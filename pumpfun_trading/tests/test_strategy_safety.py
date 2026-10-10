@@ -1,0 +1,123 @@
+import json
+import os
+import tempfile
+
+import pytest
+
+from pumpfun_trading.bot.run import TradingBot
+from pumpfun_trading.bot.strategy import TradingBotConfig, TradingStrategy, resolve_strategy_config
+
+
+def test_trading_bot_audit_log_records_trade_id_and_exit_reason(tmp_path):
+    audit_path = tmp_path / "audit.jsonl"
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        audit_log_path=str(audit_path),
+        verbose=False,
+    )
+
+    bot._record_trade(
+        mint="So11111111111111111111111111111111111111112",
+        action="buy",
+        entry=0.01,
+        reason="entry",
+    )
+    bot.active_positions["So11111111111111111111111111111111111111112"] = {"entry_market_cap": 10.0, "current_market_cap": 12.0}
+    bot._record_trade(
+        mint="So11111111111111111111111111111111111111112",
+        action="sell",
+        exit_value=0.011,
+        reason="take_profit",
+        position_id=bot._trade_ledger[0]["position_id"],
+        trade_id=f"{bot._trade_ledger[0]['trade_id']}-exit",
+    )
+
+    lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+    assert lines
+    records = [json.loads(line) for line in lines]
+    trade_records = [record for record in records if record["type"] == "trade"]
+    assert len(trade_records) >= 2
+    assert trade_records[0]["payload"]["trade_id"]
+    assert trade_records[1]["payload"]["reason"] == "take_profit"
+    assert trade_records[1]["payload"]["position_id"] == trade_records[0]["payload"]["position_id"]
+
+
+def test_strategy_config_includes_risk_fields():
+    config = resolve_strategy_config("balanced")
+    assert config.max_total_exposure_sol > 0
+    assert config.max_position_size_sol > 0
+    assert config.max_loss_per_trade_sol > 0
+    assert config.reserve_balance_sol >= 0
+    assert config.health_check_timeout_seconds > 0
+
+
+def test_trading_strategy_should_buy_respects_risk_bounds():
+    config = TradingBotConfig(
+        buy_amount_sol=0.01,
+        take_profit=1.5,
+        stop_loss=0.85,
+        max_active_positions=2,
+        min_market_cap_sol=5.0,
+        max_buy_attempts_per_mint=3,
+        min_balance_sol=0.05,
+        max_total_exposure_sol=0.2,
+        max_position_size_sol=0.05,
+        max_loss_per_trade_sol=0.02,
+        max_daily_drawdown_pct=0.2,
+        reserve_balance_sol=0.1,
+        health_check_timeout_seconds=60,
+    )
+    strategy = TradingStrategy(config)
+
+    assert strategy.should_buy(
+        market_cap_sol=15.0,
+        active_positions=1,
+        mint_seen_recently=False,
+        buy_attempts=1,
+    )
+    assert not strategy.should_buy(
+        market_cap_sol=3.0,
+        active_positions=1,
+        mint_seen_recently=False,
+        buy_attempts=1,
+    )
+
+
+def test_trading_strategy_summary_has_risk_snapshot():
+    strategy = TradingStrategy(resolve_strategy_config("balanced"))
+    summary = strategy.summary()
+    assert "max_total_exposure_sol" in summary
+    assert "reserve_balance_sol" in summary
+    assert "health_check_timeout_seconds" in summary
+
+
+def test_bot_metrics_track_buy_sell_failures_and_latency():
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+    )
+
+    bot._record_metric("buys", 2)
+    bot._record_metric("sells", 1)
+    bot._record_metric("failures", 3)
+    bot._record_metric("retries", 2)
+    bot._record_metric("connection_loss", 1)
+    bot._record_metric("stale_data", 1)
+    bot._record_latency_ms(0.0)
+
+    snapshot = bot._metrics_snapshot()
+    assert snapshot["buys"] == 2
+    assert snapshot["sells"] == 1
+    assert snapshot["failures"] == 3
+    assert snapshot["retries"] == 2
+    assert snapshot["connection_loss"] == 1
+    assert snapshot["stale_data"] == 1
+    assert snapshot["latency_ms"]["samples"] >= 1
+    assert snapshot["latency_ms"]["avg_ms"] >= 0
+
+    bot._record_trade(mint="So11111111111111111111111111111111111111112", action="buy", entry=0.01, reason="entry")
+    bot._record_trade(mint="So11111111111111111111111111111111111111112", action="sell", exit_value=0.011, reason="take_profit")
+    assert bot._metrics_snapshot()["buys"] >= 3
+    assert bot._metrics_snapshot()["sells"] >= 2
