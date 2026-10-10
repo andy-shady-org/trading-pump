@@ -146,7 +146,9 @@ def _render_raw_json(payload: Any) -> None:
     console.print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
-def _build_audit_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+def _build_audit_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     parser = subparsers.add_parser("audit", help="Inspect the JSONL audit trail")
     parser.add_argument("--path", required=True, help="Path to the JSONL audit file")
     parser.add_argument("--record-type", default=None, help="Filter by record type")
@@ -156,11 +158,23 @@ def _build_audit_parser(subparsers: argparse._SubParsersAction[argparse.Argument
     parser.add_argument("--mint", default=None, help="Filter by mint address")
     parser.add_argument("--token-name", default=None, help="Filter by token name")
     parser.add_argument("--reason", default=None, help="Filter by trade reason")
-    parser.add_argument("--status", default=None, help="Filter by record outcome/status")
-    parser.add_argument("--limit", type=int, default=None, help="Maximum records to return")
-    parser.add_argument("--summary", action="store_true", help="Print summary statistics instead of rows")
-    parser.add_argument("--json", action="store_true", help="Export filtered records as JSON to stdout")
-    parser.add_argument("--export", default=None, help="Write filtered records to a JSON file")
+    parser.add_argument(
+        "--status", default=None, help="Filter by record outcome/status"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, help="Maximum records to return"
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print summary statistics instead of rows",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Export filtered records as JSON to stdout"
+    )
+    parser.add_argument(
+        "--export", default=None, help="Write filtered records to a JSON file"
+    )
 
 
 def _run_audit_tool(args: argparse.Namespace) -> None:

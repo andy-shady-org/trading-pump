@@ -88,7 +88,11 @@ def filter_audit_records(
 
         record_state = str(record.get("state") or "").strip().lower()
         payload = _payload_for(record)
-        payload_state = str(payload.get("state") or payload.get("previous_state") or "").strip().lower()
+        payload_state = (
+            str(payload.get("state") or payload.get("previous_state") or "")
+            .strip()
+            .lower()
+        )
         state_value = record_state or payload_state
         if state and state_value != state.strip().lower():
             continue
@@ -110,14 +114,20 @@ def filter_audit_records(
             or payload.get("displayName")
             or ""
         ).strip()
-        if token_name and _normalize_text(token_name_value) != _normalize_text(token_name):
+        if token_name and _normalize_text(token_name_value) != _normalize_text(
+            token_name
+        ):
             continue
 
-        reason_value = str(payload.get("reason") or payload.get("trade_reason") or "").strip()
+        reason_value = str(
+            payload.get("reason") or payload.get("trade_reason") or ""
+        ).strip()
         if reason and _normalize_text(reason_value) != _normalize_text(reason):
             continue
 
-        status_value = str(payload.get("status") or payload.get("outcome") or "").strip().lower()
+        status_value = (
+            str(payload.get("status") or payload.get("outcome") or "").strip().lower()
+        )
         if status and status_value != status.strip().lower():
             continue
 
@@ -139,7 +149,9 @@ def summarize_audit_records(records: Iterable[dict[str, Any]]) -> dict[str, Any]
         record_type = str(record.get("type") or "unknown")
         by_type[record_type] += 1
 
-        record_state = str(record.get("state") or (_payload_for(record).get("state") or "unknown"))
+        record_state = str(
+            record.get("state") or (_payload_for(record).get("state") or "unknown")
+        )
         by_state[record_state] += 1
 
         payload = _payload_for(record)
@@ -167,7 +179,9 @@ def _format_record_time(record: dict[str, Any]) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
-def render_audit_table(records: Iterable[dict[str, Any]], console: Console | None = None) -> None:
+def render_audit_table(
+    records: Iterable[dict[str, Any]], console: Console | None = None
+) -> None:
     table = Table(title="Audit trail", show_lines=False, header_style="bold cyan")
     table.add_column("Time", style="dim")
     table.add_column("Type")
@@ -181,7 +195,12 @@ def render_audit_table(records: Iterable[dict[str, Any]], console: Console | Non
         table.add_row(
             _format_record_time(record),
             str(record.get("type") or "-"),
-            str(record.get("state") or payload.get("state") or payload.get("previous_state") or "-"),
+            str(
+                record.get("state")
+                or payload.get("state")
+                or payload.get("previous_state")
+                or "-"
+            ),
             str(payload.get("mint") or "-"),
             str(payload.get("reason") or payload.get("trade_reason") or "-"),
             str(payload.get("status") or payload.get("outcome") or "-"),
@@ -208,4 +227,3 @@ __all__ = [
     "render_audit_table",
     "export_audit_records",
 ]
-

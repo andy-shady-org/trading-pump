@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from pumpfun_trading.audit import (
     export_audit_records,
@@ -14,7 +13,9 @@ def test_load_audit_records_reads_jsonl(tmp_path):
     path.write_text(
         json.dumps({"type": "trade", "state": "buying", "payload": {"mint": "abc"}})
         + "\n"
-        + json.dumps({"type": "event", "state": "holding", "payload": {"message": "ok"}})
+        + json.dumps(
+            {"type": "event", "state": "holding", "payload": {"message": "ok"}}
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -44,7 +45,9 @@ def test_filter_audit_records_supports_common_filters(tmp_path):
             "payload": {"message": "stop loss hit", "reason": "stop_loss"},
         },
     ]
-    path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+    path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8"
+    )
 
     loaded = load_audit_records(path)
     filtered = filter_audit_records(
@@ -57,7 +60,9 @@ def test_filter_audit_records_supports_common_filters(tmp_path):
     )
 
     assert len(filtered) == 1
-    assert filtered[0]["payload"]["mint"] == "So11111111111111111111111111111111111111112"
+    assert (
+        filtered[0]["payload"]["mint"] == "So11111111111111111111111111111111111111112"
+    )
 
 
 def test_summarize_audit_records_counts_by_reason_and_type():
@@ -80,5 +85,7 @@ def test_export_audit_records_writes_json(tmp_path):
     result = export_audit_records(records, path)
 
     assert result == str(path)
-    assert json.loads(path.read_text(encoding="utf-8"))[0]["payload"]["reason"] == "risk_kill"
-
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))[0]["payload"]["reason"]
+        == "risk_kill"
+    )
