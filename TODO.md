@@ -33,8 +33,8 @@ These are the highest-value changes to make the bot safer, more operationally sa
 - [x] Add a local `bot_status.json` snapshot file for restart recovery and debugging
 
 #### 4. Audit trail investigation and forensic tooling
-- [ ] Add a dedicated audit-search CLI/tooling entry point under `pumpfun_trading/cli.py` or a new subcommand
-- [ ] Implement audit log search and filtering by:
+- [x] Add a dedicated audit-search CLI/tooling entry point under `pumpfun_trading/cli.py` or a new subcommand
+- [x] Implement audit log search and filtering by:
   - record type
   - state
   - date / time window
@@ -42,17 +42,17 @@ These are the highest-value changes to make the bot safer, more operationally sa
   - token name / display name
   - trade reason (`take_profit`, `stop_loss`, `risk_kill`, etc.)
   - status / outcome (`success`, `failed`, `skipped`, `pending`)
-- [ ] Add summary and aggregation output for recent trades, failures, and state transitions
-- [ ] Add JSON and table output modes for quick inspection and automation
-- [ ] Add export / review helpers for incident analysis and debugging
-- [ ] Add tests for audit query filtering and CLI parsing
+- [x] Add summary and aggregation output for recent trades, failures, and state transitions
+- [x] Add JSON and table output modes for quick inspection and automation
+- [x] Add export / review helpers for incident analysis and debugging
+- [x] Add tests for audit query filtering and CLI parsing
 
 #### 5. Test coverage for safety-critical paths
 - [x] Add unit tests for position sizing guard logic
-- [ ] Add tests for kill-switch conditions
-- [ ] Add tests for name resolution and active-position metadata
-- [ ] Add tests for failed API and failed websocket handling
-- [ ] Expand `pumpfun_trading/tests/` with risk and lifecycle tests
+- [x] Add tests for kill-switch conditions
+- [x] Add tests for name resolution and active-position metadata
+- [x] Add tests for failed API and failed websocket handling
+- [x] Expand `pumpfun_trading/tests/` with risk and lifecycle tests
 
 ### Phase 1: Near-term improvements (2-4 weeks)
 
@@ -149,35 +149,35 @@ These changes turn the bot into a more serious production trading system.
 ## Repo-specific work items
 
 ### `pumpfun_trading/bot/run.py`
-- [ ] Add risk guard before every buy and sell
-- [ ] Add execution state machine and trade ledger
+- [x] Add risk guard before every buy and sell
+- [x] Add execution state machine and trade ledger
 - [ ] Add graceful shutdown, restart, and health-monitoring paths
-- [ ] Add compact but informative health dashboard with risk metrics
-- [ ] Add alerting hooks for stale data or failed execution
+- [x] Add compact but informative health dashboard with risk metrics
+- [x] Add alerting hooks for stale data or failed execution
 
 ### `pumpfun_trading/api/client.py`
-- [ ] Add quality checks for API payloads and metadata freshness
-- [ ] Add fallback request paths for 4xx/5xx or missing data
+- [x] Add quality checks for API payloads and metadata freshness
+- [x] Add fallback request paths for 4xx/5xx or missing data
 - [ ] Add timeouts, retry logic, and circuit-break behavior
-- [ ] Add methods for richer token data needed by signal quality filters
+- [x] Add methods for richer token data needed by signal quality filters
 
 ### `pumpfun_trading/sdk/execution.py`
-- [ ] Add execution health checks
-- [ ] Add slippage and fee validation
+- [x] Add execution health checks
+- [x] Add slippage and fee validation
 - [ ] Add transaction queue or lock to prevent duplicate sends
 - [ ] Add safer confirmation handling and error classification
 
 ### `pumpfun_trading/bot/strategy.py`
-- [ ] Expand strategy config with risk limits and signal thresholds
-- [ ] Add strategy presets with different risk profiles
-- [ ] Add scoring thresholds and cooldown logic
+- [x] Expand strategy config with risk limits and signal thresholds
+- [x] Add strategy presets with different risk profiles
+- [x] Add scoring thresholds and cooldown logic
 
 ### `pumpfun_trading/tests/`
-- [ ] Add tests for risk limit enforcement
+- [x] Add tests for risk limit enforcement
 - [ ] Add tests for state restoration and restart recovery
 - [ ] Add tests for API fallback behavior
 - [ ] Add tests for execution failure paths and retry logic
-- [ ] Add tests for strategy scoring and buy filters
+- [x] Add tests for strategy scoring and buy filters
 
 ## Suggested sprint plan
 
@@ -185,14 +185,14 @@ These changes turn the bot into a more serious production trading system.
 - [x] risk limits
 - [x] kill-switches
 - [x] trade ledger
-- [ ] health monitoring
+- [x] health monitoring
 - [x] test coverage for safety logic
 
 ### Sprint 2: Audit trail investigation and forensic tooling
-- audit log search and filtering CLI
-- record-type, state, mint, date, name, and reason filters
-- JSON + table output and summary views
-- export helpers for incident review
+- [x] audit log search and filtering CLI
+- [x] record-type, state, mint, date, name, and reason filters
+- [x] JSON + table output and summary views
+- [x] export helpers for incident review
 
 ### Sprint 3: Runtime decomposition and first-release gate
 - split bot runtime into orchestrator, lifecycle, risk, audit, execution, dashboard modules
