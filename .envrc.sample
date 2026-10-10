@@ -1,0 +1,38 @@
+# Copy this file to .envrc and fill in your real values.
+# Do not commit .envrc to version control.
+#
+# If you use direnv, this file is loaded automatically when you enter the repo.
+
+# Required: wallet private key for on-chain execution.
+export PUMPFUN_PRIVATE_KEY="<base58-wallet-private-key>"
+# Optional legacy alias accepted by the bot runtime.
+# export SOLANA_PRIVATE_KEY="$PUMPFUN_PRIVATE_KEY"
+
+# Required: RPC endpoint used to sign and submit transactions.
+export PUMPFUN_RPC_URL="https://mainnet.helius-rpc.com/?api-key=<your-rpc-api-key>"
+# Optional legacy alias accepted by the bot runtime.
+# export HELIUS_RPC_URL="$PUMPFUN_RPC_URL"
+
+# Optional: alerting provider. Set to one of: none, discord, slack, telegram.
+# Use "none" to disable alerts entirely.
+export PUMPFUN_ALERT_PROVIDER="none"
+
+# Discord: requires a webhook URL.
+# export PUMPFUN_ALERT_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/…"
+
+# Slack: requires a webhook URL.
+# export PUMPFUN_ALERT_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/…"
+
+# Telegram: requires both a bot token and a chat id.
+# export PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN="<telegram-bot-token>"
+# export PUMPFUN_ALERT_TELEGRAM_CHAT_ID="<telegram-chat-id>"
+
+# Optional: durable JSONL audit trail path for lifecycle events and trades.
+export PUMPFUN_AUDIT_LOG="${PWD}/.data/pumpfun_trading_audit.jsonl"
+
+# Optional: JSON snapshot of the current bot state for monitoring and incident review.
+export PUMPFUN_BOT_STATUS_PATH="${PWD}/.data/bot_status.json"
+
+# Optional: if you use a local .env loader, source it before running the CLI.
+# Example:
+# export $(grep -v '^#' .env | xargs)
