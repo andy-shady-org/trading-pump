@@ -11,7 +11,10 @@ from solders.message import MessageHeader, MessageV0
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 from spl.token.constants import TOKEN_PROGRAM_ID
-from spl.token.instructions import create_associated_token_account, get_associated_token_address
+from spl.token.instructions import (
+    create_associated_token_account,
+    get_associated_token_address,
+)
 
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 GLOBAL_STATE = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
@@ -66,7 +69,11 @@ class PumpFunExecutionClient:
 
     @staticmethod
     def is_valid_mint(value: str) -> bool:
-        return isinstance(value, str) and len(value) >= 32 and PumpFunExecutionClient.is_valid_pubkey(value)
+        return (
+            isinstance(value, str)
+            and len(value) >= 32
+            and PumpFunExecutionClient.is_valid_pubkey(value)
+        )
 
     def _to_pubkey(self, value: str) -> Pubkey:
         return Pubkey.from_string(value)
@@ -95,7 +102,9 @@ class PumpFunExecutionClient:
             ) as resp:
                 body = await resp.text()
                 if resp.status != 200:
-                    raise RuntimeError(f"RPC getLatestBlockhash failed: HTTP {resp.status}: {body[:500]}")
+                    raise RuntimeError(
+                        f"RPC getLatestBlockhash failed: HTTP {resp.status}: {body[:500]}"
+                    )
                 parsed = json.loads(body)
                 value = parsed.get("result", {}).get("value", {})
                 blockhash = value.get("blockhash")
@@ -118,10 +127,14 @@ class PumpFunExecutionClient:
             ) as resp:
                 body = await resp.text()
                 if resp.status != 200:
-                    raise RuntimeError(f"getBalance failed: HTTP {resp.status}: {body[:500]}")
+                    raise RuntimeError(
+                        f"getBalance failed: HTTP {resp.status}: {body[:500]}"
+                    )
                 parsed = json.loads(body)
                 result = parsed.get("result") or {}
-                lamports = int(result.get("value", 0)) if isinstance(result, dict) else 0
+                lamports = (
+                    int(result.get("value", 0)) if isinstance(result, dict) else 0
+                )
                 return lamports / 1_000_000_000.0
 
     async def get_ata_address(self, mint: str, owner: Optional[str] = None) -> str:
@@ -149,12 +162,22 @@ class PumpFunExecutionClient:
             ) as resp:
                 body = await resp.text()
                 if resp.status != 200:
-                    raise RuntimeError(f"getTokenAccountsByOwner failed: HTTP {resp.status}: {body[:500]}")
+                    raise RuntimeError(
+                        f"getTokenAccountsByOwner failed: HTTP {resp.status}: {body[:500]}"
+                    )
                 parsed = json.loads(body)
                 accounts = (parsed.get("result") or {}).get("value", [])
                 for account in accounts or []:
-                    info = account.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
-                    if info.get("mint") == mint and str(info.get("owner")) == owner_pubkey:
+                    info = (
+                        account.get("account", {})
+                        .get("data", {})
+                        .get("parsed", {})
+                        .get("info", {})
+                    )
+                    if (
+                        info.get("mint") == mint
+                        and str(info.get("owner")) == owner_pubkey
+                    ):
                         return True
                 return False
 
@@ -162,7 +185,9 @@ class PumpFunExecutionClient:
         self.is_valid_mint(mint)
         mint_pubkey = self._to_pubkey(mint)
         program_id = self._to_pubkey(PUMP_PROGRAM_ID)
-        bonding_curve_pda, _ = Pubkey.find_program_address([b"bonding-curve", bytes(mint_pubkey)], program_id)
+        bonding_curve_pda, _ = Pubkey.find_program_address(
+            [b"bonding-curve", bytes(mint_pubkey)], program_id
+        )
         fee_recipient = self._to_pubkey(FEE_RECIPIENT)
         associated_curve_pda, _ = Pubkey.find_program_address(
             [bytes(bonding_curve_pda), bytes(fee_recipient), bytes(mint_pubkey)],
@@ -185,28 +210,58 @@ class PumpFunExecutionClient:
         user_pubkey = self.wallet
 
         accounts = [
-            AccountMeta(pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(FEE_RECIPIENT), is_signer=False, is_writable=True),
+            AccountMeta(
+                pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(FEE_RECIPIENT), is_signer=False, is_writable=True
+            ),
             AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
             AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
             AccountMeta(
-                pubkey=get_associated_token_address(bonding_curve_pubkey, mint_pubkey, TOKEN_PROGRAM_ID),
+                pubkey=get_associated_token_address(
+                    bonding_curve_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
+                ),
                 is_signer=False,
                 is_writable=True,
             ),
             AccountMeta(
-                pubkey=get_associated_token_address(user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID),
+                pubkey=get_associated_token_address(
+                    user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
+                ),
                 is_signer=False,
                 is_writable=True,
             ),
             AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
-            AccountMeta(pubkey=self._to_pubkey(SYSTEM_PROGRAM_ID), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(TOKEN_PROGRAM_ID_STR), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(RENT_PROGRAM_ID), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(EVENT_AUTHORITY), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(PUMP_PROGRAM_ID), is_signer=False, is_writable=False),
+            AccountMeta(
+                pubkey=self._to_pubkey(SYSTEM_PROGRAM_ID),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(TOKEN_PROGRAM_ID_STR),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(RENT_PROGRAM_ID),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(EVENT_AUTHORITY),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(PUMP_PROGRAM_ID),
+                is_signer=False,
+                is_writable=False,
+            ),
         ]
-        return Instruction(program_id=self._to_pubkey(PUMP_PROGRAM_ID), accounts=accounts, data=data)
+        return Instruction(
+            program_id=self._to_pubkey(PUMP_PROGRAM_ID), accounts=accounts, data=data
+        )
 
     def build_sell_instruction(
         self,
@@ -223,28 +278,58 @@ class PumpFunExecutionClient:
         user_pubkey = self.wallet
 
         accounts = [
-            AccountMeta(pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(FEE_RECIPIENT), is_signer=False, is_writable=True),
+            AccountMeta(
+                pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(FEE_RECIPIENT), is_signer=False, is_writable=True
+            ),
             AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
             AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
             AccountMeta(
-                pubkey=get_associated_token_address(bonding_curve_pubkey, mint_pubkey, TOKEN_PROGRAM_ID),
+                pubkey=get_associated_token_address(
+                    bonding_curve_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
+                ),
                 is_signer=False,
                 is_writable=True,
             ),
             AccountMeta(
-                pubkey=get_associated_token_address(user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID),
+                pubkey=get_associated_token_address(
+                    user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
+                ),
                 is_signer=False,
                 is_writable=True,
             ),
             AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
-            AccountMeta(pubkey=self._to_pubkey(SYSTEM_PROGRAM_ID), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(TOKEN_PROGRAM_ID_STR), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(EVENT_AUTHORITY), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=self._to_pubkey(PUMP_PROGRAM_ID), is_signer=False, is_writable=False),
+            AccountMeta(
+                pubkey=self._to_pubkey(SYSTEM_PROGRAM_ID),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(TOKEN_PROGRAM_ID_STR),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(EVENT_AUTHORITY),
+                is_signer=False,
+                is_writable=False,
+            ),
+            AccountMeta(
+                pubkey=self._to_pubkey(PUMP_PROGRAM_ID),
+                is_signer=False,
+                is_writable=False,
+            ),
         ]
-        return Instruction(program_id=self._to_pubkey(PUMP_PROGRAM_ID), accounts=accounts, data=data)
+        return Instruction(
+            program_id=self._to_pubkey(PUMP_PROGRAM_ID), accounts=accounts, data=data
+        )
 
     async def build_buy_tx(
         self,
@@ -256,7 +341,9 @@ class PumpFunExecutionClient:
         slippage_bps: Optional[int] = None,
     ) -> VersionedTransaction:
         token_amount = token_amount if token_amount is not None else 0
-        slippage_bps = self.default_slippage_bps if slippage_bps is None else slippage_bps
+        slippage_bps = (
+            self.default_slippage_bps if slippage_bps is None else slippage_bps
+        )
         lamports = int(sol_amount * 1_000_000_000)
         max_sol_cost = int((lamports * (10_000 + slippage_bps)) / 10_000)
 
@@ -269,7 +356,9 @@ class PumpFunExecutionClient:
                     mint=self._to_pubkey(mint),
                 )
             )
-        instructions.append(self.build_buy_instruction(mint, bonding_curve, token_amount, max_sol_cost))
+        instructions.append(
+            self.build_buy_instruction(mint, bonding_curve, token_amount, max_sol_cost)
+        )
         return await self._build_tx_with_instructions(instructions)
 
     async def build_sell_tx(
@@ -280,7 +369,11 @@ class PumpFunExecutionClient:
         *,
         min_sol_output: int = 0,
     ) -> VersionedTransaction:
-        instructions = [self.build_sell_instruction(mint, bonding_curve, token_amount, min_sol_output)]
+        instructions = [
+            self.build_sell_instruction(
+                mint, bonding_curve, token_amount, min_sol_output
+            )
+        ]
         return await self._build_tx_with_instructions(instructions)
 
     async def _build_tx_with_instructions(self, instructions) -> VersionedTransaction:
@@ -332,14 +425,18 @@ class PumpFunExecutionClient:
             ) as resp:
                 body = await resp.text()
                 if resp.status != 200:
-                    raise RuntimeError(f"sendTransaction failed: HTTP {resp.status}: {body[:500]}")
+                    raise RuntimeError(
+                        f"sendTransaction failed: HTTP {resp.status}: {body[:500]}"
+                    )
                 parsed = json.loads(body)
                 result = parsed.get("result")
                 if not isinstance(result, str) or len(result) < 20:
                     raise RuntimeError(f"Invalid sendTransaction result: {body[:500]}")
                 return result
 
-    async def confirm_transaction(self, signature: str, max_retries: int = 20, interval: float = 1.0) -> bool:
+    async def confirm_transaction(
+        self, signature: str, max_retries: int = 20, interval: float = 1.0
+    ) -> bool:
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -366,10 +463,16 @@ class PumpFunExecutionClient:
                             await asyncio.sleep(interval)
                             continue
                         confirmation_status = status.get("confirmationStatus")
-                        if confirmation_status in {"processed", "confirmed", "finalized"}:
+                        if confirmation_status in {
+                            "processed",
+                            "confirmed",
+                            "finalized",
+                        }:
                             if status.get("err") is None:
                                 return True
-                            raise RuntimeError(f"On-chain transaction failed: {status.get('err')}")
+                            raise RuntimeError(
+                                f"On-chain transaction failed: {status.get('err')}"
+                            )
                 except Exception:
                     pass
                 await asyncio.sleep(interval)
@@ -401,7 +504,9 @@ class PumpFunExecutionClient:
         *,
         min_sol_output: int = 0,
     ) -> str:
-        tx = await self.build_sell_tx(mint, bonding_curve, token_amount, min_sol_output=min_sol_output)
+        tx = await self.build_sell_tx(
+            mint, bonding_curve, token_amount, min_sol_output=min_sol_output
+        )
         return await self.send_transaction(tx)
 
     async def get_token_balance(self, mint: str, owner: Optional[str] = None) -> int:
@@ -422,11 +527,12 @@ class PumpFunExecutionClient:
             ) as resp:
                 body = await resp.text()
                 if resp.status != 200:
-                    raise RuntimeError(f"getTokenAccountBalance failed: HTTP {resp.status}: {body[:500]}")
+                    raise RuntimeError(
+                        f"getTokenAccountBalance failed: HTTP {resp.status}: {body[:500]}"
+                    )
                 parsed = json.loads(body)
-                result = (parsed.get("result") or {})
+                result = parsed.get("result") or {}
                 amount = result.get("value", {}).get("amount")
                 if amount is None:
                     return 0
                 return int(amount)
-

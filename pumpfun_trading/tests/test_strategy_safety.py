@@ -1,11 +1,12 @@
 import json
-import os
-import tempfile
 
-import pytest
 
 from pumpfun_trading.bot.run import TradingBot
-from pumpfun_trading.bot.strategy import TradingBotConfig, TradingStrategy, resolve_strategy_config
+from pumpfun_trading.bot.strategy import (
+    TradingBotConfig,
+    TradingStrategy,
+    resolve_strategy_config,
+)
 
 
 def test_trading_bot_audit_log_records_trade_id_and_exit_reason(tmp_path):
@@ -23,7 +24,10 @@ def test_trading_bot_audit_log_records_trade_id_and_exit_reason(tmp_path):
         entry=0.01,
         reason="entry",
     )
-    bot.active_positions["So11111111111111111111111111111111111111112"] = {"entry_market_cap": 10.0, "current_market_cap": 12.0}
+    bot.active_positions["So11111111111111111111111111111111111111112"] = {
+        "entry_market_cap": 10.0,
+        "current_market_cap": 12.0,
+    }
     bot._record_trade(
         mint="So11111111111111111111111111111111111111112",
         action="sell",
@@ -40,7 +44,10 @@ def test_trading_bot_audit_log_records_trade_id_and_exit_reason(tmp_path):
     assert len(trade_records) >= 2
     assert trade_records[0]["payload"]["trade_id"]
     assert trade_records[1]["payload"]["reason"] == "take_profit"
-    assert trade_records[1]["payload"]["position_id"] == trade_records[0]["payload"]["position_id"]
+    assert (
+        trade_records[1]["payload"]["position_id"]
+        == trade_records[0]["payload"]["position_id"]
+    )
 
 
 def test_strategy_config_includes_risk_fields():
@@ -117,7 +124,17 @@ def test_bot_metrics_track_buy_sell_failures_and_latency():
     assert snapshot["latency_ms"]["samples"] >= 1
     assert snapshot["latency_ms"]["avg_ms"] >= 0
 
-    bot._record_trade(mint="So11111111111111111111111111111111111111112", action="buy", entry=0.01, reason="entry")
-    bot._record_trade(mint="So11111111111111111111111111111111111111112", action="sell", exit_value=0.011, reason="take_profit")
+    bot._record_trade(
+        mint="So11111111111111111111111111111111111111112",
+        action="buy",
+        entry=0.01,
+        reason="entry",
+    )
+    bot._record_trade(
+        mint="So11111111111111111111111111111111111111112",
+        action="sell",
+        exit_value=0.011,
+        reason="take_profit",
+    )
     assert bot._metrics_snapshot()["buys"] >= 3
     assert bot._metrics_snapshot()["sells"] >= 2

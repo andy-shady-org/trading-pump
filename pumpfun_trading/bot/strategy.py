@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_PRESETS: dict[str, dict[str, float | int]] = {
     "conservative": {
         "buy_amount_sol": 0.005,
@@ -120,7 +119,12 @@ class TradingBotConfig:
         if not isinstance(raw, dict):
             raise ValueError(f"Config file {config_path} must contain a JSON object.")
         preset = str(raw.get("strategy_preset") or raw.get("preset") or "balanced")
-        resolved = resolve_strategy_config(preset, overrides={k: v for k, v in raw.items() if k not in {"preset", "strategy_preset"}})
+        resolved = resolve_strategy_config(
+            preset,
+            overrides={
+                k: v for k, v in raw.items() if k not in {"preset", "strategy_preset"}
+            },
+        )
         return resolved
 
 
@@ -154,7 +158,9 @@ def resolve_strategy_config(
     if config.buy_amount_sol <= 0:
         raise ValueError("buy_amount_sol must be greater than zero.")
     if not 0 < config.stop_loss < config.take_profit:
-        raise ValueError("stop_loss must be less than take_profit and both must be greater than zero.")
+        raise ValueError(
+            "stop_loss must be less than take_profit and both must be greater than zero."
+        )
     if config.max_active_positions < 1:
         raise ValueError("max_active_positions must be at least 1.")
     return config
@@ -164,7 +170,14 @@ class TradingStrategy:
     def __init__(self, config: TradingBotConfig):
         self.config = config
 
-    def should_buy(self, *, market_cap_sol: float, active_positions: int, mint_seen_recently: bool, buy_attempts: int) -> bool:
+    def should_buy(
+        self,
+        *,
+        market_cap_sol: float,
+        active_positions: int,
+        mint_seen_recently: bool,
+        buy_attempts: int,
+    ) -> bool:
         return (
             not mint_seen_recently
             and active_positions < self.config.max_active_positions
@@ -174,7 +187,8 @@ class TradingStrategy:
 
     def should_sell(self, *, performance: float, token_balance: int) -> bool:
         return token_balance > self.config.min_sell_balance and (
-            performance >= self.config.take_profit or performance <= self.config.stop_loss
+            performance >= self.config.take_profit
+            or performance <= self.config.stop_loss
         )
 
     def summary(self) -> dict[str, Any]:
@@ -197,4 +211,9 @@ class TradingStrategy:
         }
 
 
-__all__ = ["DEFAULT_PRESETS", "TradingBotConfig", "TradingStrategy", "resolve_strategy_config"]
+__all__ = [
+    "DEFAULT_PRESETS",
+    "TradingBotConfig",
+    "TradingStrategy",
+    "resolve_strategy_config",
+]

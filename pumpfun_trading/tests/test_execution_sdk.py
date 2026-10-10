@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 
 from solders.keypair import Keypair
