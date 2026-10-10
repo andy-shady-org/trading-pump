@@ -116,11 +116,13 @@ This document is a snapshot of the features currently implemented in this reposi
 
 ## Audit and forensic tooling
 
-- JSONL audit log output for state transitions and trades
-- Structured event-and-trade write path for runtime investigation
-- Status snapshot export for debugging and restart analysis
-- Trade ledger with mint, entry, exit, reason, position IDs, and timestamps
-- Bot history retained in memory for recent action review
+- JSONL audit log output for trade and lifecycle records
+- Structured audit record schema for state transitions, events, and metrics
+- Filter-by-record-type, state, date window, mint, token name, reason, and status queries
+- Summary aggregation for recent trades, failures, and state transitions
+- JSON and table output modes for review and automation
+- Export support for filtered audit records to a JSON file
+- CLI-based audit investigation workflow for incident review and debugging
 
 ## Environment/configuration support
 
@@ -143,4 +145,3 @@ This document is a snapshot of the features currently implemented in this reposi
 ## Notes
 
 This repository is not only a raw API wrapper; it includes a live bot runtime, execution helpers, strategy presets, risk guardrails, monitoring, and operational event logging. The codebase is structured as a foundation for a launch-monitoring and execution-focused Pump.fun trading system, with several roadmap items still pending beyond the implemented core features.
-

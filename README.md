@@ -167,3 +167,25 @@ Example bot config:
 ```
 
 The JSON file is intentionally a sample: keep your real runtime values in a local untracked copy and do not commit secrets or live config to version control. The risk-limit values above are the current portfolio safety defaults used for the balanced preset.
+
+## Audit trail investigation tool
+
+The bot writes a JSONL audit trail for trades, lifecycle transitions, status changes, and operational events. You can inspect it with the built-in CLI tool:
+
+```bash
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl
+```
+
+Common filters:
+
+```bash
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl --record-type trade
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl --state holding
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl --mint <mint-address>
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl --reason take_profit
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl --summary
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl --json
+pumpbot audit --path .data/pumpfun_trading_audit.jsonl --export ./audit-export.json
+```
+
+See `AUDIT-TOOL.md` for the full audit investigation workflow and examples.

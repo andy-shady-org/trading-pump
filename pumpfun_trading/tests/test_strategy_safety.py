@@ -1,4 +1,6 @@
 import json
+import time
+from unittest.mock import AsyncMock
 
 
 from pumpfun_trading.bot.run import TradingBot
@@ -7,6 +9,85 @@ from pumpfun_trading.bot.strategy import (
     TradingStrategy,
     resolve_strategy_config,
 )
+
+
+async def test_bot_kill_switches_when_health_stale_or_balance_check_fails():
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        config=resolve_strategy_config(
+            "balanced",
+            overrides={"health_check_timeout_seconds": 1},
+        ),
+    )
+    bot._health_ok = True
+    bot._last_message_at = 0.0
+    bot._last_health_check = 0.0
+
+    await bot._update_health_state()
+    assert bot._risk_killed is True
+    assert bot._health_ok is False
+
+    bot._risk_killed = False
+    bot._health_ok = True
+    bot.execution = AsyncMock()
+    bot.execution.get_balance_sol = AsyncMock(side_effect=RuntimeError("API down"))
+
+    assert await bot._check_account_equity_guard(required_sol=0.1) is False
+    assert bot._risk_killed is True
+    assert "risk kill: API balance check failed" in bot._last_event
+
+
+async def test_bot_resolves_names_and_tracks_position_metadata():
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+    )
+    bot._health_ok = True
+    bot._risk_killed = False
+    bot._last_message_at = time.monotonic()
+    bot._last_health_check = time.monotonic()
+    bot.dry_run = True
+
+    assert await bot._resolve_token_name("mint", "PumpCoin") == "PumpCoin"
+    assert await bot._resolve_token_name("mint", None) is None
+
+    assert await bot._buy_token("mint", 30.0, "PumpCoin") is True
+    position = bot.active_positions["mint"]
+    assert position["name"] == "PumpCoin"
+    assert position["entry_market_cap"] == 30.0
+    assert position["current_market_cap"] == 30.0
+
+
+async def test_websocket_failure_sets_risk_kill_and_reconnect_status():
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        config=resolve_strategy_config(
+            "balanced",
+            overrides={"health_check_timeout_seconds": 1},
+        ),
+    )
+    bot._health_ok = True
+    bot._risk_killed = False
+    bot._last_message_at = time.monotonic() - 10
+
+    await bot._update_health_state()
+    assert bot._risk_killed is True
+    assert bot._last_status == "health timeout"
+    assert "websocket stale" in bot._last_event
+
+    # Simulate a websocket reconnect path and ensure the loop still marks health as failed
+    bot._risk_killed = False
+    bot._health_ok = True
+    bot._last_health_check = time.monotonic()
+    bot._mark_health_check()
+    assert bot._health_ok_for_trading() is True
+    bot._last_health_check = 0.0
+    assert bot._health_ok_for_trading() is False
 
 
 def test_trading_bot_audit_log_records_trade_id_and_exit_reason(tmp_path):
