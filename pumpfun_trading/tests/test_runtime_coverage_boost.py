@@ -24,7 +24,9 @@ from pumpfun_trading.services.market_data import MarketDataService, ResilienceSt
         ("PUMPFUN_USE_SSL", False, "false", False),
     ],
 )
-def test_env_helpers_cover_all_branch_paths(monkeypatch, name, default, value, expected):
+def test_env_helpers_cover_all_branch_paths(
+    monkeypatch, name, default, value, expected
+):
     monkeypatch.setenv(name, value)
     assert get_env_bool(name, default) is expected
     assert get_env_float("PUMPFUN_TEST_FLOAT", 2.5) == 2.5
@@ -125,10 +127,9 @@ async def test_market_data_service_fallback_and_resilience_paths():
 
 def test_market_data_service_handles_missing_client_and_invalid_data():
     service = MarketDataService(api_client=None)
-    assert (
-        await_async(service.fetch_with_fallback([], fallback_value={"name": "fallback"}))
-        == {"name": "fallback"}
-    )
+    assert await_async(
+        service.fetch_with_fallback([], fallback_value={"name": "fallback"})
+    ) == {"name": "fallback"}
 
     class BrokenClient:
         async def nope(self):
@@ -148,4 +149,3 @@ def test_market_data_service_handles_missing_client_and_invalid_data():
 
 def await_async(coro):
     return asyncio.run(coro)
-

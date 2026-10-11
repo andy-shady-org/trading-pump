@@ -134,14 +134,11 @@ async def test_market_data_service_handles_failures_and_fallbacks():
     assert await service.get_market_cap_sol({"market_cap_sol": "9.5"}) == 9.5
     assert await service.get_token_name({"tokenName": " Beta "}) == "Beta"
     assert await service.get_token_name({}) is None
-    assert (
-        await service.fetch_with_fallback(
-            [("flaky", [("mint", "abc")])],
-            timeout=0.1,
-            fallback_value={"name": "fallback"},
-        )
-        == {"name": "fallback"}
-    )
+    assert await service.fetch_with_fallback(
+        [("flaky", [("mint", "abc")])],
+        timeout=0.1,
+        fallback_value={"name": "fallback"},
+    ) == {"name": "fallback"}
     assert service.is_data_fresh(last_seen_at=0.0, max_age_seconds=1) is False
     assert service.is_data_fresh(last_seen_at=0.0, max_age_seconds=0) is False
 
@@ -155,12 +152,14 @@ async def test_market_data_service_handles_failures_and_fallbacks():
 def test_strategy_config_round_trip_from_file(tmp_path):
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({
-            "strategy_preset": "aggressive",
-            "buy_amount_sol": 0.02,
-            "paper_trade": True,
-            "max_active_positions": 2,
-        }),
+        json.dumps(
+            {
+                "strategy_preset": "aggressive",
+                "buy_amount_sol": 0.02,
+                "paper_trade": True,
+                "max_active_positions": 2,
+            }
+        ),
         encoding="utf-8",
     )
 

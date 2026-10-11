@@ -4,7 +4,13 @@ import nox
 @nox.session(python=["3.14"])
 def tests(session):
     session.install("-e", ".[dev]")
-    session.run("pytest", "-q", "--cov=pumpfun_trading", "--cov-report=term-missing", "--cov-report=xml")
+    session.run(
+        "pytest",
+        "-q",
+        "--cov=pumpfun_trading",
+        "--cov-report=term-missing",
+        "--cov-report=xml",
+    )
 
 
 @nox.session(python=["3.14"])
