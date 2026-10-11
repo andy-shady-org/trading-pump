@@ -15,7 +15,8 @@ Trade records include:
 
 - `trade_id`
 - `position_id`
-- `action` (`buy` / `sell`)
+- `action` (`buy` / `sell` / `reconciled_closed`)
+- `mint_name` / `token_name`
 - `mint`
 - `entry`
 - `exit`
@@ -33,27 +34,30 @@ Event records include:
 
 ## CLI usage
 
-The tool is exposed through the package CLI entry point:
+The tool is exposed through the dedicated `pumpfun-audit` CLI entry point:
 
 ```bash
-pumpbot audit --path /path/to/audit.jsonl
+pumpfun-audit --path /path/to/audit.jsonl
 ```
 
 ### Filtering
 
 ```bash
-pumpbot audit --path /path/to/audit.jsonl --record-type trade
-pumpbot audit --path /path/to/audit.jsonl --state holding
-pumpbot audit --path /path/to/audit.jsonl --mint <mint-address>
-pumpbot audit --path /path/to/audit.jsonl --reason take_profit
-pumpbot audit --path /path/to/audit.jsonl --status success
-pumpbot audit --path /path/to/audit.jsonl --date-from 2026-01-01 --date-to 2026-01-31
+pumpfun-audit --path /path/to/audit.jsonl --record-type trade
+pumpfun-audit --path /path/to/audit.jsonl --state holding
+pumpfun-audit --path /path/to/audit.jsonl --mint <mint-address>
+pumpfun-audit --path /path/to/audit.jsonl --mint-name <token-name>
+pumpfun-audit --path /path/to/audit.jsonl --token-name <token-name>
+pumpfun-audit --path /path/to/audit.jsonl --reason take_profit
+pumpfun-audit --path /path/to/audit.jsonl --status success
+pumpfun-audit --path /path/to/audit.jsonl --date-from 2026-01-01 --date-to 2026-01-31
+pumpfun-audit --path /path/to/audit.jsonl --limit 50
 ```
 
 ### Summary output
 
 ```bash
-pumpbot audit --path /path/to/audit.jsonl --summary
+pumpfun-audit --path /path/to/audit.jsonl --summary
 ```
 
 This prints aggregate counts by:
@@ -66,7 +70,7 @@ This prints aggregate counts by:
 ### JSON output
 
 ```bash
-pumpbot audit --path /path/to/audit.jsonl --json
+pumpfun-audit --path /path/to/audit.jsonl --json
 ```
 
 This emits the filtered records as pretty JSON.
@@ -74,7 +78,7 @@ This emits the filtered records as pretty JSON.
 ### Exporting results
 
 ```bash
-pumpbot audit --path /path/to/audit.jsonl --reason risk_kill --export ./risk_kill.json
+pumpfun-audit --path /path/to/audit.jsonl --reason risk_kill --export ./risk_kill.json
 ```
 
 This writes the filtered set to a JSON file for later review, automation, or sharing.
@@ -83,24 +87,28 @@ This writes the filtered set to a JSON file for later review, automation, or sha
 
 If you do not specify `--summary`, `--json`, or `--export`, the tool renders a Rich table with:
 
-- time
-- record type
-- state
-- mint
-- reason
-- status
+- Time
+- Type
+- State
+- Mint Name
+- Mint
+- Reason
+- Status
 
 ## Example workflow
 
 ```bash
 # See all bot activity for a mint
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --mint So11111111111111111111111111111111111111112
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --mint So11111111111111111111111111111111111111112
+
+# Filter activity by mint / token name
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --mint-name SolCat
 
 # Inspect only exit events
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --record-type trade --reason take_profit
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --record-type trade --reason take_profit
 
 # Produce a summary of recent system health events
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --summary
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --summary
 ```
 
 ## Operational value

@@ -1,4 +1,7 @@
+import asyncio
+import inspect
 import json as json_module
+import time
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -18,9 +21,17 @@ class PumpFunApiClient:
         timeout: float = 20.0,
         session: Optional[aiohttp.ClientSession] = None,
         headers: Optional[Dict[str, str]] = None,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 0.5,
+        circuit_breaker_threshold: int = 5,
+        circuit_cooldown_seconds: float = 15.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self.circuit_breaker_threshold = circuit_breaker_threshold
+        self.circuit_cooldown_seconds = circuit_cooldown_seconds
         self.headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -29,6 +40,8 @@ class PumpFunApiClient:
             **(headers or {}),
         }
         self._session = session
+        self._circuit_failures = 0
+        self._circuit_open_until = 0.0
 
     async def __aenter__(self):
         await self._get_session()
@@ -38,22 +51,26 @@ class PumpFunApiClient:
         await self.close()
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
+        if self._session is None or getattr(self._session, "closed", False):
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout)
             )
         return self._session
 
     async def close(self) -> None:
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
+        close_method = getattr(self._session, "close", None)
+        if close_method is not None and inspect.iscoroutinefunction(close_method):
+            await close_method()
 
     def _build_url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
             return path
         return f"{self.base_url}{path}"
 
-    async def request(
+    def _backoff_delay(self, attempt: int) -> float:
+        return self.retry_backoff_seconds * (2**attempt)
+
+    async def _request_once(
         self,
         method: str,
         path: str,
@@ -79,6 +96,51 @@ class PumpFunApiClient:
             except json_module.JSONDecodeError:
                 return text
 
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+        data: Optional[Any] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        if self._circuit_open_until > time.monotonic():
+            raise RuntimeError(
+                "PumpFun API circuit open; market data requests are temporarily disabled."
+            )
+
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                result = await self._request_once(
+                    method,
+                    path,
+                    params=params,
+                    json=json,
+                    data=data,
+                    headers=headers,
+                )
+                self._circuit_failures = 0
+                return result
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - retry path exercised via tests
+                last_error = exc
+                if attempt >= self.max_retries:
+                    self._circuit_failures += 1
+                    if self._circuit_failures >= self.circuit_breaker_threshold:
+                        self._circuit_open_until = (
+                            time.monotonic() + self.circuit_cooldown_seconds
+                        )
+                    raise
+                await asyncio.sleep(self._backoff_delay(attempt))
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"PumpFun API request failed for {method.upper()} {path}.")
+
     async def get(
         self,
         path: str,
@@ -100,6 +162,91 @@ class PumpFunApiClient:
         return await self.request(
             "POST", path, params=params, json=json, data=data, headers=headers
         )
+
+    @staticmethod
+    def _pick_first_mapping(payload: Any, *keys: str) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, dict):
+                return value
+        return {}
+
+    async def get_liquidity_snapshot(self, mint: str) -> dict[str, Any]:
+        payload = await self.get_coin(mint)
+        if not isinstance(payload, dict):
+            return {}
+        liquidity = (
+            payload.get("liquidity")
+            or payload.get("liquidityInfo")
+            or payload.get("liquidity_snapshot")
+            or payload.get("liquiditySnapshot")
+        )
+        if isinstance(liquidity, dict):
+            return liquidity
+        return {}
+
+    async def get_holder_counts(self, mint: str) -> dict[str, Any]:
+        payload = await self.get_coin(mint)
+        if not isinstance(payload, dict):
+            return {}
+        holders = (
+            payload.get("holders")
+            or payload.get("holderCounts")
+            or payload.get("holder_count")
+            or payload.get("holderCount")
+        )
+        if isinstance(holders, dict):
+            return holders
+        return {}
+
+    async def get_token_supply(self, mint: str) -> dict[str, Any]:
+        payload = await self.get_coin(mint)
+        if not isinstance(payload, dict):
+            return {}
+        supply = (
+            payload.get("supply")
+            or payload.get("tokenSupply")
+            or payload.get("totalSupply")
+            or payload.get("supplyInfo")
+        )
+        if isinstance(supply, dict):
+            return supply
+        return {}
+
+    async def get_token_age(self, mint: str) -> dict[str, Any]:
+        payload = await self.get_coin(mint)
+        if not isinstance(payload, dict):
+            return {}
+        age = (
+            payload.get("age")
+            or payload.get("tokenAge")
+            or payload.get("createdAt")
+            or payload.get("creationTimestamp")
+            or payload.get("tokenAgeSeconds")
+        )
+        if isinstance(age, dict):
+            return age
+        if age is None:
+            return {}
+        return {"value": age}
+
+    async def get_market_data_snapshot(self, mint: str) -> dict[str, Any]:
+        payload = await self.get_coin(mint)
+        if not isinstance(payload, dict):
+            return {"mint": mint, "payload": {}}
+        return {
+            "mint": mint,
+            "name": payload.get("name")
+            or payload.get("tokenName")
+            or payload.get("displayName"),
+            "market_cap_sol": payload.get("marketCapSol") or payload.get("marketCap"),
+            "liquidity": await self.get_liquidity_snapshot(mint),
+            "holders": await self.get_holder_counts(mint),
+            "supply": await self.get_token_supply(mint),
+            "age": await self.get_token_age(mint),
+        }
 
     async def get_latest_coins(self, limit: int = 20, offset: int = 0, **kwargs) -> Any:
         params = {"limit": limit, "offset": offset, **kwargs}

@@ -62,3 +62,87 @@ def test_sdk_validation_helpers(client):
     assert client.is_valid_pubkey(curve)
     assert client.is_valid_pubkey(associated)
     assert client.is_valid_mint(mint)
+
+
+def test_slippage_normalizer_and_error_classification(client):
+    assert client.normalize_slippage_bps(None, default=250) == 250
+    assert client.normalize_slippage_bps(123) == 123
+    with pytest.raises(ValueError):
+        client.normalize_slippage_bps(10_001)
+    assert client.classify_execution_error("RPC timeout") == "rpc_timeout"
+    assert client.classify_execution_error("HTTP 503") == "server_error"
+    assert client.classify_execution_error("transaction failed") == "transaction_failed"
+
+
+def test_partial_fill_evaluation_and_reassessment(client):
+    fill = client.evaluate_fill_completion(100, 40)
+    assert fill["status"] == "partial"
+    assert fill["remaining_amount"] == 60
+    assert client.should_reassess_partial_fill(100, 40) is True
+    assert client.should_reassess_partial_fill(100, 100) is False
+    assert client.should_reassess_partial_fill(100, 0) is False
+
+
+def test_execution_lock_and_health_score_update(client):
+    assert client.execution_health_score == 100.0
+    assert client.failed_execution_attempts == 0
+    client.execution_health_score = 20.0
+    client.failed_execution_attempts = 2
+    assert client.execution_health_score < 100.0
+    assert client.failed_execution_attempts == 2
+
+
+def test_unit_conversions(client):
+    assert client.sol_to_lamports(1.0) == 1_000_000_000
+    assert client.sol_to_lamports(0.05) == 50_000_000
+    assert client.lamports_to_sol(1_000_000_000) == 1.0
+    assert client.lamports_to_sol(50_000_000) == 0.05
+    with pytest.raises(ValueError):
+        client.sol_to_lamports(-1.0)
+    with pytest.raises(ValueError):
+        client.lamports_to_sol(-100)
+
+
+def test_bonding_curve_data_decoding_and_sell_calculation():
+    # 8 discriminator bytes + 8 u64 virtual token + 8 u64 virtual sol + 8 u64 real token + 8 u64 real sol + 8 u64 supply + 1 bool complete
+    raw = (
+        b"\x17\xb7\xf8\x37\x60\xd8\xac\x60"
+        + (1_073_000_000_000_000).to_bytes(8, "little")
+        + (30_000_000_000).to_bytes(8, "little")
+        + (793_100_000_000_000).to_bytes(8, "little")
+        + (0).to_bytes(8, "little")
+        + (1_000_000_000_000_000).to_bytes(8, "little")
+        + bytes([0])
+    )
+    decoded = PumpFunExecutionClient.decode_bonding_curve_data(raw)
+    assert decoded["virtual_token_reserves"] == 1_073_000_000_000_000
+    assert decoded["virtual_sol_reserves"] == 30_000_000_000
+    assert decoded["complete"] is False
+    assert decoded["price_sol"] > 0
+    assert decoded["market_cap_sol"] > 0
+
+    with pytest.raises(ValueError):
+        PumpFunExecutionClient.decode_bonding_curve_data(b"too_short")
+
+    sol_out = PumpFunExecutionClient.calculate_sell_sol_output(
+        token_amount=1_000_000_000,
+        virtual_token_reserves=1_000_000_000_000,
+        virtual_sol_reserves=30_000_000_000,
+        slippage_bps=500,
+    )
+    assert sol_out > 0
+
+
+def test_compute_budget_and_jito_instructions(client):
+    limit_ix = client.build_set_compute_unit_limit_instruction(150_000)
+    assert len(limit_ix.data) == 5
+    assert limit_ix.data[0] == 2
+
+    price_ix = client.build_set_compute_unit_price_instruction(10_000)
+    assert len(price_ix.data) == 9
+    assert price_ix.data[0] == 3
+
+    tip_ix = client.build_jito_tip_instruction(100_000)
+    assert tip_ix.data[:4] == bytes([2, 0, 0, 0])
+    with pytest.raises(ValueError):
+        client.build_jito_tip_instruction(0)

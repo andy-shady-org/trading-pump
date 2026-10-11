@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import signal
 import sys
 import tempfile
@@ -9,56 +10,46 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
-from enum import Enum
 from typing import Any
 
 import websockets
 from dotenv import load_dotenv
-from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
-from rich.table import Table
 
 from pumpfun_trading.api.client import PumpFunApiClient
+from pumpfun_trading.bot.health import (
+    health_ok_for_trading,
+    mark_health_check,
+    update_health_state,
+)
+from pumpfun_trading.bot.lifecycle import (
+    TradingBotState,
+    VALID_STATE_TRANSITIONS,
+)
+from pumpfun_trading.bot.risk import (
+    check_daily_drawdown,
+    check_loss_per_trade,
+    check_risk_limits,
+)
 from pumpfun_trading.bot.strategy import TradingBotConfig, resolve_strategy_config
-
-
-class TradingBotState(str, Enum):
-    IDLE = "idle"
-    MONITORING = "monitoring"
-    BUYING = "buying"
-    HOLDING = "holding"
-    SELLING = "selling"
-    SHUTDOWN = "shutdown"
+from pumpfun_trading.execution.builder import build_execution_client
+from pumpfun_trading.ui.dashboard import build_dashboard
+from pumpfun_trading.config.env import (
+    sanitize_env_for_logging,
+)
+from pumpfun_trading.ops.logging import (
+    get_configured_console,
+    setup_structured_logging,
+)
 
 
 class TradingBot:
     """Production-ready Pump.fun trading bot with strategy presets and lifecycle safeguards."""
 
-    _VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = {
-        TradingBotState.IDLE: {TradingBotState.MONITORING, TradingBotState.SHUTDOWN},
-        TradingBotState.MONITORING: {
-            TradingBotState.BUYING,
-            TradingBotState.HOLDING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.BUYING: {
-            TradingBotState.HOLDING,
-            TradingBotState.MONITORING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.HOLDING: {
-            TradingBotState.SELLING,
-            TradingBotState.MONITORING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.SELLING: {
-            TradingBotState.MONITORING,
-            TradingBotState.HOLDING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.SHUTDOWN: set(),
-    }
+    _VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = (
+        VALID_STATE_TRANSITIONS
+    )
 
     def __init__(
         self,
@@ -80,6 +71,7 @@ class TradingBot:
         log_file: str | None = None,
         strategy_preset: str = "balanced",
         audit_log_path: str | None = None,
+        bot_status_path: str | None = None,
     ):
         resolved = resolve_strategy_config(
             strategy_preset,
@@ -171,11 +163,21 @@ class TradingBot:
         self.active_positions: dict[str, dict[str, Any]] = {}
         self._buy_attempts: dict[str, int] = {}
         self._seen_mints: dict[str, float] = {}
-        self.console = Console(
-            file=sys.stdout,
-            force_terminal=True,
-            force_interactive=True,
-            color_system="auto",
+        self.console = get_configured_console(file=sys.stdout)
+
+        self._ws_consecutive_failures = 0
+        self._circuit_breaker_tripped = False
+        self._max_ws_consecutive_failures = int(
+            os.getenv("PUMPFUN_WS_MAX_RETRIES", "5")
+        )
+
+        self._exit_retry_queue: dict[str, dict[str, Any]] = {}
+        self.max_exit_retries = int(os.getenv("PUMPFUN_MAX_EXIT_RETRIES", "5"))
+        self.base_exit_slippage_bps = int(
+            os.getenv("PUMPFUN_BASE_EXIT_SLIPPAGE_BPS", "500")
+        )
+        self.max_exit_slippage_bps = int(
+            os.getenv("PUMPFUN_MAX_EXIT_SLIPPAGE_BPS", "5000")
         )
 
         self._metrics: dict[str, Any] = {
@@ -188,24 +190,27 @@ class TradingBot:
             "latency_ms": deque(maxlen=200),
         }
 
-        self.logger = logging.getLogger("pumpfun_trading.bot")
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
-        self.logger.handlers.clear()
-
         resolved_log_file = log_file or os.path.join(
             tempfile.gettempdir(), "pumpfun_trading_bot.log"
         )
-        handler = logging.FileHandler(resolved_log_file)
-        formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
 
-        self.audit_log_path = (
-            audit_log_path
-            or os.getenv("PUMPFUN_AUDIT_LOG")
-            or os.path.join(tempfile.gettempdir(), "pumpfun_trading_audit.jsonl")
+        self.logger = setup_structured_logging(
+            logger_name="pumpfun_trading.bot",
+            log_file=resolved_log_file,
+            console=self.verbose,
         )
+        self.logger.setLevel(logging.INFO)
+        self.logger.info(
+            "bot_startup_configuration",
+            extra={
+                "event": "bot_startup_configuration",
+                "runtime_env": sanitize_env_for_logging(),
+                "dry_run": self.dry_run,
+                "paper_trade": self.paper_trade,
+            },
+        )
+
+        self.audit_log_path = audit_log_path or os.getenv("PUMPFUN_AUDIT_LOG")
         self._audit_handle = None
         if self.audit_log_path:
             directory = os.path.dirname(self.audit_log_path)
@@ -213,9 +218,8 @@ class TradingBot:
                 os.makedirs(directory, exist_ok=True)
             self._audit_handle = open(self.audit_log_path, "a", encoding="utf-8")
 
-        self.bot_status_path = os.getenv("PUMPFUN_BOT_STATUS_PATH") or os.path.join(
-            os.getcwd(), "bot_status.json"
-        )
+        self.bot_status_path = bot_status_path or os.getenv("PUMPFUN_BOT_STATUS_PATH")
+
         self.alert_provider = (
             (os.getenv("PUMPFUN_ALERT_PROVIDER") or "none").strip().lower()
         )
@@ -228,6 +232,18 @@ class TradingBot:
         self._recent_events: deque[str] = deque(maxlen=8)
 
         self.api = PumpFunApiClient(base_url=self.api_base_url)
+        self.execution = build_execution_client(
+            private_key_b58=self.private_key_b58,
+            rpc_url=self.rpc_url,
+            priority_fee_lamports=int(
+                os.getenv("PUMPFUN_PRIORITY_FEE_LAMPORTS", "5000")
+            ),
+            compute_unit_limit=int(os.getenv("PUMPFUN_COMPUTE_UNIT_LIMIT", "200000")),
+            jito_tip_lamports=int(os.getenv("PUMPFUN_JITO_TIP_LAMPORTS", "0")),
+            jito_block_engine_url=os.getenv("PUMPFUN_JITO_BLOCK_ENGINE_URL"),
+        )
+        self._trade_lock = asyncio.Lock()
+        self.safe_startup()
 
     def _configure_alerting(self) -> None:
         provider = self.alert_provider
@@ -315,6 +331,8 @@ class TradingBot:
             )
 
     def _write_status_snapshot(self) -> None:
+        if not self.bot_status_path:
+            return
         snapshot = self.get_status_snapshot()
         snapshot.update(
             {
@@ -338,6 +356,135 @@ class TradingBot:
         with open(self.bot_status_path, "w", encoding="utf-8") as handle:
             json.dump(snapshot, handle, sort_keys=True, indent=2)
             handle.write("\n")
+
+    def safe_startup(self) -> None:
+        """Restore a persisted bot snapshot when the process restarts."""
+        if not self.bot_status_path or not os.path.exists(self.bot_status_path):
+            return
+
+        try:
+            with open(self.bot_status_path, "r", encoding="utf-8") as handle:
+                snapshot = json.load(handle)
+        except (OSError, TypeError, ValueError):
+            self._log(
+                f"Persisted status file at {self.bot_status_path} could not be read; starting fresh.",
+                level=logging.WARNING,
+            )
+            return
+
+        if not isinstance(snapshot, dict):
+            self._log(
+                f"Persisted status file at {self.bot_status_path} has an invalid format; starting fresh.",
+                level=logging.WARNING,
+            )
+            return
+
+        positions = snapshot.get("active_positions")
+        if isinstance(positions, dict):
+            restored_positions: dict[str, dict[str, Any]] = {}
+            for mint, position in positions.items():
+                if not isinstance(position, dict):
+                    continue
+                normalized = {
+                    key: value
+                    for key, value in dict(position).items()
+                    if key not in {"entry_market_cap", "current_market_cap"}
+                }
+                normalized["entry_market_cap"] = float(
+                    position.get("entry_market_cap", 0.0) or 0.0
+                )
+                normalized["current_market_cap"] = float(
+                    position.get("current_market_cap", 0.0) or 0.0
+                )
+                restored_positions[str(mint)] = normalized
+            self.active_positions = restored_positions
+        elif isinstance(positions, list):
+            self.active_positions = {}
+
+        buy_attempts = snapshot.get("buy_attempts", {})
+        if isinstance(buy_attempts, dict):
+            self._buy_attempts = {
+                str(key): int(value)
+                for key, value in buy_attempts.items()
+                if isinstance(value, (int, float))
+            }
+
+        seen_mints = snapshot.get("seen_mints", {})
+        if isinstance(seen_mints, dict):
+            self._seen_mints = {
+                str(key): float(value)
+                for key, value in seen_mints.items()
+                if isinstance(value, (int, float))
+            }
+
+        trade_ledger = snapshot.get("trade_ledger", [])
+        if isinstance(trade_ledger, list):
+            self._trade_ledger = [
+                item for item in trade_ledger if isinstance(item, dict)
+            ]
+
+        recent_actions = snapshot.get("recent_actions", [])
+        if isinstance(recent_actions, list):
+            self._recent_actions = deque(maxlen=50)
+            for item in recent_actions:
+                if isinstance(item, dict):
+                    self._recent_actions.append(item)
+
+        recent_events = snapshot.get("recent_events", [])
+        if isinstance(recent_events, list):
+            self._recent_events = deque(maxlen=8)
+            for item in recent_events:
+                self._recent_events.append(str(item))
+
+        if "state" in snapshot:
+            try:
+                self.state = TradingBotState(snapshot["state"])
+            except ValueError:
+                self.state = TradingBotState.IDLE
+
+        self._health_ok = bool(snapshot.get("health_ok", self._health_ok))
+        self._risk_killed = bool(snapshot.get("risk_killed", self._risk_killed))
+        self._stop_requested = bool(snapshot.get("stop_requested", False))
+        self._last_message_at = float(
+            snapshot.get("last_message_at", self._last_message_at)
+        )
+        self._last_event = str(snapshot.get("last_event", self._last_event))
+        self._last_status = str(snapshot.get("last_status", self._last_status))
+        self._last_new_token = str(snapshot.get("last_new_token", self._last_new_token))
+        self._last_new_token_name = str(
+            snapshot.get("last_new_token_name", self._last_new_token_name)
+        )
+        self._trade_sequence = max(
+            int(snapshot.get("trade_sequence", self._trade_sequence)),
+            len(self._trade_ledger),
+        )
+
+        metrics = snapshot.get("metrics", {})
+        if isinstance(metrics, dict):
+            self._metrics = {
+                "buys": int(metrics.get("buys", self._metrics.get("buys", 0))),
+                "sells": int(metrics.get("sells", self._metrics.get("sells", 0))),
+                "failures": int(
+                    metrics.get("failures", self._metrics.get("failures", 0))
+                ),
+                "retries": int(metrics.get("retries", self._metrics.get("retries", 0))),
+                "connection_loss": int(
+                    metrics.get(
+                        "connection_loss",
+                        self._metrics.get("connection_loss", 0),
+                    )
+                ),
+                "stale_data": int(
+                    metrics.get("stale_data", self._metrics.get("stale_data", 0))
+                ),
+                "latency_ms": deque(maxlen=200),
+            }
+
+        self._log(
+            f"Restored persisted bot state from {self.bot_status_path} with {len(self.active_positions)} active positions.",
+            level=logging.INFO,
+        )
+        self._write_status_snapshot()
 
     def _transition_to(
         self, next_state: TradingBotState, *, reason: str | None = None
@@ -463,6 +610,8 @@ class TradingBot:
         *,
         mint: str,
         action: str,
+        token_name: str | None = None,
+        mint_name: str | None = None,
         entry: float | None = None,
         exit_value: float | None = None,
         reason: str | None = None,
@@ -472,12 +621,20 @@ class TradingBot:
         trade_id = trade_id or position_id or self._next_trade_id()
         if position_id is None and action == "buy":
             position_id = trade_id
+        resolved_name = (
+            token_name
+            or mint_name
+            or self.active_positions.get(mint, {}).get("name")
+            or (self._last_new_token_name if self._last_new_token == mint else None)
+        )
         record = {
             "timestamp": time.time(),
             "trade_id": trade_id,
             "position_id": position_id or trade_id,
             "action": action,
             "mint": mint,
+            "token_name": resolved_name,
+            "mint_name": resolved_name,
             "entry": entry,
             "exit": exit_value,
             "reason": reason,
@@ -554,209 +711,7 @@ class TradingBot:
         return snapshot
 
     def _render_dashboard(self) -> Panel:
-        strategy = Table.grid(expand=True)
-        strategy.add_column(justify="left")
-        strategy.add_column(justify="right")
-        strategy.add_row("Preset", self.config.strategy_preset)
-        strategy.add_row("Buy amount", f"{self.config.buy_amount_sol:.4f} SOL")
-        strategy.add_row("Take profit", f"{self.config.take_profit:.2%}")
-        strategy.add_row("Stop loss", f"{self.config.stop_loss:.2%}")
-        strategy.add_row("Max active", str(self.max_active_positions))
-        strategy.add_row("Min market cap", f"{self.min_market_cap_sol:.2f} SOL")
-        strategy.add_row("Dry run", "yes" if self.dry_run else "no")
-        strategy.add_row("Paper trade", "yes" if self.paper_trade else "no")
-        strategy.add_row("", "")
-        strategy.add_row("", "")
-
-        risk = Table.grid(expand=True)
-        risk.add_column(justify="left")
-        risk.add_column(justify="right")
-        risk.add_row(
-            "Max total exposure", f"{self.config.max_total_exposure_sol:.2f} SOL"
-        )
-        risk.add_row(
-            "Max position size", f"{self.config.max_position_size_sol:.2f} SOL"
-        )
-        risk.add_row(
-            "Max loss / trade", f"{self.config.max_loss_per_trade_sol:.2f} SOL"
-        )
-        risk.add_row("Daily drawdown", f"{self.config.max_daily_drawdown_pct:.2%}")
-        risk.add_row("Reserve balance", f"{self.config.reserve_balance_sol:.2f} SOL")
-        risk.add_row("Health timeout", f"{self.config.health_check_timeout_seconds}s")
-        risk.add_row("Risk killed", "yes" if self._risk_killed else "no")
-        risk.add_row("Equity guard", "enabled" if not self.dry_run else "dry-run")
-        risk.add_row("", "")
-        risk.add_row("", "")
-
-        bot_status = Table.grid(expand=True)
-        bot_status.add_column(justify="left")
-        bot_status.add_column(justify="right")
-        bot_status.add_row("State", str(self.state.value))
-        bot_status.add_row("Health", "ok" if self._health_ok else "degraded")
-        bot_status.add_row("Risk killed", "yes" if self._risk_killed else "no")
-        bot_status.add_row("Active positions", str(len(self.active_positions)))
-        bot_status.add_row("Last event", self._last_event)
-        bot_status.add_row("Status", str(self._last_status))
-        bot_status.add_row(
-            "Last message",
-            (
-                f"{time.time() - self._last_message_at:.1f}s ago"
-                if self._last_message_at
-                else "never"
-            ),
-        )
-        bot_status.add_row("Stream URL", self.stream_url)
-        bot_status.add_row("Audit log", str(self.audit_log_path))
-        bot_status.add_row("Last new token", self._last_new_token_name)
-
-        health = Table.grid(expand=True)
-        health.add_column(justify="left")
-        health.add_column(justify="right")
-        health.add_row(
-            "Heartbeat",
-            f"{max(0.0, time.monotonic() - self._last_health_check):.1f}s ago",
-        )
-        health.add_row(
-            "Last message",
-            (
-                f"{time.time() - self._last_message_at:.1f}s ago"
-                if self._last_message_at
-                else "never"
-            ),
-        )
-        health.add_row("Health timeout", f"{self.config.health_check_timeout_seconds}s")
-        health.add_row("API/WS health", "ok" if self._health_ok else "degraded")
-        health.add_row("Risk killed", "yes" if self._risk_killed else "no")
-        health.add_row("Stop requested", "yes" if self._stop_requested else "no")
-        health.add_row("Last status", str(self._last_status))
-        health.add_row("Last event", self._last_event)
-
-        overview_height = max(
-            len(strategy.rows),
-            len(risk.rows),
-            len(bot_status.rows),
-            len(health.rows),
-        )
-
-        overview = Table.grid(expand=True)
-        overview.add_column(ratio=1)
-        overview.add_column(ratio=1)
-        overview.add_column(ratio=1)
-        overview.add_column(ratio=1)
-        overview.add_row(
-            Panel(
-                strategy, title="Strategy", border_style="cyan", height=overview_height
-            ),
-            Panel(risk, title="Risk", border_style="red", height=overview_height),
-            Panel(
-                bot_status,
-                title="Bot Status",
-                border_style="blue",
-                height=overview_height,
-            ),
-            Panel(
-                health,
-                title="Health Check",
-                border_style="yellow",
-                height=overview_height,
-            ),
-        )
-
-        positions_table = Table(show_lines=True, expand=True)
-        positions_table.add_column("Name", style="cyan")
-        positions_table.add_column("Mint", style="green")
-        positions_table.add_column("Entry", justify="right")
-        positions_table.add_column("Current", justify="right")
-        positions_table.add_column("Perf", justify="right")
-        positions_table.add_column("Reason", style="yellow")
-
-        if self.active_positions:
-            for mint, position in self.active_positions.items():
-                name = str(position.get("name") or mint)
-                entry = float(position.get("entry_market_cap", 0.0) or 0.0)
-                current = float(position.get("current_market_cap", 0.0) or 0.0)
-                performance = (current / entry) if entry > 0 else 1.0
-                reason = str(position.get("reason") or "watch")
-                positions_table.add_row(
-                    name[:18],
-                    mint[:8] + "...",
-                    f"{entry:.2f}",
-                    f"{current:.2f}",
-                    f"{performance:.2%}",
-                    reason,
-                )
-        else:
-            positions_table.add_row("No active positions.", "-", "-", "-", "-", "-")
-
-        runtime = Table.grid(expand=True)
-        runtime.add_column(justify="left")
-        runtime.add_column(justify="right")
-        runtime.add_row(
-            "Last message",
-            (
-                f"{time.time() - self._last_message_at:.1f}s ago"
-                if self._last_message_at
-                else "never"
-            ),
-        )
-        runtime.add_row("Last token", self._last_new_token_name)
-        runtime.add_row("Stream URL", self.stream_url)
-        runtime.add_row("Observed", str(len(self._recent_events)))
-
-        metrics = self._metrics_snapshot()
-        metrics_table = Table.grid(expand=True)
-        metrics_table.add_column(justify="left")
-        metrics_table.add_column(justify="right")
-        for key in (
-            "buys",
-            "sells",
-            "failures",
-            "retries",
-            "connection_loss",
-            "stale_data",
-        ):
-            metrics_table.add_row(key, str(metrics.get(key, 0)))
-        metrics_table.add_row("latency avg", f"{metrics['latency_ms']['avg_ms']} ms")
-
-        events = list(self._recent_events)[-6:]
-        event_lines = [f"• {event}" for event in events] or ["No events yet."]
-
-        ledger_lines: list[str] = []
-        for record in reversed(self._trade_ledger[-5:]):
-            action = record.get("action", "trade")
-            reason = record.get("reason") or "unknown"
-            mint = record.get("mint", "-")[:8]
-            if action == "buy":
-                ledger_lines.append(
-                    f"{action.upper()} {mint} @ {record.get('entry')} | {reason}"
-                )
-            else:
-                ledger_lines.append(
-                    f"{action.upper()} {mint} -> {record.get('exit')} | {reason}"
-                )
-        if not ledger_lines:
-            ledger_lines = ["No trades recorded yet."]
-
-        audit_group = Group(
-            Panel("\n".join(event_lines), title="Events", border_style="cyan"),
-            Panel("\n".join(ledger_lines), title="Trade Ledger", border_style="green"),
-        )
-
-        runtime_group = Group(
-            Panel(positions_table, title="Open Positions", border_style="green"),
-            Panel(runtime, title="Coin Polling", border_style="yellow"),
-        )
-
-        return Panel(
-            Group(
-                Panel(overview, title="Overview", border_style="blue"),
-                Panel(runtime_group, title="Run Time", border_style="yellow"),
-                Panel(audit_group, title="Audit Trail", border_style="magenta"),
-                Panel(metrics_table, title="Metrics", border_style="magenta"),
-            ),
-            title="Trading Bot",
-            border_style="white",
-        )
+        return build_dashboard(self)
 
     def _next_position_id(self) -> str:
         return self._next_trade_id()
@@ -777,125 +732,6 @@ class TradingBot:
             )
             return False
         return True
-
-    async def _resolve_token_name(
-        self, mint: str, token_name: str | None = None
-    ) -> str | None:
-        if token_name and token_name.strip():
-            return token_name.strip()
-        return None
-
-    async def _unsubscribe_from_token_trades(self, websocket, mint: str) -> None:
-        _ = websocket, mint
-        return None
-
-    def _check_risk_limits(
-        self,
-        *,
-        mint: str,
-        proposed_entry_sol: float,
-        current_positions: dict[str, dict[str, Any]],
-    ) -> bool:
-        total_exposure = sum(
-            float(pos.get("entry_market_cap", 0.0) or 0.0)
-            for pos in current_positions.values()
-        )
-        if total_exposure + proposed_entry_sol > self.config.max_total_exposure_sol:
-            self._last_event = (
-                f"risk limit: max exposure {self.config.max_total_exposure_sol:.2f} SOL"
-            )
-            return False
-        if proposed_entry_sol > self.config.max_position_size_sol:
-            self._last_event = (
-                f"risk limit: position cap {self.config.max_position_size_sol:.2f} SOL"
-            )
-            return False
-        if mint in current_positions:
-            self._last_event = f"risk limit: mint already active {mint[:8]}..."
-            return False
-
-        if current_positions:
-            max_per_token_ratio = (
-                max(
-                    float(pos.get("entry_market_cap", 0.0) or 0.0)
-                    / self.config.max_total_exposure_sol
-                    for pos in current_positions.values()
-                )
-                if self.config.max_total_exposure_sol > 0
-                else 0.0
-            )
-            if max_per_token_ratio > float(
-                getattr(self.config, "max_token_concentration_pct", 0.35)
-            ):
-                self._last_event = (
-                    "risk limit: per-token concentration cap reached "
-                    f"({max_per_token_ratio:.2%} > {float(getattr(self.config, 'max_token_concentration_pct', 0.35)):.2%})"
-                )
-                return False
-
-        return True
-
-    def _check_daily_drawdown(self) -> bool:
-        if not self.active_positions:
-            return True
-
-        total_equity = sum(
-            float(pos.get("entry_market_cap", 0.0) or 0.0)
-            for pos in self.active_positions.values()
-        )
-        if total_equity <= 0:
-            return True
-
-        drawdown = 1.0 - (
-            sum(
-                float(pos.get("current_market_cap", 0.0) or 0.0)
-                for pos in self.active_positions.values()
-            )
-            / total_equity
-        )
-        if drawdown > self.config.max_daily_drawdown_pct:
-            self._last_event = f"risk limit: daily drawdown {drawdown:.2%} exceeds {self.config.max_daily_drawdown_pct:.2%}"
-            return False
-        return True
-
-    def _check_loss_per_trade(
-        self, *, mint: str, current_market_cap: float | None = None
-    ) -> bool:
-        position = self.active_positions.get(mint)
-        if position is None:
-            return True
-
-        if current_market_cap is None:
-            current_market_cap = float(position.get("current_market_cap", 0.0) or 0.0)
-        entry_market_cap = float(position.get("entry_market_cap", 0.0) or 0.0)
-        if entry_market_cap <= 0:
-            return True
-
-        loss_ratio = 1.0 - (current_market_cap / entry_market_cap)
-        if loss_ratio > self.config.max_loss_per_trade_sol / self.config.buy_amount_sol:
-            self._last_event = f"risk limit: trade loss {loss_ratio:.2%} exceeds max {self.config.max_loss_per_trade_sol / self.config.buy_amount_sol:.2%}"
-            return False
-        return True
-
-    def _health_ok_for_trading(self) -> bool:
-        if self._stop_requested or self._risk_killed:
-            return False
-        if not self._health_ok:
-            return False
-        if (
-            time.monotonic() - self._last_health_check
-            > self.config.health_check_timeout_seconds
-        ):
-            self._last_status = "health timeout"
-            self._health_ok = False
-            self._risk_killed = True
-            self._last_event = "risk kill: health timeout"
-            return False
-        return True
-
-    def _mark_health_check(self) -> None:
-        self._last_health_check = time.monotonic()
-        self._health_ok = True
 
     async def _check_account_equity_guard(self, *, required_sol: float) -> bool:
         if self.dry_run:
@@ -923,40 +759,85 @@ class TradingBot:
             return False
         return True
 
+    async def _resolve_token_name(
+        self, mint: str, token_name: str | None = None
+    ) -> str | None:
+        if token_name and token_name.strip():
+            return token_name.strip()
+        return None
+
+    async def _unsubscribe_from_token_trades(self, websocket, mint: str) -> None:
+        _ = websocket, mint
+        return None
+
+    def _check_risk_limits(
+        self,
+        *,
+        mint: str,
+        proposed_entry_sol: float,
+        current_positions: dict[str, dict[str, Any]],
+    ) -> bool:
+        return check_risk_limits(
+            self,
+            mint=mint,
+            proposed_entry_sol=proposed_entry_sol,
+            current_positions=current_positions,
+        )
+
+    def _check_daily_drawdown(self) -> bool:
+        return check_daily_drawdown(self)
+
+    def _check_loss_per_trade(
+        self, *, mint: str, current_market_cap: float | None = None
+    ) -> bool:
+        return check_loss_per_trade(
+            self, mint=mint, current_market_cap=current_market_cap
+        )
+
+    def _health_ok_for_trading(self) -> bool:
+        return health_ok_for_trading(self)
+
+    def _mark_health_check(self) -> None:
+        mark_health_check(self)
+
     async def _update_health_state(self) -> None:
-        if self._stop_requested:
-            return
-        if (
-            time.monotonic() - self._last_message_at
-            > self.config.health_check_timeout_seconds
-        ):
-            if self._health_ok:
-                self._health_ok = False
-                self._risk_killed = True
-                self._last_status = "health timeout"
-                self._last_event = "risk kill: websocket stale"
-                self._log(
-                    "WebSocket health stale: no messages received within the configured health timeout.",
-                    level=logging.CRITICAL,
-                )
-        else:
-            self._mark_health_check()
+        update_health_state(self)
 
     def get_status_snapshot(self) -> dict[str, Any]:
         return {
-            "active_positions": list(self.active_positions.keys()),
+            "active_positions": {
+                mint: {
+                    key: value
+                    for key, value in position.items()
+                    if key not in {"entry_market_cap", "current_market_cap"}
+                }
+                | {
+                    "entry_market_cap": float(
+                        position.get("entry_market_cap", 0.0) or 0.0
+                    ),
+                    "current_market_cap": float(
+                        position.get("current_market_cap", 0.0) or 0.0
+                    ),
+                }
+                for mint, position in self.active_positions.items()
+            },
             "trade_count": len(self.active_positions),
             "stop_requested": self._stop_requested,
             "dry_run": self.dry_run,
             "paper_trade": self.paper_trade,
             "last_message_at": self._last_message_at,
             "buy_attempts": dict(self._buy_attempts),
+            "seen_mints": dict(self._seen_mints),
+            "trade_sequence": self._trade_sequence,
             "strategy": self.config.strategy_preset,
             "health_ok": self._health_ok,
             "risk_killed": self._risk_killed,
             "state": self.state.value,
             "recent_actions": list(self._recent_actions),
             "trade_ledger": list(self._trade_ledger[-10:]),
+            "exit_retry_queue": dict(self._exit_retry_queue),
+            "circuit_breaker_tripped": self._circuit_breaker_tripped,
+            "ws_consecutive_failures": self._ws_consecutive_failures,
         }
 
     def _should_buy(self, mint: str, market_cap_sol: float) -> bool:
@@ -1012,7 +893,12 @@ class TradingBot:
             self._mark_seen(mint)
             self._last_event = f"dry-run buy for {mint}"
             self._record_trade(
-                mint=mint, action="buy", entry=self.buy_amount_sol, reason="dry_run"
+                mint=mint,
+                action="buy",
+                token_name=position_name,
+                mint_name=position_name,
+                entry=self.buy_amount_sol,
+                reason="dry_run",
             )
             self._transition_to(TradingBotState.HOLDING, reason=f"dry_run_buy {mint}")
             return True
@@ -1072,13 +958,125 @@ class TradingBot:
         self._last_new_token_name = position_name
         self._record_metric("buys")
         self._record_trade(
-            mint=mint, action="buy", entry=self.buy_amount_sol, reason="entry"
+            mint=mint,
+            action="buy",
+            token_name=position_name,
+            mint_name=position_name,
+            entry=self.buy_amount_sol,
+            reason="entry",
         )
         self._transition_to(TradingBotState.HOLDING, reason=f"buy_confirmed {mint}")
         return True
 
-    async def _sell_token(self, mint: str) -> bool:
+    def _enqueue_exit_retry(self, mint: str, *, reason: str = "") -> None:
+        """Enqueue a failed exit order for retry with escalating slippage (BUG-08)."""
         if mint not in self.active_positions:
+            return
+        entry = self._exit_retry_queue.get(mint, {})
+        retries = int(entry.get("retry_count", 0)) + 1
+        escalated_slippage = min(
+            self.base_exit_slippage_bps + (retries * 500), self.max_exit_slippage_bps
+        )
+        backoff_delay = min(2.0**retries, 30.0)
+        self._exit_retry_queue[mint] = {
+            "mint": mint,
+            "retry_count": retries,
+            "next_retry_at": time.monotonic() + backoff_delay,
+            "slippage_bps": escalated_slippage,
+            "reason": reason,
+        }
+        self._record_retry()
+        self._record_failure(category="exit_order")
+        self._log(
+            f"Enqueued exit retry #{retries} for {mint} in {backoff_delay:.1f}s with slippage {escalated_slippage} bps (reason: {reason})",
+            level=logging.WARNING,
+        )
+        if retries >= self.max_exit_retries:
+            self._log(
+                f"Max exit retries reached ({retries}) for {mint}; escalating to emergency liquidation mode",
+                level=logging.ERROR,
+            )
+            self._send_alert(
+                f"⚠️ Urgent: Exit failed {retries} times for {mint}. Max slippage liquidation scheduled."
+            )
+
+    async def _process_exit_retry_queue(self, websocket: Any = None) -> None:
+        """Process pending exit retries whose backoff has expired (BUG-08)."""
+        if not self._exit_retry_queue:
+            return
+        now = time.monotonic()
+        for mint, item in list(self._exit_retry_queue.items()):
+            if now >= item.get("next_retry_at", 0):
+                self._log(
+                    f"Executing scheduled exit retry for {mint} (attempt {item.get('retry_count')})"
+                )
+                success = await self._sell_token(
+                    mint,
+                    slippage_bps=item.get("slippage_bps"),
+                    retry_count=item.get("retry_count", 0),
+                )
+                if success and websocket is not None:
+                    await self._unsubscribe_from_token_trades(websocket, mint)
+
+    async def reconcile_onchain_positions(self) -> dict[str, Any]:
+        """Reconcile active positions against on-chain wallet token accounts (BUG-07)."""
+        if self.dry_run or self.paper_trade:
+            return {}
+
+        self._log("Reconciling active positions against on-chain wallet balances...")
+        reconciled: dict[str, Any] = {}
+        for mint, position in list(self.active_positions.items()):
+            try:
+                balance = await self.execution.get_token_balance(mint)
+            except Exception as exc:
+                self._log(
+                    f"Startup reconciliation: failed to read token balance for {mint}: {exc}",
+                    level=logging.WARNING,
+                )
+                continue
+
+            if balance <= self.min_sell_balance:
+                self._log(
+                    f"Startup reconciliation: position {mint} has non-actionable on-chain balance ({balance}). Purging stale position.",
+                    level=logging.INFO,
+                )
+                pos_name = self.active_positions.get(mint, {}).get("name")
+                self.active_positions.pop(mint, None)
+                self._exit_retry_queue.pop(mint, None)
+                self._record_trade(
+                    mint=mint,
+                    action="reconciled_closed",
+                    token_name=pos_name,
+                    mint_name=pos_name,
+                    entry=0.0,
+                    reason="startup_zero_balance_reconciliation",
+                )
+                self._recent_events.append(f"reconciled {mint[:8]} (closed)")
+                reconciled[mint] = {"status": "purged", "balance": balance}
+            else:
+                position["token_amount"] = balance
+                try:
+                    curve_state = await self.execution.get_bonding_curve_state(mint)
+                    mc = float(curve_state.get("market_cap_sol", 0.0) or 0.0)
+                    if mc > 0:
+                        position["current_market_cap"] = mc
+                except Exception:
+                    pass
+                reconciled[mint] = {"status": "active", "balance": balance}
+
+        if reconciled:
+            self._write_status_snapshot()
+        return reconciled
+
+    async def _sell_token(
+        self,
+        mint: str,
+        *,
+        slippage_bps: int | None = None,
+        retry_count: int = 0,
+    ) -> bool:
+        if mint not in self.active_positions:
+            self._exit_retry_queue.pop(mint, None)
             return False
 
         self._transition_to(TradingBotState.SELLING, reason=f"selling {mint}")
@@ -1086,6 +1084,8 @@ class TradingBot:
             self._log(f"DRY RUN SELL: {mint}")
             self._last_event = f"dry-run sell for {mint}"
             self.active_positions.pop(mint, None)
+            self._exit_retry_queue.pop(mint, None)
+            self._record_metric("sells")
             self._transition_to(
                 TradingBotState.MONITORING, reason=f"dry_run_sell {mint}"
             )
@@ -1098,9 +1098,9 @@ class TradingBot:
                 f"Unable to fetch token balance for {mint}: {exc}",
                 level=logging.WARNING,
             )
-            self.active_positions.pop(mint, None)
+            self._enqueue_exit_retry(mint, reason=f"balance_fetch_error: {exc}")
             self._transition_to(
-                TradingBotState.MONITORING, reason=f"sell_balance_failed {mint}"
+                TradingBotState.HOLDING, reason=f"sell_balance_failed {mint}"
             )
             return False
 
@@ -1109,6 +1109,7 @@ class TradingBot:
                 f"No actionable balance for {mint}; current balance={token_balance}"
             )
             self.active_positions.pop(mint, None)
+            self._exit_retry_queue.pop(mint, None)
             self._transition_to(
                 TradingBotState.MONITORING, reason=f"sell_zero_balance {mint}"
             )
@@ -1121,25 +1122,59 @@ class TradingBot:
                 f"Could not compute bonding curve PDA for sell on {mint}: {exc}",
                 level=logging.WARNING,
             )
+            self._enqueue_exit_retry(mint, reason=f"pda_error: {exc}")
             self._transition_to(
                 TradingBotState.HOLDING, reason=f"sell_pda_failed {mint}"
             )
             return False
 
-        self._log(f"Selling {token_balance} units of {mint} at threshold")
+        # Compute minimum expected SOL output in Lamports (BUG-01 & BUG-03)
+        effective_slippage_bps = (
+            slippage_bps
+            if slippage_bps is not None
+            else self.execution.default_slippage_bps
+        )
+        min_sol_output_lamports = 0
+        try:
+            curve_state = await self.execution.get_bonding_curve_state(mint)
+            v_token = int(curve_state.get("virtual_token_reserves", 0))
+            v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+            if v_token > 0 and v_sol > 0:
+                min_sol_output_lamports = self.execution.calculate_sell_sol_output(
+                    token_balance,
+                    v_token,
+                    v_sol,
+                    slippage_bps=effective_slippage_bps,
+                )
+        except Exception as exc:
+            self._log(
+                f"Could not compute on-chain curve sell output for {mint}: {exc}; using default slippage",
+                level=logging.DEBUG,
+            )
+
+        self._log(
+            f"Selling {token_balance} units of {mint} (min_sol_lamports={min_sol_output_lamports}, slippage_bps={effective_slippage_bps})"
+        )
         self._last_event = f"selling {mint}"
         try:
-            signature = await self.execution.sell(mint, bonding_curve, token_balance)
+            signature = await self.execution.sell(
+                mint,
+                bonding_curve,
+                token_balance,
+                min_sol_output=min_sol_output_lamports,
+            )
         except Exception as exc:  # pragma: no cover - defensive branch
             self._log(
                 f"Sell transaction failed for {mint}: {exc}", level=logging.WARNING
             )
+            self._enqueue_exit_retry(mint, reason=f"tx_send_error: {exc}")
             self._transition_to(
                 TradingBotState.HOLDING, reason=f"sell_transaction_failed {mint}"
             )
             return False
 
         if not signature:
+            self._enqueue_exit_retry(mint, reason="missing_signature")
             self._transition_to(
                 TradingBotState.HOLDING, reason=f"sell_missing_signature {mint}"
             )
@@ -1148,12 +1183,28 @@ class TradingBot:
         confirmed = await self.execution.confirm_transaction(signature)
         if not confirmed:
             self._log(f"Sell confirmation failed for {mint}", level=logging.WARNING)
+            self._enqueue_exit_retry(mint, reason="confirmation_failed")
             self._transition_to(
                 TradingBotState.HOLDING, reason=f"sell_confirmation_failed {mint}"
             )
             return False
 
+        pos_name = self.active_positions.get(mint, {}).get("name")
         self.active_positions.pop(mint, None)
+        self._exit_retry_queue.pop(mint, None)
+        self._record_metric("sells")
+        self._record_trade(
+            mint=mint,
+            action="sell",
+            token_name=pos_name,
+            mint_name=pos_name,
+            entry=(
+                min_sol_output_lamports / 1_000_000_000.0
+                if min_sol_output_lamports
+                else 0.0
+            ),
+            reason="exit_confirmed",
+        )
         self._transition_to(TradingBotState.MONITORING, reason=f"sell_complete {mint}")
         return True
 
@@ -1178,23 +1229,26 @@ class TradingBot:
             or None
         )
 
-        if self._is_recently_seen(mint):
-            return
+        async with self._trade_lock:
+            if self._is_recently_seen(mint):
+                return
 
-        if not self._should_buy(mint, market_cap_sol):
-            self._log(f"Skipping new token {mint}: not eligible for buy")
-            self._last_event = f"skipped {mint}"
-            return
+            if not self._should_buy(mint, market_cap_sol):
+                self._log(f"Skipping new token {mint}: not eligible for buy")
+                self._last_event = f"skipped {mint}"
+                return
 
-        self._log(
-            f"New token detected: {mint} | launch market cap: {market_cap_sol:.2f} SOL"
-        )
-        self._last_event = f"new token {mint}"
-        self._last_new_token = mint
-        self._last_new_token_name = token_name
-        if await self._buy_token(mint, market_cap_sol, token_name):
+            self._log(
+                f"New token detected: {mint} | launch market cap: {market_cap_sol:.2f} SOL"
+            )
+            self._last_event = f"new token {mint}"
+            self._last_new_token = mint
+            self._last_new_token_name = token_name
+            bought = await self._buy_token(mint, market_cap_sol, token_name)
+
+        if bought:
             self._record_event(
-                f"bought {self.active_positions[mint].get('name', mint)}"
+                f"bought {self.active_positions.get(mint, {}).get('name', mint)}"
             )
 
     async def _handle_trade_update(self, data: dict[str, Any], websocket) -> None:
@@ -1216,6 +1270,14 @@ class TradingBot:
             return
 
         position = self.active_positions[mint]
+        if not self.dry_run:
+            try:
+                curve_state = await self.execution.get_bonding_curve_state(mint)
+                on_chain_mc = float(curve_state.get("market_cap_sol", 0.0))
+                if on_chain_mc > 0:
+                    current_market_cap = on_chain_mc
+            except Exception:
+                pass
         position["current_market_cap"] = current_market_cap
         entry_market_cap = float(position.get("entry_market_cap") or current_market_cap)
         performance = (
@@ -1258,13 +1320,24 @@ class TradingBot:
         self._last_status = "connecting to websocket"
         self._transition_to(TradingBotState.MONITORING, reason="start_monitoring")
 
+        # Perform on-chain position reconciliation at startup (BUG-07)
+        try:
+            await self.reconcile_onchain_positions()
+        except Exception as exc:
+            self._log(
+                f"On-chain reconciliation error during startup: {exc}",
+                level=logging.WARNING,
+            )
+
         backoff = self.reconnect_delay_seconds
+        use_screen = bool(self.console.is_terminal)
         with Live(
             self._render_dashboard(),
             console=self.console,
             refresh_per_second=2,
             transient=True,
-            screen=False,
+            screen=use_screen,
+            vertical_overflow="visible",
         ) as live:
 
             self._display_live = live
@@ -1274,7 +1347,16 @@ class TradingBot:
                         self.stream_url, ping_interval=20, ping_timeout=20
                     ) as websocket:
                         self._last_status = "stream connected"
-                        live.update(self._render_dashboard())
+                        self._ws_consecutive_failures = 0
+                        if self._circuit_breaker_tripped:
+                            self._circuit_breaker_tripped = False
+                            self._health_ok = True
+                            self._log(
+                                "WebSocket stream restored. Circuit breaker reset.",
+                                level=logging.INFO,
+                            )
+                        backoff = self.reconnect_delay_seconds
+                        live.update(self._render_dashboard(), refresh=True)
                         await websocket.send(
                             json.dumps({"method": "subscribeNewToken"})
                         )
@@ -1286,14 +1368,14 @@ class TradingBot:
                             except json.JSONDecodeError:
                                 continue
                             await self._handle_message(data, websocket)
+                            await self._process_exit_retry_queue(websocket)
                             if time.monotonic() - self._last_message_at > 60:
                                 self._log(
                                     "WebSocket heartbeat timeout: no messages received for 60s.",
                                     level=logging.WARNING,
                                 )
                                 self._last_status = "heartbeat timeout"
-                            live.update(self._render_dashboard())
-                            live.refresh()
+                            live.update(self._render_dashboard(), refresh=True)
                 except asyncio.CancelledError:
                     self._log("TradingBot shutdown requested.")
                     self._last_status = "shutdown requested"
@@ -1301,23 +1383,44 @@ class TradingBot:
                 except (
                     websockets.ConnectionClosed
                 ) as exc:  # pragma: no cover - network branch
+                    self._ws_consecutive_failures += 1
+                    self._record_connection_loss()
                     self._log(
-                        f"WebSocket closed: {exc}. Reconnecting in {backoff:.1f}s",
+                        f"WebSocket closed: {exc}. Reconnecting (attempt {self._ws_consecutive_failures}).",
                         level=logging.WARNING,
                     )
-                    self._last_status = f"reconnecting in {backoff:.1f}s"
                 except Exception as exc:  # pragma: no cover - defensive branch
+                    self._ws_consecutive_failures += 1
+                    self._record_connection_loss()
                     self._log(
-                        f"Bot loop error: {exc}. Reconnecting in {backoff:.1f}s",
+                        f"Bot loop error: {exc}. Reconnecting (attempt {self._ws_consecutive_failures}).",
                         level=logging.ERROR,
                     )
-                    self._last_status = f"reconnect after error in {backoff:.1f}s"
+
                 if self._stop_requested:
                     break
-                live.update(self._render_dashboard())
-                live.refresh()
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30.0)
+
+                # Circuit breaker transition (BUG-06)
+                if self._ws_consecutive_failures >= self._max_ws_consecutive_failures:
+                    self._circuit_breaker_tripped = True
+                    self._health_ok = False
+                    self._last_status = "degraded: ws circuit breaker active"
+                    self._log(
+                        f"WebSocket circuit breaker tripped after {self._ws_consecutive_failures} failures. Bot transitioned to degraded state.",
+                        level=logging.ERROR,
+                    )
+                    self._send_alert(
+                        f"⚠️ Circuit Breaker Active: WebSocket connection lost {self._ws_consecutive_failures} times. Trading halted."
+                    )
+
+                # Exponential backoff with jitter (BUG-06)
+                jitter = random.uniform(0.85, 1.25)
+                sleep_delay = min(backoff * jitter, 60.0)
+                self._last_status = f"reconnecting in {sleep_delay:.1f}s (attempt {self._ws_consecutive_failures})"
+                live.update(self._render_dashboard(), refresh=True)
+                await asyncio.sleep(sleep_delay)
+                backoff = min(backoff * 2.0, 60.0)
+                await self._process_exit_retry_queue()
 
         self._log("TradingBot shutdown complete.")
         self._transition_to(TradingBotState.SHUTDOWN, reason="loop_exited")

@@ -73,6 +73,7 @@ def filter_audit_records(
     date_to: str | None = None,
     mint: str | None = None,
     token_name: str | None = None,
+    mint_name: str | None = None,
     reason: str | None = None,
     status: str | None = None,
     limit: int | None = None,
@@ -80,6 +81,7 @@ def filter_audit_records(
     filtered: list[dict[str, Any]] = []
     date_from_ts = _as_timestamp(date_from)
     date_to_ts = _as_timestamp(date_to)
+    name_filter = mint_name if mint_name is not None else token_name
 
     for record in records:
         record_type_value = str(record.get("type") or "").strip().lower()
@@ -108,14 +110,18 @@ def filter_audit_records(
             continue
 
         token_name_value = str(
-            payload.get("token_name")
-            or payload.get("name")
+            payload.get("mint_name")
+            or payload.get("token_name")
             or payload.get("display_name")
             or payload.get("displayName")
+            or record.get("mint_name")
+            or record.get("token_name")
+            or (payload.get("name") if str(record.get("type")) != "metric" else "")
+            or (record.get("name") if str(record.get("type")) != "metric" else "")
             or ""
         ).strip()
-        if token_name and _normalize_text(token_name_value) != _normalize_text(
-            token_name
+        if name_filter and _normalize_text(token_name_value) != _normalize_text(
+            name_filter
         ):
             continue
 
@@ -186,12 +192,25 @@ def render_audit_table(
     table.add_column("Time", style="dim")
     table.add_column("Type")
     table.add_column("State")
+    table.add_column("Mint Name")
     table.add_column("Mint")
     table.add_column("Reason")
     table.add_column("Status")
 
     for record in records:
         payload = _payload_for(record)
+        mint_name = str(
+            payload.get("mint_name")
+            or payload.get("token_name")
+            or payload.get("display_name")
+            or payload.get("displayName")
+            or record.get("mint_name")
+            or record.get("token_name")
+            or (payload.get("name") if str(record.get("type")) != "metric" else "")
+            or (record.get("name") if str(record.get("type")) != "metric" else "")
+            or "-"
+        )
+        mint_address = str(payload.get("mint") or record.get("mint") or "-")
         table.add_row(
             _format_record_time(record),
             str(record.get("type") or "-"),
@@ -201,7 +220,8 @@ def render_audit_table(
                 or payload.get("previous_state")
                 or "-"
             ),
-            str(payload.get("mint") or "-"),
+            mint_name,
+            mint_address,
             str(payload.get("reason") or payload.get("trade_reason") or "-"),
             str(payload.get("status") or payload.get("outcome") or "-"),
         )

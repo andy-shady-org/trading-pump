@@ -53,6 +53,8 @@ This document is a snapshot of the features currently implemented in this reposi
 - Reconnection handling for websocket failures
 - Graceful shutdown hooks and signal handling
 - Bot status snapshots written to JSON
+- State restore on startup from a persisted snapshot
+- Recovery of active positions, buy attempts, seen mints, and recent state on restart
 - Audit trail recording to JSONL
 - Trade ledger tracking for buy/sell records, reasons, timestamps, and position IDs
 - Recent action memory for debugging and runtime introspection
@@ -145,3 +147,13 @@ This document is a snapshot of the features currently implemented in this reposi
 ## Notes
 
 This repository is not only a raw API wrapper; it includes a live bot runtime, execution helpers, strategy presets, risk guardrails, monitoring, and operational event logging. The codebase is structured as a foundation for a launch-monitoring and execution-focused Pump.fun trading system, with several roadmap items still pending beyond the implemented core features.
+
+## Replay engine and strategy validation
+
+- Historical replay execution via `PaperTradingEngine` and `run_replay()`
+- JSON and JSONL snapshot ingestion for historical market data replay
+- Dedicated replay CLI tool (`pumpfun-replay --path ...`)
+- Separate replay dashboard and trade ledger rendering that does not modify the live bot dashboard
+- Fee/slippage-aware paper-trading simulation for realistic backtest runs
+- Summary metrics for profit factor, max drawdown, win rate, average trade return, and final equity
+- Additional replay output modes for summary and trade-focused views
