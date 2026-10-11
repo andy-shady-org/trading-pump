@@ -62,7 +62,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["pumpfun_trading/tests"]
-addopts = "-q"
+addopts = "-q --cov=pumpfun_trading/config --cov=pumpfun_trading/ops --cov=pumpfun_trading/services --cov=pumpfun_trading/strategies --cov-report=term-missing --cov-report=xml --cov-fail-under=95"
 
 [tool.coverage.run]
 source = [
