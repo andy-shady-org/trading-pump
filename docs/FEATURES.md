@@ -152,7 +152,7 @@ This repository is not only a raw API wrapper; it includes a live bot runtime, e
 
 - Historical replay execution via `PaperTradingEngine` and `run_replay()`
 - JSON and JSONL snapshot ingestion for historical market data replay
-- Dedicated replay-only CLI mode (`pumpbot --mode replay --replay-path ...`)
+- Dedicated replay CLI tool (`pumpfun-replay --path ...`)
 - Separate replay dashboard and trade ledger rendering that does not modify the live bot dashboard
 - Fee/slippage-aware paper-trading simulation for realistic backtest runs
 - Summary metrics for profit factor, max drawdown, win rate, average trade return, and final equity

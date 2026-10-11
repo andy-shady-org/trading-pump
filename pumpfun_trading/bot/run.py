@@ -610,6 +610,8 @@ class TradingBot:
         *,
         mint: str,
         action: str,
+        token_name: str | None = None,
+        mint_name: str | None = None,
         entry: float | None = None,
         exit_value: float | None = None,
         reason: str | None = None,
@@ -619,12 +621,20 @@ class TradingBot:
         trade_id = trade_id or position_id or self._next_trade_id()
         if position_id is None and action == "buy":
             position_id = trade_id
+        resolved_name = (
+            token_name
+            or mint_name
+            or self.active_positions.get(mint, {}).get("name")
+            or (self._last_new_token_name if self._last_new_token == mint else None)
+        )
         record = {
             "timestamp": time.time(),
             "trade_id": trade_id,
             "position_id": position_id or trade_id,
             "action": action,
             "mint": mint,
+            "token_name": resolved_name,
+            "mint_name": resolved_name,
             "entry": entry,
             "exit": exit_value,
             "reason": reason,
@@ -883,7 +893,12 @@ class TradingBot:
             self._mark_seen(mint)
             self._last_event = f"dry-run buy for {mint}"
             self._record_trade(
-                mint=mint, action="buy", entry=self.buy_amount_sol, reason="dry_run"
+                mint=mint,
+                action="buy",
+                token_name=position_name,
+                mint_name=position_name,
+                entry=self.buy_amount_sol,
+                reason="dry_run",
             )
             self._transition_to(TradingBotState.HOLDING, reason=f"dry_run_buy {mint}")
             return True
@@ -943,7 +958,12 @@ class TradingBot:
         self._last_new_token_name = position_name
         self._record_metric("buys")
         self._record_trade(
-            mint=mint, action="buy", entry=self.buy_amount_sol, reason="entry"
+            mint=mint,
+            action="buy",
+            token_name=position_name,
+            mint_name=position_name,
+            entry=self.buy_amount_sol,
+            reason="entry",
         )
         self._transition_to(TradingBotState.HOLDING, reason=f"buy_confirmed {mint}")
         return True
@@ -1020,11 +1040,14 @@ class TradingBot:
                     f"Startup reconciliation: position {mint} has non-actionable on-chain balance ({balance}). Purging stale position.",
                     level=logging.INFO,
                 )
+                pos_name = self.active_positions.get(mint, {}).get("name")
                 self.active_positions.pop(mint, None)
                 self._exit_retry_queue.pop(mint, None)
                 self._record_trade(
                     mint=mint,
                     action="reconciled_closed",
+                    token_name=pos_name,
+                    mint_name=pos_name,
                     entry=0.0,
                     reason="startup_zero_balance_reconciliation",
                 )
@@ -1166,12 +1189,15 @@ class TradingBot:
             )
             return False
 
+        pos_name = self.active_positions.get(mint, {}).get("name")
         self.active_positions.pop(mint, None)
         self._exit_retry_queue.pop(mint, None)
         self._record_metric("sells")
         self._record_trade(
             mint=mint,
             action="sell",
+            token_name=pos_name,
+            mint_name=pos_name,
             entry=(
                 min_sol_output_lamports / 1_000_000_000.0
                 if min_sol_output_lamports

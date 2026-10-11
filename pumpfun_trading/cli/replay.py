@@ -33,6 +33,9 @@ def build_parser(
         default="dashboard",
         help="Historic replay output mode",
     )
+    parser.add_argument("--mint", default=None, help="Filter by mint address")
+    parser.add_argument("--mint-name", default=None, help="Filter by mint name")
+    parser.add_argument("--token-name", default=None, help="Filter by token name")
     return parser
 
 
@@ -50,7 +53,12 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
     if not target_path:
         raise SystemExit("--path is required")
 
-    summary = run_replay(target_path)
+    summary = run_replay(
+        target_path,
+        mint=getattr(args, "mint", None),
+        mint_name=getattr(args, "mint_name", None),
+        token_name=getattr(args, "token_name", None),
+    )
     mode = getattr(args, "mode", None) or getattr(args, "replay_mode", "dashboard")
     if mode == "summary":
         render_replay_summary(summary, console)

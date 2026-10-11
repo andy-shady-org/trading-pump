@@ -171,34 +171,36 @@ The JSON file is intentionally a sample: keep your real runtime values in a loca
 
 ## Audit trail investigation tool
 
-The bot writes a JSONL audit trail for trades, lifecycle transitions, status changes, and operational events. You can inspect it with the built-in CLI tool:
+The bot writes a JSONL audit trail for trades, lifecycle transitions, status changes, and operational events. You can inspect it with the dedicated `pumpfun-audit` CLI tool:
 
 ```bash
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl
 ```
 
 Common filters:
 
 ```bash
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --record-type trade
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --state holding
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --mint <mint-address>
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --reason take_profit
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --summary
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --json
-pumpbot audit --path .data/pumpfun_trading_audit.jsonl --export ./audit-export.json
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --record-type trade
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --state holding
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --mint <mint-address>
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --mint-name SolCat
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --reason take_profit
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --summary
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --json
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --export ./audit-export.json
 ```
 
 See [AUDIT-TOOL.md](./docs/AUDIT-TOOL.md) for the full audit investigation workflow and examples.
 
 ## Replay engine and historical strategy validation
 
-The project now includes a dedicated replay engine for evaluating trading decisions against historical market snapshots without touching the live bot dashboard. This is implemented as a separate UI path so the live bot runtime remains unchanged while replay analysis runs in its own Rich panel flow.
+The project includes a dedicated `pumpfun-replay` tool for evaluating trading decisions against historical market snapshots without touching the live bot dashboard. This is implemented as a separate UI path so the live bot runtime remains unchanged while replay analysis runs in its own Rich panel flow.
 
 ```bash
-pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode dashboard
-pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode summary
-pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode trades
+pumpfun-replay --path ./historical_snapshots.json --mode dashboard
+pumpfun-replay --path ./historical_snapshots.json --mode summary
+pumpfun-replay --path ./historical_snapshots.json --mode trades
+pumpfun-replay --path ./historical_snapshots.json --mint-name SolCat --mode trades
 ```
 
 The replay mode loads JSON or JSONL snapshot data, runs a lightweight paper-trading engine with fee/slippage assumptions, and prints metrics such as:

@@ -8,12 +8,12 @@ The replay engine is a historical paper-trading subsystem for evaluating strateg
 - Evaluate buy/sell decisions using realistic fee + slippage assumptions
 - Separate replay output from the live bot dashboard so operational monitoring remains stable
 - Produce concise performance metrics for strategy comparison and debugging
-- Keep the replay path available from the same `pumpbot` CLI entrypoint as the rest of the project
+- Provide a dedicated `pumpfun-replay` CLI entrypoint alongside the live trading bot
 - Preserve the live bot’s crash-recovery and persisted state features while replay runs independently from runtime state
 
 ## Architecture
 
-The replay logic lives in `pumpfun_trading/replay.py` and is intentionally independent from the execution bot lifecycle:
+The replay logic lives in `pumpfun_trading/engines/replay.py` (and is exposed via `pumpfun_trading`) and is intentionally independent from the execution bot lifecycle:
 
 - `PaperTradingEngine` handles market-snapshot processing and trade execution logic
 - `ReplayEngine` is a compatibility alias retained for future extension
@@ -62,19 +62,21 @@ This keeps the simulation more realistic than a pure zero-cost trade model while
 
 ## Command usage
 
-The replay feature is exposed through the `pumpbot` CLI as a separate mode:
+The replay feature is exposed through the dedicated `pumpfun-replay` CLI command:
 
 ```bash
-pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode dashboard
-pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode summary
-pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode trades
+pumpfun-replay --path ./historical_snapshots.json --mode dashboard
+pumpfun-replay --path ./historical_snapshots.json --mode summary
+pumpfun-replay --path ./historical_snapshots.json --mode trades
 ```
 
 ### Arguments
 
-- `--mode replay`: switches to the historical replay flow
-- `--replay-path`: path to the JSON or JSONL dataset to replay
-- `--replay-mode`: one of `dashboard`, `summary`, or `trades`
+- `--path`: path to the JSON or JSONL dataset to replay
+- `--mode`: output mode, one of `dashboard` (default), `summary`, or `trades`
+- `--mint`: filter replay snapshots by token mint address
+- `--mint-name`: filter replay snapshots by token / mint name
+- `--token-name`: alias to filter replay snapshots by token name
 
 The replay flow is intentionally isolated from the live bot execution flow:
 
@@ -89,32 +91,32 @@ The replay flow is intentionally isolated from the live bot execution flow:
 ```text
 Replay Engine
 ╭────────────────────────────────────────────────────────────────────────────╮
-│ Replay Status                                                           │
-│ Trades: 7                                                               │
-│ Buys: 4                                                                │
-│ Sells: 3                                                               │
-│ Final cash: 91.3241                                                     │
+│ Replay Status                                                              │
+│ Trades: 7                                                                  │
+│ Buys: 4                                                                    │
+│ Sells: 3                                                                   │
+│ Final cash: 91.3241                                                        │
 ╰────────────────────────────────────────────────────────────────────────────╯
 
 Replay summary
-Metric             Value
-initial_cash       100.0
-final_equity       108.2
-total_trades       7
-profit_factor      1.84
-max_drawdown       0.12
-win_rate           0.66
-average_trade_return 0.12
-open_positions     0
+Metric                Value
+initial_cash          100.0
+final_equity          108.2
+total_trades          7
+profit_factor         1.84
+max_drawdown          0.12
+win_rate              0.66
+average_trade_return  0.12
+open_positions        0
 ```
 
 ### Trade ledger
 
 ```text
 Replay trades
-Index  Timestamp  Mint  Action  Qty  P&L  Return  Reason
-0      1710000000 ...  buy     ...
-1      1710000600 ...  sell    ...  ...   ...    take_profit
+Index  Timestamp   Mint Name  Mint  Action  Qty  P&L  Return  Reason
+0      1710000000  SolCat     ...   buy     ...
+1      1710000600  SolCat     ...   sell    ...  ...  ...     take_profit
 ```
 
 ## Metrics returned by the replay engine
@@ -146,12 +148,13 @@ These outputs are useful for:
 
 ## A note on file structure and UI separation
 
-The repo already contains a live bot dashboard in `pumpfun_trading/bot/run.py`. This replay engine deliberately does not modify that code path. Instead, the historical replay feature is presented as a separate UI surface only when `--mode replay` is selected. This preserves the existing operational layout while enabling a research and backtesting workflow on top of the same repository.
+The repo already contains a live bot dashboard in `pumpfun_trading/bot/run.py`. This replay engine deliberately does not modify that code path. Instead, the historical replay feature is presented as a separate UI surface via the dedicated `pumpfun-replay` command. This preserves the existing operational layout while enabling a research and backtesting workflow on top of the same repository.
 
 ## Python API usage
 
 ```python
-from pumpfun_trading.replay import PaperTradingEngine, run_replay
+from pumpfun_trading.engines.replay import PaperTradingEngine, run_replay
+# or: from pumpfun_trading import PaperTradingEngine, run_replay
 
 summary = run_replay("./historical_snapshots.json")
 print(summary["profit_factor"])

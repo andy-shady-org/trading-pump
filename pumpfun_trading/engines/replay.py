@@ -97,7 +97,7 @@ class PaperTradingEngine:
     @staticmethod
     def _snapshot_name(snapshot: dict[str, Any]) -> str:
         value = PaperTradingEngine._snapshot_value(
-            snapshot, "name", "token_name", "display_name", "displayName"
+            snapshot, "mint_name", "token_name", "name", "display_name", "displayName"
         )
         return str(value) if value is not None else "unknown"
 
@@ -180,11 +180,14 @@ class PaperTradingEngine:
                         reason = "take_profit"
                     else:
                         reason = "stop_loss"
+                    trade_name = position.get("name") or name
                     trade = {
                         "index": len(trades),
                         "timestamp": self._snapshot_timestamp(snapshot),
                         "mint": mint,
-                        "name": name,
+                        "name": trade_name,
+                        "mint_name": trade_name,
+                        "token_name": trade_name,
                         "action": "sell",
                         "entry_price": position["entry_price"],
                         "exit_price": price,
@@ -223,6 +226,8 @@ class PaperTradingEngine:
                                 "timestamp": self._snapshot_timestamp(snapshot),
                                 "mint": mint,
                                 "name": name,
+                                "mint_name": name,
+                                "token_name": name,
                                 "action": "buy",
                                 "entry_price": price,
                                 "exit_price": None,
@@ -308,10 +313,27 @@ class ReplayEngine(PaperTradingEngine):
 
 
 def run_replay(
-    path: str | Path, *, engine: PaperTradingEngine | None = None
+    path: str | Path,
+    *,
+    engine: PaperTradingEngine | None = None,
+    mint: str | None = None,
+    mint_name: str | None = None,
+    token_name: str | None = None,
 ) -> dict[str, Any]:
     replay_engine = engine or PaperTradingEngine()
     snapshots = replay_engine.load_history(path)
+    target_name = mint_name if mint_name is not None else token_name
+    if mint or target_name:
+        filtered = []
+        for snapshot in snapshots:
+            s_mint = replay_engine._snapshot_mint(snapshot)
+            s_name = replay_engine._snapshot_name(snapshot)
+            if mint and s_mint.lower() != str(mint).lower():
+                continue
+            if target_name and str(target_name).lower() not in s_name.lower():
+                continue
+            filtered.append(snapshot)
+        snapshots = filtered
     return replay_engine.run(snapshots)
 
 
@@ -350,6 +372,7 @@ def render_replay_trades(
     table = Table(title="Replay trades", header_style="bold cyan")
     table.add_column("Index")
     table.add_column("Timestamp")
+    table.add_column("Mint Name")
     table.add_column("Mint")
     table.add_column("Action")
     table.add_column("Qty")
@@ -357,9 +380,17 @@ def render_replay_trades(
     table.add_column("Return")
     table.add_column("Reason")
     for trade in trade_rows:
+        mint_name = str(
+            trade.get("mint_name")
+            or trade.get("token_name")
+            or trade.get("name")
+            or trade.get("display_name")
+            or "-"
+        )
         table.add_row(
             str(trade.get("index", "-")),
             str(trade.get("timestamp", "-")),
+            mint_name,
             str(trade.get("mint", "-")),
             str(trade.get("action", "-")),
             f"{trade.get('quantity', 0):.6f}",

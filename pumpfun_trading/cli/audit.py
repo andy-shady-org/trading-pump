@@ -32,6 +32,7 @@ def build_parser(
     parser.add_argument("--date-from", default=None, help="Start timestamp or ISO date")
     parser.add_argument("--date-to", default=None, help="End timestamp or ISO date")
     parser.add_argument("--mint", default=None, help="Filter by mint address")
+    parser.add_argument("--mint-name", default=None, help="Filter by mint name")
     parser.add_argument("--token-name", default=None, help="Filter by token name")
     parser.add_argument("--reason", default=None, help="Filter by trade reason")
     parser.add_argument(
@@ -73,6 +74,7 @@ def run_audit_cli(args: argparse.Namespace | None = None) -> None:
         date_to=args.date_to,
         mint=args.mint,
         token_name=args.token_name,
+        mint_name=getattr(args, "mint_name", None),
         reason=args.reason,
         status=args.status,
         limit=args.limit,
