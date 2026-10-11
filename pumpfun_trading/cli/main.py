@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import json
 
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
@@ -15,8 +14,9 @@ from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig, resolve_strategy_config
 from pumpfun_trading.cli.audit import build_audit_parser, run_audit_cli
 from pumpfun_trading.cli.replay import build_replay_parser
+from pumpfun_trading.ops.logging import get_configured_console
 
-console = Console()
+console = get_configured_console()
 
 
 def _coerce_list(payload):

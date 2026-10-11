@@ -62,28 +62,13 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["pumpfun_trading/tests"]
-addopts = "-q --cov=pumpfun_trading/config --cov=pumpfun_trading/ops --cov=pumpfun_trading/services --cov=pumpfun_trading/strategies --cov-report=term-missing --cov-report=xml --cov-fail-under=95"
+addopts = "-q"
 
 [tool.coverage.run]
-source = [
-    "pumpfun_trading/config",
-    "pumpfun_trading/ops",
-    "pumpfun_trading/services",
-    "pumpfun_trading/strategies",
-]
+source = ["pumpfun_trading"]
 branch = true
 omit = [
     "*/tests/*",
-    "pumpfun_trading/cli/*",
-    "pumpfun_trading/ui/*",
-    "pumpfun_trading/engines/*",
-    "pumpfun_trading/bot/run.py",
-    "pumpfun_trading/bot/strategy.py",
-    "pumpfun_trading/bot/__init__.py",
-    "pumpfun_trading/sdk/*",
-    "pumpfun_trading/api/*",
-    "pumpfun_trading/storage/*",
-    "pumpfun_trading/execution/*",
 ]
 
 [tool.coverage.report]

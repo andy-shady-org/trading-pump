@@ -53,6 +53,9 @@ def build_status_snapshot(bot: Any) -> dict[str, Any]:
         "last_new_token_name": getattr(bot, "_last_new_token_name", "-"),
         "stop_requested": getattr(bot, "_stop_requested", False),
         "trade_sequence": getattr(bot, "_trade_sequence", 0),
+        "exit_retry_queue": dict(getattr(bot, "_exit_retry_queue", {})),
+        "circuit_breaker_tripped": getattr(bot, "_circuit_breaker_tripped", False),
+        "ws_consecutive_failures": getattr(bot, "_ws_consecutive_failures", 0),
     }
 
 

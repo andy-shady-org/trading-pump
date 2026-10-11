@@ -7,7 +7,7 @@ import aiohttp
 import base58
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
-from solders.message import MessageHeader, MessageV0
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 from spl.token.constants import TOKEN_PROGRAM_ID
@@ -24,6 +24,18 @@ SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 RENT_PROGRAM_ID = "SysvarRent111111111111111111111111111111111"
 EVENT_AUTHORITY = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
 TOKEN_PROGRAM_ID_STR = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
+
+JITO_TIP_ACCOUNTS = [
+    "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+    "HFqU5x63VTxvQssQamRxUBvu13Wqh4KZxGar46YoxrfP",
+    "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+    "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+    "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+    "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
+    "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+    "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
+]
 
 BUY_DISCRIMINATOR = bytes([102, 6, 61, 18, 1, 218, 235, 234])
 SELL_DISCRIMINATOR = bytes([51, 230, 133, 164, 1, 127, 131, 173])
@@ -124,12 +136,113 @@ class PumpFunExecutionClient:
         return "unknown"
 
     @staticmethod
+    def sol_to_lamports(sol_amount: float | int) -> int:
+        """Convert SOL value to integer Lamports."""
+        if sol_amount < 0:
+            raise ValueError("SOL amount cannot be negative")
+        return int(round(float(sol_amount) * 1_000_000_000))
+
+    @staticmethod
+    def lamports_to_sol(lamports: int) -> float:
+        """Convert Lamports value to floating-point SOL."""
+        if lamports < 0:
+            raise ValueError("Lamports cannot be negative")
+        return float(lamports) / 1_000_000_000.0
+
+    @staticmethod
+    def decode_bonding_curve_data(data: bytes) -> dict[str, int | float | bool]:
+        """Decode raw Solana account data of a Pump.fun bonding curve.
+
+        Layout:
+          0..8: Discriminator (u64 / 8 bytes)
+          8..16: virtual_token_reserves (u64)
+          16..24: virtual_sol_reserves (u64)
+          24..32: real_token_reserves (u64)
+          32..40: real_sol_reserves (u64)
+          40..48: token_total_supply (u64)
+          48..49: complete (bool)
+        """
+        if len(data) < 49:
+            raise ValueError(
+                f"Bonding curve account data too short: {len(data)} bytes (expected >= 49)"
+            )
+        virtual_token_reserves = int.from_bytes(
+            data[8:16], byteorder="little", signed=False
+        )
+        virtual_sol_reserves = int.from_bytes(
+            data[16:24], byteorder="little", signed=False
+        )
+        real_token_reserves = int.from_bytes(
+            data[24:32], byteorder="little", signed=False
+        )
+        real_sol_reserves = int.from_bytes(
+            data[32:40], byteorder="little", signed=False
+        )
+        token_total_supply = int.from_bytes(
+            data[40:48], byteorder="little", signed=False
+        )
+        complete = bool(data[48])
+
+        price_sol = (
+            (virtual_sol_reserves / 1_000_000_000.0)
+            / (virtual_token_reserves / 1_000_000.0)
+            if virtual_token_reserves > 0
+            else 0.0
+        )
+        market_cap_sol = (
+            (virtual_sol_reserves / 1_000_000_000.0)
+            * (token_total_supply / float(virtual_token_reserves))
+            if virtual_token_reserves > 0
+            else 0.0
+        )
+
+        return {
+            "virtual_token_reserves": virtual_token_reserves,
+            "virtual_sol_reserves": virtual_sol_reserves,
+            "real_token_reserves": real_token_reserves,
+            "real_sol_reserves": real_sol_reserves,
+            "token_total_supply": token_total_supply,
+            "complete": complete,
+            "price_sol": price_sol,
+            "market_cap_sol": market_cap_sol,
+        }
+
+    @staticmethod
+    def calculate_sell_sol_output(
+        token_amount: int,
+        virtual_token_reserves: int,
+        virtual_sol_reserves: int,
+        *,
+        slippage_bps: int = 0,
+    ) -> int:
+        """Calculate minimum output Lamports for selling a token amount on the bonding curve."""
+        if (
+            token_amount <= 0
+            or virtual_token_reserves <= 0
+            or virtual_sol_reserves <= 0
+        ):
+            return 0
+        sol_out_lamports = (token_amount * virtual_sol_reserves) // (
+            virtual_token_reserves + token_amount
+        )
+        if slippage_bps > 0:
+            sol_out_lamports = max(
+                0, int((sol_out_lamports * (10_000 - slippage_bps)) / 10_000)
+            )
+        return sol_out_lamports
+
+    @staticmethod
     def _decode_keypair(private_key_b58: str) -> Keypair:
         decoded = base58.b58decode(private_key_b58)
         if len(decoded) == 32:
             return Keypair.from_seed(decoded)
         if len(decoded) == 64:
-            return Keypair.from_bytes(decoded)
+            try:
+                return Keypair.from_bytes(decoded)
+            except Exception:
+                return Keypair.from_seed(decoded[:32])
+        if len(decoded) >= 32:
+            return Keypair.from_seed(decoded[:32])
         raise ValueError(
             "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret key; "
             f"got {len(decoded)} bytes after decoding."
@@ -141,11 +254,19 @@ class PumpFunExecutionClient:
         rpc_url: str,
         *,
         priority_fee_lamports: int = 5000,
+        compute_unit_limit: int = 200_000,
+        compute_unit_price_micro_lamports: Optional[int] = None,
+        jito_tip_lamports: int = 0,
+        jito_block_engine_url: Optional[str] = None,
         default_slippage_bps: int = 500,
     ):
         self.private_key_b58 = private_key_b58
         self.rpc_url = rpc_url
         self.priority_fee_lamports = priority_fee_lamports
+        self.compute_unit_limit = compute_unit_limit
+        self.compute_unit_price_micro_lamports = compute_unit_price_micro_lamports
+        self.jito_tip_lamports = jito_tip_lamports
+        self.jito_block_engine_url = jito_block_engine_url
         self.default_slippage_bps = self.normalize_slippage_bps(default_slippage_bps)
         self.keypair = self._decode_keypair(private_key_b58)
         self.wallet = self.keypair.pubkey()
@@ -226,7 +347,9 @@ class PumpFunExecutionClient:
             and PumpFunExecutionClient.is_valid_pubkey(value)
         )
 
-    def _to_pubkey(self, value: str) -> Pubkey:
+    def _to_pubkey(self, value: str | Pubkey) -> Pubkey:
+        if isinstance(value, Pubkey):
+            return value
         return Pubkey.from_string(value)
 
     @staticmethod
@@ -283,13 +406,23 @@ class PumpFunExecutionClient:
         }
         parsed = await self._request_rpc_json(payload)
         accounts = (parsed.get("result") or {}).get("value", [])
-        for account in accounts or []:
-            info = (
-                account.get("account", {})
-                .get("data", {})
-                .get("parsed", {})
-                .get("info", {})
-            )
+        if not isinstance(accounts, list):
+            return False
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            account_data = account.get("account")
+            if not isinstance(account_data, dict):
+                continue
+            parsed_data = account_data.get("data")
+            if not isinstance(parsed_data, dict):
+                continue
+            parsed_info = parsed_data.get("parsed")
+            if not isinstance(parsed_info, dict):
+                continue
+            info = parsed_info.get("info")
+            if not isinstance(info, dict):
+                continue
             if info.get("mint") == mint and str(info.get("owner")) == owner_pubkey:
                 return True
         return False
@@ -444,6 +577,72 @@ class PumpFunExecutionClient:
             program_id=self._to_pubkey(PUMP_PROGRAM_ID), accounts=accounts, data=data
         )
 
+    def build_set_compute_unit_limit_instruction(
+        self, units: int = 200_000
+    ) -> Instruction:
+        """Create ComputeBudget instruction to set max compute units."""
+        data = bytes([2]) + units.to_bytes(4, byteorder="little", signed=False)
+        return Instruction(
+            program_id=self._to_pubkey(COMPUTE_BUDGET_PROGRAM_ID),
+            accounts=[],
+            data=data,
+        )
+
+    def build_set_compute_unit_price_instruction(
+        self, micro_lamports: int
+    ) -> Instruction:
+        """Create ComputeBudget instruction to set priority fee per compute unit."""
+        data = bytes([3]) + self._u64(micro_lamports)
+        return Instruction(
+            program_id=self._to_pubkey(COMPUTE_BUDGET_PROGRAM_ID),
+            accounts=[],
+            data=data,
+        )
+
+    def build_jito_tip_instruction(
+        self, tip_lamports: int, tip_account: str | None = None
+    ) -> Instruction:
+        """Create transfer instruction sending Jito tip to validator tip address."""
+        if tip_lamports <= 0:
+            raise ValueError("Jito tip lamports must be positive")
+        target_account = tip_account or JITO_TIP_ACCOUNTS[0]
+        data = bytes([2, 0, 0, 0]) + self._u64(tip_lamports)
+        accounts = [
+            AccountMeta(pubkey=self.wallet, is_signer=True, is_writable=True),
+            AccountMeta(
+                pubkey=self._to_pubkey(target_account),
+                is_signer=False,
+                is_writable=True,
+            ),
+        ]
+        return Instruction(
+            program_id=self._to_pubkey(SYSTEM_PROGRAM_ID),
+            accounts=accounts,
+            data=data,
+        )
+
+    async def get_bonding_curve_state(self, mint: str) -> dict[str, int | float | bool]:
+        """Fetch and decode on-chain bonding curve account state directly from RPC."""
+        bonding_curve_pda, _ = self.get_bonding_curve_pda(mint)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [
+                bonding_curve_pda,
+                {"encoding": "base64", "commitment": "confirmed"},
+            ],
+        }
+        parsed = await self._request_rpc_json(payload)
+        value = (parsed.get("result") or {}).get("value")
+        if not value:
+            raise RuntimeError(
+                f"Bonding curve account {bonding_curve_pda} not found on-chain"
+            )
+        raw_data_b64 = value.get("data", [""])[0]
+        raw_bytes = base64.b64decode(raw_data_b64)
+        return self.decode_bonding_curve_data(raw_bytes)
+
     async def build_buy_tx(
         self,
         mint: str,
@@ -455,9 +654,11 @@ class PumpFunExecutionClient:
     ) -> VersionedTransaction:
         token_amount = token_amount if token_amount is not None else 0
         slippage_bps = (
-            self.default_slippage_bps if slippage_bps is None else slippage_bps
+            self.default_slippage_bps
+            if slippage_bps is None
+            else self.normalize_slippage_bps(slippage_bps)
         )
-        lamports = int(sol_amount * 1_000_000_000)
+        lamports = self.sol_to_lamports(sol_amount)
         max_sol_cost = int((lamports * (10_000 + slippage_bps)) / 10_000)
 
         instructions = []
@@ -480,29 +681,60 @@ class PumpFunExecutionClient:
         bonding_curve: str,
         token_amount: int,
         *,
-        min_sol_output: int = 0,
+        min_sol_output: int | float = 0,
         slippage_bps: int | None = None,
     ) -> VersionedTransaction:
         slippage_bps = self.normalize_slippage_bps(
             slippage_bps, self.default_slippage_bps
         )
-        if min_sol_output < 0:
+        if isinstance(min_sol_output, float):
+            min_sol_lamports = self.sol_to_lamports(min_sol_output)
+        else:
+            min_sol_lamports = int(min_sol_output)
+
+        if min_sol_lamports < 0:
             raise ValueError("Minimum SOL output cannot be negative")
-        if min_sol_output == 0:
-            min_sol_output = max(
-                0, int((min_sol_output * (10_000 - slippage_bps)) / 10_000)
+
+        if min_sol_lamports > 0:
+            min_sol_lamports = max(
+                0, int((min_sol_lamports * (10_000 - slippage_bps)) / 10_000)
             )
+
         instructions = [
             self.build_sell_instruction(
-                mint, bonding_curve, token_amount, min_sol_output
+                mint, bonding_curve, token_amount, min_sol_lamports
             )
         ]
         return await self._build_tx_with_instructions(instructions)
 
     async def _build_tx_with_instructions(self, instructions) -> VersionedTransaction:
+        tx_instructions = []
+        if self.compute_unit_limit > 0:
+            tx_instructions.append(
+                self.build_set_compute_unit_limit_instruction(self.compute_unit_limit)
+            )
+        unit_price = self.compute_unit_price_micro_lamports
+        if (
+            unit_price is None
+            and self.priority_fee_lamports > 0
+            and self.compute_unit_limit > 0
+        ):
+            unit_price = int(
+                (self.priority_fee_lamports * 1_000_000) / self.compute_unit_limit
+            )
+        if unit_price and unit_price > 0:
+            tx_instructions.append(
+                self.build_set_compute_unit_price_instruction(unit_price)
+            )
+        tx_instructions.extend(instructions)
+        if self.jito_tip_lamports > 0:
+            tx_instructions.append(
+                self.build_jito_tip_instruction(self.jito_tip_lamports)
+            )
+
         blockhash = await self.get_latest_blockhash()
         account_keys = []
-        for instruction in instructions:
+        for instruction in tx_instructions:
             for meta in instruction.accounts:
                 if meta.pubkey not in account_keys:
                     account_keys.append(meta.pubkey)
@@ -511,19 +743,56 @@ class PumpFunExecutionClient:
         else:
             account_keys.remove(self.wallet)
             account_keys.insert(0, self.wallet)
-        message = MessageV0(
-            header=MessageHeader(
-                num_required_signatures=1,
-                num_readonly_signed_accounts=0,
-                num_readonly_unsigned_accounts=0,
-            ),
-            account_keys=account_keys,
-            recent_blockhash=blockhash,
-            instructions=instructions,
-            address_table_lookups=[],
+        from solders.hash import Hash
+
+        blockhash_obj = (
+            Hash.from_string(blockhash) if isinstance(blockhash, str) else blockhash
+        )
+        message = MessageV0.try_compile(
+            self.wallet,
+            tx_instructions,
+            [],
+            blockhash_obj,
         )
         signature = self.keypair.sign_message(bytes(message))
         return VersionedTransaction.populate(message, [signature])
+
+    async def send_jito_bundle(
+        self,
+        transactions: list[VersionedTransaction],
+        *,
+        endpoint_url: Optional[str] = None,
+    ) -> str:
+        """Submit a bundle of versioned transactions to Jito Block Engine."""
+        url = (
+            endpoint_url
+            or self.jito_block_engine_url
+            or "https://mainnet.block-engine.jito.wtf/api/v1/bundles"
+        )
+        encoded_txs = [
+            base64.b64encode(bytes(tx)).decode("utf-8") for tx in transactions
+        ]
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendBundle",
+            "params": [encoded_txs],
+        }
+        timeout = aiohttp.ClientTimeout(total=15.0)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                url, json=payload, headers={"Content-Type": "application/json"}
+            ) as resp:
+                body = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"Jito bundle submission failed (HTTP {resp.status}): {body[:500]}"
+                    )
+                parsed = json.loads(body)
+                result = parsed.get("result")
+                if not result:
+                    raise RuntimeError(f"Invalid Jito bundle response: {parsed}")
+                return str(result)
 
     async def send_transaction(self, tx: VersionedTransaction) -> str:
         async with self._execution_lock:
@@ -635,7 +904,10 @@ class PumpFunExecutionClient:
         }
         parsed = await self._request_rpc_json(payload)
         result = parsed.get("result") or {}
-        amount = result.get("value", {}).get("amount")
+        value = result.get("value")
+        if not isinstance(value, dict):
+            return 0
+        amount = value.get("amount")
         if amount is None:
             return 0
         return int(amount)

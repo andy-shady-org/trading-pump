@@ -7,10 +7,7 @@ def tests(session):
     session.run(
         "pytest",
         "-q",
-        "--cov=pumpfun_trading/config",
-        "--cov=pumpfun_trading/ops",
-        "--cov=pumpfun_trading/services",
-        "--cov=pumpfun_trading/strategies",
+        "--cov=pumpfun_trading",
         "--cov-report=term-missing",
         "--cov-report=xml",
         "--cov-fail-under=95",

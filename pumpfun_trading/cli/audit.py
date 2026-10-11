@@ -5,8 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 
-from rich.console import Console
-
 from pumpfun_trading.bot.audit import (
     export_audit_records,
     filter_audit_records,
@@ -14,12 +12,20 @@ from pumpfun_trading.bot.audit import (
     render_audit_table,
     summarize_audit_records,
 )
+from pumpfun_trading.ops.logging import get_configured_console
 
-console = Console()
+console = get_configured_console()
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Inspect the JSONL audit trail")
+def build_parser(
+    subparsers: argparse._SubParsersAction | None = None,
+) -> argparse.ArgumentParser:
+    if subparsers is not None:
+        parser = subparsers.add_parser(
+            "audit", description="Inspect the JSONL audit trail"
+        )
+    else:
+        parser = argparse.ArgumentParser(description="Inspect the JSONL audit trail")
     parser.add_argument("--path", required=True, help="Path to the JSONL audit file")
     parser.add_argument("--record-type", default=None, help="Filter by record type")
     parser.add_argument("--state", default=None, help="Filter by state")
@@ -46,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--export", default=None, help="Write filtered records to a JSON file"
     )
     return parser
+
+
+def build_audit_parser(
+    subparsers: argparse._SubParsersAction | None = None,
+) -> argparse.ArgumentParser:
+    return build_parser(subparsers)
 
 
 def run_audit_cli(args: argparse.Namespace | None = None) -> None:

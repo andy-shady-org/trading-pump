@@ -4,9 +4,53 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import sys
 from typing import Any
 
+from rich.console import Console
+
 from pumpfun_trading.config.env import sanitize_env_for_logging
+
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def strip_ansi(text: str) -> str:
+    """Strip ANSI escape sequences from text."""
+    if not isinstance(text, str):
+        return str(text)
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
+def is_color_enabled(stream: Any = None) -> bool:
+    """Return True if colored output is allowed according to NO_COLOR and TTY status."""
+    if os.getenv("NO_COLOR", "").strip() != "":
+        return False
+    target = stream or sys.stdout
+    if hasattr(target, "isatty") and not target.isatty():
+        return False
+    return True
+
+
+def get_configured_console(file: Any = None, **kwargs: Any) -> Console:
+    """Return a Rich Console instance configured for NO_COLOR and TTY conditions."""
+    target = file or sys.stdout
+    color_enabled = is_color_enabled(target)
+    defaults = {
+        "file": target,
+        "no_color": not color_enabled,
+        "highlight": color_enabled,
+    }
+    defaults.update(kwargs)
+    return Console(**defaults)
+
+
+class AnsiStrippingFormatter(logging.Formatter):
+    """Log formatter that removes ANSI escape sequences for file and non-TTY outputs."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        return strip_ansi(formatted)
 
 
 def setup_structured_logging(
@@ -22,7 +66,7 @@ def setup_structured_logging(
     logger.propagate = False
     logger.handlers.clear()
 
-    formatter = logging.Formatter(
+    formatter = AnsiStrippingFormatter(
         "%(asctime)s %(levelname)s %(name)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S%z",
     )
@@ -62,4 +106,11 @@ def log_runtime_event(
     logger.log(level, "event=%s payload=%s", event, payload)
 
 
-__all__ = ["setup_structured_logging", "log_runtime_event"]
+__all__ = [
+    "AnsiStrippingFormatter",
+    "get_configured_console",
+    "is_color_enabled",
+    "log_runtime_event",
+    "setup_structured_logging",
+    "strip_ansi",
+]

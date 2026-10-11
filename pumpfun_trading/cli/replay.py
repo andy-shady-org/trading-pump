@@ -4,20 +4,26 @@ from __future__ import annotations
 
 import argparse
 
-from rich.console import Console
-
 from pumpfun_trading.engines.replay import (
     render_replay_dashboard,
     render_replay_summary,
     render_replay_trades,
     run_replay,
 )
+from pumpfun_trading.ops.logging import get_configured_console
 
-console = Console()
+console = get_configured_console()
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run historical replay analysis")
+def build_parser(
+    subparsers: argparse._SubParsersAction | None = None,
+) -> argparse.ArgumentParser:
+    if subparsers is not None:
+        parser = subparsers.add_parser(
+            "replay", description="Run historical replay analysis"
+        )
+    else:
+        parser = argparse.ArgumentParser(description="Run historical replay analysis")
     parser.add_argument(
         "--path", required=True, help="Path to a JSON/JSONL replay dataset"
     )
@@ -30,18 +36,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_replay_parser(
+    subparsers: argparse._SubParsersAction | None = None,
+) -> argparse.ArgumentParser:
+    return build_parser(subparsers)
+
+
 def run_replay_cli(args: argparse.Namespace | None = None) -> None:
     if args is None:
         args = build_parser().parse_args()
 
-    if not getattr(args, "path", None):
+    target_path = getattr(args, "path", None) or getattr(args, "replay_path", None)
+    if not target_path:
         raise SystemExit("--path is required")
 
-    summary = run_replay(args.path)
-    if args.mode == "summary":
+    summary = run_replay(target_path)
+    mode = getattr(args, "mode", None) or getattr(args, "replay_mode", "dashboard")
+    if mode == "summary":
         render_replay_summary(summary, console)
         return
-    if args.mode == "trades":
+    if mode == "trades":
         render_replay_trades(summary.get("trades", []), console)
         return
     render_replay_dashboard(summary, console)

@@ -50,7 +50,7 @@ def build_dashboard(bot: Any) -> Panel:
     bot_status.add_row(
         "Last message",
         (
-            f"{time.time() - bot._last_message_at:.1f}s ago"
+            f"{max(0.0, time.monotonic() - bot._last_message_at):.1f}s ago"
             if bot._last_message_at
             else "never"
         ),
@@ -68,7 +68,7 @@ def build_dashboard(bot: Any) -> Panel:
     health.add_row(
         "Last message",
         (
-            f"{time.time() - bot._last_message_at:.1f}s ago"
+            f"{max(0.0, time.monotonic() - bot._last_message_at):.1f}s ago"
             if bot._last_message_at
             else "never"
         ),
@@ -80,11 +80,14 @@ def build_dashboard(bot: Any) -> Panel:
     health.add_row("Last status", str(bot._last_status))
     health.add_row("Last event", bot._last_event)
 
-    overview_height = max(
-        len(strategy.rows),
-        len(risk.rows),
-        len(bot_status.rows),
-        len(health.rows),
+    overview_height = (
+        max(
+            len(strategy.rows),
+            len(risk.rows),
+            len(bot_status.rows),
+            len(health.rows),
+        )
+        + 2
     )
 
     overview = Table.grid(expand=True)
@@ -135,7 +138,7 @@ def build_dashboard(bot: Any) -> Panel:
     runtime.add_row(
         "Last message",
         (
-            f"{time.time() - bot._last_message_at:.1f}s ago"
+            f"{max(0.0, time.monotonic() - bot._last_message_at):.1f}s ago"
             if bot._last_message_at
             else "never"
         ),
