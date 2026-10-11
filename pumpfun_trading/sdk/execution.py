@@ -33,6 +33,97 @@ class PumpFunExecutionClient:
     """Build and broadcast real Pump.fun transactions using the program instruction pattern."""
 
     @staticmethod
+    def normalize_slippage_bps(value: int | None, default: int = 500) -> int:
+        """Normalize a slippage value into basis points, clamping invalid values."""
+        if value is None:
+            return max(0, min(default, 10_000))
+        if isinstance(value, bool):
+            raise ValueError("Slippage must be an integer number of basis points")
+        numeric = int(value)
+        if numeric < 0:
+            raise ValueError("Slippage cannot be negative")
+        if numeric > 10_000:
+            raise ValueError("Slippage cannot exceed 100% (10,000 bps)")
+        return numeric
+
+    @staticmethod
+    def evaluate_fill_completion(
+        expected_amount: int,
+        actual_amount: int,
+        *,
+        minimum_partial_ratio: float = 0.1,
+    ) -> dict[str, int | str | float | bool]:
+        """Classify a fill event as full, partial, or failed.
+
+        This is intentionally lightweight and reusable by the bot when a transaction result
+        indicates only a subset of the requested tokens were filled.
+        """
+        expected = max(0, int(expected_amount))
+        actual = max(0, int(actual_amount))
+        if actual <= 0:
+            return {
+                "status": "failed",
+                "expected_amount": expected,
+                "actual_amount": actual,
+                "remaining_amount": expected,
+                "partial": False,
+                "fill_ratio": 0.0,
+            }
+        if actual >= expected:
+            return {
+                "status": "full",
+                "expected_amount": expected,
+                "actual_amount": actual,
+                "remaining_amount": max(0, expected - actual),
+                "partial": False,
+                "fill_ratio": 1.0,
+            }
+        ratio = actual / expected if expected else 0.0
+        return {
+            "status": "partial",
+            "expected_amount": expected,
+            "actual_amount": actual,
+            "remaining_amount": expected - actual,
+            "partial": True,
+            "fill_ratio": ratio,
+        }
+
+    @staticmethod
+    def should_reassess_partial_fill(
+        expected_amount: int,
+        actual_amount: int,
+        *,
+        minimum_partial_ratio: float = 0.1,
+    ) -> bool:
+        """Return True if a partial fill is material enough that it should be re-evaluated."""
+        if expected_amount <= 0 or actual_amount <= 0:
+            return False
+        ratio = actual_amount / expected_amount
+        return 0.0 < ratio < 1.0 and ratio >= minimum_partial_ratio
+
+    @staticmethod
+    def classify_execution_error(exc: Exception | str) -> str:
+        """Classify common transient execution and RPC failures."""
+        text = str(exc).lower()
+        if "timeout" in text or "timed out" in text:
+            return "rpc_timeout"
+        if "429" in text or "rate limit" in text:
+            return "rate_limited"
+        if "connection" in text or "network" in text or "dns" in text:
+            return "network_error"
+        if (
+            "http 5" in text
+            or "500" in text
+            or "502" in text
+            or "503" in text
+            or "504" in text
+        ):
+            return "server_error"
+        if "signature" in text or "transaction" in text and "failed" in text:
+            return "transaction_failed"
+        return "unknown"
+
+    @staticmethod
     def _decode_keypair(private_key_b58: str) -> Keypair:
         decoded = base58.b58decode(private_key_b58)
         if len(decoded) == 32:
@@ -55,9 +146,69 @@ class PumpFunExecutionClient:
         self.private_key_b58 = private_key_b58
         self.rpc_url = rpc_url
         self.priority_fee_lamports = priority_fee_lamports
-        self.default_slippage_bps = default_slippage_bps
+        self.default_slippage_bps = self.normalize_slippage_bps(default_slippage_bps)
         self.keypair = self._decode_keypair(private_key_b58)
         self.wallet = self.keypair.pubkey()
+        self._execution_lock = asyncio.Lock()
+        self.execution_health_score = 100.0
+        self.failed_execution_attempts = 0
+
+    async def _request_rpc_json(
+        self,
+        payload: dict,
+        *,
+        max_retries: int = 3,
+        timeout_seconds: float = 20.0,
+    ) -> dict:
+        last_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(
+                        self.rpc_url,
+                        json=payload,
+                        headers={"Content-Type": "application/json"},
+                    ) as resp:
+                        body = await resp.text()
+                        if resp.status != 200:
+                            raise RuntimeError(
+                                f"RPC request failed: HTTP {resp.status}: {body[:500]}"
+                            )
+                        try:
+                            parsed = json.loads(body)
+                        except json.JSONDecodeError as exc:
+                            raise RuntimeError(
+                                f"RPC response was not valid JSON: {body[:500]}"
+                            ) from exc
+                        if isinstance(parsed, dict):
+                            return parsed
+                        raise RuntimeError(
+                            f"RPC response was not a JSON object: {body[:500]}"
+                        )
+            except Exception as exc:
+                last_error = exc
+                classification = self.classify_execution_error(exc)
+                self.failed_execution_attempts += 1
+                self.execution_health_score = max(
+                    0.0, self.execution_health_score - 10.0
+                )
+                if classification not in {
+                    "rpc_timeout",
+                    "rate_limited",
+                    "network_error",
+                    "server_error",
+                }:
+                    raise
+                if attempt >= max_retries:
+                    break
+                backoff = 0.5 * (2**attempt)
+                await asyncio.sleep(backoff)
+        if last_error is not None:
+            raise RuntimeError(
+                f"RPC request failed after retries: {last_error}"
+            ) from last_error
+        raise RuntimeError("RPC request failed after retries without a captured error")
 
     @staticmethod
     def is_valid_pubkey(value: str) -> bool:
@@ -88,29 +239,18 @@ class PumpFunExecutionClient:
         return str(self.wallet)
 
     async def get_latest_blockhash(self) -> str:
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getLatestBlockhash",
-                "params": [{"commitment": "confirmed"}],
-            }
-            async with session.post(
-                self.rpc_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                body = await resp.text()
-                if resp.status != 200:
-                    raise RuntimeError(
-                        f"RPC getLatestBlockhash failed: HTTP {resp.status}: {body[:500]}"
-                    )
-                parsed = json.loads(body)
-                value = parsed.get("result", {}).get("value", {})
-                blockhash = value.get("blockhash")
-                if not isinstance(blockhash, str):
-                    raise RuntimeError(f"Invalid blockhash response: {body[:500]}")
-                return blockhash
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getLatestBlockhash",
+            "params": [{"commitment": "confirmed"}],
+        }
+        parsed = await self._request_rpc_json(payload)
+        value = parsed.get("result", {}).get("value", {})
+        blockhash = value.get("blockhash")
+        if not isinstance(blockhash, str):
+            raise RuntimeError(f"Invalid blockhash response: {parsed}")
+        return blockhash
 
     async def get_balance_sol(self) -> float:
         payload = {
@@ -119,23 +259,10 @@ class PumpFunExecutionClient:
             "method": "getBalance",
             "params": [str(self.wallet)],
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.rpc_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                body = await resp.text()
-                if resp.status != 200:
-                    raise RuntimeError(
-                        f"getBalance failed: HTTP {resp.status}: {body[:500]}"
-                    )
-                parsed = json.loads(body)
-                result = parsed.get("result") or {}
-                lamports = (
-                    int(result.get("value", 0)) if isinstance(result, dict) else 0
-                )
-                return lamports / 1_000_000_000.0
+        parsed = await self._request_rpc_json(payload)
+        result = parsed.get("result") or {}
+        lamports = int(result.get("value", 0)) if isinstance(result, dict) else 0
+        return lamports / 1_000_000_000.0
 
     async def get_ata_address(self, mint: str, owner: Optional[str] = None) -> str:
         owner_pubkey = self._to_pubkey(owner or str(self.wallet))
@@ -154,32 +281,18 @@ class PumpFunExecutionClient:
                 {"programId": TOKEN_PROGRAM_ID_STR, "encoding": "jsonParsed"},
             ],
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.rpc_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                body = await resp.text()
-                if resp.status != 200:
-                    raise RuntimeError(
-                        f"getTokenAccountsByOwner failed: HTTP {resp.status}: {body[:500]}"
-                    )
-                parsed = json.loads(body)
-                accounts = (parsed.get("result") or {}).get("value", [])
-                for account in accounts or []:
-                    info = (
-                        account.get("account", {})
-                        .get("data", {})
-                        .get("parsed", {})
-                        .get("info", {})
-                    )
-                    if (
-                        info.get("mint") == mint
-                        and str(info.get("owner")) == owner_pubkey
-                    ):
-                        return True
-                return False
+        parsed = await self._request_rpc_json(payload)
+        accounts = (parsed.get("result") or {}).get("value", [])
+        for account in accounts or []:
+            info = (
+                account.get("account", {})
+                .get("data", {})
+                .get("parsed", {})
+                .get("info", {})
+            )
+            if info.get("mint") == mint and str(info.get("owner")) == owner_pubkey:
+                return True
+        return False
 
     def get_bonding_curve_pda(self, mint: str) -> tuple[str, str]:
         self.is_valid_mint(mint)
@@ -368,7 +481,17 @@ class PumpFunExecutionClient:
         token_amount: int,
         *,
         min_sol_output: int = 0,
+        slippage_bps: int | None = None,
     ) -> VersionedTransaction:
+        slippage_bps = self.normalize_slippage_bps(
+            slippage_bps, self.default_slippage_bps
+        )
+        if min_sol_output < 0:
+            raise ValueError("Minimum SOL output cannot be negative")
+        if min_sol_output == 0:
+            min_sol_output = max(
+                0, int((min_sol_output * (10_000 - slippage_bps)) / 10_000)
+            )
         instructions = [
             self.build_sell_instruction(
                 mint, bonding_curve, token_amount, min_sol_output
@@ -403,36 +526,27 @@ class PumpFunExecutionClient:
         return VersionedTransaction.populate(message, [signature])
 
     async def send_transaction(self, tx: VersionedTransaction) -> str:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "sendTransaction",
-            "params": [
-                base64.b64encode(bytes(tx)).decode("utf-8"),
-                {
-                    "skipPreflight": True,
-                    "preflightCommitment": "confirmed",
-                    "encoding": "base64",
-                    "maxRetries": 3,
-                },
-            ],
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.rpc_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                body = await resp.text()
-                if resp.status != 200:
-                    raise RuntimeError(
-                        f"sendTransaction failed: HTTP {resp.status}: {body[:500]}"
-                    )
-                parsed = json.loads(body)
-                result = parsed.get("result")
-                if not isinstance(result, str) or len(result) < 20:
-                    raise RuntimeError(f"Invalid sendTransaction result: {body[:500]}")
-                return result
+        async with self._execution_lock:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendTransaction",
+                "params": [
+                    base64.b64encode(bytes(tx)).decode("utf-8"),
+                    {
+                        "skipPreflight": True,
+                        "preflightCommitment": "confirmed",
+                        "encoding": "base64",
+                        "maxRetries": 3,
+                    },
+                ],
+            }
+            parsed = await self._request_rpc_json(payload)
+            result = parsed.get("result")
+            if not isinstance(result, str) or len(result) < 20:
+                raise RuntimeError(f"Invalid sendTransaction result: {parsed}")
+            self.execution_health_score = min(100.0, self.execution_health_score + 5.0)
+            return result
 
     async def confirm_transaction(
         self, signature: str, max_retries: int = 20, interval: float = 1.0
@@ -519,20 +633,9 @@ class PumpFunExecutionClient:
             "method": "getTokenAccountBalance",
             "params": [ata, {"commitment": "confirmed"}],
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.rpc_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                body = await resp.text()
-                if resp.status != 200:
-                    raise RuntimeError(
-                        f"getTokenAccountBalance failed: HTTP {resp.status}: {body[:500]}"
-                    )
-                parsed = json.loads(body)
-                result = parsed.get("result") or {}
-                amount = result.get("value", {}).get("amount")
-                if amount is None:
-                    return 0
-                return int(amount)
+        parsed = await self._request_rpc_json(payload)
+        result = parsed.get("result") or {}
+        amount = result.get("value", {}).get("amount")
+        if amount is None:
+            return 0
+        return int(amount)

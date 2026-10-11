@@ -1,7 +1,10 @@
+"""Main CLI entrypoint for the Pump.fun trading bot and public tooling."""
+
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
-from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -10,18 +13,13 @@ from rich.table import Table
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig, resolve_strategy_config
-from pumpfun_trading.audit import (
-    export_audit_records,
-    filter_audit_records,
-    load_audit_records,
-    render_audit_table,
-    summarize_audit_records,
-)
+from pumpfun_trading.cli.audit import build_audit_parser, run_audit_cli
+from pumpfun_trading.cli.replay import build_replay_parser
 
 console = Console()
 
 
-def _coerce_list(payload: Any) -> list[dict[str, Any]]:
+def _coerce_list(payload):
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
     if isinstance(payload, dict):
@@ -32,14 +30,14 @@ def _coerce_list(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _first_key(record: dict[str, Any], *keys: str) -> Any:
+def _first_key(record, *keys):
     for key in keys:
         if key in record and record.get(key) is not None:
             return record.get(key)
     return None
 
 
-def _format_value(value: Any) -> str:
+def _format_value(value) -> str:
     if value is None:
         return "-"
     if isinstance(value, bool):
@@ -51,7 +49,7 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
-def _render_latest_coins(payload: Any) -> None:
+def _render_latest_coins(payload) -> None:
     rows = _coerce_list(payload)
     if not rows:
         console.print("[yellow]No latest coin data returned.[/yellow]")
@@ -88,7 +86,7 @@ def _render_latest_coins(payload: Any) -> None:
     console.print(table)
 
 
-def _render_market_info(payload: Any) -> None:
+def _render_market_info(payload) -> None:
     if isinstance(payload, list):
         payload = payload[0] if payload else {}
     if not isinstance(payload, dict):
@@ -142,75 +140,8 @@ def _render_market_info(payload: Any) -> None:
         console.print(Panel(detail_table, title="Details", border_style="blue"))
 
 
-def _render_raw_json(payload: Any) -> None:
+def _render_raw_json(payload) -> None:
     console.print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
-
-
-def _build_audit_parser(
-    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
-) -> None:
-    parser = subparsers.add_parser("audit", help="Inspect the JSONL audit trail")
-    parser.add_argument("--path", required=True, help="Path to the JSONL audit file")
-    parser.add_argument("--record-type", default=None, help="Filter by record type")
-    parser.add_argument("--state", default=None, help="Filter by state")
-    parser.add_argument("--date-from", default=None, help="Start timestamp or ISO date")
-    parser.add_argument("--date-to", default=None, help="End timestamp or ISO date")
-    parser.add_argument("--mint", default=None, help="Filter by mint address")
-    parser.add_argument("--token-name", default=None, help="Filter by token name")
-    parser.add_argument("--reason", default=None, help="Filter by trade reason")
-    parser.add_argument(
-        "--status", default=None, help="Filter by record outcome/status"
-    )
-    parser.add_argument(
-        "--limit", type=int, default=None, help="Maximum records to return"
-    )
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Print summary statistics instead of rows",
-    )
-    parser.add_argument(
-        "--json", action="store_true", help="Export filtered records as JSON to stdout"
-    )
-    parser.add_argument(
-        "--export", default=None, help="Write filtered records to a JSON file"
-    )
-
-
-def _run_audit_tool(args: argparse.Namespace) -> None:
-    records = load_audit_records(args.path)
-    filtered = filter_audit_records(
-        records,
-        record_type=args.record_type,
-        state=args.state,
-        date_from=args.date_from,
-        date_to=args.date_to,
-        mint=args.mint,
-        token_name=args.token_name,
-        reason=args.reason,
-        status=args.status,
-        limit=args.limit,
-    )
-
-    if args.summary:
-        summary = summarize_audit_records(filtered)
-        console.print(json.dumps(summary, indent=2, sort_keys=True))
-        return
-
-    if args.export:
-        exported = export_audit_records(filtered, args.export)
-        console.print(f"[green]Exported {len(filtered)} records to {exported}[/green]")
-        return
-
-    if args.json:
-        console.print(json.dumps(filtered, indent=2, ensure_ascii=False, default=str))
-        return
-
-    if not filtered:
-        console.print("[yellow]No matching audit records found.[/yellow]")
-        return
-
-    render_audit_table(filtered, console)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -218,7 +149,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Pump.fun public market data CLI and trading bot"
     )
     subparsers = parser.add_subparsers(dest="command")
-    _build_audit_parser(subparsers)
+    build_audit_parser(subparsers)
+    build_replay_parser(subparsers)
 
     parser.add_argument("--mint", type=str, help="Mint address to inspect")
     parser.add_argument(
@@ -229,9 +161,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=["market-info", "latest-coins", "bot"],
+        choices=["market-info", "latest-coins", "bot", "replay"],
         default="market-info",
-        help="market-info: inspect metadata, latest-coins: list coins, bot: run the live launch-monitoring bot",
+        help="market-info: inspect metadata, latest-coins: list coins, bot: run the live launch-monitoring bot, replay: run a historical replay",
     )
     parser.add_argument(
         "--preset",
@@ -283,6 +215,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the raw JSON payload instead of a Rich-formatted view",
     )
+    parser.add_argument(
+        "--replay-path", type=str, help="Path to a JSON/JSONL historical replay dataset"
+    )
+    parser.add_argument(
+        "--replay-mode",
+        choices=["summary", "trades", "dashboard"],
+        default="dashboard",
+        help="Historic replay output mode",
+    )
     return parser
 
 
@@ -290,7 +231,15 @@ def main() -> None:
     args = _build_parser().parse_args()
 
     if args.command == "audit":
-        _run_audit_tool(args)
+        run_audit_cli(args)
+        return
+
+    if args.command == "replay":
+        if not args.path:
+            raise SystemExit("--path is required when using the replay subcommand")
+        from pumpfun_trading.cli.replay import run_replay_cli
+
+        run_replay_cli(argparse.Namespace(replay_path=args.path, replay_mode=args.mode))
         return
 
     if args.mode == "latest-coins":
@@ -340,6 +289,14 @@ def main() -> None:
                 await bot.close()
 
         asyncio.run(_run_bot())
+        return
+
+    if args.mode == "replay":
+        if not args.replay_path:
+            raise SystemExit("--replay-path is required when --mode replay")
+        from pumpfun_trading.cli.replay import run_replay_cli
+
+        run_replay_cli(args)
         return
 
     async def _run_market_info() -> None:

@@ -33,7 +33,9 @@ dependencies = [
 ]
 
 [project.scripts]
-pumpbot = "pumpfun_trading.cli:main"
+pumpbot = "pumpfun_trading.cli.bot:main"
+pumpfun-audit = "pumpfun_trading.cli.audit:run_audit_cli"
+pumpfun-replay = "pumpfun_trading.cli.replay:main"
 
 [project.urls]
 Homepage = "https://github.com/andy-shady-org/pumpfun-trading"
@@ -51,6 +53,7 @@ dev = [
     "nox>=2024.3.2",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
     "pip-audit>=2.7.0",
     "build>=1.2.0",
     "twine>=5.0.0",
@@ -59,3 +62,30 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["pumpfun_trading/tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = [
+    "pumpfun_trading/config",
+    "pumpfun_trading/ops",
+    "pumpfun_trading/services",
+    "pumpfun_trading/strategies",
+]
+branch = true
+omit = [
+    "*/tests/*",
+    "pumpfun_trading/cli/*",
+    "pumpfun_trading/ui/*",
+    "pumpfun_trading/engines/*",
+    "pumpfun_trading/bot/run.py",
+    "pumpfun_trading/bot/strategy.py",
+    "pumpfun_trading/bot/__init__.py",
+    "pumpfun_trading/sdk/*",
+    "pumpfun_trading/api/*",
+    "pumpfun_trading/storage/*",
+    "pumpfun_trading/execution/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 95

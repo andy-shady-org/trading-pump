@@ -62,3 +62,31 @@ def test_sdk_validation_helpers(client):
     assert client.is_valid_pubkey(curve)
     assert client.is_valid_pubkey(associated)
     assert client.is_valid_mint(mint)
+
+
+def test_slippage_normalizer_and_error_classification(client):
+    assert client.normalize_slippage_bps(None, default=250) == 250
+    assert client.normalize_slippage_bps(123) == 123
+    with pytest.raises(ValueError):
+        client.normalize_slippage_bps(10_001)
+    assert client.classify_execution_error("RPC timeout") == "rpc_timeout"
+    assert client.classify_execution_error("HTTP 503") == "server_error"
+    assert client.classify_execution_error("transaction failed") == "transaction_failed"
+
+
+def test_partial_fill_evaluation_and_reassessment(client):
+    fill = client.evaluate_fill_completion(100, 40)
+    assert fill["status"] == "partial"
+    assert fill["remaining_amount"] == 60
+    assert client.should_reassess_partial_fill(100, 40) is True
+    assert client.should_reassess_partial_fill(100, 100) is False
+    assert client.should_reassess_partial_fill(100, 0) is False
+
+
+def test_execution_lock_and_health_score_update(client):
+    assert client.execution_health_score == 100.0
+    assert client.failed_execution_attempts == 0
+    client.execution_health_score = 20.0
+    client.failed_execution_attempts = 2
+    assert client.execution_health_score < 100.0
+    assert client.failed_execution_attempts == 2

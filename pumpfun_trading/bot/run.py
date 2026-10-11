@@ -9,56 +9,43 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
-from enum import Enum
 from typing import Any
 
 import websockets
 from dotenv import load_dotenv
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.table import Table
 
 from pumpfun_trading.api.client import PumpFunApiClient
+from pumpfun_trading.bot.health import (
+    health_ok_for_trading,
+    mark_health_check,
+    update_health_state,
+)
+from pumpfun_trading.bot.lifecycle import (
+    TradingBotState,
+    VALID_STATE_TRANSITIONS,
+)
+from pumpfun_trading.bot.risk import (
+    check_daily_drawdown,
+    check_loss_per_trade,
+    check_risk_limits,
+)
 from pumpfun_trading.bot.strategy import TradingBotConfig, resolve_strategy_config
-
-
-class TradingBotState(str, Enum):
-    IDLE = "idle"
-    MONITORING = "monitoring"
-    BUYING = "buying"
-    HOLDING = "holding"
-    SELLING = "selling"
-    SHUTDOWN = "shutdown"
+from pumpfun_trading.ui.dashboard import build_dashboard
+from pumpfun_trading.config.env import (
+    sanitize_env_for_logging,
+)
+from pumpfun_trading.ops.logging import setup_structured_logging
 
 
 class TradingBot:
     """Production-ready Pump.fun trading bot with strategy presets and lifecycle safeguards."""
 
-    _VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = {
-        TradingBotState.IDLE: {TradingBotState.MONITORING, TradingBotState.SHUTDOWN},
-        TradingBotState.MONITORING: {
-            TradingBotState.BUYING,
-            TradingBotState.HOLDING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.BUYING: {
-            TradingBotState.HOLDING,
-            TradingBotState.MONITORING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.HOLDING: {
-            TradingBotState.SELLING,
-            TradingBotState.MONITORING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.SELLING: {
-            TradingBotState.MONITORING,
-            TradingBotState.HOLDING,
-            TradingBotState.SHUTDOWN,
-        },
-        TradingBotState.SHUTDOWN: set(),
-    }
+    _VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = (
+        VALID_STATE_TRANSITIONS
+    )
 
     def __init__(
         self,
@@ -80,6 +67,7 @@ class TradingBot:
         log_file: str | None = None,
         strategy_preset: str = "balanced",
         audit_log_path: str | None = None,
+        bot_status_path: str | None = None,
     ):
         resolved = resolve_strategy_config(
             strategy_preset,
@@ -188,24 +176,27 @@ class TradingBot:
             "latency_ms": deque(maxlen=200),
         }
 
-        self.logger = logging.getLogger("pumpfun_trading.bot")
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
-        self.logger.handlers.clear()
-
         resolved_log_file = log_file or os.path.join(
             tempfile.gettempdir(), "pumpfun_trading_bot.log"
         )
-        handler = logging.FileHandler(resolved_log_file)
-        formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
 
-        self.audit_log_path = (
-            audit_log_path
-            or os.getenv("PUMPFUN_AUDIT_LOG")
-            or os.path.join(tempfile.gettempdir(), "pumpfun_trading_audit.jsonl")
+        self.logger = setup_structured_logging(
+            logger_name="pumpfun_trading.bot",
+            log_file=resolved_log_file,
+            console=self.verbose,
         )
+        self.logger.setLevel(logging.INFO)
+        self.logger.info(
+            "bot_startup_configuration",
+            extra={
+                "event": "bot_startup_configuration",
+                "runtime_env": sanitize_env_for_logging(),
+                "dry_run": self.dry_run,
+                "paper_trade": self.paper_trade,
+            },
+        )
+
+        self.audit_log_path = audit_log_path or os.getenv("PUMPFUN_AUDIT_LOG")
         self._audit_handle = None
         if self.audit_log_path:
             directory = os.path.dirname(self.audit_log_path)
@@ -213,9 +204,8 @@ class TradingBot:
                 os.makedirs(directory, exist_ok=True)
             self._audit_handle = open(self.audit_log_path, "a", encoding="utf-8")
 
-        self.bot_status_path = os.getenv("PUMPFUN_BOT_STATUS_PATH") or os.path.join(
-            os.getcwd(), "bot_status.json"
-        )
+        self.bot_status_path = bot_status_path or os.getenv("PUMPFUN_BOT_STATUS_PATH")
+
         self.alert_provider = (
             (os.getenv("PUMPFUN_ALERT_PROVIDER") or "none").strip().lower()
         )
@@ -228,6 +218,7 @@ class TradingBot:
         self._recent_events: deque[str] = deque(maxlen=8)
 
         self.api = PumpFunApiClient(base_url=self.api_base_url)
+        self.safe_startup()
 
     def _configure_alerting(self) -> None:
         provider = self.alert_provider
@@ -315,6 +306,8 @@ class TradingBot:
             )
 
     def _write_status_snapshot(self) -> None:
+        if not self.bot_status_path:
+            return
         snapshot = self.get_status_snapshot()
         snapshot.update(
             {
@@ -338,6 +331,135 @@ class TradingBot:
         with open(self.bot_status_path, "w", encoding="utf-8") as handle:
             json.dump(snapshot, handle, sort_keys=True, indent=2)
             handle.write("\n")
+
+    def safe_startup(self) -> None:
+        """Restore a persisted bot snapshot when the process restarts."""
+        if not self.bot_status_path or not os.path.exists(self.bot_status_path):
+            return
+
+        try:
+            with open(self.bot_status_path, "r", encoding="utf-8") as handle:
+                snapshot = json.load(handle)
+        except (OSError, TypeError, ValueError):
+            self._log(
+                f"Persisted status file at {self.bot_status_path} could not be read; starting fresh.",
+                level=logging.WARNING,
+            )
+            return
+
+        if not isinstance(snapshot, dict):
+            self._log(
+                f"Persisted status file at {self.bot_status_path} has an invalid format; starting fresh.",
+                level=logging.WARNING,
+            )
+            return
+
+        positions = snapshot.get("active_positions")
+        if isinstance(positions, dict):
+            restored_positions: dict[str, dict[str, Any]] = {}
+            for mint, position in positions.items():
+                if not isinstance(position, dict):
+                    continue
+                normalized = {
+                    key: value
+                    for key, value in dict(position).items()
+                    if key not in {"entry_market_cap", "current_market_cap"}
+                }
+                normalized["entry_market_cap"] = float(
+                    position.get("entry_market_cap", 0.0) or 0.0
+                )
+                normalized["current_market_cap"] = float(
+                    position.get("current_market_cap", 0.0) or 0.0
+                )
+                restored_positions[str(mint)] = normalized
+            self.active_positions = restored_positions
+        elif isinstance(positions, list):
+            self.active_positions = {}
+
+        buy_attempts = snapshot.get("buy_attempts", {})
+        if isinstance(buy_attempts, dict):
+            self._buy_attempts = {
+                str(key): int(value)
+                for key, value in buy_attempts.items()
+                if isinstance(value, (int, float))
+            }
+
+        seen_mints = snapshot.get("seen_mints", {})
+        if isinstance(seen_mints, dict):
+            self._seen_mints = {
+                str(key): float(value)
+                for key, value in seen_mints.items()
+                if isinstance(value, (int, float))
+            }
+
+        trade_ledger = snapshot.get("trade_ledger", [])
+        if isinstance(trade_ledger, list):
+            self._trade_ledger = [
+                item for item in trade_ledger if isinstance(item, dict)
+            ]
+
+        recent_actions = snapshot.get("recent_actions", [])
+        if isinstance(recent_actions, list):
+            self._recent_actions = deque(maxlen=50)
+            for item in recent_actions:
+                if isinstance(item, dict):
+                    self._recent_actions.append(item)
+
+        recent_events = snapshot.get("recent_events", [])
+        if isinstance(recent_events, list):
+            self._recent_events = deque(maxlen=8)
+            for item in recent_events:
+                self._recent_events.append(str(item))
+
+        if "state" in snapshot:
+            try:
+                self.state = TradingBotState(snapshot["state"])
+            except ValueError:
+                self.state = TradingBotState.IDLE
+
+        self._health_ok = bool(snapshot.get("health_ok", self._health_ok))
+        self._risk_killed = bool(snapshot.get("risk_killed", self._risk_killed))
+        self._stop_requested = bool(snapshot.get("stop_requested", False))
+        self._last_message_at = float(
+            snapshot.get("last_message_at", self._last_message_at)
+        )
+        self._last_event = str(snapshot.get("last_event", self._last_event))
+        self._last_status = str(snapshot.get("last_status", self._last_status))
+        self._last_new_token = str(snapshot.get("last_new_token", self._last_new_token))
+        self._last_new_token_name = str(
+            snapshot.get("last_new_token_name", self._last_new_token_name)
+        )
+        self._trade_sequence = max(
+            int(snapshot.get("trade_sequence", self._trade_sequence)),
+            len(self._trade_ledger),
+        )
+
+        metrics = snapshot.get("metrics", {})
+        if isinstance(metrics, dict):
+            self._metrics = {
+                "buys": int(metrics.get("buys", self._metrics.get("buys", 0))),
+                "sells": int(metrics.get("sells", self._metrics.get("sells", 0))),
+                "failures": int(
+                    metrics.get("failures", self._metrics.get("failures", 0))
+                ),
+                "retries": int(metrics.get("retries", self._metrics.get("retries", 0))),
+                "connection_loss": int(
+                    metrics.get(
+                        "connection_loss",
+                        self._metrics.get("connection_loss", 0),
+                    )
+                ),
+                "stale_data": int(
+                    metrics.get("stale_data", self._metrics.get("stale_data", 0))
+                ),
+                "latency_ms": deque(maxlen=200),
+            }
+
+        self._log(
+            f"Restored persisted bot state from {self.bot_status_path} with {len(self.active_positions)} active positions.",
+            level=logging.INFO,
+        )
+        self._write_status_snapshot()
 
     def _transition_to(
         self, next_state: TradingBotState, *, reason: str | None = None
@@ -554,209 +676,7 @@ class TradingBot:
         return snapshot
 
     def _render_dashboard(self) -> Panel:
-        strategy = Table.grid(expand=True)
-        strategy.add_column(justify="left")
-        strategy.add_column(justify="right")
-        strategy.add_row("Preset", self.config.strategy_preset)
-        strategy.add_row("Buy amount", f"{self.config.buy_amount_sol:.4f} SOL")
-        strategy.add_row("Take profit", f"{self.config.take_profit:.2%}")
-        strategy.add_row("Stop loss", f"{self.config.stop_loss:.2%}")
-        strategy.add_row("Max active", str(self.max_active_positions))
-        strategy.add_row("Min market cap", f"{self.min_market_cap_sol:.2f} SOL")
-        strategy.add_row("Dry run", "yes" if self.dry_run else "no")
-        strategy.add_row("Paper trade", "yes" if self.paper_trade else "no")
-        strategy.add_row("", "")
-        strategy.add_row("", "")
-
-        risk = Table.grid(expand=True)
-        risk.add_column(justify="left")
-        risk.add_column(justify="right")
-        risk.add_row(
-            "Max total exposure", f"{self.config.max_total_exposure_sol:.2f} SOL"
-        )
-        risk.add_row(
-            "Max position size", f"{self.config.max_position_size_sol:.2f} SOL"
-        )
-        risk.add_row(
-            "Max loss / trade", f"{self.config.max_loss_per_trade_sol:.2f} SOL"
-        )
-        risk.add_row("Daily drawdown", f"{self.config.max_daily_drawdown_pct:.2%}")
-        risk.add_row("Reserve balance", f"{self.config.reserve_balance_sol:.2f} SOL")
-        risk.add_row("Health timeout", f"{self.config.health_check_timeout_seconds}s")
-        risk.add_row("Risk killed", "yes" if self._risk_killed else "no")
-        risk.add_row("Equity guard", "enabled" if not self.dry_run else "dry-run")
-        risk.add_row("", "")
-        risk.add_row("", "")
-
-        bot_status = Table.grid(expand=True)
-        bot_status.add_column(justify="left")
-        bot_status.add_column(justify="right")
-        bot_status.add_row("State", str(self.state.value))
-        bot_status.add_row("Health", "ok" if self._health_ok else "degraded")
-        bot_status.add_row("Risk killed", "yes" if self._risk_killed else "no")
-        bot_status.add_row("Active positions", str(len(self.active_positions)))
-        bot_status.add_row("Last event", self._last_event)
-        bot_status.add_row("Status", str(self._last_status))
-        bot_status.add_row(
-            "Last message",
-            (
-                f"{time.time() - self._last_message_at:.1f}s ago"
-                if self._last_message_at
-                else "never"
-            ),
-        )
-        bot_status.add_row("Stream URL", self.stream_url)
-        bot_status.add_row("Audit log", str(self.audit_log_path))
-        bot_status.add_row("Last new token", self._last_new_token_name)
-
-        health = Table.grid(expand=True)
-        health.add_column(justify="left")
-        health.add_column(justify="right")
-        health.add_row(
-            "Heartbeat",
-            f"{max(0.0, time.monotonic() - self._last_health_check):.1f}s ago",
-        )
-        health.add_row(
-            "Last message",
-            (
-                f"{time.time() - self._last_message_at:.1f}s ago"
-                if self._last_message_at
-                else "never"
-            ),
-        )
-        health.add_row("Health timeout", f"{self.config.health_check_timeout_seconds}s")
-        health.add_row("API/WS health", "ok" if self._health_ok else "degraded")
-        health.add_row("Risk killed", "yes" if self._risk_killed else "no")
-        health.add_row("Stop requested", "yes" if self._stop_requested else "no")
-        health.add_row("Last status", str(self._last_status))
-        health.add_row("Last event", self._last_event)
-
-        overview_height = max(
-            len(strategy.rows),
-            len(risk.rows),
-            len(bot_status.rows),
-            len(health.rows),
-        )
-
-        overview = Table.grid(expand=True)
-        overview.add_column(ratio=1)
-        overview.add_column(ratio=1)
-        overview.add_column(ratio=1)
-        overview.add_column(ratio=1)
-        overview.add_row(
-            Panel(
-                strategy, title="Strategy", border_style="cyan", height=overview_height
-            ),
-            Panel(risk, title="Risk", border_style="red", height=overview_height),
-            Panel(
-                bot_status,
-                title="Bot Status",
-                border_style="blue",
-                height=overview_height,
-            ),
-            Panel(
-                health,
-                title="Health Check",
-                border_style="yellow",
-                height=overview_height,
-            ),
-        )
-
-        positions_table = Table(show_lines=True, expand=True)
-        positions_table.add_column("Name", style="cyan")
-        positions_table.add_column("Mint", style="green")
-        positions_table.add_column("Entry", justify="right")
-        positions_table.add_column("Current", justify="right")
-        positions_table.add_column("Perf", justify="right")
-        positions_table.add_column("Reason", style="yellow")
-
-        if self.active_positions:
-            for mint, position in self.active_positions.items():
-                name = str(position.get("name") or mint)
-                entry = float(position.get("entry_market_cap", 0.0) or 0.0)
-                current = float(position.get("current_market_cap", 0.0) or 0.0)
-                performance = (current / entry) if entry > 0 else 1.0
-                reason = str(position.get("reason") or "watch")
-                positions_table.add_row(
-                    name[:18],
-                    mint[:8] + "...",
-                    f"{entry:.2f}",
-                    f"{current:.2f}",
-                    f"{performance:.2%}",
-                    reason,
-                )
-        else:
-            positions_table.add_row("No active positions.", "-", "-", "-", "-", "-")
-
-        runtime = Table.grid(expand=True)
-        runtime.add_column(justify="left")
-        runtime.add_column(justify="right")
-        runtime.add_row(
-            "Last message",
-            (
-                f"{time.time() - self._last_message_at:.1f}s ago"
-                if self._last_message_at
-                else "never"
-            ),
-        )
-        runtime.add_row("Last token", self._last_new_token_name)
-        runtime.add_row("Stream URL", self.stream_url)
-        runtime.add_row("Observed", str(len(self._recent_events)))
-
-        metrics = self._metrics_snapshot()
-        metrics_table = Table.grid(expand=True)
-        metrics_table.add_column(justify="left")
-        metrics_table.add_column(justify="right")
-        for key in (
-            "buys",
-            "sells",
-            "failures",
-            "retries",
-            "connection_loss",
-            "stale_data",
-        ):
-            metrics_table.add_row(key, str(metrics.get(key, 0)))
-        metrics_table.add_row("latency avg", f"{metrics['latency_ms']['avg_ms']} ms")
-
-        events = list(self._recent_events)[-6:]
-        event_lines = [f"• {event}" for event in events] or ["No events yet."]
-
-        ledger_lines: list[str] = []
-        for record in reversed(self._trade_ledger[-5:]):
-            action = record.get("action", "trade")
-            reason = record.get("reason") or "unknown"
-            mint = record.get("mint", "-")[:8]
-            if action == "buy":
-                ledger_lines.append(
-                    f"{action.upper()} {mint} @ {record.get('entry')} | {reason}"
-                )
-            else:
-                ledger_lines.append(
-                    f"{action.upper()} {mint} -> {record.get('exit')} | {reason}"
-                )
-        if not ledger_lines:
-            ledger_lines = ["No trades recorded yet."]
-
-        audit_group = Group(
-            Panel("\n".join(event_lines), title="Events", border_style="cyan"),
-            Panel("\n".join(ledger_lines), title="Trade Ledger", border_style="green"),
-        )
-
-        runtime_group = Group(
-            Panel(positions_table, title="Open Positions", border_style="green"),
-            Panel(runtime, title="Coin Polling", border_style="yellow"),
-        )
-
-        return Panel(
-            Group(
-                Panel(overview, title="Overview", border_style="blue"),
-                Panel(runtime_group, title="Run Time", border_style="yellow"),
-                Panel(audit_group, title="Audit Trail", border_style="magenta"),
-                Panel(metrics_table, title="Metrics", border_style="magenta"),
-            ),
-            title="Trading Bot",
-            border_style="white",
-        )
+        return build_dashboard(self)
 
     def _next_position_id(self) -> str:
         return self._next_trade_id()
@@ -777,125 +697,6 @@ class TradingBot:
             )
             return False
         return True
-
-    async def _resolve_token_name(
-        self, mint: str, token_name: str | None = None
-    ) -> str | None:
-        if token_name and token_name.strip():
-            return token_name.strip()
-        return None
-
-    async def _unsubscribe_from_token_trades(self, websocket, mint: str) -> None:
-        _ = websocket, mint
-        return None
-
-    def _check_risk_limits(
-        self,
-        *,
-        mint: str,
-        proposed_entry_sol: float,
-        current_positions: dict[str, dict[str, Any]],
-    ) -> bool:
-        total_exposure = sum(
-            float(pos.get("entry_market_cap", 0.0) or 0.0)
-            for pos in current_positions.values()
-        )
-        if total_exposure + proposed_entry_sol > self.config.max_total_exposure_sol:
-            self._last_event = (
-                f"risk limit: max exposure {self.config.max_total_exposure_sol:.2f} SOL"
-            )
-            return False
-        if proposed_entry_sol > self.config.max_position_size_sol:
-            self._last_event = (
-                f"risk limit: position cap {self.config.max_position_size_sol:.2f} SOL"
-            )
-            return False
-        if mint in current_positions:
-            self._last_event = f"risk limit: mint already active {mint[:8]}..."
-            return False
-
-        if current_positions:
-            max_per_token_ratio = (
-                max(
-                    float(pos.get("entry_market_cap", 0.0) or 0.0)
-                    / self.config.max_total_exposure_sol
-                    for pos in current_positions.values()
-                )
-                if self.config.max_total_exposure_sol > 0
-                else 0.0
-            )
-            if max_per_token_ratio > float(
-                getattr(self.config, "max_token_concentration_pct", 0.35)
-            ):
-                self._last_event = (
-                    "risk limit: per-token concentration cap reached "
-                    f"({max_per_token_ratio:.2%} > {float(getattr(self.config, 'max_token_concentration_pct', 0.35)):.2%})"
-                )
-                return False
-
-        return True
-
-    def _check_daily_drawdown(self) -> bool:
-        if not self.active_positions:
-            return True
-
-        total_equity = sum(
-            float(pos.get("entry_market_cap", 0.0) or 0.0)
-            for pos in self.active_positions.values()
-        )
-        if total_equity <= 0:
-            return True
-
-        drawdown = 1.0 - (
-            sum(
-                float(pos.get("current_market_cap", 0.0) or 0.0)
-                for pos in self.active_positions.values()
-            )
-            / total_equity
-        )
-        if drawdown > self.config.max_daily_drawdown_pct:
-            self._last_event = f"risk limit: daily drawdown {drawdown:.2%} exceeds {self.config.max_daily_drawdown_pct:.2%}"
-            return False
-        return True
-
-    def _check_loss_per_trade(
-        self, *, mint: str, current_market_cap: float | None = None
-    ) -> bool:
-        position = self.active_positions.get(mint)
-        if position is None:
-            return True
-
-        if current_market_cap is None:
-            current_market_cap = float(position.get("current_market_cap", 0.0) or 0.0)
-        entry_market_cap = float(position.get("entry_market_cap", 0.0) or 0.0)
-        if entry_market_cap <= 0:
-            return True
-
-        loss_ratio = 1.0 - (current_market_cap / entry_market_cap)
-        if loss_ratio > self.config.max_loss_per_trade_sol / self.config.buy_amount_sol:
-            self._last_event = f"risk limit: trade loss {loss_ratio:.2%} exceeds max {self.config.max_loss_per_trade_sol / self.config.buy_amount_sol:.2%}"
-            return False
-        return True
-
-    def _health_ok_for_trading(self) -> bool:
-        if self._stop_requested or self._risk_killed:
-            return False
-        if not self._health_ok:
-            return False
-        if (
-            time.monotonic() - self._last_health_check
-            > self.config.health_check_timeout_seconds
-        ):
-            self._last_status = "health timeout"
-            self._health_ok = False
-            self._risk_killed = True
-            self._last_event = "risk kill: health timeout"
-            return False
-        return True
-
-    def _mark_health_check(self) -> None:
-        self._last_health_check = time.monotonic()
-        self._health_ok = True
 
     async def _check_account_equity_guard(self, *, required_sol: float) -> bool:
         if self.dry_run:
@@ -923,34 +724,76 @@ class TradingBot:
             return False
         return True
 
+    async def _resolve_token_name(
+        self, mint: str, token_name: str | None = None
+    ) -> str | None:
+        if token_name and token_name.strip():
+            return token_name.strip()
+        return None
+
+    async def _unsubscribe_from_token_trades(self, websocket, mint: str) -> None:
+        _ = websocket, mint
+        return None
+
+    def _check_risk_limits(
+        self,
+        *,
+        mint: str,
+        proposed_entry_sol: float,
+        current_positions: dict[str, dict[str, Any]],
+    ) -> bool:
+        return check_risk_limits(
+            self,
+            mint=mint,
+            proposed_entry_sol=proposed_entry_sol,
+            current_positions=current_positions,
+        )
+
+    def _check_daily_drawdown(self) -> bool:
+        return check_daily_drawdown(self)
+
+    def _check_loss_per_trade(
+        self, *, mint: str, current_market_cap: float | None = None
+    ) -> bool:
+        return check_loss_per_trade(
+            self, mint=mint, current_market_cap=current_market_cap
+        )
+
+    def _health_ok_for_trading(self) -> bool:
+        return health_ok_for_trading(self)
+
+    def _mark_health_check(self) -> None:
+        mark_health_check(self)
+
     async def _update_health_state(self) -> None:
-        if self._stop_requested:
-            return
-        if (
-            time.monotonic() - self._last_message_at
-            > self.config.health_check_timeout_seconds
-        ):
-            if self._health_ok:
-                self._health_ok = False
-                self._risk_killed = True
-                self._last_status = "health timeout"
-                self._last_event = "risk kill: websocket stale"
-                self._log(
-                    "WebSocket health stale: no messages received within the configured health timeout.",
-                    level=logging.CRITICAL,
-                )
-        else:
-            self._mark_health_check()
+        update_health_state(self)
 
     def get_status_snapshot(self) -> dict[str, Any]:
         return {
-            "active_positions": list(self.active_positions.keys()),
+            "active_positions": {
+                mint: {
+                    key: value
+                    for key, value in position.items()
+                    if key not in {"entry_market_cap", "current_market_cap"}
+                }
+                | {
+                    "entry_market_cap": float(
+                        position.get("entry_market_cap", 0.0) or 0.0
+                    ),
+                    "current_market_cap": float(
+                        position.get("current_market_cap", 0.0) or 0.0
+                    ),
+                }
+                for mint, position in self.active_positions.items()
+            },
             "trade_count": len(self.active_positions),
             "stop_requested": self._stop_requested,
             "dry_run": self.dry_run,
             "paper_trade": self.paper_trade,
             "last_message_at": self._last_message_at,
             "buy_attempts": dict(self._buy_attempts),
+            "seen_mints": dict(self._seen_mints),
+            "trade_sequence": self._trade_sequence,
             "strategy": self.config.strategy_preset,
             "health_ok": self._health_ok,
             "risk_killed": self._risk_killed,

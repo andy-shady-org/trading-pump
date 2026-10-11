@@ -219,3 +219,78 @@ def test_bot_metrics_track_buy_sell_failures_and_latency():
     )
     assert bot._metrics_snapshot()["buys"] >= 3
     assert bot._metrics_snapshot()["sells"] >= 2
+
+
+def test_bot_restores_persisted_state(tmp_path):
+    status_path = tmp_path / "status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "active_positions": {
+                    "So11111111111111111111111111111111111111112": {
+                        "name": "PersistedCoin",
+                        "entry_market_cap": 25.0,
+                        "current_market_cap": 27.5,
+                    }
+                },
+                "buy_attempts": {"So11111111111111111111111111111111111111112": 1},
+                "seen_mints": {"So11111111111111111111111111111111111111112": 123.0},
+                "trade_ledger": [
+                    {
+                        "action": "buy",
+                        "mint": "So11111111111111111111111111111111111111112",
+                    }
+                ],
+                "recent_actions": [
+                    {
+                        "type": "trade",
+                        "payload": {
+                            "mint": "So11111111111111111111111111111111111111112"
+                        },
+                    }
+                ],
+                "recent_events": ["restored"],
+                "state": "holding",
+                "health_ok": True,
+                "risk_killed": False,
+                "stop_requested": False,
+                "last_message_at": 12.0,
+                "last_event": "restored",
+                "last_status": "restored",
+                "last_new_token": "So11111111111111111111111111111111111111112",
+                "last_new_token_name": "PersistedCoin",
+                "trade_sequence": 3,
+                "metrics": {
+                    "buys": 1,
+                    "sells": 0,
+                    "failures": 0,
+                    "retries": 0,
+                    "connection_loss": 0,
+                    "stale_data": 0,
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        bot_status_path=str(status_path),
+    )
+
+    assert (
+        bot.active_positions["So11111111111111111111111111111111111111112"]["name"]
+        == "PersistedCoin"
+    )
+    assert (
+        bot.active_positions["So11111111111111111111111111111111111111112"][
+            "current_market_cap"
+        ]
+        == 27.5
+    )
+    assert bot.state == "holding"
+    assert bot._trade_sequence >= 3
+    assert "restored" in list(bot._recent_events)

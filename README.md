@@ -4,6 +4,7 @@ A lightweight Python package for [Pump.fun](https://pump.fun) public market data
 
 <div align="center">
 <a href="https://pypi.org/project/pumpfun-trading/"><img src="https://img.shields.io/pypi/v/pumpfun-trading" alt="PyPi"/></a>
+<a href="https://codecov.io/gh/andy-shady-org/pumpfun-trading"><img src="https://codecov.io/gh/andy-shady-org/pumpfun-trading/branch/main/graph/badge.svg" alt="Coverage"/></a>
 <a href="https://github.com/andy-shady-org/pumpfun-trading/stargazers"><img src="https://img.shields.io/github/stars/andy-shady-org/pumpfun-trading?style=flat" alt="Stars Badge"/></a>
 <a href="https://github.com/andy-shady-org/pumpfun-trading/network/members"><img src="https://img.shields.io/github/forks/andy-shady-org/pumpfun-trading?style=flat" alt="Forks Badge"/></a>
 <a href="https://github.com/andy-shady-org/pumpfun-trading/issues"><img src="https://img.shields.io/github/issues/andy-shady-org/pumpfun-trading" alt="Issues Badge"/></a>
@@ -188,4 +189,24 @@ pumpbot audit --path .data/pumpfun_trading_audit.jsonl --json
 pumpbot audit --path .data/pumpfun_trading_audit.jsonl --export ./audit-export.json
 ```
 
-See `AUDIT-TOOL.md` for the full audit investigation workflow and examples.
+See [AUDIT-TOOL.md](./docs/AUDIT-TOOL.md) for the full audit investigation workflow and examples.
+
+## Replay engine and historical strategy validation
+
+The project now includes a dedicated replay engine for evaluating trading decisions against historical market snapshots without touching the live bot dashboard. This is implemented as a separate UI path so the live bot runtime remains unchanged while replay analysis runs in its own Rich panel flow.
+
+```bash
+pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode dashboard
+pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode summary
+pumpbot --mode replay --replay-path ./historical_snapshots.json --replay-mode trades
+```
+
+The replay mode loads JSON or JSONL snapshot data, runs a lightweight paper-trading engine with fee/slippage assumptions, and prints metrics such as:
+
+- profit factor
+- max drawdown
+- win rate
+- average trade return
+- final equity and total trade count
+
+See [REPLAY-ENGINE.md](./docs/REPLAY-ENGINE.md) for the full replay workflow, dataset format, and UI separation details.
