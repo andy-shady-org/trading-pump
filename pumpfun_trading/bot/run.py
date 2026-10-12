@@ -37,7 +37,6 @@ from pumpfun_trading.bot.strategy import (
     DevWalletProfile,
     ExitAction,
     HolderDistribution,
-    MomentumSignal,
     OrderFlowEngine,
     PositionExitState,
     ScreeningCache,

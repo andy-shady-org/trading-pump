@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import (
     TokenScreeningVerdict,
