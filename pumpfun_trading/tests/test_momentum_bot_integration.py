@@ -167,7 +167,9 @@ async def test_momentum_buy_screen_rejected_when_anti_rug_fails(bot):
         reasons=["Dev launched > 5 tokens in 24h"],
     )
 
-    with patch.object(bot, "_enrich_and_screen_token", new_callable=AsyncMock) as mock_screen:
+    with patch.object(
+        bot, "_enrich_and_screen_token", new_callable=AsyncMock
+    ) as mock_screen:
         mock_screen.return_value = failed_verdict
 
         for i in range(4):
@@ -239,6 +241,8 @@ async def test_websocket_trade_update_records_in_engine(bot):
         "marketCapSol": 25.0,
     }
     await bot._handle_trade_update(trade_data)
-    metrics = bot.order_flow_engine.get_metrics(SAMPLE_MINT, window_seconds=30, current_time=123460.0)
+    metrics = bot.order_flow_engine.get_metrics(
+        SAMPLE_MINT, window_seconds=30, current_time=123460.0
+    )
     assert metrics.trade_count == 1
     assert metrics.buy_volume_sol == 1.25

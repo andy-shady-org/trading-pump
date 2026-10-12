@@ -139,9 +139,7 @@ class PaperTradingEngine:
         )
 
     @staticmethod
-    def _buy_signal(
-        snapshot: dict[str, Any], momentum_triggered: bool = False
-    ) -> bool:
+    def _buy_signal(snapshot: dict[str, Any], momentum_triggered: bool = False) -> bool:
         if isinstance(snapshot.get("buy_signal"), bool):
             return bool(snapshot["buy_signal"])
         if isinstance(snapshot.get("signal"), str):
@@ -284,9 +282,7 @@ class PaperTradingEngine:
                         }
                         cash -= gross_cost
                         buy_reason = (
-                            "momentum_spike"
-                            if momentum_triggered
-                            else "buy_signal"
+                            "momentum_spike" if momentum_triggered else "buy_signal"
                         )
                         trades.append(
                             {

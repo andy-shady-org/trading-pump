@@ -233,9 +233,21 @@ def test_strategy_momentum_decision_pipeline():
     # Ingest trades to create breakout
     for slice_idx in range(1, 10):
         t = base_time - (slice_idx * 30 + 15)
-        engine.record_trade("TokenBreakout", is_buy=True, sol_amount=0.05, user=f"OldUser{slice_idx}", timestamp=t)
+        engine.record_trade(
+            "TokenBreakout",
+            is_buy=True,
+            sol_amount=0.05,
+            user=f"OldUser{slice_idx}",
+            timestamp=t,
+        )
     for i in range(5):
-        engine.record_trade("TokenBreakout", is_buy=True, sol_amount=1.0, user=f"NewBuyer{i}", timestamp=base_time - 10 + i)
+        engine.record_trade(
+            "TokenBreakout",
+            is_buy=True,
+            sol_amount=1.0,
+            user=f"NewBuyer{i}",
+            timestamp=base_time - 10 + i,
+        )
 
     signal = strategy.evaluate_momentum(
         engine,
@@ -248,20 +260,26 @@ def test_strategy_momentum_decision_pipeline():
     assert signal.unique_buyers >= 3
 
     # Check should_buy_momentum
-    assert strategy.should_buy_momentum(
-        momentum_signal=signal,
-        active_positions=0,
-        buy_attempts=0,
-        mint_seen_recently=False,
-    ) is True
+    assert (
+        strategy.should_buy_momentum(
+            momentum_signal=signal,
+            active_positions=0,
+            buy_attempts=0,
+            mint_seen_recently=False,
+        )
+        is True
+    )
 
     # Check rejection when active positions full
-    assert strategy.should_buy_momentum(
-        momentum_signal=signal,
-        active_positions=1,
-        buy_attempts=0,
-        mint_seen_recently=False,
-    ) is False
+    assert (
+        strategy.should_buy_momentum(
+            momentum_signal=signal,
+            active_positions=1,
+            buy_attempts=0,
+            mint_seen_recently=False,
+        )
+        is False
+    )
 
     # Check rejection when signal not triggered
     failed_signal = MomentumSignal(
@@ -287,11 +305,14 @@ def test_strategy_momentum_decision_pipeline():
         ),
         reason="failed",
     )
-    assert strategy.should_buy_momentum(
-        momentum_signal=failed_signal,
-        active_positions=0,
-        buy_attempts=0,
-    ) is False
+    assert (
+        strategy.should_buy_momentum(
+            momentum_signal=failed_signal,
+            active_positions=0,
+            buy_attempts=0,
+        )
+        is False
+    )
 
     # Check summary contains momentum
     summary = strategy.summary()

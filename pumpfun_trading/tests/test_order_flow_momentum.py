@@ -1,6 +1,5 @@
 """Unit tests for OrderFlowEngine, sliding window analytics, and velocity Z-score detector."""
 
-
 from pumpfun_trading.strategies.momentum import (
     MomentumSignal,
     OrderFlowEngine,
@@ -81,11 +80,21 @@ def test_token_tracker_sliding_window_metrics_and_eviction() -> None:
     base_time = 1000.0
 
     # Record 4 buys and 1 sell within 15 seconds
-    tracker.record_trade(is_buy=True, sol_amount=1.0, user="User1", timestamp=base_time + 1)
-    tracker.record_trade(is_buy=True, sol_amount=2.0, user="User2", timestamp=base_time + 5)
-    tracker.record_trade(is_buy=False, sol_amount=0.5, user="User3", timestamp=base_time + 10)
-    tracker.record_trade(is_buy=True, sol_amount=1.5, user="User1", timestamp=base_time + 12)
-    tracker.record_trade(is_buy=True, sol_amount=0.5, user="User4", timestamp=base_time + 14)
+    tracker.record_trade(
+        is_buy=True, sol_amount=1.0, user="User1", timestamp=base_time + 1
+    )
+    tracker.record_trade(
+        is_buy=True, sol_amount=2.0, user="User2", timestamp=base_time + 5
+    )
+    tracker.record_trade(
+        is_buy=False, sol_amount=0.5, user="User3", timestamp=base_time + 10
+    )
+    tracker.record_trade(
+        is_buy=True, sol_amount=1.5, user="User1", timestamp=base_time + 12
+    )
+    tracker.record_trade(
+        is_buy=True, sol_amount=0.5, user="User4", timestamp=base_time + 14
+    )
 
     # Metrics over 15s window (at t = 1015)
     m15 = tracker.get_window_metrics(window_seconds=15, current_time=base_time + 15)
@@ -109,7 +118,9 @@ def test_token_tracker_sliding_window_metrics_and_eviction() -> None:
     assert m5.sell_volume_sol == 0.5
 
     # Check retention eviction: record trade at t = 1080 (older than 60s from base_time + 1)
-    tracker.record_trade(is_buy=True, sol_amount=1.0, user="User5", timestamp=base_time + 80)
+    tracker.record_trade(
+        is_buy=True, sol_amount=1.0, user="User5", timestamp=base_time + 80
+    )
     # The first trade at t=1001 should be pruned since 1080 - 60 = 1020
     assert len(tracker.trades) == 1
     assert tracker.trades[0].user == "User5"
@@ -119,8 +130,12 @@ def test_token_tracker_zero_sell_volume_ratio() -> None:
     tracker = TokenOrderFlowTracker(mint="MintZeroSell")
     base_time = 1000.0
 
-    tracker.record_trade(is_buy=True, sol_amount=2.0, user="Buyer1", timestamp=base_time + 1)
-    tracker.record_trade(is_buy=True, sol_amount=3.0, user="Buyer2", timestamp=base_time + 2)
+    tracker.record_trade(
+        is_buy=True, sol_amount=2.0, user="Buyer1", timestamp=base_time + 1
+    )
+    tracker.record_trade(
+        is_buy=True, sol_amount=3.0, user="Buyer2", timestamp=base_time + 2
+    )
 
     metrics = tracker.get_window_metrics(window_seconds=30, current_time=base_time + 10)
     assert metrics.sell_volume_sol == 0.0
@@ -149,11 +164,18 @@ def test_velocity_z_score_calculation() -> None:
     # Slices 1 to 9 (from t=700 to t=970): steady 1 trade per slice (velocity = 1/30 = 0.0333)
     for slice_idx in range(1, 10):
         t = base_time - (slice_idx * 30 + 15)
-        tracker.record_trade(is_buy=True, sol_amount=0.1, user=f"User{slice_idx}", timestamp=t)
+        tracker.record_trade(
+            is_buy=True, sol_amount=0.1, user=f"User{slice_idx}", timestamp=t
+        )
 
     # In the current slice (t = 970 to 1000), sudden trade burst of 10 trades
     for i in range(10):
-        tracker.record_trade(is_buy=True, sol_amount=0.5, user=f"BurstUser{i}", timestamp=base_time - 10 + i)
+        tracker.record_trade(
+            is_buy=True,
+            sol_amount=0.5,
+            user=f"BurstUser{i}",
+            timestamp=base_time - 10 + i,
+        )
 
     # Calculate Z-score at current_time = base_time
     z_score = tracker.get_velocity_z_score(
@@ -191,7 +213,9 @@ def test_evaluate_momentum_signal_wash_trading_guard() -> None:
 
     # Burst of 10 buys, but ALL from the same wallet address "WashTrader"
     for i in range(10):
-        tracker.record_trade(is_buy=True, sol_amount=1.0, user="WashTrader", timestamp=base_time - 10 + i)
+        tracker.record_trade(
+            is_buy=True, sol_amount=1.0, user="WashTrader", timestamp=base_time - 10 + i
+        )
 
     signal = tracker.evaluate_momentum_signal(
         window_seconds=30,
@@ -212,11 +236,21 @@ def test_evaluate_momentum_signal_ratio_and_inflow_guards() -> None:
     base_time = 1000.0
 
     # 4 distinct buyers with 0.1 SOL each = 0.4 SOL buy volume, but 1.0 SOL sell volume
-    tracker.record_trade(is_buy=True, sol_amount=0.1, user="UserA", timestamp=base_time - 10)
-    tracker.record_trade(is_buy=True, sol_amount=0.1, user="UserB", timestamp=base_time - 8)
-    tracker.record_trade(is_buy=True, sol_amount=0.1, user="UserC", timestamp=base_time - 6)
-    tracker.record_trade(is_buy=True, sol_amount=0.1, user="UserD", timestamp=base_time - 4)
-    tracker.record_trade(is_buy=False, sol_amount=1.0, user="Seller1", timestamp=base_time - 2)
+    tracker.record_trade(
+        is_buy=True, sol_amount=0.1, user="UserA", timestamp=base_time - 10
+    )
+    tracker.record_trade(
+        is_buy=True, sol_amount=0.1, user="UserB", timestamp=base_time - 8
+    )
+    tracker.record_trade(
+        is_buy=True, sol_amount=0.1, user="UserC", timestamp=base_time - 6
+    )
+    tracker.record_trade(
+        is_buy=True, sol_amount=0.1, user="UserD", timestamp=base_time - 4
+    )
+    tracker.record_trade(
+        is_buy=False, sol_amount=1.0, user="Seller1", timestamp=base_time - 2
+    )
 
     signal = tracker.evaluate_momentum_signal(
         window_seconds=30,
@@ -235,7 +269,9 @@ def test_evaluate_momentum_signal_token_age_limit() -> None:
     base_time = 2000.0
 
     for i in range(5):
-        tracker.record_trade(is_buy=True, sol_amount=1.0, user=f"Buyer{i}", timestamp=base_time - 5 + i)
+        tracker.record_trade(
+            is_buy=True, sol_amount=1.0, user=f"Buyer{i}", timestamp=base_time - 5 + i
+        )
 
     signal = tracker.evaluate_momentum_signal(
         window_seconds=30,
@@ -258,11 +294,18 @@ def test_evaluate_momentum_signal_success() -> None:
     # Historical low baseline
     for slice_idx in range(1, 10):
         t = base_time - (slice_idx * 30 + 15)
-        tracker.record_trade(is_buy=True, sol_amount=0.05, user=f"OldUser{slice_idx}", timestamp=t)
+        tracker.record_trade(
+            is_buy=True, sol_amount=0.05, user=f"OldUser{slice_idx}", timestamp=t
+        )
 
     # Current burst with 5 distinct buyers, 5.0 SOL buy volume, 0 sells
     for i in range(5):
-        tracker.record_trade(is_buy=True, sol_amount=1.0, user=f"NewBuyer{i}", timestamp=base_time - 10 + (i * 2))
+        tracker.record_trade(
+            is_buy=True,
+            sol_amount=1.0,
+            user=f"NewBuyer{i}",
+            timestamp=base_time - 10 + (i * 2),
+        )
 
     signal = tracker.evaluate_momentum_signal(
         window_seconds=30,
@@ -289,8 +332,12 @@ def test_order_flow_engine_multi_token_and_cleanup() -> None:
     base_time = 1000.0
 
     # Record trade for Token1 and Token2
-    engine.record_trade("Token1", is_buy=True, sol_amount=1.0, user="UserA", timestamp=base_time - 150)
-    engine.record_trade("Token2", is_buy=True, sol_amount=2.0, user="UserB", timestamp=base_time - 20)
+    engine.record_trade(
+        "Token1", is_buy=True, sol_amount=1.0, user="UserA", timestamp=base_time - 150
+    )
+    engine.record_trade(
+        "Token2", is_buy=True, sol_amount=2.0, user="UserB", timestamp=base_time - 20
+    )
 
     assert engine.tracked_token_count == 2
 
@@ -302,7 +349,9 @@ def test_order_flow_engine_multi_token_and_cleanup() -> None:
     assert m2.buy_volume_sol == 2.0
 
     # Query metrics for unknown token
-    m_unknown = engine.get_metrics("UnknownToken", window_seconds=30, current_time=base_time)
+    m_unknown = engine.get_metrics(
+        "UnknownToken", window_seconds=30, current_time=base_time
+    )
     assert m_unknown.trade_count == 0
     assert m_unknown.buy_volume_sol == 0.0
 

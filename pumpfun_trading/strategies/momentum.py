@@ -129,7 +129,11 @@ class TokenOrderFlowTracker:
         current_time: Optional[float] = None,
     ) -> WindowMetrics:
         """Compute rolling order flow metrics over the specified window in seconds."""
-        now = float(current_time if current_time is not None else (self.last_trade_time or time.time()))
+        now = float(
+            current_time
+            if current_time is not None
+            else (self.last_trade_time or time.time())
+        )
         cutoff = now - max(window_seconds, 1)
 
         trade_count = 0
@@ -188,7 +192,11 @@ class TokenOrderFlowTracker:
         current_time: Optional[float] = None,
     ) -> float:
         """Compute statistical trade velocity Z-score against a longer rolling baseline window."""
-        now = float(current_time if current_time is not None else (self.last_trade_time or time.time()))
+        now = float(
+            current_time
+            if current_time is not None
+            else (self.last_trade_time or time.time())
+        )
         slice_size = max(window_seconds, 1)
         total_baseline = max(baseline_window_seconds, slice_size)
         num_slices = max(int(total_baseline / slice_size), 2)
@@ -215,7 +223,9 @@ class TokenOrderFlowTracker:
         current_velocity = slice_velocities[0]
 
         mean_velocity = sum(slice_velocities) / float(num_slices)
-        variance = sum((v - mean_velocity) ** 2 for v in slice_velocities) / float(num_slices)
+        variance = sum((v - mean_velocity) ** 2 for v in slice_velocities) / float(
+            num_slices
+        )
         std_dev = math.sqrt(variance)
 
         if std_dev > 1e-6:
@@ -241,9 +251,15 @@ class TokenOrderFlowTracker:
         current_time: Optional[float] = None,
     ) -> MomentumSignal:
         """Evaluate whether token order flow meets momentum breakout entry criteria."""
-        now = float(current_time if current_time is not None else (self.last_trade_time or time.time()))
+        now = float(
+            current_time
+            if current_time is not None
+            else (self.last_trade_time or time.time())
+        )
 
-        metrics = self.get_window_metrics(window_seconds=window_seconds, current_time=now)
+        metrics = self.get_window_metrics(
+            window_seconds=window_seconds, current_time=now
+        )
         z_score = self.get_velocity_z_score(
             window_seconds=window_seconds,
             baseline_window_seconds=baseline_window_seconds,
@@ -282,11 +298,17 @@ class TokenOrderFlowTracker:
         if z_score < min_z_score:
             failed_reasons.append(f"z_score_{z_score:.2f}_below_{min_z_score:.2f}")
         if metrics.buy_sell_ratio < min_buy_ratio:
-            failed_reasons.append(f"buy_ratio_{metrics.buy_sell_ratio:.2f}_below_{min_buy_ratio:.2f}")
+            failed_reasons.append(
+                f"buy_ratio_{metrics.buy_sell_ratio:.2f}_below_{min_buy_ratio:.2f}"
+            )
         if metrics.unique_buyers < min_unique_buyers:
-            failed_reasons.append(f"unique_buyers_{metrics.unique_buyers}_below_{min_unique_buyers}")
+            failed_reasons.append(
+                f"unique_buyers_{metrics.unique_buyers}_below_{min_unique_buyers}"
+            )
         if metrics.net_sol_inflow < min_net_inflow_sol:
-            failed_reasons.append(f"net_inflow_{metrics.net_sol_inflow:.2f}_below_{min_net_inflow_sol:.2f}")
+            failed_reasons.append(
+                f"net_inflow_{metrics.net_sol_inflow:.2f}_below_{min_net_inflow_sol:.2f}"
+            )
 
         triggered = len(failed_reasons) == 0
         reason = "momentum_spike" if triggered else "; ".join(failed_reasons)
@@ -325,7 +347,9 @@ class OrderFlowEngine:
         """Get or initialize tracker for a token mint."""
         tracker = self._trackers.get(mint)
         if tracker is None:
-            tracker = TokenOrderFlowTracker(mint=mint, max_retention_seconds=self.max_retention_seconds)
+            tracker = TokenOrderFlowTracker(
+                mint=mint, max_retention_seconds=self.max_retention_seconds
+            )
             self._trackers[mint] = tracker
         return tracker
 
@@ -368,7 +392,9 @@ class OrderFlowEngine:
                 unique_sellers=0,
                 trade_velocity=0.0,
             )
-        return tracker.get_window_metrics(window_seconds=window_seconds, current_time=current_time)
+        return tracker.get_window_metrics(
+            window_seconds=window_seconds, current_time=current_time
+        )
 
     def get_velocity_z_score(
         self,

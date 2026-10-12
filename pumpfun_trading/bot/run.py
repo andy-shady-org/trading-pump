@@ -181,15 +181,9 @@ class TradingBot:
             enable_momentum_signals=bool(
                 getattr(base, "enable_momentum_signals", True)
             ),
-            momentum_window_seconds=int(
-                getattr(base, "momentum_window_seconds", 30)
-            ),
-            momentum_min_buy_ratio=float(
-                getattr(base, "momentum_min_buy_ratio", 3.0)
-            ),
-            momentum_min_z_score=float(
-                getattr(base, "momentum_min_z_score", 2.5)
-            ),
+            momentum_window_seconds=int(getattr(base, "momentum_window_seconds", 30)),
+            momentum_min_buy_ratio=float(getattr(base, "momentum_min_buy_ratio", 3.0)),
+            momentum_min_z_score=float(getattr(base, "momentum_min_z_score", 2.5)),
             momentum_min_unique_buyers=int(
                 getattr(base, "momentum_min_unique_buyers", 3)
             ),
