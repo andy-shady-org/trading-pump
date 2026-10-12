@@ -342,6 +342,20 @@ class PumpFunApiClient:
     async def get_sol_price(self) -> Any:
         return await self.get("/sol-price")
 
+    async def get_creator_coins(
+        self, creator: str, limit: int = 50, offset: int = 0
+    ) -> Any:
+        try:
+            return await self.get(
+                f"/coins/user-created-coins/{creator}",
+                params={"limit": limit, "offset": offset},
+            )
+        except Exception:
+            return await self.get(
+                "/coins",
+                params={"creator": creator, "limit": limit, "offset": offset},
+            )
+
     async def get_market_overview(
         self, limit: int = 20, offset: int = 0, **kwargs
     ) -> Any:

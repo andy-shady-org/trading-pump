@@ -194,7 +194,11 @@ async def test_bot_full_websocket_and_lifecycle(tmp_path):
 
     bot = TradingBot.from_env(
         env_file=str(env_file),
-        config=TradingBotConfig(buy_amount_sol=0.05, min_market_cap_sol=10.0),
+        config=TradingBotConfig(
+            buy_amount_sol=0.05,
+            min_market_cap_sol=10.0,
+            enable_tiered_take_profit=False,
+        ),
         dry_run=True,
         bot_status_path=str(tmp_path / "status.json"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
@@ -207,50 +211,28 @@ async def test_bot_full_websocket_and_lifecycle(tmp_path):
     bot._prune_seen_mints()
     assert SAMPLE_MINT not in bot._seen_mints
 
-    # Start loop with messages and graceful shutdown
-    messages = [
-        json.dumps(
-            {
-                "txType": "create",
-                "mint": SAMPLE_MINT,
-                "name": "LiveToken",
-                "marketCapSol": 25.0,
-            }
-        ),
-        json.dumps(
-            {
-                "txType": "trade",
-                "mint": SAMPLE_MINT,
-                "marketCapSol": 50.0,  # TP exit
-            }
-        ),
+    # Start loop with events and graceful shutdown
+    events = [
+        {
+            "txType": "create",
+            "mint": SAMPLE_MINT,
+            "name": "LiveToken",
+            "marketCapSol": 25.0,
+        },
+        {
+            "txType": "trade",
+            "mint": SAMPLE_MINT,
+            "marketCapSol": 50.0,  # TP exit
+        },
     ]
 
-    class MockWebsocket:
-        def __init__(self):
-            self.sent = []
+    async def mock_listen():
+        for msg in events:
+            yield msg
+        bot.request_shutdown()
 
-        async def send(self, data):
-            self.sent.append(data)
-
-        async def __aiter__(self):
-            for msg in messages:
-                yield msg
-            # After processing messages, request shutdown
-            bot.request_shutdown()
-
-    class MockWSConnect:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return MockWebsocket()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-    with patch("websockets.connect", side_effect=MockWSConnect):
-        await bot.start()
+    bot.geyser_client.listen = mock_listen
+    await bot.start()
 
     assert SAMPLE_MINT not in bot.active_positions
     await bot.close()

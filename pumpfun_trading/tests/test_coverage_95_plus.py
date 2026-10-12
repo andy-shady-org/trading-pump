@@ -10,6 +10,7 @@ import pytest
 from solders.hash import Hash
 
 from pumpfun_trading.api.client import PumpFunApiClient
+from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.cli import bot as cli_bot
@@ -299,6 +300,9 @@ async def test_bot_run_all_missing_branches(tmp_path):
     bot._health_ok = True
 
     # new token message creates position
+    bot.state = TradingBotState.MONITORING
+    bot.wallet_balance_sol = 10.0
+    bot.daily_equity_tracker.reset_circuit_breaker()
     msg_new = {
         "txType": "create",
         "mint": SAMPLE_MINT,
@@ -347,36 +351,30 @@ async def test_bot_start_circuit_breaker_and_loop():
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
-        stream_url="wss://pumpportal.fun/api/data",
+        stream_url="http://127.0.0.1:10000",
         config=TradingBotConfig(),
         dry_run=True,
     )
-    bot._max_ws_consecutive_failures = 1
+    bot._max_stream_consecutive_failures = 1
 
-    # Simulate start loop error triggering circuit breaker
     call_count = 0
 
-    class FailingWSContext:
-        def __init__(self, *args, **kwargs):
+    async def failing_listen():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("simulated stream failure")
+        bot.request_shutdown()
+        if False:
+            yield {}
+
+    bot.geyser_client.listen = failing_listen
+
+    with patch("asyncio.sleep", return_value=None):
+        try:
+            await bot.start()
+        except (asyncio.CancelledError, Exception):
             pass
-
-        async def __aenter__(self):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("simulated stream failure")
-            bot._stop_requested = True
-            raise asyncio.CancelledError()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-    with patch("websockets.connect", side_effect=FailingWSContext):
-        with patch("asyncio.sleep", return_value=None):
-            try:
-                await bot.start()
-            except (asyncio.CancelledError, Exception):
-                pass
 
     assert bot._circuit_breaker_tripped is True
     await bot.close()

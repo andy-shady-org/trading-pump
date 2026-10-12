@@ -174,3 +174,72 @@ def test_paper_trading_engine_run_and_render(tmp_path):
     assert summary_mint_name["total_trades"] == 2
     summary_none = run_replay(file_path, mint="NonExistent")
     assert summary_none["total_trades"] == 0
+
+
+def test_paper_trading_engine_with_order_flow_momentum():
+    from pumpfun_trading.strategies.base import TradingBotConfig
+
+    config = TradingBotConfig(
+        enable_momentum_signals=True,
+        momentum_window_seconds=30,
+        momentum_min_buy_ratio=2.0,
+        momentum_min_z_score=1.5,
+        momentum_min_unique_buyers=2,
+        momentum_min_net_inflow_sol=0.2,
+        momentum_baseline_window_seconds=300,
+        take_profit=1.5,
+        stop_loss=0.85,
+    )
+    engine = PaperTradingEngine(
+        initial_cash=100.0,
+        strategy_config=config,
+        enable_order_flow_momentum=True,
+    )
+
+    base_time = 1000.0
+    snapshots = []
+    # Baseline trades (1 trade per slice in slices 1..9)
+    for slice_idx in range(1, 10):
+        t = base_time - (slice_idx * 30 + 15)
+        snapshots.append(
+            {
+                "mint": "TokenMom",
+                "name": "MomToken",
+                "price": 10.0,
+                "timestamp": t,
+                "is_buy": True,
+                "sol_amount": 0.05,
+                "user": f"User{slice_idx}",
+            }
+        )
+
+    # Current burst (3 trades with 1.0 SOL each from distinct users)
+    for i in range(3):
+        snapshots.append(
+            {
+                "mint": "TokenMom",
+                "name": "MomToken",
+                "price": 10.0,
+                "timestamp": base_time - 5 + i,
+                "is_buy": True,
+                "sol_amount": 1.0,
+                "user": f"Buyer{i}",
+            }
+        )
+
+    # Price rise for take profit (performance (26-10)/10 = 1.6 >= 1.5)
+    snapshots.append(
+        {
+            "mint": "TokenMom",
+            "name": "MomToken",
+            "price": 26.0,
+            "timestamp": base_time + 10,
+        }
+    )
+
+    summary = engine.run(snapshots)
+    assert summary["total_trades"] == 2  # 1 buy (momentum_spike), 1 sell (take_profit)
+    assert summary["trades"][0]["action"] == "buy"
+    assert summary["trades"][0]["reason"] == "momentum_spike"
+    assert summary["trades"][1]["action"] == "sell"
+    assert summary["trades"][1]["reason"] == "take_profit"

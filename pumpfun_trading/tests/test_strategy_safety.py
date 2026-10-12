@@ -77,7 +77,7 @@ async def test_websocket_failure_sets_risk_kill_and_reconnect_status():
     await bot._update_health_state()
     assert bot._risk_killed is True
     assert bot._last_status == "health timeout"
-    assert "websocket stale" in bot._last_event
+    assert "stream stale" in bot._last_event
 
     # Simulate a websocket reconnect path and ensure the loop still marks health as failed
     bot._risk_killed = False

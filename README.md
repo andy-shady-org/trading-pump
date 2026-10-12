@@ -1,6 +1,24 @@
 # Pump Fun Trading
 
-A lightweight Python package for [Pump.fun](https://pump.fun) public market data access and on-chain execution helpers.
+A high-performance, institutional-grade automated trading system for [Pump.fun](https://pump.fun) bonding curve liquidity on Solana.
+
+---
+
+## 📚 Central Documentation Portal
+
+All operational manuals, mathematical strategy guides, and architectural blueprints are organized in a structured knowledge hub centered on the [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](./docs/USER-GUIDE.md):
+
+* 📖 [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](./docs/USER-GUIDE.md) — Central directory, installation, operational workflows, and CLI matrix.
+* 📈 [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](./docs/STRATEGY.md) — Bonding curve math, fractional Kelly sizing, dynamic trailing stops, and anti-rug heuristics.
+* 🛡️ [**Capital Protection & Risk Management (`docs/RISK.md`)**](./docs/RISK.md) — Exposure caps, daily hard circuit breakers (FEAT-09), and startup on-chain reconciliation.
+* 🖥️ [**Terminal UI & Operator Observability (`docs/TERMINAL-UI.md`)**](./docs/TERMINAL-UI.md) — Live console monitor, sub-millisecond slot telemetry, and alerting webhooks.
+* 🌐 [**Web Dashboard & Hosted Architecture (`docs/WEB-UI.md`)**](./docs/WEB-UI.md) — FastAPI control portal (FEAT-10), volatile in-memory key upload vault, and hot config endpoints.
+* ⚙️ [**Standardized Feature Catalog (`docs/FEATURES.md`)**](./docs/FEATURES.md) — Comprehensive catalog of all features (FEAT-01 through FEAT-20).
+* 🔄 [**Historical Replay Backtesting Engine (`docs/REPLAY-ENGINE.md`)**](./docs/REPLAY-ENGINE.md) — Market replay simulator and strategy performance analyzer.
+* 🔍 [**Forensic Audit & Accounting Tool (`docs/AUDIT-TOOL.md`)**](./docs/AUDIT-TOOL.md) — Structured audit trail query and inspection CLI.
+* 🛠️ [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](./docs/dev/README.md) — Sprint backlog, bug tracker, suggestions, release gates, and operations runbook.
+
+---
 
 <div align="center">
 <a href="https://pypi.org/project/pumpfun-trading/"><img src="https://img.shields.io/pypi/v/pumpfun-trading" alt="PyPi"/></a>

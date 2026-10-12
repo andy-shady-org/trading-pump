@@ -1,5 +1,7 @@
 # Audit Trail Investigation and Forensic Tool
 
+> **Navigation**: [User Guide](USER-GUIDE.md) | [Financial Strategy](STRATEGY.md) | [Risk Controls](RISK.md) | [Terminal UI](TERMINAL-UI.md) | [Web UI](WEB-UI.md) | [Feature Catalog](FEATURES.md) | [Replay Engine](REPLAY-ENGINE.md)
+
 The audit trail tool lets you inspect the bot's JSONL event stream for state transitions, trade records, alerts, and operational events. It is designed for post-mortem review, incident analysis, and runtime debugging.
 
 ## What is recorded

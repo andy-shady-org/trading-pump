@@ -55,6 +55,24 @@ def build_status_snapshot(bot: Any) -> dict[str, Any]:
         "trade_sequence": getattr(bot, "_trade_sequence", 0),
         "exit_retry_queue": dict(getattr(bot, "_exit_retry_queue", {})),
         "circuit_breaker_tripped": getattr(bot, "_circuit_breaker_tripped", False),
+        "circuit_breaker_engaged": (
+            getattr(
+                getattr(bot, "daily_equity_tracker", None),
+                "circuit_breaker_engaged",
+                False,
+            )
+        ),
+        "daily_equity": (
+            bot.daily_equity_tracker.to_dict()
+            if hasattr(bot, "daily_equity_tracker")
+            and hasattr(bot.daily_equity_tracker, "to_dict")
+            else {}
+        ),
+        "stream_consecutive_failures": getattr(
+            bot,
+            "_stream_consecutive_failures",
+            getattr(bot, "_ws_consecutive_failures", 0),
+        ),
         "ws_consecutive_failures": getattr(bot, "_ws_consecutive_failures", 0),
     }
 

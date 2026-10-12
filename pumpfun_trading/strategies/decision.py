@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pumpfun_trading.strategies.base import TradingBotConfig
-from pumpfun_trading.strategies.exits import should_exit_position
-from pumpfun_trading.strategies.filters import token_is_eligible
+from pumpfun_trading.strategies.exits import (
+    ExitDecision,
+    PositionExitState,
+    evaluate_exit_strategy,
+    should_exit_position,
+    update_position_peak,
+)
+from pumpfun_trading.strategies.filters import (
+    DevWalletProfile,
+    HolderDistribution,
+    ScreeningCache,
+    TokenMetadata,
+    TokenScreeningVerdict,
+    evaluate_token_heuristics,
+    token_is_eligible,
+)
+from pumpfun_trading.strategies.momentum import MomentumSignal, OrderFlowEngine
 from pumpfun_trading.strategies.risk_validation import validate_risk_limits
-from pumpfun_trading.strategies.signal import generate_buy_signal
+from pumpfun_trading.strategies.signal import (
+    generate_buy_signal,
+    generate_momentum_buy_signal,
+)
 
 
 class TradingStrategy:
@@ -18,6 +38,7 @@ class TradingStrategy:
         active_positions: int,
         mint_seen_recently: bool,
         buy_attempts: int,
+        momentum_signal: MomentumSignal | None = None,
     ) -> bool:
         return generate_buy_signal(
             self.config,
@@ -25,12 +46,87 @@ class TradingStrategy:
             active_positions=active_positions,
             mint_seen_recently=mint_seen_recently,
             buy_attempts=buy_attempts,
+            momentum_signal=momentum_signal,
         )
 
-    def should_sell(self, *, performance: float, token_balance: int) -> bool:
-        return should_exit_position(
-            self.config, performance=performance, token_balance=token_balance
+    def should_buy_momentum(
+        self,
+        *,
+        momentum_signal: MomentumSignal,
+        active_positions: int,
+        buy_attempts: int,
+        mint_seen_recently: bool = False,
+    ) -> bool:
+        return generate_momentum_buy_signal(
+            self.config,
+            momentum_signal=momentum_signal,
+            active_positions=active_positions,
+            buy_attempts=buy_attempts,
+            mint_seen_recently=mint_seen_recently,
         )
+
+    def evaluate_momentum(
+        self,
+        engine: OrderFlowEngine,
+        mint: str,
+        *,
+        token_creation_timestamp: float | None = None,
+        current_time: float | None = None,
+    ) -> MomentumSignal:
+        return engine.evaluate_momentum_signal(
+            mint,
+            window_seconds=self.config.momentum_window_seconds,
+            min_buy_ratio=self.config.momentum_min_buy_ratio,
+            min_z_score=self.config.momentum_min_z_score,
+            min_unique_buyers=self.config.momentum_min_unique_buyers,
+            min_net_inflow_sol=self.config.momentum_min_net_inflow_sol,
+            baseline_window_seconds=self.config.momentum_baseline_window_seconds,
+            token_creation_timestamp=token_creation_timestamp,
+            max_token_age_seconds=self.config.momentum_max_token_age_seconds,
+            current_time=current_time,
+        )
+
+    def should_sell(
+        self,
+        *,
+        performance: float,
+        token_balance: int,
+        position: dict[str, Any] | PositionExitState | None = None,
+        current_market_cap: float | None = None,
+    ) -> bool:
+        return should_exit_position(
+            self.config,
+            performance=performance,
+            token_balance=token_balance,
+            position=position,
+            current_market_cap=current_market_cap,
+        )
+
+    def evaluate_exit(
+        self,
+        position: dict[str, Any] | PositionExitState,
+        *,
+        current_market_cap: float | None = None,
+        token_balance: int | None = None,
+    ) -> ExitDecision:
+        state = (
+            position
+            if isinstance(position, PositionExitState)
+            else PositionExitState.from_dict(position)
+        )
+        return evaluate_exit_strategy(
+            self.config,
+            state,
+            current_market_cap=current_market_cap,
+            token_balance=token_balance,
+        )
+
+    def update_peak(
+        self,
+        position: dict[str, Any] | PositionExitState,
+        current_market_cap: float,
+    ) -> float:
+        return update_position_peak(position, current_market_cap)
 
     def is_eligible_for_buy(
         self,
@@ -38,12 +134,36 @@ class TradingStrategy:
         market_cap_sol: float,
         mint_seen_recently: bool,
         buy_attempts: int,
+        screening_verdict: TokenScreeningVerdict | None = None,
     ) -> bool:
         return token_is_eligible(
             self.config,
             market_cap_sol=market_cap_sol,
             mint_seen_recently=mint_seen_recently,
             buy_attempts=buy_attempts,
+            screening_verdict=screening_verdict,
+        )
+
+    def screen_token(
+        self,
+        mint: str,
+        *,
+        metadata: TokenMetadata | dict[str, Any] | None = None,
+        dev_profile: DevWalletProfile | None = None,
+        holder_distribution: HolderDistribution | None = None,
+        bonding_curve_pda: str | None = None,
+        cache: ScreeningCache | None = None,
+        use_cache: bool = True,
+    ) -> TokenScreeningVerdict:
+        return evaluate_token_heuristics(
+            self.config,
+            mint,
+            metadata=metadata,
+            dev_profile=dev_profile,
+            holder_distribution=holder_distribution,
+            bonding_curve_pda=bonding_curve_pda,
+            cache=cache,
+            use_cache=use_cache,
         )
 
     def validate_risk(
@@ -60,7 +180,7 @@ class TradingStrategy:
             wallet_balance_sol=wallet_balance_sol,
         )
 
-    def summary(self) -> dict[str, float | int | str]:
+    def summary(self) -> dict[str, float | int | str | bool]:
         return {
             "preset": self.config.strategy_preset,
             "buy_amount_sol": self.config.buy_amount_sol,
@@ -77,4 +197,30 @@ class TradingStrategy:
             "max_daily_drawdown_pct": self.config.max_daily_drawdown_pct,
             "reserve_balance_sol": self.config.reserve_balance_sol,
             "health_check_timeout_seconds": self.config.health_check_timeout_seconds,
+            "enable_trailing_stop": self.config.enable_trailing_stop,
+            "trailing_stop_activation_pct": self.config.trailing_stop_activation_pct,
+            "trailing_stop_drop_pct": self.config.trailing_stop_drop_pct,
+            "enable_tiered_take_profit": self.config.enable_tiered_take_profit,
+            "tier_1_take_profit": self.config.tier_1_take_profit,
+            "tier_1_sell_fraction": self.config.tier_1_sell_fraction,
+            "tier_2_take_profit": self.config.tier_2_take_profit,
+            "tier_2_sell_fraction": self.config.tier_2_sell_fraction,
+            "moonbag_trailing_floor": self.config.moonbag_trailing_floor,
+            "enable_anti_rug_filters": self.config.enable_anti_rug_filters,
+            "max_dev_24h_launches": self.config.max_dev_24h_launches,
+            "max_creator_initial_holding_pct": self.config.max_creator_initial_holding_pct,
+            "max_top5_holder_concentration_pct": self.config.max_top5_holder_concentration_pct,
+            "max_gini_coefficient": self.config.max_gini_coefficient,
+            "require_social_links": self.config.require_social_links,
+            "min_social_links_count": self.config.min_social_links_count,
+            "max_acceptable_risk_score": self.config.max_acceptable_risk_score,
+            "screening_cache_ttl_seconds": self.config.screening_cache_ttl_seconds,
+            "enable_momentum_signals": self.config.enable_momentum_signals,
+            "momentum_window_seconds": self.config.momentum_window_seconds,
+            "momentum_min_buy_ratio": self.config.momentum_min_buy_ratio,
+            "momentum_min_z_score": self.config.momentum_min_z_score,
+            "momentum_min_unique_buyers": self.config.momentum_min_unique_buyers,
+            "momentum_min_net_inflow_sol": self.config.momentum_min_net_inflow_sol,
+            "momentum_baseline_window_seconds": self.config.momentum_baseline_window_seconds,
+            "momentum_max_token_age_seconds": self.config.momentum_max_token_age_seconds,
         }

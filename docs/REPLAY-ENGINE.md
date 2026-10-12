@@ -1,5 +1,7 @@
 # Replay Engine
 
+> **Navigation**: [User Guide](USER-GUIDE.md) | [Financial Strategy](STRATEGY.md) | [Risk Controls](RISK.md) | [Terminal UI](TERMINAL-UI.md) | [Web UI](WEB-UI.md) | [Feature Catalog](FEATURES.md) | [Audit Tool](AUDIT-TOOL.md)
+
 The replay engine is a historical paper-trading subsystem for evaluating strategy behavior against stored market snapshots without changing the live bot runtime. It is intentionally separated from the active dashboard in `pumpfun_trading/bot/run.py`, so the existing live trading UI stays exactly as-is and the replay workflow becomes a completely separate interface.
 
 ## Design goals

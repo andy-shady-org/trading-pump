@@ -1,159 +1,204 @@
 # Features
 
-This document is a snapshot of the features currently implemented in this repository as of the current codebase state. It includes both the public API client surface and the live trading bot/runtime features.
+This document provides a comprehensive and accurate overview of all features and architectural capabilities implemented in the `pumpfun-trading` repository. It covers the public API client, on-chain execution SDK, low-latency streaming pipeline, private mempool MEV protection, trading bot runtime, risk guards, historical replay engine, forensic audit tooling, and CLI suites.
 
-## Public Pump.fun API access
+---
 
-- HTTP client for Pump.fun frontend and analytics endpoints
-- Fetch latest coin listings with limit/offset paging
-- Fetch market info for a specific mint
-- Fallback mint lookup when a direct coin endpoint returns 404/401/403
-- Support for advanced API endpoints and alternate endpoint sources
-- Search, featured, and personalized-style coin queries via API helper methods
-- Fetch trade history and trade count for a mint
-- Fetch candlestick data by mint and interval
-- Fetch SOL price and market overview helpers
+## 1. Yellowstone Geyser gRPC Streaming Engine (FEAT-01)
 
-## Execution / on-chain SDK
+- **Sub-Millisecond On-Chain Event Ingestion**: Bidirectional Solana Yellowstone Geyser gRPC streaming client (`YellowstoneGeyserClient`) bypassing standard JSON-RPC latency.
+- **Zero-Copy Binary Bonding Curve Decoding**: Direct binary parsing (`BondingCurveBinaryParser`) using `memoryview` and struct unpacking to decode bonding curve states (`virtualTokenReserves`, `virtualSolReserves`, `realTokenReserves`, `realSolReserves`, `complete`, token supply, and live SOL price) without JSON serialization overhead.
+- **Instruction Inner Data & Event Decoding**: Real-time trade instruction parser (`TradeInstructionBinaryParser`) decoding Buy/Sell instructions and Anchor program log events (`Program data: <base64>`) for instantaneous swap and curve graduation detection.
+- **Resilient Connection Lifecycle**: Auto-reconnect handling with exponential backoff and randomized jitter (`0.85x`–`1.25x`), queue overflow drop tracking, and keepalive heartbeats.
+- **Slot-Time Latency Telemetry**: Microsecond-precision benchmarking measuring slot-to-processing latencies displayed live in runtime telemetry.
 
-- Solana wallet key handling from base58 private keys
-- Validation helpers for public keys and mint addresses
-- Derivation of Pump.fun bonding curve PDAs and associated token addresses
-- Build buy and sell instructions for Pump.fun program interactions
-- Wallet balance queries via Solana RPC
-- ATA existence checks
-- Transaction signing and broadcast helpers
-- Optional priority fee and default slippage configuration
-- Built-in validation for wallet addresses, minter addresses, and instruction payloads
+---
 
-## CLI tooling
+## 2. Private Mempool MEV Bundling & Anti-Sandwich Protection (FEAT-02)
 
-- `market-info` mode for inspecting a mint
-- `latest-coins` mode for listing recent coins
-- `bot` mode for running the live trading bot
-- Rich console rendering for API outputs and market summaries
-- JSON raw output mode
-- Bot config file loading from JSON
-- Strategy preset selection through command-line flags
-- Dry-run and paper-trade options
+- **Jito Block Engine Integration**: Direct JSON-RPC client (`JitoClient`) interfacing with global Jito Block Engine endpoints (`mainnet`, `amsterdam`, `frankfurt`, `ny`, `tokyo`).
+- **Toxic MEV & Sandwich Attack Protection**: Submits transactions via private validator mempools to prevent frontrunning and sandwich exploits.
+- **Live Dynamic Tip Floor Estimation**: Queries real-time Jito tip stream percentiles (`p25`, `p50`, `p75`, `p95`, `p99`, `EMA`) with automatic TTL caching and fallback defaults.
+- **Dynamic Tip Calculation**: Scales tip lamports dynamically (`calculate_dynamic_jito_tip`) based on trade size (e.g. 0.5% default) and trade conviction scores.
+- **Validator Account Rotation**: Dynamic selection and round-robin rotation across active verified Jito tip recipient public keys.
+- **Atomic Bundle Packaging**: Assembles atomic transaction bundles packing Compute Budget instructions, trade instructions, and validator tip transfers.
+- **Fast Fallback to High-Priority RPC**: Automated failover routing (`send_jito_bundle_with_fallback`) submitting directly to Solana RPC with high priority fees on bundle timeout or block engine unreachability, guaranteeing no missed trading slots.
+- **Environment & Runtime Configuration**:
+  - `PUMPFUN_USE_JITO`: Toggle Jito bundle execution
+  - `PUMPFUN_JITO_BLOCK_ENGINE_URL`: Custom Block Engine endpoint URL
+  - `PUMPFUN_JITO_TIP_LAMPORTS`: Static tip override in Lamports
+  - `PUMPFUN_JITO_CONFIRMATION_TIMEOUT`: Max seconds to await bundle confirmation (default: `12.0`)
+  - `PUMPFUN_JITO_FALLBACK_TO_RPC`: Fast fallback to direct RPC on timeout (default: `true`)
 
-## Trading bot runtime
+---
 
-- Live Pump.fun token stream monitoring over websocket
-- New token detection and candidate evaluation
-- Buy decision pipeline based on token market cap and strategy rules
-- Sell decision pipeline based on take-profit and stop-loss thresholds
-- Explicit bot lifecycle state machine:
-  - idle
-  - monitoring
-  - buying
-  - holding
-  - selling
-  - shutdown
-- Reconnection handling for websocket failures
-- Graceful shutdown hooks and signal handling
-- Bot status snapshots written to JSON
-- State restore on startup from a persisted snapshot
-- Recovery of active positions, buy attempts, seen mints, and recent state on restart
-- Audit trail recording to JSONL
-- Trade ledger tracking for buy/sell records, reasons, timestamps, and position IDs
-- Recent action memory for debugging and runtime introspection
+## 3. Execution & On-Chain Solana SDK (FEAT-12)
 
-## Risk controls and safety guards
+- **Solana Keypair Management**: Secure base58 private key decoding and wallet public key derivation.
+- **Exact Integer Lamports Precision**: Strict integer Lamports unit packing eliminating floating-point rounding errors across all buy/sell execution flows.
+- **Solana Compute Budget Optimization**: Builds explicit priority fee instructions (`SetComputeUnitLimit`, `SetComputeUnitPrice`) for transaction inclusion.
+- **PDA & Token Address Derivation**: Deterministic derivation of Pump.fun bonding curve PDAs and Associated Token Accounts (ATAs).
+- **Instruction Construction**: Builds native Pump.fun buy and sell instructions with configurable slippage tolerance and minimum output guarantees.
+- **On-Chain Bonding Curve State Decoding**: Queries and decodes bonding curve accounts directly from Solana RPC (`get_bonding_curve_state`, `decode_bonding_curve_data`).
+- **Account & Balance Helpers**: Real-time wallet SOL balance queries, ATA existence checks, and automatic ATA creation on buy.
+- **Transaction Compilation & Signing**: Compiles Versioned Transactions (`MessageV0`) with recent blockhashes and cryptographic signing.
 
-- Per-wallet minimum balance checks before opening positions
-- Portfolio-level max total exposure cap
-- Max active positions limit
-- Per-token concentration cap
-- Maximum drawdown guard
-- Maximum loss-per-trade guard
-- Buy attempt throttle per mint
-- Recent mint cooldown / spam prevention
-- Reserve balance / equity guard before trade execution
-- Health timeout enforcement for stale websocket/API state
-- Risk kill-switch behavior when safety conditions fail
-- Dry-run operation mode for safe testing
-- Paper-trade mode flag
+---
 
-## Strategy system
+## 4. Rug-Pull, Honeypot & Dev-Dumping Heuristic Screening (FEAT-04)
 
-- Preset strategy configs:
-  - conservative
-  - balanced
-  - aggressive
-- Config dataclass for trading bot settings
-- JSON config file parsing and override support
-- Strategy summary snapshots for bot monitoring
-- Buy eligibility checks via `TradingStrategy.should_buy()`
-- Sell eligibility checks via `TradingStrategy.should_sell()`
+- **Pre-Trade Launch Screening Pipeline**: Automated multi-factor heuristic screening (`pumpfun_trading/strategies/filters.py`) protecting capital against malicious tokens, serial scams, and developer dump exploits before executing on-chain orders.
+- **Developer Wallet Profiling**:
+  - Queries creator historical token deployment records (`DevWalletProfile`, `evaluate_dev_wallet`).
+  - Detects serial ruggers and penalizes creators launching excessive tokens (configurable, default `>5` launched coins in the preceding 24 hours).
+  - Imposes severe risk score penalties (`>=50.0`) on developers with confirmed historical rug actions.
+- **Creator Initial Holding Limit**:
+  - Verifies creator launch-block purchase allocations (`evaluate_creator_holdings`).
+  - Automatically flags and rejects tokens where the creator/developer bought `>10%` (configurable) of total circulating supply at mint creation to prevent catastrophic dev dumps.
+- **Top Holder Concentration & Gini Coefficient**:
+  - Measures wealth inequality and holder distribution (`HolderDistribution`, `calculate_gini_coefficient`, `evaluate_holder_distribution`).
+  - Excludes bonding curve PDA reserves to evaluate true non-AMM circulating distribution.
+  - Flags tokens where top 5 non-curve wallets control `>15%` of supply or exhibit extreme wealth inequality (`Gini > 0.85`).
+- **Metadata & Social Presence Verification**:
+  - Inspects token metadata URI and extracts links (`TokenMetadata`, `evaluate_metadata_socials`).
+  - Verifies active community channels (Twitter/X, Telegram, Website, Discord) and penalizes missing or malformed social presences.
+- **Composite Risk Scoring & Verdicts**:
+  - Synthesizes heuristic flags into normalized composite risk scores ($0.0$ to $100.0$) (`TokenScreeningVerdict`, `evaluate_token_heuristics`).
+  - Hard-fails toxic tokens and applies configurable risk tolerance thresholds across presets (`conservative`: max risk `30.0`, `balanced`: `50.0`, `aggressive`: `70.0`).
+- **High-Performance In-Memory Screening Cache**:
+  - Thread-safe TTL cache (`ScreeningCache`, default 60s TTL) preventing redundant API/RPC queries across high-frequency Geyser stream events.
+- **Live Runtime Integration**:
+  - Directly hooked into Geyser bonding curve event handlers (`_handle_bonding_curve_state_update`) and token discovery events (`_handle_new_token_event`) in `TradingBot`.
+  - Transparently enriches candidates using `PumpFunApiClient.get_coin` and `get_creator_coins`.
+  - Emits real-time screening telemetry in status snapshots (`screening_cache_size`, `enable_anti_rug_filters`) and audit logs.
 
-## Monitoring and observability
+---
 
-- In-memory metrics tracking for:
-  - buys
-  - sells
-  - failures
-  - retries
-  - connection loss
-  - stale data
-  - latency
-- Latency sampling and summary statistics
-- Runtime dashboard rendering with Rich tables and panels
-- Bot health status and recent event tracking
-- Active position reporting in the dashboard
-- Recent trade ledger display in the UI
+## 5. Public Pump.fun API Client (FEAT-13)
 
-## Alerting
+- **REST & Analytics Client**: Async HTTP client (`PumpFunApiClient`) for Pump.fun endpoints with configurable timeouts and headers.
+- **Coin Discovery & Pagination**: Fetches latest coin listings with offset and limit pagination.
+- **Market & Metadata Queries**: Queries mint details with fallback lookup mechanisms for 404/401/403 responses.
+- **Trade History & Candlesticks**: Retrieves trade history, trade volume counts, and OHLCV candlestick data across intervals.
+- **Search & Filter Helpers**: Search, featured, and sorted coin queries.
+- **SOL Price & Overview Helpers**: Real-time SOL/USD price checks and global market metrics.
 
-- Alert provider selection via environment variables
-- Supported providers:
-  - Discord
-  - Slack
-  - Telegram
-  - none
-- Webhook-based delivery for Discord and Slack
-- Telegram chat-based delivery using bot token and chat ID
-- Alerting tied to bot lifecycle events and operational state transitions
-- Safe failure handling so alert errors do not crash the bot
+---
 
-## Audit and forensic tooling
+## 6. Trading Bot Runtime & Execution Engine (FEAT-14)
 
-- JSONL audit log output for trade and lifecycle records
-- Structured audit record schema for state transitions, events, and metrics
-- Filter-by-record-type, state, date window, mint, token name, reason, and status queries
-- Summary aggregation for recent trades, failures, and state transitions
-- JSON and table output modes for review and automation
-- Export support for filtered audit records to a JSON file
-- CLI-based audit investigation workflow for incident review and debugging
+- **State Machine Architecture**: Explicit lifecycle states (`idle`, `monitoring`, `buying`, `holding`, `selling`, `shutdown`) with signal handling.
+- **Concurrency Mutex Protection**: Async trade locking (`_trade_lock`) ensuring thread-safe portfolio state mutations across simultaneous mint stream events.
+- **On-Chain Startup Reconciliation**: Startup sync (`reconcile_onchain_positions`) discovering wallet token holdings, purging stale ghost positions, and synchronizing live valuations.
+- **Exit Retry Queue & Emergency Escalation**: Automated retry queue (`_exit_retry_queue`) with escalating slippage limits and scheduled emergency liquidations for failed exits.
+- **Candidate Evaluation**: Automated token discovery, bonding curve progress tracking, and market cap eligibility checks.
+- **State Persistence & Recovery**: Periodic JSON status snapshots (`BotStatusStorage`) with automatic state restoration (positions, seen mints, buy attempts) on restart.
+- **Structured Audit Logging**: Real-time JSONL audit logging (`AuditLogger`) capturing lifecycle transitions, order routing, PnL records, and reconciliation events.
 
-## Environment/configuration support
+---
 
-- `.envrc`-style environment variable configuration
-- Private key and RPC URL environment configuration
-- Optional audit log path configuration
-- Optional bot status snapshot path configuration
-- Optional alert provider configuration
-- Configurable stream URL and API base URL
+## 7. Risk Controls & Capital Protection (FEAT-15)
 
-## Testing
+- **Portfolio Exposure Caps**: Enforces global portfolio exposure limits and maximum simultaneous open positions.
+- **Token Concentration Limits**: Caps single-token allocation as a percentage of total portfolio equity.
+- **Drawdown & Loss Guards**: Circuit breaker triggers on maximum portfolio drawdown or individual per-trade stop-loss thresholds.
+- **Minimum Wallet Balance Guard**: Reserves required SOL balances for transaction fees and rent before entering trades.
+- **Rate-Limiting & Anti-Spam**: Buy attempt throttling per mint and configurable cooldown windows on recently seen mints.
+- **Stale Stream Circuit Breaker**: Health timeout monitor tripping when stream or RPC data exceeds maximum age thresholds.
+- **Dry-Run & Paper-Trading Modes**: Safe simulation execution without broadcasting live Solana transactions.
 
-- Unit tests covering:
-  - strategy safety logic
-  - risk-related validation behavior
-  - audit log trade record behavior
-  - metrics collection behavior
-  - bot configuration and strategy summary checks
+---
 
-## Notes
+## 8. Strategy System, Presets & Dynamic Exit Engine (FEAT-03 & FEAT-16)
 
-This repository is not only a raw API wrapper; it includes a live bot runtime, execution helpers, strategy presets, risk guardrails, monitoring, and operational event logging. The codebase is structured as a foundation for a launch-monitoring and execution-focused Pump.fun trading system, with several roadmap items still pending beyond the implemented core features.
+- **Preset Strategy Configurations**:
+  - `conservative`: Tighter market cap filters, lower position sizing, strict take-profit/stop-loss thresholds, earlier trailing activation (+35%), and conservative scale-outs.
+  - `balanced`: Default balanced risk-reward parameters with 2.0x Tier 1 and 3.5x Tier 2 take-profit scaling.
+  - `aggressive`: Wider risk limits, higher slippage tolerance, momentum-focused entry/exit triggers, and extended runner targets.
+- **Dynamic Trailing Stop-Loss Engine (FEAT-03)**:
+  - Continuous peak market cap tracking per position (`PositionExitState`, `update_position_peak`, `track_position_peak`).
+  - Activation threshold triggering after initial price gain (e.g. `+50%` / `1.5x`).
+  - Configurable peak retracement liquidation (`trailing_stop_drop_pct`, default 15%) locking in accumulated upside before parabolic reversals.
+- **Multi-Tier Take-Profit Scale-Out (FEAT-03)**:
+  - **Tier 1**: Automatically liquidates initial principal allocation (e.g. 50% position quantity at `2.0x` / +100%) to de-risk capital.
+  - **Tier 2**: Liquidates secondary allocation (e.g. 25% of position at `3.5x` / +250%).
+  - **Tier 3 (Moonbag)**: Preserves residual 25% runner allocation protected by a dynamic trailing stop or configurable floor price (`2.5x`).
+- **Config Dataclass Architecture**: Strongly-typed configuration (`TradingBotConfig`) supporting JSON file loading and environment overrides.
+- **Modular Entry & Exit Logic**: Separated decision logic (`should_buy()`, `should_sell()`, `evaluate_exit_strategy()`) allowing custom strategy extensions.
 
-## Replay engine and strategy validation
+---
 
-- Historical replay execution via `PaperTradingEngine` and `run_replay()`
-- JSON and JSONL snapshot ingestion for historical market data replay
-- Dedicated replay CLI tool (`pumpfun-replay --path ...`)
-- Separate replay dashboard and trade ledger rendering that does not modify the live bot dashboard
-- Fee/slippage-aware paper-trading simulation for realistic backtest runs
-- Summary metrics for profit factor, max drawdown, win rate, average trade return, and final equity
-- Additional replay output modes for summary and trade-focused views
+## 9. CLI Tooling & Dedicated Entry Points (FEAT-17)
+
+- **`pumpbot`**: Dedicated command-line entry point to launch the live trading bot with rich dashboard/headless options, strategy presets, and custom config paths.
+- **`pumpfun-replay`**: Dedicated historical replay and backtesting tool with multiple rendering modes (`dashboard`, `summary`, `trades`) and token/mint filtering.
+- **`pumpfun-audit`**: Dedicated forensic audit inspection CLI with filtering by mint address, mint name, record type, status, date windows, and JSON export.
+- **`pumpfun-cli` / `pumpfun`**: Unified command-line interface providing subcommands:
+  - `market-info`: Inspect on-chain and API market data for a specific mint.
+  - `latest-coins`: Stream and list newly created tokens.
+  - `bot`: Launch the automated trading bot.
+  - `replay`: Run historical market data backtests.
+  - `audit`: Query and inspect forensic audit logs.
+
+---
+
+## 10. Replay Engine & Strategy Backtesting (FEAT-18)
+
+- **High-Fidelity Backtesting**: `PaperTradingEngine` and `run_replay()` simulating market data playback with fee and slippage awareness.
+- **Dataset Ingestion**: Ingests JSON and JSONL market snapshot datasets (including virtual reserves, prices, and timestamps).
+- **Observability & Analytics**: Calculates Profit Factor, Maximum Drawdown, Win Rate, Average Trade Return, and Final Equity.
+- **Dual Mint/Name Display**: Displays both Mint Name and Mint Address in trade inspection tables.
+- **Multiple Output Modes**: Rich live dashboard view, tabular trade logs, or summary statistical output.
+
+---
+
+## 11. Terminal UI, Alerting & Forensic Telemetry (FEAT-19)
+
+- **Rich Live Terminal Dashboard**: Alternate-screen buffer rendering (`screen=True`) preventing cursor artifacts and header frame duplication.
+- **Dual Identifier Representation**: Displays Token Name alongside Mint Address across dashboard positions, trade ledgers, and CLI tables.
+- **ANSI & Non-TTY Compliance**: Built-in ANSI stripping (`AnsiStrippingFormatter`) respecting `NO_COLOR` and headless log environments.
+- **Multi-Channel Alert Dispatcher**: Integrated alert notifications for trade executions, risk events, and state changes via:
+  - Discord (webhooks)
+  - Slack (webhooks)
+  - Telegram (bot API)
+- **Runtime Health Telemetry**: In-memory metrics tracking buy/sell counts, failure rates, connection drops, and slot latencies.
+
+---
+
+## 12. Testing & Code Quality Standards (FEAT-20)
+
+- **Project-Wide Test Coverage**: 100% test pass rate with strict project-wide coverage enforcement ($\ge 95\%$ statement and branch coverage).
+- **Automated Quality Pipeline**: Configured with `nox` covering code formatting (`black`), linting (`ruff`), and async test execution (`pytest`).
+- **CI/CD Integration**: GitHub Actions workflows for automated testing and release artifact builds with Codecov coverage verification.
+
+---
+
+## 13. Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot (FEAT-10)
+
+- **FastAPI Asynchronous Backend**: High-performance ASGI service streaming real-time bot state, active positions, and telemetry over WebSockets.
+- **Full Operational Control Center**: Web-based bot control interface supporting live start/pause/stop, emergency position liquidation (`sell_all`), and hot config mutation without bot process restarts.
+- **Interactive Portfolio Visualization**: Real-time equity curves, drawdown monitoring, and live position inspection tables.
+- **Embedded In-App Documentation Hub**: Direct in-dashboard browser and search for all project Markdown documentation (`User Guide`, `Strategy Logic`, `Risk Controls`, `Architecture`, `Runbooks`).
+- **Integrated Telegram Bot**: Command-based remote control (`/status`, `/positions`, `/sell_all`, `/pause`, `/resume`, `/pnl`) with push alerts for key trade events.
+
+---
+
+## 14. Comprehensive Documentation Overhaul & Markdown Knowledge Hub (FEAT-11)
+
+- **Exhaustive User Guide (`docs/USER-GUIDE.md`)**: Complete operator documentation covering installation, configuration, key security, and CLI command references.
+- **Mathematical Strategy Guide (`docs/STRATEGY.md`)**: Formal formulation of bonding curve pricing, entry filtering, heuristic risk models, and exit algorithms.
+- **Risk Management Specification (`docs/RISK.md`)**: Granular breakdown of portfolio exposure controls, concentration limits, drawdown rules, and emergency liquidation mechanisms.
+- **Terminal UI & Monitoring Manual (`docs/TERMINAL-UI.md`)**: Detailed reference for dashboard panels, health checks, and alerting integrations.
+- **Web UI Roadmap (`docs/WEB-UI.md`)**: Architectural blueprints and API specifications for the full-featured FastAPI web dashboard.
+
+---
+
+## 15. Real-Time Order Flow & Trade Velocity Momentum Signals (FEAT-07)
+
+- **High-Performance Sliding Window Engine**: Thread-safe in-memory sliding window aggregation (`OrderFlowEngine`, `TokenOrderFlowTracker`) tracking 15s, 30s, and 60s windows with automatic timestamp-based eviction ($600\text{s TTL}$).
+- **Real-Time Flow Analytics**: Instantaneous computation of Buy Volume (SOL), Sell Volume (SOL), Buy/Sell Volume Ratio, Net SOL Inflow, Unique Buyer Count, Unique Seller Count, and Trade Velocity ($\text{tx/s}$).
+- **Statistical Anomaly Detection & Velocity Z-Scores**: Rolling baseline moving average ($\mu$) and standard deviation ($\sigma$) computation deriving statistical Z-scores ($Z = \frac{v - \mu}{\sigma}$) with safeguards against zero variance.
+- **Sybil & Wash-Trading Guard**: Mandates unique buyer diversity ($\ge 3$ distinct wallets) and positive net SOL capital inflow ($\ge 0.5\text{ SOL}$) to prevent capital deployment on single-wallet churning.
+- **Live Yellowstone Geyser Stream Integration**: Seamlessly routes live on-chain `TradeEventUpdate` and WebSocket trades into `OrderFlowEngine`, evaluating momentum signals for unowned tokens and triggering automated buy orders with reason `momentum_spike`.
+- **Historical Paper Trading & Backtesting**: Full support in `PaperTradingEngine` for backtesting momentum strategies against multi-trade snapshot datasets.
+- **Preset Sensitivity Profiles**: Configurable parameters across `conservative` ($Z \ge 3.0$, ratio $\ge 4.0$, 5 buyers), `balanced` ($Z \ge 2.5$, ratio $\ge 3.0$, 3 buyers), and `aggressive` ($Z \ge 2.0$, ratio $\ge 2.0$, 2 buyers).

@@ -35,8 +35,19 @@ def build_dashboard(bot: Any) -> Panel:
     risk.add_row("Health timeout", f"{bot.config.health_check_timeout_seconds}s")
     risk.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     risk.add_row("Equity guard", "enabled" if not bot.dry_run else "dry-run")
-    risk.add_row("", "")
-    risk.add_row("", "")
+
+    from pumpfun_trading.bot.risk import DailyEquityTracker
+
+    tracker = getattr(bot, "daily_equity_tracker", None)
+    if isinstance(tracker, DailyEquityTracker) and hasattr(
+        tracker, "realized_daily_pnl_sol"
+    ):
+        risk.add_row("Daily PnL", f"{tracker.realized_daily_pnl_sol:+.4f} SOL")
+        breaker_status = "LOCKED" if tracker.circuit_breaker_engaged else "ok"
+        risk.add_row("Circuit breaker", breaker_status)
+    else:
+        risk.add_row("", "")
+        risk.add_row("", "")
 
     bot_status = Table.grid(expand=True)
     bot_status.add_column(justify="left")

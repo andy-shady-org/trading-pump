@@ -15,10 +15,16 @@ class TradingBotState(str, Enum):
 
 
 VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = {
-    TradingBotState.IDLE: {TradingBotState.MONITORING, TradingBotState.SHUTDOWN},
+    TradingBotState.IDLE: {
+        TradingBotState.MONITORING,
+        TradingBotState.HOLDING,
+        TradingBotState.SELLING,
+        TradingBotState.SHUTDOWN,
+    },
     TradingBotState.MONITORING: {
         TradingBotState.BUYING,
         TradingBotState.HOLDING,
+        TradingBotState.SELLING,
         TradingBotState.SHUTDOWN,
     },
     TradingBotState.BUYING: {

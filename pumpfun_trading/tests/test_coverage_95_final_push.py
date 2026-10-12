@@ -228,7 +228,7 @@ async def test_bot_startup_schema_and_edge_branches(tmp_path):
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
         stream_url="wss://pumpportal.fun/api/data",
-        config=TradingBotConfig(),
+        config=TradingBotConfig(enable_tiered_take_profit=False),
         min_market_cap_sol=20,  # int
         min_balance_sol=1,  # int
         max_active_positions=2,  # int
@@ -353,42 +353,27 @@ async def test_bot_start_and_message_loop_heartbeat(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
-        stream_url="wss://pumpportal.fun/api/data",
+        stream_url="http://127.0.0.1:10000",
         config=TradingBotConfig(),
         dry_run=True,
     )
     bot._circuit_breaker_tripped = True
     bot._last_message_at = time.monotonic() - 70.0  # triggers heartbeat timeout check
 
-    messages = [
-        "not valid json string",  # json decode error branch
-        json.dumps({"txType": "create", "mint": SAMPLE_MINT, "marketCapSol": 30.0}),
+    events = [
+        "not_valid_dict",
+        {"txType": "create", "mint": SAMPLE_MINT, "marketCapSol": 30.0},
     ]
 
-    class MockWebsocket:
-        async def send(self, data):
-            pass
+    async def mock_listen():
+        for e in events:
+            yield e
+        bot.request_shutdown()
 
-        async def __aiter__(self):
-            for m in messages:
-                yield m
-            bot.request_shutdown()
-
-    class MockWSConnect:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return MockWebsocket()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-    # Test startup reconciliation exception and successful startup run
+    bot.geyser_client.listen = mock_listen
     bot.reconcile_onchain_positions = AsyncMock(side_effect=RuntimeError("recon err"))
 
-    with patch("websockets.connect", side_effect=MockWSConnect):
-        await bot.start()
+    await bot.start()
 
     assert bot._circuit_breaker_tripped is False
     await bot.close()

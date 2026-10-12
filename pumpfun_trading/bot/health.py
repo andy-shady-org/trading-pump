@@ -39,6 +39,6 @@ def update_health_state(bot: Any) -> None:
             bot._health_ok = False
             bot._risk_killed = True
             bot._last_status = "health timeout"
-            bot._last_event = "risk kill: websocket stale"
+            bot._last_event = "risk kill: stream stale"
     else:
         mark_health_check(bot)

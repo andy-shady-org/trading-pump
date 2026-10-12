@@ -9,6 +9,9 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 
+from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.strategies.momentum import OrderFlowEngine
+
 
 class PaperTradingEngine:
     """Lightweight paper-trading engine for historical token snapshots."""
@@ -23,6 +26,8 @@ class PaperTradingEngine:
         buy_fraction: float = 0.5,
         take_profit: float = 1.5,
         stop_loss: float = 0.85,
+        strategy_config: TradingBotConfig | None = None,
+        enable_order_flow_momentum: bool = False,
     ) -> None:
         self.initial_cash = float(initial_cash)
         self.max_positions = int(max_positions)
@@ -31,6 +36,11 @@ class PaperTradingEngine:
         self.buy_fraction = float(buy_fraction)
         self.take_profit = float(take_profit)
         self.stop_loss = float(stop_loss)
+        self.strategy_config = strategy_config
+        self.enable_order_flow_momentum = enable_order_flow_momentum or (
+            bool(strategy_config.enable_momentum_signals) if strategy_config else False
+        )
+        self.order_flow_engine = OrderFlowEngine()
 
     @staticmethod
     def _coerce_records(payload: Any) -> list[dict[str, Any]]:
@@ -129,11 +139,16 @@ class PaperTradingEngine:
         )
 
     @staticmethod
-    def _buy_signal(snapshot: dict[str, Any]) -> bool:
+    def _buy_signal(
+        snapshot: dict[str, Any], momentum_triggered: bool = False
+    ) -> bool:
         if isinstance(snapshot.get("buy_signal"), bool):
             return bool(snapshot["buy_signal"])
         if isinstance(snapshot.get("signal"), str):
-            return snapshot["signal"].lower() in {"buy", "long", "entry"}
+            if snapshot["signal"].lower() in {"buy", "long", "entry"}:
+                return True
+        if momentum_triggered:
+            return True
         return bool(snapshot.get("should_buy"))
 
     @staticmethod
@@ -159,6 +174,54 @@ class PaperTradingEngine:
                 continue
 
             last_prices[mint] = price
+
+            # Process order flow recording and momentum signal evaluation
+            momentum_triggered = False
+            if (
+                "txType" in snapshot
+                or "is_buy" in snapshot
+                or "sol_amount" in snapshot
+                or "solAmount" in snapshot
+            ):
+                is_buy = snapshot.get("txType") == "buy" or bool(
+                    snapshot.get("is_buy", True)
+                )
+                sol_amount = float(
+                    snapshot.get("sol_amount") or snapshot.get("solAmount") or 0.0
+                )
+                user = str(
+                    snapshot.get("user")
+                    or snapshot.get("traderPublicKey")
+                    or "replay_trader"
+                )
+                ts_raw = self._snapshot_timestamp(snapshot)
+                try:
+                    ts = float(ts_raw)
+                except (TypeError, ValueError):
+                    ts = float(index)
+
+                self.order_flow_engine.record_trade(
+                    mint=mint,
+                    is_buy=is_buy,
+                    sol_amount=sol_amount,
+                    user=user,
+                    timestamp=ts,
+                )
+
+                if self.enable_order_flow_momentum:
+                    if self.strategy_config:
+                        from pumpfun_trading.strategies.decision import TradingStrategy
+
+                        strategy = TradingStrategy(self.strategy_config)
+                        signal = strategy.evaluate_momentum(
+                            self.order_flow_engine, mint, current_time=ts
+                        )
+                        momentum_triggered = signal.triggered
+                    else:
+                        signal = self.order_flow_engine.evaluate_momentum_signal(
+                            mint, current_time=ts
+                        )
+                        momentum_triggered = signal.triggered
 
             if mint in positions:
                 position = positions[mint]
@@ -202,7 +265,7 @@ class PaperTradingEngine:
 
             if (
                 mint not in positions
-                and self._buy_signal(snapshot)
+                and self._buy_signal(snapshot, momentum_triggered=momentum_triggered)
                 and len(positions) < self.max_positions
             ):
                 buy_amount = max(0.0, min(cash * self.buy_fraction, cash))
@@ -220,6 +283,11 @@ class PaperTradingEngine:
                             "cost_basis": gross_cost,
                         }
                         cash -= gross_cost
+                        buy_reason = (
+                            "momentum_spike"
+                            if momentum_triggered
+                            else "buy_signal"
+                        )
                         trades.append(
                             {
                                 "index": len(trades),
@@ -234,7 +302,7 @@ class PaperTradingEngine:
                                 "quantity": quantity,
                                 "pnl": 0.0,
                                 "return_pct": 0.0,
-                                "reason": "buy_signal",
+                                "reason": buy_reason,
                             }
                         )
 

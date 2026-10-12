@@ -16,6 +16,13 @@ from spl.token.instructions import (
     get_associated_token_address,
 )
 
+from .jito import (
+    JITO_BLOCK_ENGINE_ENDPOINTS,
+    JITO_TIP_ACCOUNTS,
+    JitoClient,
+    JitoTipConfig,
+)
+
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 GLOBAL_STATE = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 FEE_RECIPIENT = "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
@@ -25,17 +32,6 @@ RENT_PROGRAM_ID = "SysvarRent111111111111111111111111111111111"
 EVENT_AUTHORITY = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
 TOKEN_PROGRAM_ID_STR = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
-
-JITO_TIP_ACCOUNTS = [
-    "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
-    "HFqU5x63VTxvQssQamRxUBvu13Wqh4KZxGar46YoxrfP",
-    "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
-    "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
-    "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
-    "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
-    "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
-    "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
-]
 
 BUY_DISCRIMINATOR = bytes([102, 6, 61, 18, 1, 218, 235, 234])
 SELL_DISCRIMINATOR = bytes([51, 230, 133, 164, 1, 127, 131, 173])
@@ -258,6 +254,11 @@ class PumpFunExecutionClient:
         compute_unit_price_micro_lamports: Optional[int] = None,
         jito_tip_lamports: int = 0,
         jito_block_engine_url: Optional[str] = None,
+        use_jito: bool = False,
+        jito_fallback_to_rpc: bool = True,
+        jito_confirmation_timeout: float = 12.0,
+        jito_client: Optional[JitoClient] = None,
+        jito_tip_config: Optional[JitoTipConfig] = None,
         default_slippage_bps: int = 500,
     ):
         self.private_key_b58 = private_key_b58
@@ -267,12 +268,24 @@ class PumpFunExecutionClient:
         self.compute_unit_price_micro_lamports = compute_unit_price_micro_lamports
         self.jito_tip_lamports = jito_tip_lamports
         self.jito_block_engine_url = jito_block_engine_url
+        self.use_jito = bool(use_jito or jito_tip_lamports > 0 or jito_block_engine_url)
+        self.jito_fallback_to_rpc = jito_fallback_to_rpc
+        self.jito_confirmation_timeout = jito_confirmation_timeout
         self.default_slippage_bps = self.normalize_slippage_bps(default_slippage_bps)
         self.keypair = self._decode_keypair(private_key_b58)
         self.wallet = self.keypair.pubkey()
         self._execution_lock = asyncio.Lock()
         self.execution_health_score = 100.0
         self.failed_execution_attempts = 0
+        self.jito_tip_config = jito_tip_config or JitoTipConfig()
+        self.jito_client: Optional[JitoClient] = jito_client
+        if self.jito_client is None and self.use_jito:
+            self.jito_client = JitoClient(
+                wallet=self.wallet,
+                block_engine_url=self.jito_block_engine_url
+                or JITO_BLOCK_ENGINE_ENDPOINTS["mainnet"],
+                config=self.jito_tip_config,
+            )
 
     async def _request_rpc_json(
         self,
@@ -605,7 +618,12 @@ class PumpFunExecutionClient:
         """Create transfer instruction sending Jito tip to validator tip address."""
         if tip_lamports <= 0:
             raise ValueError("Jito tip lamports must be positive")
-        target_account = tip_account or JITO_TIP_ACCOUNTS[0]
+        if tip_account is not None:
+            target_account = tip_account
+        elif self.jito_client is not None:
+            target_account = self.jito_client.get_tip_account()
+        else:
+            target_account = JITO_TIP_ACCOUNTS[0]
         data = bytes([2, 0, 0, 0]) + self._u64(tip_lamports)
         accounts = [
             AccountMeta(pubkey=self.wallet, is_signer=True, is_writable=True),
@@ -620,6 +638,26 @@ class PumpFunExecutionClient:
             accounts=accounts,
             data=data,
         )
+
+    async def calculate_dynamic_jito_tip(
+        self,
+        trade_amount_sol: float = 0.0,
+        conviction_score: float = 1.0,
+    ) -> int:
+        """Calculate dynamic Jito tip in Lamports based on trade amount and conviction."""
+        if self.jito_client is not None:
+            try:
+                floor = await self.jito_client.fetch_tip_floor()
+                return self.jito_client.calculate_tip_lamports(
+                    trade_amount_sol=trade_amount_sol,
+                    conviction_score=conviction_score,
+                    tip_floor=floor,
+                )
+            except Exception:
+                pass
+        if self.jito_tip_lamports > 0:
+            return self.jito_tip_lamports
+        return self.jito_tip_config.default_tip_lamports
 
     async def get_bonding_curve_state(self, mint: str) -> dict[str, int | float | bool]:
         """Fetch and decode on-chain bonding curve account state directly from RPC."""
@@ -651,6 +689,7 @@ class PumpFunExecutionClient:
         *,
         token_amount: Optional[int] = None,
         slippage_bps: Optional[int] = None,
+        tip_lamports: Optional[int] = None,
     ) -> VersionedTransaction:
         token_amount = token_amount if token_amount is not None else 0
         slippage_bps = (
@@ -673,7 +712,9 @@ class PumpFunExecutionClient:
         instructions.append(
             self.build_buy_instruction(mint, bonding_curve, token_amount, max_sol_cost)
         )
-        return await self._build_tx_with_instructions(instructions)
+        return await self._build_tx_with_instructions(
+            instructions, tip_lamports=tip_lamports
+        )
 
     async def build_sell_tx(
         self,
@@ -683,6 +724,7 @@ class PumpFunExecutionClient:
         *,
         min_sol_output: int | float = 0,
         slippage_bps: int | None = None,
+        tip_lamports: Optional[int] = None,
     ) -> VersionedTransaction:
         slippage_bps = self.normalize_slippage_bps(
             slippage_bps, self.default_slippage_bps
@@ -705,9 +747,16 @@ class PumpFunExecutionClient:
                 mint, bonding_curve, token_amount, min_sol_lamports
             )
         ]
-        return await self._build_tx_with_instructions(instructions)
+        return await self._build_tx_with_instructions(
+            instructions, tip_lamports=tip_lamports
+        )
 
-    async def _build_tx_with_instructions(self, instructions) -> VersionedTransaction:
+    async def _build_tx_with_instructions(
+        self,
+        instructions,
+        *,
+        tip_lamports: Optional[int] = None,
+    ) -> VersionedTransaction:
         tx_instructions = []
         if self.compute_unit_limit > 0:
             tx_instructions.append(
@@ -727,10 +776,11 @@ class PumpFunExecutionClient:
                 self.build_set_compute_unit_price_instruction(unit_price)
             )
         tx_instructions.extend(instructions)
-        if self.jito_tip_lamports > 0:
-            tx_instructions.append(
-                self.build_jito_tip_instruction(self.jito_tip_lamports)
-            )
+        effective_tip = (
+            tip_lamports if tip_lamports is not None else self.jito_tip_lamports
+        )
+        if effective_tip > 0:
+            tx_instructions.append(self.build_jito_tip_instruction(effective_tip))
 
         blockhash = await self.get_latest_blockhash()
         account_keys = []
@@ -793,6 +843,50 @@ class PumpFunExecutionClient:
                 if not result:
                     raise RuntimeError(f"Invalid Jito bundle response: {parsed}")
                 return str(result)
+
+    async def send_jito_bundle_with_fallback(
+        self,
+        transactions: list[VersionedTransaction],
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> str:
+        """Submit transactions via Jito bundle with confirmation polling and direct RPC fallback."""
+        if not transactions:
+            raise ValueError("Cannot submit empty transaction list as bundle")
+
+        tx = transactions[0]
+        tx_sig = str(tx.signatures[0]) if tx.signatures else ""
+        timeout = timeout_seconds or self.jito_confirmation_timeout
+
+        try:
+            if self.jito_client is not None:
+                bundle_id = await self.jito_client.send_bundle(transactions)
+                status = await self.jito_client.wait_for_bundle_confirmation(
+                    bundle_id, timeout_seconds=timeout
+                )
+                if status.is_landed:
+                    self.execution_health_score = min(
+                        100.0, self.execution_health_score + 5.0
+                    )
+                    return tx_sig
+                if status.is_failed:
+                    raise RuntimeError(f"Jito bundle {bundle_id} failed: {status.err}")
+                return tx_sig
+            else:
+                bundle_id = await self.send_jito_bundle(transactions)
+                confirmed = await self.confirm_transaction(
+                    tx_sig, max_retries=max(1, int(timeout))
+                )
+                if confirmed:
+                    return tx_sig
+                raise TimeoutError(f"Bundle {bundle_id} not confirmed within timeout")
+        except Exception:
+            if not self.jito_fallback_to_rpc:
+                raise
+            self.failed_execution_attempts += 1
+            self.execution_health_score = max(0.0, self.execution_health_score - 5.0)
+            # Fast fallback to high-priority direct RPC submission
+            return await self.send_transaction(tx)
 
     async def send_transaction(self, tx: VersionedTransaction) -> str:
         async with self._execution_lock:
@@ -869,14 +963,25 @@ class PumpFunExecutionClient:
         *,
         token_amount: Optional[int] = None,
         slippage_bps: Optional[int] = None,
+        use_jito: Optional[bool] = None,
+        conviction_score: float = 1.0,
     ) -> str:
+        should_jito = self.use_jito if use_jito is None else use_jito
+        tip_lamports = None
+        if should_jito:
+            tip_lamports = await self.calculate_dynamic_jito_tip(
+                trade_amount_sol=sol_amount, conviction_score=conviction_score
+            )
         tx = await self.build_buy_tx(
             mint,
             bonding_curve,
             sol_amount,
             token_amount=token_amount,
             slippage_bps=slippage_bps,
+            tip_lamports=tip_lamports,
         )
+        if should_jito:
+            return await self.send_jito_bundle_with_fallback([tx])
         return await self.send_transaction(tx)
 
     async def sell(
@@ -885,12 +990,36 @@ class PumpFunExecutionClient:
         bonding_curve: str,
         token_amount: int,
         *,
-        min_sol_output: int = 0,
+        min_sol_output: int | float = 0,
+        slippage_bps: Optional[int] = None,
+        use_jito: Optional[bool] = None,
+        conviction_score: float = 1.0,
     ) -> str:
+        should_jito = self.use_jito if use_jito is None else use_jito
+        tip_lamports = None
+        if should_jito:
+            approx_sol = (
+                (float(min_sol_output) / 1_000_000_000) if min_sol_output > 0 else 0.0
+            )
+            tip_lamports = await self.calculate_dynamic_jito_tip(
+                trade_amount_sol=approx_sol, conviction_score=conviction_score
+            )
         tx = await self.build_sell_tx(
-            mint, bonding_curve, token_amount, min_sol_output=min_sol_output
+            mint,
+            bonding_curve,
+            token_amount,
+            min_sol_output=min_sol_output,
+            slippage_bps=slippage_bps,
+            tip_lamports=tip_lamports,
         )
+        if should_jito:
+            return await self.send_jito_bundle_with_fallback([tx])
         return await self.send_transaction(tx)
+
+    async def close(self) -> None:
+        """Close external client connections including Jito client session."""
+        if self.jito_client is not None:
+            await self.jito_client.close()
 
     async def get_token_balance(self, mint: str, owner: Optional[str] = None) -> int:
         """Return the token balance for the wallet ATA for a given mint, in raw token units."""

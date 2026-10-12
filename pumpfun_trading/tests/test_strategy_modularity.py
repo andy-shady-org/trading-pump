@@ -193,3 +193,107 @@ def test_strategy_preset_validation_and_fallbacks():
 
     with pytest.raises(ValueError, match="at least 1"):
         resolve_strategy_config("balanced", overrides={"max_active_positions": 0})
+
+
+def test_strategy_presets_momentum_configuration():
+    conservative = resolve_strategy_config("conservative")
+    assert conservative.enable_momentum_signals is True
+    assert conservative.momentum_min_z_score == 3.0
+    assert conservative.momentum_min_buy_ratio == 4.0
+    assert conservative.momentum_min_unique_buyers == 5
+    assert conservative.momentum_min_net_inflow_sol == 1.0
+
+    balanced = resolve_strategy_config("balanced")
+    assert balanced.enable_momentum_signals is True
+    assert balanced.momentum_min_z_score == 2.5
+    assert balanced.momentum_min_buy_ratio == 3.0
+    assert balanced.momentum_min_unique_buyers == 3
+    assert balanced.momentum_min_net_inflow_sol == 0.5
+
+    aggressive = resolve_strategy_config("aggressive")
+    assert aggressive.enable_momentum_signals is True
+    assert aggressive.momentum_min_z_score == 2.0
+    assert aggressive.momentum_min_buy_ratio == 2.0
+    assert aggressive.momentum_min_unique_buyers == 2
+    assert aggressive.momentum_min_net_inflow_sol == 0.25
+
+
+def test_strategy_momentum_decision_pipeline():
+    from pumpfun_trading.strategies.momentum import (
+        MomentumSignal,
+        OrderFlowEngine,
+        WindowMetrics,
+    )
+
+    config = resolve_strategy_config("balanced")
+    strategy = TradingStrategy(config)
+    engine = OrderFlowEngine()
+
+    base_time = 1000.0
+    # Ingest trades to create breakout
+    for slice_idx in range(1, 10):
+        t = base_time - (slice_idx * 30 + 15)
+        engine.record_trade("TokenBreakout", is_buy=True, sol_amount=0.05, user=f"OldUser{slice_idx}", timestamp=t)
+    for i in range(5):
+        engine.record_trade("TokenBreakout", is_buy=True, sol_amount=1.0, user=f"NewBuyer{i}", timestamp=base_time - 10 + i)
+
+    signal = strategy.evaluate_momentum(
+        engine,
+        "TokenBreakout",
+        token_creation_timestamp=base_time - 100,
+        current_time=base_time,
+    )
+    assert signal.triggered is True
+    assert signal.z_score >= 2.5
+    assert signal.unique_buyers >= 3
+
+    # Check should_buy_momentum
+    assert strategy.should_buy_momentum(
+        momentum_signal=signal,
+        active_positions=0,
+        buy_attempts=0,
+        mint_seen_recently=False,
+    ) is True
+
+    # Check rejection when active positions full
+    assert strategy.should_buy_momentum(
+        momentum_signal=signal,
+        active_positions=1,
+        buy_attempts=0,
+        mint_seen_recently=False,
+    ) is False
+
+    # Check rejection when signal not triggered
+    failed_signal = MomentumSignal(
+        triggered=False,
+        mint="TokenFailed",
+        z_score=1.0,
+        buy_sell_ratio=1.0,
+        net_sol_inflow=0.1,
+        unique_buyers=1,
+        trade_velocity=0.05,
+        metrics=WindowMetrics(
+            window_seconds=30,
+            trade_count=1,
+            buy_count=1,
+            sell_count=0,
+            buy_volume_sol=0.1,
+            sell_volume_sol=0.0,
+            buy_sell_ratio=999.0,
+            net_sol_inflow=0.1,
+            unique_buyers=1,
+            unique_sellers=0,
+            trade_velocity=0.033,
+        ),
+        reason="failed",
+    )
+    assert strategy.should_buy_momentum(
+        momentum_signal=failed_signal,
+        active_positions=0,
+        buy_attempts=0,
+    ) is False
+
+    # Check summary contains momentum
+    summary = strategy.summary()
+    assert summary["enable_momentum_signals"] is True
+    assert summary["momentum_min_z_score"] == 2.5

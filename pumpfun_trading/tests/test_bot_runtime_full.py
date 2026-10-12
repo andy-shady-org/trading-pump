@@ -24,6 +24,7 @@ def base_bot(tmp_path):
         max_position_size_sol=0.2,
         min_market_cap_sol=10.0,
         min_balance_sol=0.1,
+        enable_tiered_take_profit=False,
     )
     status_file = tmp_path / "bot_status.json"
     audit_file = tmp_path / "audit.jsonl"
