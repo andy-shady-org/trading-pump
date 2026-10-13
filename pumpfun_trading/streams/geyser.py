@@ -607,7 +607,7 @@ class YellowstoneGeyserClient:
         """Async generator yielding incoming parsed events from the stream."""
         while self._running or not self._queue.empty():
             try:
-                item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                item = await asyncio.wait_for(self._queue.get(), timeout=0.5)
                 yield item
                 self._queue.task_done()
             except asyncio.TimeoutError:

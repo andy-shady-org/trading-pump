@@ -88,7 +88,10 @@ def main() -> None:
         finally:
             await bot.close()
 
-    asyncio.run(_run_bot())
+    try:
+        asyncio.run(_run_bot())
+    except (KeyboardInterrupt, SystemExit):
+        pass
 
 
 if __name__ == "__main__":

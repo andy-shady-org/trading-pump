@@ -535,7 +535,35 @@ print('Keypair loaded successfully:', kp is not None)
 
 #### Gate 4 Results
 ```bash
-
+(.venv) [13:51]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (274) $ git grep -iE "(private_key|secret_key|api_key|token|password)" -- ":(exclude)*.sample" ":(exclude)*.md" ":(exclude)*tests*" ":(exclude)*.py"
+.github/workflows/release.yml:            id-token: write
+bot-config.example.json:  "recent_token_ttl_seconds": 600,
+bot-config.example.json:  "max_token_concentration_pct": 0.35,
+configs/aggressive_test.json:  "recent_token_ttl_seconds": 600,
+configs/aggressive_test.json:  "max_token_concentration_pct": 0.50,
+configs/aggressive_test.json:  "momentum_max_token_age_seconds": 3600,
+configs/balanced_test.json:  "recent_token_ttl_seconds": 600,
+configs/balanced_test.json:  "max_token_concentration_pct": 0.35,
+configs/balanced_test.json:  "momentum_max_token_age_seconds": 1800,
+configs/conservative_test.json:  "recent_token_ttl_seconds": 600,
+configs/conservative_test.json:  "max_token_concentration_pct": 0.25,
+configs/conservative_test.json:  "momentum_max_token_age_seconds": 900,
+configs/devnet_test.json:  "recent_token_ttl_seconds": 600,
+configs/devnet_test.json:  "max_token_concentration_pct": 0.35,
+configs/devnet_test.json:  "momentum_max_token_age_seconds": 1800,
+configs/preprod_pilot.json:  "recent_token_ttl_seconds": 600,
+configs/preprod_pilot.json:  "max_token_concentration_pct": 0.35,
+configs/preprod_pilot.json:  "momentum_max_token_age_seconds": 1800,
+configs/replay_test.json:  "recent_token_ttl_seconds": 600,
+configs/replay_test.json:  "max_token_concentration_pct": 0.35,
+configs/replay_test.json:  "momentum_max_token_age_seconds": 1800,
+(.venv) [13:52]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (275) $ test -f .envrc && stat -f "%Sp %N" .envrc | grep -E "^-rw-------"
+(.venv) [13:52]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (276) $ python -c "
+from pumpfun_trading.config.env import load_keypair_from_env
+kp = load_keypair_from_env()
+print('Keypair loaded successfully:', kp is not None)
+"
+Keypair loaded successfully: True
 ```
 
 
@@ -565,7 +593,78 @@ python -m pumpfun_trading.cli.main audit --path test-data/audit_trail.jsonl --su
 
 #### Gate 5 Results
 ```bash
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (277) $ # 1. Persistence & Lifecycle Resilience Tests
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (277) $ pytest -v pumpfun_trading/tests/test_bot_subsystems.py pumpfun_trading/tests/test_bugfixes_lifecycle_resilience.py pumpfun_trading/tests/test_position_manager.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 18 items
 
+pumpfun_trading/tests/test_bot_subsystems.py .......                                                                                                                                                                                                    [ 38%]
+pumpfun_trading/tests/test_bugfixes_lifecycle_resilience.py ....                                                                                                                                                                                        [ 61%]
+pumpfun_trading/tests/test_position_manager.py .......                                                                                                                                                                                                  [100%]
+
+===================================================================================================================== 18 passed in 0.23s ======================================================================================================================
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (278) $
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (278) $ # 2. Audit Trail Tool & Export CLI Verification
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (278) $ pytest -v pumpfun_trading/tests/test_audit_tool.py pumpfun_trading/tests/test_audit_full.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 7 items
+
+pumpfun_trading/tests/test_audit_tool.py ....                                                                                                                                                                                                           [ 57%]
+pumpfun_trading/tests/test_audit_full.py ...                                                                                                                                                                                                            [100%]
+
+====================================================================================================================== 7 passed in 0.15s ======================================================================================================================
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (279) $
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (279) $ # 3. Audit Log Summary Inspection on Test Output (from runtime directory)
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (279) $ python -m pumpfun_trading.cli.main audit --path test-data/audit_trail.jsonl --summary
+{
+  "by_reason": {
+    "auto_advance_idle_to_monitoring": 2,
+    "buy_confirmed 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": 2,
+    "buy_rejected_equity_guard 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": 2,
+    "buying 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": 4,
+    "circuit_breaker_reset": 2,
+    "entry": 2,
+    "raydium_graduation_snipe": 2,
+    "retry_test": 2,
+    "second_failure": 2,
+    "sell_complete 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": 2,
+    "sell_complete HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump": 2,
+    "sell_failed HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump": 2,
+    "selling 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R (stop_loss_hit (8.00% <= 85.00%))": 2,
+    "selling HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump (exit)": 2,
+    "selling HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump (second_failure)": 2,
+    "shutdown_requested": 4,
+    "stop_loss_hit (2.50% <= 85.00%)": 1,
+    "stop_loss_hit (8.00% <= 85.00%)": 2,
+    "take_profit_tier_1 (2.00x >= 2.00x)": 2,
+    "take_profit_tier_2 (3.50x >= 3.50x)": 2
+  },
+  "by_state": {
+    "buying": 6,
+    "holding": 4,
+    "idle": 110,
+    "monitoring": 10,
+    "selling": 10,
+    "shutdown": 13
+  },
+  "by_status": {},
+  "by_type": {
+    "state_transition": 28,
+    "trade": 125
+  },
+  "total_records": 153
+}
+(.venv) [13:53]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (280) $
 ```
 
 

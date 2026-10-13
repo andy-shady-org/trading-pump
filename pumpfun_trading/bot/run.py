@@ -629,10 +629,12 @@ class TradingBot:
                 self.state = TradingBotState(snapshot["state"])
             except ValueError:
                 self.state = TradingBotState.IDLE
+        if self.state == TradingBotState.SHUTDOWN:
+            self.state = TradingBotState.IDLE
 
         self._health_ok = bool(snapshot.get("health_ok", self._health_ok))
         self._risk_killed = bool(snapshot.get("risk_killed", self._risk_killed))
-        self._stop_requested = bool(snapshot.get("stop_requested", False))
+        self._stop_requested = False
         self._last_message_at = float(
             snapshot.get("last_message_at", self._last_message_at)
         )
@@ -684,6 +686,8 @@ class TradingBot:
 
     def _transition_to(self, next_state: TradingBotState, reason: str = "") -> None:
         current = self.state
+        if current == next_state:
+            return
         if next_state not in self._VALID_STATE_TRANSITIONS.get(current, set()):
             if current == TradingBotState.IDLE and next_state == TradingBotState.BUYING:
                 self._transition_to(
@@ -771,7 +775,10 @@ class TradingBot:
     def request_shutdown(self) -> None:
         self._stop_requested = True
         self._last_status = "shutdown requested"
-        self._transition_to(TradingBotState.SHUTDOWN, reason="shutdown_requested")
+        if hasattr(self, "geyser_client") and self.geyser_client is not None:
+            self.geyser_client._running = False
+        if self.state != TradingBotState.SHUTDOWN:
+            self._transition_to(TradingBotState.SHUTDOWN, reason="shutdown_requested")
         self._log("Shutdown requested.")
 
     def _register_signal_handlers(self) -> None:
@@ -2251,6 +2258,8 @@ class TradingBot:
                 )
                 await self.geyser_client.start()
                 async for event in self.geyser_client.listen():
+                    if self._stop_requested:
+                        break
                     self._last_message_at = time.monotonic()
                     self._circuit_breaker_tripped = False
                     self._stream_consecutive_failures = 0
@@ -2267,7 +2276,7 @@ class TradingBot:
             else:
                 self._log("No Geyser stream configured; idling.", level=logging.WARNING)
                 while not self._stop_requested:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
         except asyncio.CancelledError:
             pass
         except Exception as exc:
@@ -2292,7 +2301,8 @@ class TradingBot:
                 elif hasattr(self.rpc_pool, "close"):
                     await self.rpc_pool.close()
             self.persistence.close()
-            self._transition_to(TradingBotState.SHUTDOWN, reason="bot_terminated")
+            if self.state != TradingBotState.SHUTDOWN:
+                self._transition_to(TradingBotState.SHUTDOWN, reason="bot_terminated")
 
     def run(self) -> None:
         """Synchronous runner entrypoint."""

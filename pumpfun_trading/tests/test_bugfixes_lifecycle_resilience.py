@@ -197,3 +197,37 @@ async def test_bug06_websocket_backoff_and_circuit_breaker():
     snapshot = build_status_snapshot(bot)
     assert snapshot["circuit_breaker_tripped"] is True
     assert snapshot["ws_consecutive_failures"] == 3
+
+
+def test_safe_startup_resets_shutdown_state_and_stop_requested(tmp_path):
+    """Test that restarting the bot resets SHUTDOWN state and stop_requested to clean defaults."""
+    status_file = tmp_path / "bot_status.json"
+    status_file.write_text(
+        '{"state": "shutdown", "stop_requested": true, "active_positions": {}}',
+        encoding="utf-8",
+    )
+    with patch.dict(os.environ, {"PUMPFUN_STATUS_PATH": str(status_file)}):
+        bot = _make_bot()
+        bot.safe_startup()
+        from pumpfun_trading.bot.lifecycle import TradingBotState
+
+        assert bot.state == TradingBotState.IDLE
+        assert bot._stop_requested is False
+
+
+def test_request_shutdown_idempotent_and_stops_geyser():
+    """Test that request_shutdown stops geyser client and is safe to call repeatedly."""
+    bot = _make_bot()
+    from pumpfun_trading.bot.lifecycle import TradingBotState
+
+    assert bot.geyser_client is not None
+    bot.geyser_client._running = True
+
+    bot.request_shutdown()
+    assert bot._stop_requested is True
+    assert bot.geyser_client._running is False
+    assert bot.state == TradingBotState.SHUTDOWN
+
+    # Repeated calls should be idempotent
+    bot.request_shutdown()
+    assert bot.state == TradingBotState.SHUTDOWN
