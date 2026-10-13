@@ -4,7 +4,6 @@ import json
 from typing import Any, Optional
 
 import aiohttp
-import base58
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
 from solders.message import MessageV0
@@ -236,20 +235,9 @@ class PumpFunExecutionClient:
 
     @staticmethod
     def _decode_keypair(private_key_b58: str) -> Keypair:
-        decoded = base58.b58decode(private_key_b58)
-        if len(decoded) == 32:
-            return Keypair.from_seed(decoded)
-        if len(decoded) == 64:
-            try:
-                return Keypair.from_bytes(decoded)
-            except Exception:
-                return Keypair.from_seed(decoded[:32])
-        if len(decoded) >= 32:
-            return Keypair.from_seed(decoded[:32])
-        raise ValueError(
-            "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret key; "
-            f"got {len(decoded)} bytes after decoding."
-        )
+        from pumpfun_trading.config.env import decode_keypair
+
+        return decode_keypair(private_key_b58)
 
     def __init__(
         self,

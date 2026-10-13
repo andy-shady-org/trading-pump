@@ -6,6 +6,9 @@ import os
 from collections.abc import Iterable
 from typing import Any
 
+import base58
+from solders.keypair import Keypair
+
 
 def get_env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -48,6 +51,39 @@ def mask_secret(value: str | None, *, hidden: str = "********") -> str:
     if len(value) <= 8:
         return hidden
     return f"{value[:4]}...{value[-2:]}"
+
+
+def decode_keypair(private_key_b58: str) -> Keypair:
+    """Decode a base58-encoded string into a solders Keypair."""
+    decoded = base58.b58decode(private_key_b58.strip())
+    if len(decoded) == 32:
+        return Keypair.from_seed(decoded)
+    if len(decoded) == 64:
+        try:
+            return Keypair.from_bytes(decoded)
+        except Exception:
+            return Keypair.from_seed(decoded[:32])
+    if len(decoded) >= 32:
+        return Keypair.from_seed(decoded[:32])
+    raise ValueError(
+        "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret key; "
+        f"got {len(decoded)} bytes after decoding."
+    )
+
+
+def load_keypair_from_env(
+    env_var: str | None = None,
+) -> Keypair | None:
+    """Load and decode a Keypair from environment variables (e.g. PUMPFUN_PRIVATE_KEY or SOLANA_PRIVATE_KEY)."""
+    raw_key: str | None = None
+    if env_var:
+        raw_key = os.getenv(env_var)
+    else:
+        raw_key = os.getenv("PUMPFUN_PRIVATE_KEY") or os.getenv("SOLANA_PRIVATE_KEY")
+
+    if not raw_key or not raw_key.strip():
+        return None
+    return decode_keypair(raw_key.strip())
 
 
 def get_runtime_env(**overrides: Any) -> dict[str, Any]:
@@ -100,11 +136,13 @@ def validate_required_runtime_env(
 
 
 __all__ = [
+    "decode_keypair",
     "get_env_bool",
     "get_env_float",
     "get_env_int",
     "get_env_list",
     "get_runtime_env",
+    "load_keypair_from_env",
     "mask_secret",
     "sanitize_env_for_logging",
     "validate_required_runtime_env",

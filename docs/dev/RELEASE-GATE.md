@@ -228,7 +228,118 @@ pytest -v pumpfun_trading/tests/test_replay_engine.py pumpfun_trading/tests/test
 
 #### Gate 1 Results
 ```bash
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (255) $ python -m pumpfun_trading.cli.main replay --path test-data/historical_captures.jsonl --mode dashboard --config configs/replay_test.json
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Engine ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│ ┃ Metric                                                                                                                                                                                      ┃ Value                                                     ┃ │
+│ ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩ │
+│ │ initial_cash                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ final_equity                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ profit_factor                                                                                                                                                                               │ 0.0                                                       │ │
+│ │ max_drawdown                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ win_rate                                                                                                                                                                                    │ 0.0                                                       │ │
+│ │ average_trade_return                                                                                                                                                                        │ 0.0                                                       │ │
+│ │ total_return                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ open_positions                                                                                                                                                                              │ 0                                                         │ │
+│ └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────┘ │
+│ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Status ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Trades: 0                                                                                                                                                                                                                                               │ │
+│ │ Buys: 0                                                                                                                                                                                                                                                 │ │
+│ │ Sells: 0                                                                                                                                                                                                                                                │ │
+│ │ Final cash: 100.0                                                                                                                                                                                                                                       │ │
+│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+No replay trades recorded.
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (256) $
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (256) $ # 2. Replay Verification across Strategy Presets and Configs
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (256) $ python -m pumpfun_trading.cli.main --mode replay --replay-path test-data/historical_captures.jsonl --config configs/conservative_test.json
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Engine ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│ ┃ Metric                                                                                                                                                                                      ┃ Value                                                     ┃ │
+│ ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩ │
+│ │ initial_cash                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ final_equity                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ profit_factor                                                                                                                                                                               │ 0.0                                                       │ │
+│ │ max_drawdown                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ win_rate                                                                                                                                                                                    │ 0.0                                                       │ │
+│ │ average_trade_return                                                                                                                                                                        │ 0.0                                                       │ │
+│ │ total_return                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ open_positions                                                                                                                                                                              │ 0                                                         │ │
+│ └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────┘ │
+│ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Status ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Trades: 0                                                                                                                                                                                                                                               │ │
+│ │ Buys: 0                                                                                                                                                                                                                                                 │ │
+│ │ Sells: 0                                                                                                                                                                                                                                                │ │
+│ │ Final cash: 100.0                                                                                                                                                                                                                                       │ │
+│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+No replay trades recorded.
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (257) $ python -m pumpfun_trading.cli.main --mode replay --replay-path test-data/historical_captures.jsonl --config configs/balanced_test.json
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Engine ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│ ┃ Metric                                                                                                                                                                                      ┃ Value                                                     ┃ │
+│ ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩ │
+│ │ initial_cash                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ final_equity                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ profit_factor                                                                                                                                                                               │ 0.0                                                       │ │
+│ │ max_drawdown                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ win_rate                                                                                                                                                                                    │ 0.0                                                       │ │
+│ │ average_trade_return                                                                                                                                                                        │ 0.0                                                       │ │
+│ │ total_return                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ open_positions                                                                                                                                                                              │ 0                                                         │ │
+│ └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────┘ │
+│ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Status ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Trades: 0                                                                                                                                                                                                                                               │ │
+│ │ Buys: 0                                                                                                                                                                                                                                                 │ │
+│ │ Sells: 0                                                                                                                                                                                                                                                │ │
+│ │ Final cash: 100.0                                                                                                                                                                                                                                       │ │
+│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+No replay trades recorded.
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (258) $ python -m pumpfun_trading.cli.main --mode replay --replay-path test-data/historical_captures.jsonl --config configs/aggressive_test.json
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Engine ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│ ┃ Metric                                                                                                                                                                                      ┃ Value                                                     ┃ │
+│ ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩ │
+│ │ initial_cash                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ final_equity                                                                                                                                                                                │ 100.0                                                     │ │
+│ │ profit_factor                                                                                                                                                                               │ 0.0                                                       │ │
+│ │ max_drawdown                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ win_rate                                                                                                                                                                                    │ 0.0                                                       │ │
+│ │ average_trade_return                                                                                                                                                                        │ 0.0                                                       │ │
+│ │ total_return                                                                                                                                                                                │ 0.0                                                       │ │
+│ │ open_positions                                                                                                                                                                              │ 0                                                         │ │
+│ └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────┘ │
+│ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Replay Status ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Trades: 0                                                                                                                                                                                                                                               │ │
+│ │ Buys: 0                                                                                                                                                                                                                                                 │ │
+│ │ Sells: 0                                                                                                                                                                                                                                                │ │
+│ │ Final cash: 100.0                                                                                                                                                                                                                                       │ │
+│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+No replay trades recorded.
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (259) $
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (259) $ # 3. Strategy Modularity & Heuristic Safety Tests
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (259) $ pytest -v pumpfun_trading/tests/test_replay_engine.py pumpfun_trading/tests/test_strategy_modularity.py pumpfun_trading/tests/test_strategy_safety.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 26 items
 
+pumpfun_trading/tests/test_replay_engine.py .......                                                                                                                                                                                                     [ 26%]
+pumpfun_trading/tests/test_strategy_modularity.py .........                                                                                                                                                                                             [ 61%]
+pumpfun_trading/tests/test_strategy_safety.py ..........                                                                                                                                                                                                [100%]
+
+===================================================================================================================== 26 passed in 8.72s ======================================================================================================================
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x10c6f6120>
+Unclosed connector
+connections: ['deque([(<aiohttp.client_proto.ResponseHandler object at 0x109478e60>, 2025818.729288208)])']
+connector: <aiohttp.connector.TCPConnector object at 0x10c6f6270>
+(.venv) [13:35]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (260) $
 ```
 
 #### Quantitative Acceptance Criteria
@@ -258,7 +369,49 @@ pytest -v pumpfun_trading/tests/test_risk_health_execution.py
 
 #### Gate 2 Results
 ```bash
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (260) $ pytest -v pumpfun_trading/tests/test_trailing_and_tiered_exits.py pumpfun_trading/tests/test_position_manager.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 20 items
 
+pumpfun_trading/tests/test_trailing_and_tiered_exits.py .............                                                                                                                                                                                   [ 65%]
+pumpfun_trading/tests/test_position_manager.py .......                                                                                                                                                                                                  [100%]
+
+===================================================================================================================== 20 passed in 0.25s ======================================================================================================================
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (261) $
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (261) $ # 2. Portfolio Drawdown Circuit Breaker & Emergency Liquidation
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (261) $ pytest -v pumpfun_trading/tests/test_portfolio_circuit_breaker.py pumpfun_trading/tests/test_order_executor.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 17 items
+
+pumpfun_trading/tests/test_portfolio_circuit_breaker.py ...........                                                                                                                                                                                     [ 64%]
+pumpfun_trading/tests/test_order_executor.py ......                                                                                                                                                                                                     [100%]
+
+===================================================================================================================== 17 passed in 0.16s ======================================================================================================================
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (262) $
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (262) $ # 3. Risk Engine State & Health Checks
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (262) $ pytest -v pumpfun_trading/tests/test_risk_health_execution.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 6 items
+
+pumpfun_trading/tests/test_risk_health_execution.py ......                                                                                                                                                                                              [100%]
+
+====================================================================================================================== 6 passed in 0.14s ======================================================================================================================
+(.venv) [13:36]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (263) $
 ```
 
 
@@ -292,7 +445,64 @@ pytest -v pumpfun_trading/tests/test_geyser_stream.py pumpfun_trading/tests/test
 
 #### Gate 3 Results
 ```bash
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (263) $ # 1. Multi-RPC Connection Pool & Latency Failover Tests
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (263) $ pytest -v pumpfun_trading/tests/test_rpc_pool.py pumpfun_trading/tests/test_rpc_pool_bot_integration.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 14 items
 
+pumpfun_trading/tests/test_rpc_pool.py ...........                                                                                                                                                                                                      [ 78%]
+pumpfun_trading/tests/test_rpc_pool_bot_integration.py ...                                                                                                                                                                                              [100%]
+
+===================================================================================================================== 14 passed in 0.59s ======================================================================================================================
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (264) $
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (264) $ # 2. Jito MEV Bundle & Fallback Execution Tests
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (264) $ pytest -v pumpfun_trading/tests/test_jito_sdk.py pumpfun_trading/tests/test_jito_execution_integration.py pumpfun_trading/tests/test_execution_sdk_full.py
+===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 35 items
+
+pumpfun_trading/tests/test_jito_sdk.py .................                                                                                                                                                                                                [ 48%]
+pumpfun_trading/tests/test_jito_execution_integration.py ..............                                                                                                                                                                                 [ 88%]
+pumpfun_trading/tests/test_execution_sdk_full.py ....                                                                                                                                                                                                   [100%]
+
+===================================================================================================================== 35 passed in 0.48s ======================================================================================================================
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x1085557f0>
+Unclosed connector
+connections: ['deque([(<aiohttp.client_proto.ResponseHandler object at 0x105350e60>, 2025908.595532458)])']
+connector: <aiohttp.connector.TCPConnector object at 0x1084f9090>
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x1085a4c20>
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (265) $
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (265) $ # 3. Yellowstone Geyser Stream Resilience & Reconnection
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (265) $ pytest -v pumpfun_trading/tests/test_geyser_stream.py pumpfun_trading/tests/test_geyser_bot_integration.py pumpfun_trading/tests/test_market_data_resilience.py===================================================================================================================== test session starts =====================================================================================================================
+platform darwin -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/andy/projects/git/trading/runtime/pumpfun-trading
+configfile: pyproject.toml
+plugins: platformdirs-4.13.0, cov-7.1.0, asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 23 items
+
+pumpfun_trading/tests/test_geyser_stream.py ..............                                                                                                                                                                                              [ 60%]
+pumpfun_trading/tests/test_geyser_bot_integration.py ......                                                                                                                                                                                             [ 86%]
+pumpfun_trading/tests/test_market_data_resilience.py ...                                                                                                                                                                                                [100%]
+
+===================================================================================================================== 23 passed in 26.93s =====================================================================================================================
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x10a24af90>
+Unclosed connector
+connections: ['deque([(<aiohttp.client_proto.ResponseHandler object at 0x1021dce60>, 2025923.243389375)])']
+connector: <aiohttp.connector.TCPConnector object at 0x10a2fc1a0>
+(.venv) [13:37]:andy@M-FYRF96W7JH:~/projects/git/trading/runtime/pumpfun-trading (main) (266) $
 ```
 #### Quantitative Acceptance Criteria
 - **Multi-RPC Failover:** Dynamic circuit breaker transitions between `HEALTHY`, `DEGRADED`, `OPEN`, and `HALF_OPEN` within 3 consecutive probe failures.
