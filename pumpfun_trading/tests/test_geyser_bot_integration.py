@@ -451,3 +451,33 @@ async def test_geyser_tiered_and_trailing_exits(tmp_path):
     )
     await bot._handle_bonding_curve_state_update(update_drop)
     assert SAMPLE_MINT not in bot.active_positions
+
+
+@pytest.mark.asyncio
+async def test_websocket_stream_dispatch_when_stream_url_configured(tmp_path):
+    config = TradingBotConfig(
+        stream_url="wss://pumpportal.fun/api/data",
+        paper_trade=True,
+    )
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        stream_url="wss://pumpportal.fun/api/data",
+        config=config,
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+    )
+
+    ws_stream_called = False
+
+    async def fake_websocket_stream():
+        nonlocal ws_stream_called
+        ws_stream_called = True
+        bot.request_shutdown()
+
+    bot._run_websocket_stream = fake_websocket_stream
+    await bot.start()
+
+    assert ws_stream_called is True
+    assert bot.state == TradingBotState.SHUTDOWN
+    await bot.close()

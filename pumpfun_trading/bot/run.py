@@ -282,7 +282,7 @@ class TradingBot:
         self.paper_trade = self.config.paper_trade
         self.verbose = self.config.verbose
         self._stop_requested = False
-        self._last_message_at = 0.0
+        self._last_message_at = time.monotonic()
         self._last_event = "waiting for new token stream"
         self._last_new_token = "-"
         self._last_new_token_name = "-"
@@ -2247,6 +2247,7 @@ class TradingBot:
                     async with session.ws_connect(self.stream_url) as ws:
                         self._active_ws = ws
                         self._log(f"Connected to WebSocket stream at {self.stream_url}")
+                        self._last_message_at = time.monotonic()
                         self._circuit_breaker_tripped = False
                         self._stream_consecutive_failures = 0
                         self._last_status = "monitoring active tokens"
@@ -2372,6 +2373,11 @@ class TradingBot:
         if self.rpc_pool:
             await self.rpc_pool.start_health_loop()
 
+        self._health_ok = True
+        self._risk_killed = False
+        self._last_message_at = time.monotonic()
+        self._last_health_check = time.monotonic()
+
         self._transition_to(TradingBotState.MONITORING, reason="bot_started")
         await self._reconcile_positions_on_startup()
 
@@ -2380,15 +2386,18 @@ class TradingBot:
         if self.verbose:
             render_task = asyncio.create_task(self._render_loop())
 
+        is_custom_listen = (
+            hasattr(self.geyser_client, "listen")
+            and getattr(
+                getattr(self.geyser_client, "listen"),
+                "__func__",
+                getattr(self.geyser_client, "listen", None),
+            )
+            != YellowstoneGeyserClient.listen
+        )
+
         try:
-            if self.geyser_client and (
-                self.geyser_endpoint
-                or (
-                    hasattr(self.geyser_client, "listen")
-                    and getattr(self.geyser_client, "listen")
-                    != YellowstoneGeyserClient.listen
-                )
-            ):
+            if self.geyser_client and (self.geyser_endpoint or is_custom_listen):
                 if hasattr(self.geyser_client, "on_bonding_curve"):
                     self.geyser_client.on_bonding_curve(
                         self.event_router.route_geyser_curve_update

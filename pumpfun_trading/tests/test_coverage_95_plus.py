@@ -403,3 +403,105 @@ def test_cli_runners_execution():
     with patch("pumpfun_trading.cli.bot.TradingBot.from_env", return_value=mock_bot):
         with patch("sys.argv", ["pumpfun-bot", "--dry-run"]):
             cli_bot.main()
+
+
+@pytest.mark.asyncio
+async def test_bot_ws_and_sub_unsub_and_idle_coverage(tmp_path):
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        stream_url="http://127.0.0.1:10000",
+        config=TradingBotConfig(dry_run=True),
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+    )
+
+    # 1. Idle branch in start()
+    async def stop_soon():
+        await asyncio.sleep(0.02)
+        bot.request_shutdown()
+
+    asyncio.create_task(stop_soon())
+    await bot.start()
+    assert bot.state == TradingBotState.SHUTDOWN
+
+    # 2. _subscribe_to_token_trades & _unsubscribe_from_token_trades variants
+    class SendJsonWS:
+        def __init__(self):
+            self.json_calls = []
+
+        async def send_json(self, msg):
+            self.json_calls.append(msg)
+
+    class SendStrWS:
+        def __init__(self):
+            self.str_calls = []
+
+        async def send_str(self, msg):
+            self.str_calls.append(msg)
+
+    class SendWS:
+        def __init__(self):
+            self.send_calls = []
+
+        async def send(self, msg):
+            self.send_calls.append(msg)
+
+    class FailingWS:
+        async def send_json(self, msg):
+            raise RuntimeError("ws error")
+
+    ws_json = SendJsonWS()
+    await bot._subscribe_to_token_trades(ws_json, SAMPLE_MINT)
+    await bot._unsubscribe_from_token_trades(ws_json, SAMPLE_MINT)
+    assert len(ws_json.json_calls) == 2
+
+    ws_str = SendStrWS()
+    await bot._subscribe_to_token_trades(ws_str, SAMPLE_MINT)
+    await bot._unsubscribe_from_token_trades(ws_str, SAMPLE_MINT)
+    assert len(ws_str.str_calls) == 2
+
+    ws_send = SendWS()
+    await bot._subscribe_to_token_trades(ws_send, SAMPLE_MINT)
+    await bot._unsubscribe_from_token_trades(ws_send, SAMPLE_MINT)
+    assert len(ws_send.send_calls) == 2
+
+    ws_fail = FailingWS()
+    await bot._subscribe_to_token_trades(ws_fail, SAMPLE_MINT)
+    await bot._unsubscribe_from_token_trades(ws_fail, SAMPLE_MINT)
+
+    # 3. Active WS fallback
+    bot._active_ws = ws_json
+    await bot._subscribe_to_token_trades(mint=SAMPLE_MINT)
+    await bot._unsubscribe_from_token_trades(mint=SAMPLE_MINT)
+    bot._active_ws = None
+
+    # Empty mint / None ws
+    await bot._subscribe_to_token_trades(None, "")
+    await bot._unsubscribe_from_token_trades(None, "")
+
+    # 4. Raydium message parsing in _handle_message
+    raydium_msg_direct = {
+        "amm_id": "AMM111",
+        "coin_mint": SAMPLE_MINT,
+        "pc_mint": SAMPLE_MINT_2,
+        "lp_mint": "LP111",
+        "open_orders": "OO111",
+        "target_orders": "TO111",
+        "base_vault": "BV111",
+        "quote_vault": "QV111",
+        "market_id": "MKT111",
+    }
+    await bot._handle_message(raydium_msg_direct)
+
+    raydium_msg_event = {
+        "event": "raydium_pool_created",
+        "poolKeys": raydium_msg_direct,
+    }
+    await bot._handle_message(raydium_msg_event)
+
+    # Malformed raydium dict
+    await bot._handle_message({"amm_id": 123, "coin_mint": None})
+    await bot._handle_message({"event": "raydium_pool_created", "pool_keys": "invalid"})
+
+    await bot.close()
