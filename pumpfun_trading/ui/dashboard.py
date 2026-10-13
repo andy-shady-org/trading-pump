@@ -8,6 +8,20 @@ from rich.panel import Panel
 from rich.table import Table
 
 
+def format_compact_tokens(amount: int | float) -> str:
+    """Format token amount with compact metric suffixes (K, M, B)."""
+    val = float(amount or 0)
+    if val <= 0:
+        return "0"
+    if val >= 1_000_000_000:
+        return f"{val / 1_000_000_000:.2f}B"
+    if val >= 1_000_000:
+        return f"{val / 1_000_000:.2f}M"
+    if val >= 1_000:
+        return f"{val / 1_000:.2f}K"
+    return f"{val:.0f}"
+
+
 def build_dashboard(bot: Any) -> Panel:
     """Build the bot dashboard panel from the live bot state."""
     strategy = Table.grid(expand=True)
@@ -128,9 +142,10 @@ def build_dashboard(bot: Any) -> Panel:
     positions_table.add_column("Mint", style="green")
     positions_table.add_column("Entry MC", justify="right")
     positions_table.add_column("Current MC", justify="right")
-    positions_table.add_column("Buy Price", justify="right")
-    positions_table.add_column("Cost", justify="right")
-    positions_table.add_column("Perf", justify="right")
+    positions_table.add_column("Cost / Spend", justify="right")
+    positions_table.add_column("Token Amount", justify="right")
+    positions_table.add_column("Unit Token Price", justify="right")
+    positions_table.add_column("Perf / PnL", justify="right")
     positions_table.add_column("Reason", style="yellow")
 
     if bot.active_positions:
@@ -150,40 +165,52 @@ def build_dashboard(bot: Any) -> Panel:
                 or position.get("remaining_token_amount")
                 or 0
             )
-            buy_price = float(
+            unit_price = float(
                 position.get("buy_price")
                 or position.get("entry_price")
                 or position.get("price")
                 or (
                     cost / float(raw_tokens)
                     if raw_tokens and float(raw_tokens) > 0 and cost > 0
-                    else 0.0
+                    else (entry / 1_000_000_000 if entry > 0 else 0.0)
                 )
                 or 0.0
             )
-            if buy_price > 0:
-                buy_price_str = (
-                    f"{buy_price:.6f} SOL"
-                    if buy_price < 0.0001
-                    else f"{buy_price:.4f} SOL"
-                )
+            if unit_price > 0:
+                microsol = unit_price * 1_000_000
+                unit_price_str = f"{microsol:.4f} µSOL"
             else:
-                buy_price_str = "-"
-            performance = (current / entry) if entry > 0 else 1.0
+                unit_price_str = "-"
+
+            tokens_str = format_compact_tokens(raw_tokens)
+
+            if entry > 0:
+                pnl_pct = (current - entry) / entry
+            else:
+                pnl_pct = 0.0
+
+            if abs(pnl_pct) < 1e-9:
+                pnl_str = "0.00%"
+            elif pnl_pct > 0:
+                pnl_str = f"+{pnl_pct:.2%}"
+            else:
+                pnl_str = f"{pnl_pct:.2%}"
+
             reason = str(position.get("reason") or "watch")
             positions_table.add_row(
                 name[:18],
                 mint[:8] + "...",
                 f"{entry:.2f} SOL",
                 f"{current:.2f} SOL",
-                buy_price_str,
                 f"{cost:.4f} SOL",
-                f"{performance:.2%}",
+                tokens_str,
+                unit_price_str,
+                pnl_str,
                 reason,
             )
     else:
         positions_table.add_row(
-            "No active positions.", "-", "-", "-", "-", "-", "-", "-"
+            "No active positions.", "-", "-", "-", "-", "-", "-", "-", "-"
         )
 
     runtime = Table.grid(expand=True)

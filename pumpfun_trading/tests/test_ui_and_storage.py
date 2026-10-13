@@ -90,8 +90,17 @@ def test_ui_dashboard_rendering():
     console = Console(width=200, file=None, record=True)
     console.print(panel)
     output = console.export_text()
-    assert "Buy Price" in output
+    assert "Entry MC" in output
+    assert "Current MC" in output
+    assert "Cost / Spend" in output
+    assert "Token Amount" in output
+    assert "Unit Token Price" in output
+    assert "Perf / PnL" in output
     assert "Open Positions" in output
+    assert "+50.00%" in output
+    assert "-20.00%" in output
+    assert "1.00M" in output
+    assert "500.00K" in output
 
     # Test dashboard with empty positions & degraded health
     bot.active_positions = {}
@@ -107,11 +116,24 @@ def test_ui_dashboard_rendering():
     assert "No active positions." in output_empty
 
 
-def test_ui_dashboard_buy_price_explicit_formatting():
+def test_ui_dashboard_table_formatting_and_pnl():
+    from pumpfun_trading.ui.dashboard import format_compact_tokens
+
+    # Verify compact token formatting helper
+    assert format_compact_tokens(0) == "0"
+    assert format_compact_tokens(4) == "4"
+    assert format_compact_tokens(500) == "500"
+    assert format_compact_tokens(1500) == "1.50K"
+    assert format_compact_tokens(500_000) == "500.00K"
+    assert format_compact_tokens(2_380_952) == "2.38M"
+    assert format_compact_tokens(357_653_812) == "357.65M"
+    assert format_compact_tokens(1_000_000_000) == "1.00B"
+    assert format_compact_tokens(2_500_000_000) == "2.50B"
+
     config = TradingBotConfig(buy_amount_sol=0.1)
     bot = MagicMock()
     bot.config = config
-    bot.max_active_positions = 2
+    bot.max_active_positions = 4
     bot.min_market_cap_sol = 20.0
     bot.dry_run = False
     bot.paper_trade = False
@@ -145,6 +167,7 @@ def test_ui_dashboard_buy_price_explicit_formatting():
         },
     }
 
+    # Test break-even (0.00%), drop (-10.00%), profit (+50.00%), micro-SOL pricing
     bot.active_positions = {
         "TokenMint1111111111111111111111111111": {
             "name": "AlphaCoin",
@@ -157,10 +180,17 @@ def test_ui_dashboard_buy_price_explicit_formatting():
         "TokenMint2222222222222222222222222222": {
             "name": "BetaCoin",
             "entry_market_cap": 50.0,
-            "current_market_cap": 55.0,
+            "current_market_cap": 50.0,
             "entry_price": 0.05,
             "cost_sol": 0.2,
             "token_amount": 4,
+        },
+        "TokenMint3333333333333333333333333333": {
+            "name": "GammaCoin",
+            "entry_market_cap": 30.0,
+            "current_market_cap": 27.0,  # 10% drop
+            "cost_sol": 0.01,
+            "token_amount": 357_653,
         },
     }
     bot._recent_actions = []
@@ -185,9 +215,25 @@ def test_ui_dashboard_buy_price_explicit_formatting():
     console.print(panel)
     output = console.export_text()
 
-    assert "Buy Price" in output
-    assert "0.000042 SOL" in output
-    assert "0.0500 SOL" in output
+    assert "Entry MC" in output
+    assert "Current MC" in output
+    assert "Cost / Spend" in output
+    assert "Token Amount" in output
+    assert "Unit Token Price" in output
+    assert "Perf / PnL" in output
+    # Micro-SOL units
+    assert "42.0000 µSOL" in output
+    assert "50000.0000 µSOL" in output
+    assert "0.0280 µSOL" in output
+    # Compact suffixes
+    assert "2.38M" in output
+    assert "357.65K" in output
+    assert "4" in output
+    # PnL percentages
+    assert "+50.00%" in output
+    assert "0.00%" in output
+    assert "-10.00%" in output
+    # Trade ledger
     assert "BUY TokenMin @ 0.0000 SOL | entry" in output or "BUY TokenMin" in output
     assert "SELL TokenMin -> 0.0800 SOL | take_profit" in output
 
