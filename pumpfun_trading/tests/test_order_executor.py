@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pumpfun_trading.bot.position_manager import PositionManager
-from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
+from pumpfun_trading.execution.executor import OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
@@ -61,7 +60,9 @@ async def test_order_executor_dry_run():
 
 
 @pytest.mark.asyncio
-async def test_order_executor_live_buy(mock_exec_client: MagicMock, base_config: TradingBotConfig):
+async def test_order_executor_live_buy(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
 
     res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
@@ -74,7 +75,9 @@ async def test_order_executor_live_buy(mock_exec_client: MagicMock, base_config:
 
 
 @pytest.mark.asyncio
-async def test_order_executor_buy_confirmation_failed(mock_exec_client: MagicMock, base_config: TradingBotConfig):
+async def test_order_executor_buy_confirmation_failed(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
     mock_exec_client.confirm_transaction = AsyncMock(return_value=False)
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
 
@@ -84,7 +87,9 @@ async def test_order_executor_buy_confirmation_failed(mock_exec_client: MagicMoc
 
 
 @pytest.mark.asyncio
-async def test_order_executor_live_sell(mock_exec_client: MagicMock, base_config: TradingBotConfig):
+async def test_order_executor_live_sell(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
 
     res = await executor.execute_sell("Mint111", 500_000, slippage_bps=500)
@@ -96,7 +101,9 @@ async def test_order_executor_live_sell(mock_exec_client: MagicMock, base_config
 
 
 @pytest.mark.asyncio
-async def test_order_executor_raydium(mock_exec_client: MagicMock, base_config: TradingBotConfig):
+async def test_order_executor_raydium(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
     pool_keys = RaydiumPoolKeys(
         amm_id="Amm111",
@@ -128,7 +135,9 @@ async def test_order_executor_raydium(mock_exec_client: MagicMock, base_config: 
 
 
 @pytest.mark.asyncio
-async def test_order_liquidator(mock_exec_client: MagicMock, base_config: TradingBotConfig):
+async def test_order_liquidator(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
     pm = PositionManager(base_config)
 

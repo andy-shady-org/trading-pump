@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 import signal
 import sys
 import time
@@ -13,7 +12,6 @@ from typing import Any
 
 from dotenv import load_dotenv
 from rich.live import Live
-from rich.panel import Panel
 
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.alerts import AlertDispatcher
@@ -29,7 +27,7 @@ from pumpfun_trading.bot.lifecycle import (
     VALID_STATE_TRANSITIONS,
 )
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
-from pumpfun_trading.bot.position_manager import Position, PositionManager
+from pumpfun_trading.bot.position_manager import PositionManager
 from pumpfun_trading.bot.risk import (
     DailyEquityTracker,
     check_daily_drawdown,
@@ -39,31 +37,24 @@ from pumpfun_trading.bot.risk import (
 )
 from pumpfun_trading.bot.strategy import (
     CopyTradeEngine,
-    DevWalletProfile,
     ExitAction,
     GraduationEngine,
-    HolderDistribution,
     OrderFlowEngine,
-    PositionExitState,
     RaydiumPoolKeys,
     ScreeningCache,
-    TokenMetadata,
     TokenScreeningVerdict,
     TradingBotConfig,
     TradingStrategy,
-    evaluate_exit_strategy,
     resolve_strategy_config,
 )
-from pumpfun_trading.config.env import sanitize_env_for_logging
 from pumpfun_trading.execution.builder import build_execution_client
-from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
+from pumpfun_trading.execution.executor import OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool, RpcPoolConfig
 from pumpfun_trading.ops.logging import (
     get_configured_console,
     setup_structured_logging,
 )
-from pumpfun_trading.sdk.raydium import parse_raydium_pool_from_tx
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -210,12 +201,8 @@ class TradingBot:
             raydium_pre_migration_sol_threshold=float(
                 getattr(base, "raydium_pre_migration_sol_threshold", 80.0)
             ),
-            raydium_buy_amount_sol=float(
-                getattr(base, "raydium_buy_amount_sol", 0.02)
-            ),
-            raydium_slippage_bps=int(
-                getattr(base, "raydium_slippage_bps", 500)
-            ),
+            raydium_buy_amount_sol=float(getattr(base, "raydium_buy_amount_sol", 0.02)),
+            raydium_slippage_bps=int(getattr(base, "raydium_slippage_bps", 500)),
             raydium_priority_fee_lamports=int(
                 getattr(base, "raydium_priority_fee_lamports", 100_000)
             ),
@@ -625,11 +612,15 @@ class TradingBot:
         exit_retry_queue = snapshot.get("exit_retry_queue")
         if isinstance(exit_retry_queue, dict):
             self._exit_retry_queue = {
-                str(k): dict(v) for k, v in exit_retry_queue.items() if isinstance(v, dict)
+                str(k): dict(v)
+                for k, v in exit_retry_queue.items()
+                if isinstance(v, dict)
             }
 
         if "circuit_breaker_tripped" in snapshot:
-            self._circuit_breaker_tripped = bool(snapshot.get("circuit_breaker_tripped"))
+            self._circuit_breaker_tripped = bool(
+                snapshot.get("circuit_breaker_tripped")
+            )
 
         if "state" in snapshot:
             try:
@@ -656,10 +647,16 @@ class TradingBot:
 
         equity_tracker_data = snapshot.get("daily_equity_tracker")
         if isinstance(equity_tracker_data, dict):
-            self.daily_equity_tracker = DailyEquityTracker.from_dict(equity_tracker_data)
+            self.daily_equity_tracker = DailyEquityTracker.from_dict(
+                equity_tracker_data
+            )
         elif "circuit_breaker_engaged" in snapshot:
-            self.daily_equity_tracker.circuit_breaker_engaged = bool(snapshot.get("circuit_breaker_engaged", False))
-            self.daily_equity_tracker.locked_at_timestamp = snapshot.get("circuit_breaker_lockout_until")
+            self.daily_equity_tracker.circuit_breaker_engaged = bool(
+                snapshot.get("circuit_breaker_engaged", False)
+            )
+            self.daily_equity_tracker.locked_at_timestamp = snapshot.get(
+                "circuit_breaker_lockout_until"
+            )
 
         metrics = snapshot.get("metrics", {})
         if isinstance(metrics, dict):
@@ -687,7 +684,9 @@ class TradingBot:
         current = self.state
         if next_state not in self._VALID_STATE_TRANSITIONS.get(current, set()):
             if current == TradingBotState.IDLE and next_state == TradingBotState.BUYING:
-                self._transition_to(TradingBotState.MONITORING, reason="auto_advance_idle_to_monitoring")
+                self._transition_to(
+                    TradingBotState.MONITORING, reason="auto_advance_idle_to_monitoring"
+                )
                 current = self.state
             else:
                 self._log(
@@ -849,7 +848,9 @@ class TradingBot:
         self._write_status_snapshot()
 
     def _record_latency_ms(self, latency_ms: float) -> None:
-        if "latency_ms" not in self._metrics or not isinstance(self._metrics["latency_ms"], dict):
+        if "latency_ms" not in self._metrics or not isinstance(
+            self._metrics["latency_ms"], dict
+        ):
             self._metrics["latency_ms"] = {
                 "samples": 0,
                 "avg_ms": 0.0,
@@ -876,7 +877,9 @@ class TradingBot:
 
     def _metrics_snapshot(self) -> dict[str, Any]:
         snapshot = dict(self._metrics)
-        if "latency_ms" in self._metrics and isinstance(self._metrics["latency_ms"], dict):
+        if "latency_ms" in self._metrics and isinstance(
+            self._metrics["latency_ms"], dict
+        ):
             snapshot["latency_ms"] = dict(self._metrics["latency_ms"])
         return snapshot
 
@@ -892,7 +895,9 @@ class TradingBot:
         if reason:
             self._log(f"Stale data recorded: {reason}", level=logging.WARNING)
 
-    def _record_failure(self, reason: str = "", category: str = "", **kwargs: Any) -> None:
+    def _record_failure(
+        self, reason: str = "", category: str = "", **kwargs: Any
+    ) -> None:
         self._record_metric("failures")
         msg = category or reason or "unknown"
         self._log(f"Failure recorded: {msg}", level=logging.WARNING)
@@ -973,7 +978,9 @@ class TradingBot:
 
             return True
         except Exception as exc:
-            self._log(f"Error checking account equity guard: {exc}", level=logging.WARNING)
+            self._log(
+                f"Error checking account equity guard: {exc}", level=logging.WARNING
+            )
             self._risk_killed = True
             self._last_event = "risk kill: API balance check failed"
             return False
@@ -998,15 +1005,23 @@ class TradingBot:
                 balance_sol = await self.execution.get_wallet_balance_sol()
                 self.wallet_balance_sol = balance_sol
             open_val_sol = self.position_manager.calculate_total_open_value()
-            self.daily_equity_tracker.update_valuation(self.wallet_balance_sol, open_val_sol)
+            self.daily_equity_tracker.update_valuation(
+                self.wallet_balance_sol, open_val_sol
+            )
         except Exception as exc:
-            self._log(f"Valuation check error during circuit breaker check: {exc}", level=logging.DEBUG)
+            self._log(
+                f"Valuation check error during circuit breaker check: {exc}",
+                level=logging.DEBUG,
+            )
 
         is_locked, reason = evaluate_portfolio_circuit_breaker(self)
 
         if is_locked:
             self._last_event = f"circuit breaker: {reason}"
-            if self.config.auto_liquidate_on_circuit_breaker and len(self.active_positions) > 0:
+            if (
+                self.config.auto_liquidate_on_circuit_breaker
+                and len(self.active_positions) > 0
+            ):
                 self._log(
                     f"Engaging emergency liquidation due to circuit breaker breach: {reason}",
                     level=logging.ERROR,
@@ -1015,7 +1030,11 @@ class TradingBot:
 
             self._risk_killed = True
             self._record_metric("circuit_breaker_trips")
-            if self.state in {TradingBotState.BUYING, TradingBotState.HOLDING, TradingBotState.SELLING}:
+            if self.state in {
+                TradingBotState.BUYING,
+                TradingBotState.HOLDING,
+                TradingBotState.SELLING,
+            }:
                 self._transition_to(
                     TradingBotState.MONITORING,
                     reason=f"circuit_breaker: {reason}",
@@ -1086,9 +1105,7 @@ class TradingBot:
                 }
                 for mint, position in self.active_positions.items()
             },
-            "positions": [
-                dict(pos) for pos in self.active_positions.values()
-            ],
+            "positions": [dict(pos) for pos in self.active_positions.values()],
             "trade_count": len(self.active_positions),
             "stop_requested": self._stop_requested,
             "dry_run": self.dry_run,
@@ -1127,7 +1144,9 @@ class TradingBot:
     async def _enrich_and_screen_token(
         self, mint: str, token_data: dict[str, Any] | None = None
     ) -> TokenScreeningVerdict:
-        return await self.enricher.enrich_and_screen(mint, token_data=token_data, config=self.config)
+        return await self.enricher.enrich_and_screen(
+            mint, token_data=token_data, config=self.config
+        )
 
     def _should_buy(
         self,
@@ -1164,7 +1183,9 @@ class TradingBot:
             return False
         return self._buy_attempts.get(mint, 0) < self.max_buy_attempts_per_mint
 
-    async def _resolve_token_name(self, mint: str, token_name: str | None = None) -> str | None:
+    async def _resolve_token_name(
+        self, mint: str, token_name: str | None = None
+    ) -> str | None:
         if token_name:
             return token_name
         cached = self.active_positions.get(mint, {}).get("name")
@@ -1229,7 +1250,8 @@ class TradingBot:
         if not exec_res.success:
             self._buy_attempts[mint] = self._buy_attempts.get(mint, 0) + 1
             self._transition_to(
-                TradingBotState.MONITORING, reason=f"buy_failed {mint} ({exec_res.error})"
+                TradingBotState.MONITORING,
+                reason=f"buy_failed {mint} ({exec_res.error})",
             )
             return False
 
@@ -1278,9 +1300,7 @@ class TradingBot:
         ):
             return False
 
-        self._transition_to(
-            TradingBotState.BUYING, reason=f"buying_raydium {mint}"
-        )
+        self._transition_to(TradingBotState.BUYING, reason=f"buying_raydium {mint}")
         if not await self._check_account_equity_guard(required_sol=buy_amount):
             self._transition_to(
                 TradingBotState.MONITORING,
@@ -1358,7 +1378,9 @@ class TradingBot:
             }
         else:
             entry = self._exit_retry_queue[mint]
-            entry["retries"] = int(entry.get("retries") or entry.get("retry_count") or 0) + 1
+            entry["retries"] = (
+                int(entry.get("retries") or entry.get("retry_count") or 0) + 1
+            )
             entry["retry_count"] = entry["retries"]
             entry["last_attempt"] = time.monotonic()
             entry["reason"] = reason
@@ -1390,8 +1412,7 @@ class TradingBot:
         """Reconciles on-chain token balances for open positions upon startup."""
         if self.dry_run:
             return {
-                mint: {"status": "reconciled_dry_run"}
-                for mint in self.active_positions
+                mint: {"status": "reconciled_dry_run"} for mint in self.active_positions
             }
 
         reconciled: dict[str, Any] = {}
@@ -1428,9 +1449,12 @@ class TradingBot:
                     else:
                         vt = int(curve.get("virtual_token_reserves", 0))
                         vs = int(curve.get("virtual_sol_reserves", 0))
-                        mc = (vs / 1_000_000_000.0) * (
-                            1_000_000_000.0 / (vt / 1_000_000.0)
-                        ) if (vt > 0 and vs > 0) else float(position.get("current_market_cap", 0.0) or 0.0)
+                        mc = (
+                            (vs / 1_000_000_000.0)
+                            * (1_000_000_000.0 / (vt / 1_000_000.0))
+                            if (vt > 0 and vs > 0)
+                            else float(position.get("current_market_cap", 0.0) or 0.0)
+                        )
                     position["current_market_cap"] = mc
                     entry_mc = float(position.get("entry_market_cap", mc) or mc)
                     peak_mc = float(
@@ -1484,16 +1508,23 @@ class TradingBot:
                 token_balance = await self.execution.get_token_balance(mint)
                 rem_tokens = token_balance
             except Exception as exc:
-                self._log(f"Unable to fetch token balance for {mint}: {exc}", level=logging.WARNING)
+                self._log(
+                    f"Unable to fetch token balance for {mint}: {exc}",
+                    level=logging.WARNING,
+                )
                 self._enqueue_exit_retry(mint, reason=f"balance_fetch_error: {exc}")
-                self._transition_to(TradingBotState.HOLDING, reason=f"sell_balance_failed {mint}")
+                self._transition_to(
+                    TradingBotState.HOLDING, reason=f"sell_balance_failed {mint}"
+                )
                 return False
 
             if rem_tokens <= self.min_sell_balance:
                 self.position_manager.remove_position(mint)
                 self.active_positions = self.position_manager.get_all_positions()
                 self._exit_retry_queue.pop(mint, None)
-                self._transition_to(TradingBotState.MONITORING, reason=f"sell_zero_balance {mint}")
+                self._transition_to(
+                    TradingBotState.MONITORING, reason=f"sell_zero_balance {mint}"
+                )
                 return True
 
         if sell_amount_tokens is not None and sell_amount_tokens > 0:
@@ -1505,7 +1536,9 @@ class TradingBot:
             tokens_to_sell = rem_tokens
 
         rem_after = rem_tokens - tokens_to_sell
-        is_partial = (tokens_to_sell < rem_tokens) and (rem_after > self.min_sell_balance)
+        is_partial = (tokens_to_sell < rem_tokens) and (
+            rem_after > self.min_sell_balance
+        )
         if not is_partial:
             tokens_to_sell = rem_tokens
 
@@ -1541,7 +1574,9 @@ class TradingBot:
                 entry=0.0,
                 reason=reason,
             )
-            self._transition_to(TradingBotState.HOLDING, reason=f"partial_sell_complete {mint}")
+            self._transition_to(
+                TradingBotState.HOLDING, reason=f"partial_sell_complete {mint}"
+            )
             return True
 
         self._exit_retry_queue.pop(mint, None)
@@ -1562,7 +1597,6 @@ class TradingBot:
         if mint not in self.active_positions:
             return False
 
-        position = self.active_positions[mint]
         entry_mc, curr_mc, peak_mc = self.position_manager.update_price(
             mint, current_market_cap
         )
@@ -1722,12 +1756,18 @@ class TradingBot:
                 and self.copy_trade_engine.is_tracked_wallet(update.user)
             ):
                 wallet_obj = self.copy_trade_engine.registry.get_wallet(update.user)
-                wallet_label = wallet_obj.label if wallet_obj and wallet_obj.label else update.user[:8]
+                wallet_label = (
+                    wallet_obj.label
+                    if wallet_obj and wallet_obj.label
+                    else update.user[:8]
+                )
                 self._log(
                     f"Smart money sell detected on held token {mint} by {wallet_label}... executing mirrored exit."
                 )
                 self._last_event = f"copy-trade exit {mint[:8]}"
-                await self._sell_token(mint, reason=f"copy_trade_mirror_exit_{wallet_label}")
+                await self._sell_token(
+                    mint, reason=f"copy_trade_mirror_exit_{wallet_label}"
+                )
                 return
 
             await self._evaluate_and_execute_exit(mint, current_market_cap)
@@ -1758,7 +1798,11 @@ class TradingBot:
                         return
 
                     wallet_obj = self.copy_trade_engine.registry.get_wallet(update.user)
-                    wallet_label = wallet_obj.label if wallet_obj and wallet_obj.label else update.user[:8]
+                    wallet_label = (
+                        wallet_obj.label
+                        if wallet_obj and wallet_obj.label
+                        else update.user[:8]
+                    )
                     reason_label = f"copy_trade_{wallet_label}"
 
                     screening_verdict = None
@@ -1848,7 +1892,9 @@ class TradingBot:
             return
 
         mint = update.mint
-        curve_key = getattr(update, "bonding_curve", None) or getattr(update, "bonding_curve_pubkey", "")
+        curve_key = getattr(update, "bonding_curve", None) or getattr(
+            update, "bonding_curve_pubkey", ""
+        )
         self._log(
             f"Bonding curve completed / graduated for {mint}! Bonding curve: {curve_key}"
         )
@@ -1871,9 +1917,7 @@ class TradingBot:
             return
 
         mint = pool_keys.coin_mint
-        self._log(
-            f"Raydium AMM pool initialized for {mint}: amm_id={pool_keys.amm_id}"
-        )
+        self._log(f"Raydium AMM pool initialized for {mint}: amm_id={pool_keys.amm_id}")
         self._last_event = f"raydium pool {mint[:8]}"
         self.graduation_engine.record_raydium_pool(mint=mint, pool_keys=pool_keys)
 
@@ -1987,7 +2031,9 @@ class TradingBot:
             or (float(data.get("sol_amount_lamports", 0)) / 1_000_000_000.0)
             or (float(data.get("solAmountLamports", 0)) / 1_000_000_000.0)
         )
-        user = str(data.get("user") or data.get("traderPublicKey") or data.get("owner") or "")
+        user = str(
+            data.get("user") or data.get("traderPublicKey") or data.get("owner") or ""
+        )
         ts = float(data.get("timestamp") or data.get("time") or time.time())
         self.order_flow_engine.record_trade(
             mint=mint,
@@ -2009,7 +2055,11 @@ class TradingBot:
                     curve = await self.execution.get_bonding_curve_state(mint)
                     if isinstance(curve, dict) and "market_cap_sol" in curve:
                         current_market_cap = float(curve["market_cap_sol"])
-                    elif isinstance(curve, dict) and "virtual_token_reserves" in curve and "virtual_sol_reserves" in curve:
+                    elif (
+                        isinstance(curve, dict)
+                        and "virtual_token_reserves" in curve
+                        and "virtual_sol_reserves" in curve
+                    ):
                         vt = int(curve.get("virtual_token_reserves", 0))
                         vs = int(curve.get("virtual_sol_reserves", 0))
                         if vt > 0 and vs > 0:
@@ -2026,12 +2076,16 @@ class TradingBot:
                 and self.copy_trade_engine.is_tracked_wallet(user)
             ):
                 wallet_obj = self.copy_trade_engine.registry.get_wallet(user)
-                wallet_label = wallet_obj.label if wallet_obj and wallet_obj.label else user[:8]
+                wallet_label = (
+                    wallet_obj.label if wallet_obj and wallet_obj.label else user[:8]
+                )
                 self._log(
                     f"Smart money sell detected on held token {mint} by {wallet_label}... executing mirrored exit."
                 )
                 self._last_event = f"copy-trade exit {mint[:8]}"
-                await self._sell_token(mint, reason=f"copy_trade_mirror_exit_{wallet_label}")
+                await self._sell_token(
+                    mint, reason=f"copy_trade_mirror_exit_{wallet_label}"
+                )
                 if websocket:
                     await self._unsubscribe_from_token_trades(websocket, mint)
                 return
@@ -2062,12 +2116,18 @@ class TradingBot:
                         return
 
                     wallet_obj = self.copy_trade_engine.registry.get_wallet(user)
-                    wallet_label = wallet_obj.label if wallet_obj and wallet_obj.label else user[:8]
+                    wallet_label = (
+                        wallet_obj.label
+                        if wallet_obj and wallet_obj.label
+                        else user[:8]
+                    )
                     reason_label = f"copy_trade_{wallet_label}"
 
                     screening_verdict = None
                     if self.config.copy_trading_require_anti_rug_screen:
-                        screening_verdict = await self._enrich_and_screen_token(mint, token_data=data)
+                        screening_verdict = await self._enrich_and_screen_token(
+                            mint, token_data=data
+                        )
                         if not screening_verdict.passed:
                             self._log(
                                 f"Copy-trade buy rejected for {mint} by {wallet_label}: failed anti-rug screening (score={screening_verdict.risk_score:.1f})"
@@ -2108,7 +2168,9 @@ class TradingBot:
                     return
                 except Exception:
                     pass
-            elif data.get("event") in {"raydium_pool_created", "raydium_pool"} and ("poolKeys" in data or "pool_keys" in data):
+            elif data.get("event") in {"raydium_pool_created", "raydium_pool"} and (
+                "poolKeys" in data or "pool_keys" in data
+            ):
                 try:
                     pkeys = data.get("poolKeys") or data.get("pool_keys")
                     if isinstance(pkeys, dict):
@@ -2184,9 +2246,13 @@ class TradingBot:
 
         try:
             if self.geyser_client and self.geyser_endpoint:
-                self.geyser_client.on_bonding_curve(self.event_router.route_geyser_curve_update)
+                self.geyser_client.on_bonding_curve(
+                    self.event_router.route_geyser_curve_update
+                )
                 self.geyser_client.on_trade(self.event_router.route_geyser_trade_update)
-                self.geyser_client.on_complete(self.event_router.route_geyser_complete_update)
+                self.geyser_client.on_complete(
+                    self.event_router.route_geyser_complete_update
+                )
                 await self.geyser_client.start()
                 async for event in self.geyser_client.listen():
                     self._last_message_at = time.monotonic()
@@ -2210,7 +2276,10 @@ class TradingBot:
             pass
         except Exception as exc:
             self._stream_consecutive_failures += 1
-            if self._stream_consecutive_failures >= self._max_stream_consecutive_failures:
+            if (
+                self._stream_consecutive_failures
+                >= self._max_stream_consecutive_failures
+            ):
                 self._circuit_breaker_tripped = True
                 self._health_ok = False
                 self._last_status = "degraded: stream circuit breaker active"

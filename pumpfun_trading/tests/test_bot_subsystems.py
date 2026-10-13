@@ -57,7 +57,9 @@ async def test_token_enricher_with_mock_api():
         ]
     )
 
-    config = TradingBotConfig(enable_anti_rug_filters=True, max_acceptable_risk_score=50.0)
+    config = TradingBotConfig(
+        enable_anti_rug_filters=True, max_acceptable_risk_score=50.0
+    )
     enricher = TokenEnricher(api_client=mock_api, config=config)
     verdict = await enricher.enrich_and_screen("Mint111")
     assert isinstance(verdict, TokenScreeningVerdict)
@@ -76,9 +78,7 @@ def test_status_persistence_manager():
 
         snapshot_data = {
             "state": "RUNNING",
-            "active_positions": {
-                "Mint1": {"name": "SolCat", "entry_market_cap": 30.0}
-            },
+            "active_positions": {"Mint1": {"name": "SolCat", "entry_market_cap": 30.0}},
         }
 
         success = pm.write_status_snapshot(snapshot_data)
@@ -119,20 +119,28 @@ def test_alert_dispatcher_configuration():
     assert not disp_discord_missing.enabled
 
     # Discord configured
-    disp_discord = AlertDispatcher(provider="discord", discord_webhook_url="https://discord.com/webhook")
+    disp_discord = AlertDispatcher(
+        provider="discord", discord_webhook_url="https://discord.com/webhook"
+    )
     assert disp_discord.enabled
 
     # Slack configured
-    disp_slack = AlertDispatcher(provider="slack", slack_webhook_url="https://slack.com/webhook")
+    disp_slack = AlertDispatcher(
+        provider="slack", slack_webhook_url="https://slack.com/webhook"
+    )
     assert disp_slack.enabled
 
     # Telegram configured
-    disp_tg = AlertDispatcher(provider="telegram", telegram_bot_token="tok123", telegram_chat_id="chat123")
+    disp_tg = AlertDispatcher(
+        provider="telegram", telegram_bot_token="tok123", telegram_chat_id="chat123"
+    )
     assert disp_tg.enabled
 
 
 def test_alert_dispatcher_send_mocked():
-    disp = AlertDispatcher(provider="discord", discord_webhook_url="https://discord.com/api/webhooks/test")
+    disp = AlertDispatcher(
+        provider="discord", discord_webhook_url="https://discord.com/api/webhooks/test"
+    )
     with patch("urllib.request.urlopen") as mock_urlopen:
         sent = disp.send_alert("Trade executed: SolCat buy @ 0.1 SOL")
         assert sent

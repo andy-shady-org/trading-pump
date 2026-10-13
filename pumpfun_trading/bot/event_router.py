@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from typing import Any, Awaitable, Callable, Optional
 
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
@@ -20,11 +18,17 @@ class EventRouter:
 
     def __init__(
         self,
-        on_curve_update: Optional[Callable[[BondingCurveStateUpdate], Awaitable[None]]] = None,
+        on_curve_update: Optional[
+            Callable[[BondingCurveStateUpdate], Awaitable[None]]
+        ] = None,
         on_trade_event: Optional[Callable[[TradeEventUpdate], Awaitable[None]]] = None,
-        on_complete_event: Optional[Callable[[CompleteEventUpdate], Awaitable[None]]] = None,
+        on_complete_event: Optional[
+            Callable[[CompleteEventUpdate], Awaitable[None]]
+        ] = None,
         on_raydium_pool: Optional[Callable[[RaydiumPoolKeys], Awaitable[None]]] = None,
-        on_ws_new_token: Optional[Callable[[dict[str, Any], Any], Awaitable[None]]] = None,
+        on_ws_new_token: Optional[
+            Callable[[dict[str, Any], Any], Awaitable[None]]
+        ] = None,
         on_ws_trade: Optional[Callable[[dict[str, Any], Any], Awaitable[None]]] = None,
     ) -> None:
         self.on_curve_update = on_curve_update

@@ -7,11 +7,9 @@ from typing import Any, Iterator, Mapping
 
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.exits import (
-    ExitAction,
     ExitDecision,
     PositionExitState,
     evaluate_exit_strategy,
-    update_position_peak,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,9 +221,7 @@ class PositionManager:
 
         pos = self._positions[mint]
         current_remaining = int(
-            pos.get("remaining_token_amount")
-            or pos.get("token_amount")
-            or 0
+            pos.get("remaining_token_amount") or pos.get("token_amount") or 0
         )
         new_remaining = max(0, current_remaining - int(sold_tokens))
         pos["remaining_token_amount"] = new_remaining
@@ -237,7 +233,14 @@ class PositionManager:
             pos["tier_2_executed"] = True
             pos["moonbag_active"] = True
 
-        if not is_partial or new_remaining <= 0 or (not self.config.dry_run and new_remaining <= self.config.min_sell_balance):
+        if (
+            not is_partial
+            or new_remaining <= 0
+            or (
+                not self.config.dry_run
+                and new_remaining <= self.config.min_sell_balance
+            )
+        ):
             self.remove_position(mint)
             return True, 0
 
@@ -263,8 +266,7 @@ class PositionManager:
             pos["entry_market_cap"] = entry_mc
 
         peak_mc = float(
-            pos.get("peak_market_cap", max(entry_mc, mc))
-            or max(entry_mc, mc)
+            pos.get("peak_market_cap", max(entry_mc, mc)) or max(entry_mc, mc)
         )
         if mc > peak_mc:
             peak_mc = mc
@@ -351,10 +353,7 @@ class PositionManager:
         self._positions.clear()
 
     def to_dict(self) -> dict[str, dict[str, Any]]:
-        return {
-            mint: dict(pos)
-            for mint, pos in self._positions.items()
-        }
+        return {mint: dict(pos) for mint, pos in self._positions.items()}
 
     def restore_from_dict(self, data: dict[str, Any]) -> None:
         restored_positions: dict[str, dict[str, Any]] = {}

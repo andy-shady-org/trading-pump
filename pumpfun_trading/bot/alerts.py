@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import urllib.request
-from typing import Any, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,21 @@ class AlertDispatcher:
         telegram_bot_token: Optional[str] = None,
         telegram_chat_id: Optional[str] = None,
     ) -> None:
-        self.provider = (provider or os.getenv("PUMPFUN_ALERT_PROVIDER", "none")).lower().strip()
-        self.discord_webhook_url = discord_webhook_url or os.getenv("PUMPFUN_ALERT_DISCORD_WEBHOOK_URL")
-        self.slack_webhook_url = slack_webhook_url or os.getenv("PUMPFUN_ALERT_SLACK_WEBHOOK_URL")
-        self.telegram_bot_token = telegram_bot_token or os.getenv("PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN")
-        self.telegram_chat_id = telegram_chat_id or os.getenv("PUMPFUN_ALERT_TELEGRAM_CHAT_ID")
+        self.provider = (
+            (provider or os.getenv("PUMPFUN_ALERT_PROVIDER", "none")).lower().strip()
+        )
+        self.discord_webhook_url = discord_webhook_url or os.getenv(
+            "PUMPFUN_ALERT_DISCORD_WEBHOOK_URL"
+        )
+        self.slack_webhook_url = slack_webhook_url or os.getenv(
+            "PUMPFUN_ALERT_SLACK_WEBHOOK_URL"
+        )
+        self.telegram_bot_token = telegram_bot_token or os.getenv(
+            "PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN"
+        )
+        self.telegram_chat_id = telegram_chat_id or os.getenv(
+            "PUMPFUN_ALERT_TELEGRAM_CHAT_ID"
+        )
         self.enabled = False
 
         self._configure()
@@ -52,17 +62,25 @@ class AlertDispatcher:
 
         if self.provider == "discord" and not self.discord_webhook_url:
             self.enabled = False
-            logger.warning("PUMPFUN_ALERT_PROVIDER is set to 'discord' but webhook URL is missing.")
+            logger.warning(
+                "PUMPFUN_ALERT_PROVIDER is set to 'discord' but webhook URL is missing."
+            )
             return
 
         if self.provider == "slack" and not self.slack_webhook_url:
             self.enabled = False
-            logger.warning("PUMPFUN_ALERT_PROVIDER is set to 'slack' but webhook URL is missing.")
+            logger.warning(
+                "PUMPFUN_ALERT_PROVIDER is set to 'slack' but webhook URL is missing."
+            )
             return
 
-        if self.provider == "telegram" and (not self.telegram_bot_token or not self.telegram_chat_id):
+        if self.provider == "telegram" and (
+            not self.telegram_bot_token or not self.telegram_chat_id
+        ):
             self.enabled = False
-            logger.warning("PUMPFUN_ALERT_PROVIDER is set to 'telegram' but token or chat ID is missing.")
+            logger.warning(
+                "PUMPFUN_ALERT_PROVIDER is set to 'telegram' but token or chat ID is missing."
+            )
             return
 
         self.enabled = True
@@ -97,7 +115,11 @@ class AlertDispatcher:
                 with urllib.request.urlopen(request, timeout=10):
                     pass
                 return True
-            elif self.provider == "telegram" and self.telegram_bot_token and self.telegram_chat_id:
+            elif (
+                self.provider == "telegram"
+                and self.telegram_bot_token
+                and self.telegram_chat_id
+            ):
                 request = urllib.request.Request(
                     f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage",
                     data=json.dumps(

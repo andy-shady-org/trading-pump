@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
@@ -83,7 +83,9 @@ class OrderExecutor:
             try:
                 bonding_curve, _ = self.execution.get_bonding_curve_pda(mint)
             except Exception as exc:
-                logger.warning("Could not compute bonding curve PDA for %s: %s", mint, exc)
+                logger.warning(
+                    "Could not compute bonding curve PDA for %s: %s", mint, exc
+                )
                 return ExecutionResult(
                     success=False,
                     mint=mint,
@@ -124,7 +126,9 @@ class OrderExecutor:
 
             confirmed = await self.execution.confirm_transaction(signature)
             if not confirmed:
-                logger.warning("Buy confirmation failed for %s (sig=%s)", mint, signature)
+                logger.warning(
+                    "Buy confirmation failed for %s (sig=%s)", mint, signature
+                )
                 return ExecutionResult(
                     success=False,
                     signature=signature,
@@ -173,7 +177,9 @@ class OrderExecutor:
             try:
                 bonding_curve, _ = self.execution.get_bonding_curve_pda(mint)
             except Exception as exc:
-                logger.warning("Could not compute bonding curve PDA for sell on %s: %s", mint, exc)
+                logger.warning(
+                    "Could not compute bonding curve PDA for sell on %s: %s", mint, exc
+                )
                 return ExecutionResult(
                     success=False,
                     mint=mint,
@@ -202,7 +208,9 @@ class OrderExecutor:
                             slippage_bps=effective_slippage_bps,
                         )
                 except Exception as exc:
-                    logger.debug("Could not compute curve sell output for %s: %s", mint, exc)
+                    logger.debug(
+                        "Could not compute curve sell output for %s: %s", mint, exc
+                    )
 
             logger.info(
                 "Selling %d units of %s (min_sol_lamports=%d, slippage_bps=%d, reason=%s)",
@@ -243,7 +251,9 @@ class OrderExecutor:
 
             confirmed = await self.execution.confirm_transaction(signature)
             if not confirmed:
-                logger.warning("Sell confirmation failed for %s (sig=%s)", mint, signature)
+                logger.warning(
+                    "Sell confirmation failed for %s (sig=%s)", mint, signature
+                )
                 return ExecutionResult(
                     success=False,
                     signature=signature,
@@ -289,7 +299,9 @@ class OrderExecutor:
             )
 
         async with self.get_lock(mint):
-            logger.info("Executing Raydium snipe for %s with %.4f SOL", mint, amount_sol)
+            logger.info(
+                "Executing Raydium snipe for %s with %.4f SOL", mint, amount_sol
+            )
             try:
                 signature = await self.execution.swap_raydium(
                     pool_keys=pool_keys,
@@ -320,7 +332,9 @@ class OrderExecutor:
 
             confirmed = await self.execution.confirm_transaction(signature)
             if not confirmed:
-                logger.warning("Raydium buy confirmation failed for %s (sig=%s)", mint, signature)
+                logger.warning(
+                    "Raydium buy confirmation failed for %s (sig=%s)", mint, signature
+                )
                 return ExecutionResult(
                     success=False,
                     signature=signature,
@@ -397,7 +411,9 @@ class OrderExecutor:
 
             confirmed = await self.execution.confirm_transaction(signature)
             if not confirmed:
-                logger.warning("Raydium sell confirmation failed for %s (sig=%s)", mint, signature)
+                logger.warning(
+                    "Raydium sell confirmation failed for %s (sig=%s)", mint, signature
+                )
                 return ExecutionResult(
                     success=False,
                     signature=signature,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import time
 from typing import Any, Optional, TextIO
 
@@ -54,7 +53,11 @@ class StatusPersistenceManager:
             os.replace(temp_path, self.bot_status_path)
             return True
         except Exception as exc:
-            logger.warning("Failed to write bot status snapshot to %s: %s", self.bot_status_path, exc)
+            logger.warning(
+                "Failed to write bot status snapshot to %s: %s",
+                self.bot_status_path,
+                exc,
+            )
             return False
 
     def load_status_snapshot(self) -> Optional[dict[str, Any]]:
@@ -67,10 +70,16 @@ class StatusPersistenceManager:
                 snapshot = json.load(handle)
             if isinstance(snapshot, dict):
                 return snapshot
-            logger.warning("Persisted status at %s has non-dict structure", self.bot_status_path)
+            logger.warning(
+                "Persisted status at %s has non-dict structure", self.bot_status_path
+            )
             return None
         except Exception as exc:
-            logger.warning("Could not read persisted status file at %s: %s", self.bot_status_path, exc)
+            logger.warning(
+                "Could not read persisted status file at %s: %s",
+                self.bot_status_path,
+                exc,
+            )
             return None
 
     def write_audit_record(
@@ -87,7 +96,9 @@ class StatusPersistenceManager:
                     os.makedirs(parent_dir, exist_ok=True)
                 self._audit_handle = open(self.audit_log_path, "a", encoding="utf-8")
             except OSError as exc:
-                logger.warning("Could not open audit log at %s: %s", self.audit_log_path, exc)
+                logger.warning(
+                    "Could not open audit log at %s: %s", self.audit_log_path, exc
+                )
                 return
 
         if self._audit_handle is None:

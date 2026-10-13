@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from pumpfun_trading.bot.position_manager import PositionManager
 from pumpfun_trading.execution.executor import OrderExecutor
@@ -36,9 +35,7 @@ class OrderLiquidator:
 
         pos = self.position_manager.get_position(mint) or {}
         token_amount = int(
-            pos.get("remaining_token_amount")
-            or pos.get("token_amount")
-            or 100_000_000
+            pos.get("remaining_token_amount") or pos.get("token_amount") or 100_000_000
         )
 
         logger.warning(

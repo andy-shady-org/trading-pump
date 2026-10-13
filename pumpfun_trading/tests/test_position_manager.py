@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pumpfun_trading.bot.position_manager import Position, PositionManager
 from pumpfun_trading.strategies.base import TradingBotConfig
-from pumpfun_trading.strategies.exits import ExitAction, ExitDecision, PositionExitState
+from pumpfun_trading.strategies.exits import ExitAction
 
 
 @pytest.fixture
@@ -64,6 +64,8 @@ def test_position_manager_buy_and_get(base_config: TradingBotConfig):
         dry_run=True,
     )
 
+    assert pos["name"] == "SolCat"
+    assert pos["token_amount"] == 1_000_000
     assert len(pm) == 1
     assert pm.has_position("Mint111")
     assert "Mint111" in pm
@@ -99,7 +101,9 @@ def test_position_manager_price_updates_and_peak(base_config: TradingBotConfig):
     assert curr_mc == 50.0
 
 
-def test_position_manager_evaluate_exit_tiered_take_profit(base_config: TradingBotConfig):
+def test_position_manager_evaluate_exit_tiered_take_profit(
+    base_config: TradingBotConfig,
+):
     pm = PositionManager(base_config)
     pm.record_buy(
         mint="Mint111",
@@ -121,7 +125,9 @@ def test_position_manager_evaluate_exit_tiered_take_profit(base_config: TradingB
     assert dec.target_tier == 1
 
     # Record Tier 1 sell
-    closed, remaining = pm.record_sell("Mint111", sold_tokens=500_000, target_tier=1, is_partial=True)
+    closed, remaining = pm.record_sell(
+        "Mint111", sold_tokens=500_000, target_tier=1, is_partial=True
+    )
     assert not closed
     assert remaining == 500_000
     assert pm["Mint111"]["tier_1_executed"] is True
@@ -134,7 +140,9 @@ def test_position_manager_evaluate_exit_tiered_take_profit(base_config: TradingB
     assert dec.target_tier == 2
 
     # Record Tier 2 sell
-    closed, remaining = pm.record_sell("Mint111", sold_tokens=250_000, target_tier=2, is_partial=True)
+    closed, remaining = pm.record_sell(
+        "Mint111", sold_tokens=250_000, target_tier=2, is_partial=True
+    )
     assert not closed
     assert remaining == 250_000
     assert pm["Mint111"]["tier_2_executed"] is True

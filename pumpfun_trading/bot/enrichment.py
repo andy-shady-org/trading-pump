@@ -65,7 +65,9 @@ class TokenEnricher:
                 if isinstance(fetched, dict):
                     coin_data = fetched
             except Exception as exc:
-                logger.debug("Metadata query for %s failed during screening: %s", mint, exc)
+                logger.debug(
+                    "Metadata query for %s failed during screening: %s", mint, exc
+                )
 
         metadata = TokenMetadata.from_dict(coin_data) if coin_data else None
 
