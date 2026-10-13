@@ -126,8 +126,9 @@ def build_dashboard(bot: Any) -> Panel:
     positions_table = Table(show_lines=True, expand=True)
     positions_table.add_column("Name", style="cyan")
     positions_table.add_column("Mint", style="green")
-    positions_table.add_column("Entry", justify="right")
-    positions_table.add_column("Current", justify="right")
+    positions_table.add_column("Entry MC", justify="right")
+    positions_table.add_column("Current MC", justify="right")
+    positions_table.add_column("Cost", justify="right")
     positions_table.add_column("Perf", justify="right")
     positions_table.add_column("Reason", style="yellow")
 
@@ -136,18 +137,25 @@ def build_dashboard(bot: Any) -> Panel:
             name = str(position.get("name") or mint)
             entry = float(position.get("entry_market_cap", 0.0) or 0.0)
             current = float(position.get("current_market_cap", 0.0) or 0.0)
+            cost = float(
+                position.get("cost_sol")
+                or position.get("entry_sol", 0.0)
+                or getattr(bot.config, "buy_amount_sol", 0.0)
+                or 0.0
+            )
             performance = (current / entry) if entry > 0 else 1.0
             reason = str(position.get("reason") or "watch")
             positions_table.add_row(
                 name[:18],
                 mint[:8] + "...",
-                f"{entry:.2f}",
-                f"{current:.2f}",
+                f"{entry:.2f} SOL",
+                f"{current:.2f} SOL",
+                f"{cost:.4f} SOL",
                 f"{performance:.2%}",
                 reason,
             )
     else:
-        positions_table.add_row("No active positions.", "-", "-", "-", "-", "-")
+        positions_table.add_row("No active positions.", "-", "-", "-", "-", "-", "-")
 
     runtime = Table.grid(expand=True)
     runtime.add_column(justify="left")

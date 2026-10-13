@@ -300,3 +300,55 @@ async def test_bot_reconciliation_and_retries(tmp_path):
     await bot._process_exit_retry_queue(websocket=AsyncMock())
 
     await bot.close()
+
+
+@pytest.mark.asyncio
+async def test_bot_buy_metric_and_reserve_price_refresh(tmp_path):
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        stream_url="wss://pumpportal.fun/api/data",
+        config=TradingBotConfig(
+            buy_amount_sol=0.01,
+            take_profit=1.5,
+            stop_loss=0.85,
+        ),
+        dry_run=True,
+        paper_trade=True,
+        bot_status_path=str(tmp_path / "status.json"),
+    )
+
+    # 1. Verify single buy increments buys metric by exactly 1
+    assert bot._metrics.get("buys", 0) == 0
+    bought = await bot._buy_token("MintMetricTest1", market_cap_sol=27.96)
+    assert bought is True
+    assert bot._metrics.get("buys", 0) == 1
+    assert bot._metrics_snapshot()["buys"] == 1
+
+    # 2. Verify trade update with virtual reserves updates market cap
+    trade_with_reserves = {
+        "txType": "trade",
+        "mint": "MintMetricTest1",
+        "vSolInBondingCurve": 35_000_000_000,  # 35 SOL
+        "vTokensInBondingCurve": 1_000_000_000_000_000,  # 1B tokens
+    }
+    await bot._handle_message(trade_with_reserves)
+    pos = bot.active_positions.get("MintMetricTest1")
+    assert pos is not None
+    assert pos["current_market_cap"] == 35.0
+
+    # 3. Verify _refresh_active_positions_market_caps polls bonding curve
+    bot.execution.get_bonding_curve_state = AsyncMock(
+        return_value={"market_cap_sol": 38.5}
+    )
+    await bot._refresh_active_positions_market_caps()
+    assert bot.active_positions["MintMetricTest1"]["current_market_cap"] == 38.5
+
+    # 4. Verify sell increments sells metric by exactly 1
+    assert bot._metrics.get("sells", 0) == 0
+    sold = await bot._sell_token("MintMetricTest1")
+    assert sold is True
+    assert bot._metrics.get("sells", 0) == 1
+    assert bot._metrics_snapshot()["sells"] == 1
+
+    await bot.close()

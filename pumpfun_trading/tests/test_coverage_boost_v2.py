@@ -1265,7 +1265,9 @@ async def test_bot_raydium_and_trade_updates_deep():
     # 6. _handle_trade_update on new token with smart money buy (copy-trade entry)
     bot.position_manager.clear()
     bot._enrich_and_screen_token = AsyncMock(
-        return_value=TokenScreeningVerdict(mint=SAMPLE_MINT_2, passed=True, risk_score=10.0)
+        return_value=TokenScreeningVerdict(
+            mint=SAMPLE_MINT_2, passed=True, risk_score=10.0
+        )
     )
     trade_buy_msg = {
         "mint": SAMPLE_MINT_2,
@@ -1841,7 +1843,9 @@ async def test_final_coverage_push():
     bot.geyser_client.listen = mock_geyser_events
     bot._reconcile_positions_on_startup = AsyncMock(return_value={})
     bot._enrich_and_screen_token = AsyncMock(
-        return_value=TokenScreeningVerdict(mint=SAMPLE_MINT, passed=True, risk_score=10.0)
+        return_value=TokenScreeningVerdict(
+            mint=SAMPLE_MINT, passed=True, risk_score=10.0
+        )
     )
     bot.executor.execute_sell = AsyncMock(return_value=ExecutionResult(success=True))
     bot.executor.execute_buy = AsyncMock(return_value=ExecutionResult(success=True))
@@ -1873,7 +1877,9 @@ async def test_final_coverage_push():
     bot_ws.geyser_endpoint = None
     bot_ws.reconnect_delay_seconds = 0.01
     bot_ws._enrich_and_screen_token = AsyncMock(
-        return_value=TokenScreeningVerdict(mint=SAMPLE_MINT, passed=True, risk_score=10.0)
+        return_value=TokenScreeningVerdict(
+            mint=SAMPLE_MINT, passed=True, risk_score=10.0
+        )
     )
     bot_ws._reconcile_positions_on_startup = AsyncMock(return_value={})
 
@@ -1936,6 +1942,7 @@ async def test_final_coverage_push():
     mock_session = MockSessionContext(mock_ws_ctx)
 
     with patch("aiohttp.ClientSession", return_value=mock_session):
+
         async def stop_ws():
             await asyncio.sleep(0.05)
             bot_ws._stop_requested = True
@@ -1946,9 +1953,8 @@ async def test_final_coverage_push():
 
     bot_ws._stop_requested = False
     bot_ws._max_stream_consecutive_failures = 1
-    with patch(
-        "aiohttp.ClientSession", side_effect=RuntimeError("connection dropped")
-    ):
+    with patch("aiohttp.ClientSession", side_effect=RuntimeError("connection dropped")):
+
         async def stop_ws_err():
             await asyncio.sleep(0.05)
             bot_ws._stop_requested = True
@@ -1961,6 +1967,7 @@ async def test_final_coverage_push():
     bot_ws._stop_requested = False
     bot_ws.geyser_endpoint = None
     bot_ws._run_websocket_stream = AsyncMock()
+
     async def stop_start_ws():
         await asyncio.sleep(0.05)
         bot_ws._stop_requested = True

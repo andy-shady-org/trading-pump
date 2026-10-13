@@ -338,9 +338,7 @@ class TradingBot:
         self._seen_mints: dict[str, float] = {}
         self.console = get_configured_console(file=sys.stdout)
 
-        self.geyser_endpoint = (
-            geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
-        )
+        self.geyser_endpoint = geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
         self.geyser_x_token = geyser_x_token or os.getenv("PUMPFUN_GEYSER_X_TOKEN")
         self.geyser_client = geyser_client or YellowstoneGeyserClient(
             endpoint=self.geyser_endpoint or self.stream_url,
@@ -659,7 +657,9 @@ class TradingBot:
         self._observed_tokens_count = int(
             snapshot.get(
                 "observed_tokens",
-                snapshot.get("metrics", {}).get("observed_tokens", self._observed_tokens_count),
+                snapshot.get("metrics", {}).get(
+                    "observed_tokens", self._observed_tokens_count
+                ),
             )
         )
         self._trade_sequence = max(
@@ -867,7 +867,7 @@ class TradingBot:
         if len(self._trade_ledger) > 50:
             self._trade_ledger.pop(0)
         self._recent_actions.append(record)
-        if action == "buy":
+        if action == "buy" or "buy" in action:
             self._record_metric("buys")
         elif "sell" in action:
             self._record_metric("sells")
@@ -1292,7 +1292,6 @@ class TradingBot:
         self._mark_seen(mint)
         self._last_new_token = mint
         self._last_new_token_name = position_name
-        self._record_metric("buys")
         self._record_trade(
             mint=mint,
             action="buy",
@@ -1370,7 +1369,6 @@ class TradingBot:
         self._mark_seen(mint)
         self._last_new_token = mint
         self._last_new_token_name = position_name
-        self._record_metric("buys")
         self._record_trade(
             mint=mint,
             action="raydium_buy",
@@ -1403,6 +1401,13 @@ class TradingBot:
                 int(entry.get("retries") or entry.get("retry_count") or 0) + 1
             )
             entry["retry_count"] = entry["retries"]
+            if entry["retry_count"] >= self.max_exit_retries:
+                self._record_failure(
+                    f"Max exit retries ({self.max_exit_retries}) exceeded for {mint}",
+                    category="max_exit_retries",
+                )
+                self._exit_retry_queue.pop(mint, None)
+                return
             entry["last_attempt"] = time.monotonic()
             entry["reason"] = reason
             entry["slippage_bps"] = min(
@@ -1584,7 +1589,6 @@ class TradingBot:
             is_partial=is_partial,
         )
         self.active_positions = self.position_manager.get_all_positions()
-        self._record_metric("sells")
 
         if is_partial:
             self._record_trade(
@@ -2007,8 +2011,29 @@ class TradingBot:
             data.get("market_cap", 0.0)
             or data.get("marketCapSol", 0.0)
             or data.get("market_cap_sol", 0.0)
+            or data.get("marketCap", 0.0)
             or 0.0
         )
+        if current_market_cap <= 0.0:
+            v_sol = float(
+                data.get("vSolInBondingCurve", 0.0)
+                or data.get("v_sol_in_bonding_curve", 0.0)
+                or data.get("virtual_sol_reserves", 0.0)
+                or 0.0
+            )
+            v_tokens = float(
+                data.get("vTokensInBondingCurve", 0.0)
+                or data.get("v_tokens_in_bonding_curve", 0.0)
+                or data.get("virtual_token_reserves", 0.0)
+                or 0.0
+            )
+            if v_sol > 0 and v_tokens > 0:
+                sol_val = v_sol / 1_000_000_000.0 if v_sol > 1_000_000 else v_sol
+                token_val = (
+                    v_tokens / 1_000_000.0 if v_tokens > 1_000_000_000 else v_tokens
+                )
+                if token_val > 0:
+                    current_market_cap = sol_val * (1_000_000_000.0 / token_val)
         token_name = data.get("name") or mint
         self._last_new_token = mint
         self._last_new_token_name = (
@@ -2085,10 +2110,32 @@ class TradingBot:
             data.get("market_cap", 0.0)
             or data.get("marketCapSol", 0.0)
             or data.get("market_cap_sol", 0.0)
+            or data.get("marketCap", 0.0)
             or 0.0
         )
+        if current_market_cap <= 0.0:
+            v_sol = float(
+                data.get("vSolInBondingCurve", 0.0)
+                or data.get("v_sol_in_bonding_curve", 0.0)
+                or data.get("virtual_sol_reserves", 0.0)
+                or 0.0
+            )
+            v_tokens = float(
+                data.get("vTokensInBondingCurve", 0.0)
+                or data.get("v_tokens_in_bonding_curve", 0.0)
+                or data.get("virtual_token_reserves", 0.0)
+                or 0.0
+            )
+            if v_sol > 0 and v_tokens > 0:
+                sol_val = v_sol / 1_000_000_000.0 if v_sol > 1_000_000 else v_sol
+                token_val = (
+                    v_tokens / 1_000_000.0 if v_tokens > 1_000_000_000 else v_tokens
+                )
+                if token_val > 0:
+                    current_market_cap = sol_val * (1_000_000_000.0 / token_val)
+
         if mint in self.active_positions:
-            if not self.dry_run:
+            if not self.dry_run or current_market_cap <= 0.0:
                 try:
                     curve = await self.execution.get_bonding_curve_state(mint)
                     if isinstance(curve, dict) and "market_cap_sol" in curve:
@@ -2282,7 +2329,9 @@ class TradingBot:
                         if hasattr(ws, "send_json"):
                             await ws.send_json({"method": "subscribeNewToken"})
                         elif hasattr(ws, "send_str"):
-                            await ws.send_str(json.dumps({"method": "subscribeNewToken"}))
+                            await ws.send_str(
+                                json.dumps({"method": "subscribeNewToken"})
+                            )
                         elif hasattr(ws, "send"):
                             await ws.send(json.dumps({"method": "subscribeNewToken"}))
 
@@ -2357,12 +2406,34 @@ class TradingBot:
             finally:
                 self._active_ws = None
 
+    async def _refresh_active_positions_market_caps(self) -> None:
+        """Periodically refresh active position market caps from on-chain bonding curve states."""
+        if not self.active_positions:
+            return
+        for mint in list(self.active_positions.keys()):
+            try:
+                curve = await self.execution.get_bonding_curve_state(mint)
+                if isinstance(curve, dict):
+                    mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
+                    if mc <= 0.0:
+                        vt = int(curve.get("virtual_token_reserves", 0))
+                        vs = int(curve.get("virtual_sol_reserves", 0))
+                        if vt > 0 and vs > 0:
+                            mc = (vs / 1_000_000_000.0) * (
+                                1_000_000_000.0 / (vt / 1_000_000.0)
+                            )
+                    if mc > 0.0:
+                        await self._evaluate_and_execute_exit(mint, mc)
+            except Exception:
+                pass
+
     async def _run_health_loop(self) -> None:
         """Periodic background task evaluating health, equity, and reconciliations."""
         while not self._stop_requested:
             try:
                 await asyncio.sleep(5)
                 await self._update_health_state()
+                await self._refresh_active_positions_market_caps()
                 await self._check_and_enforce_circuit_breaker()
                 self._prune_seen_mints()
                 self._write_status_snapshot()
@@ -2455,7 +2526,9 @@ class TradingBot:
                         break
             elif (
                 self.stream_url
-                and self.stream_url.startswith(("ws://", "wss://", "http://", "https://"))
+                and self.stream_url.startswith(
+                    ("ws://", "wss://", "http://", "https://")
+                )
                 and self.stream_url != "http://127.0.0.1:10000"
             ):
                 await self._run_websocket_stream()
