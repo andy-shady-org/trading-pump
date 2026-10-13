@@ -183,7 +183,9 @@ def test_rpc_connection_pool_scoring_and_selection() -> None:
     pool = RpcConnectionPool(endpoints=[ep_slow, ep_degraded, ep_fast])
     healthy = pool.get_healthy_endpoints()
     assert healthy[0].url == ep_fast.url
-    assert pool.get_best_endpoint().url == ep_fast.url
+    best_ep = pool.get_best_endpoint()
+    assert best_ep is not None
+    assert best_ep.url == ep_fast.url
 
 
 @pytest.mark.asyncio

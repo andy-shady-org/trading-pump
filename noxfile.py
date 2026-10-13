@@ -28,6 +28,12 @@ def audit(session):
 
 
 @nox.session(python=["3.14"])
+def mypy(session):
+    session.install("-e", ".[dev]")
+    session.run("mypy", "pumpfun_trading")
+
+
+@nox.session(python=["3.14"])
 def format(session):
     session.install("-e", ".[dev]")
     session.run("black", ".")

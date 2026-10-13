@@ -103,6 +103,7 @@ The package exposes dedicated, high-performance CLI entry points:
 All contributions must strictly satisfy project quality gates:
 
 * **Code Formatting & Linting**: 100% compliance with Ruff and Black (`nox -s format`, `nox -s lint`).
+* **Static Type Safety**: 0 type violations under strict Mypy checks (`nox -s mypy`).
 * **Unit & Integration Test Coverage**: Mandatory minimum of **95% statement and branch coverage** across all modules (`nox -s tests`).
 * **Clean Commits & Documentation**: Keep `docs/dev/TODO.md` and feature docs updated with all architectural changes.
 

@@ -8,7 +8,7 @@ import signal
 import sys
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from rich.live import Live
@@ -174,8 +174,8 @@ class TradingBot:
             max_acceptable_risk_score=float(
                 getattr(base, "max_acceptable_risk_score", 45.0)
             ),
-            screening_cache_ttl_seconds=float(
-                getattr(base, "screening_cache_ttl_seconds", 60.0)
+            screening_cache_ttl_seconds=int(
+                getattr(base, "screening_cache_ttl_seconds", 60)
             ),
             enable_momentum_signals=bool(
                 getattr(base, "enable_momentum_signals", True)
@@ -278,7 +278,7 @@ class TradingBot:
         self._last_new_token = "-"
         self._last_new_token_name = "-"
         self._last_status = "initializing"
-        self._display_live = None
+        self._display_live: Optional[Live] = None
         self._trade_ledger: list[dict[str, Any]] = []
         self._recent_actions: deque[dict[str, Any]] = deque(maxlen=50)
         self._recent_events: deque[str] = deque(maxlen=8)
@@ -340,10 +340,10 @@ class TradingBot:
 
         self._stream_consecutive_failures = 0
         self._circuit_breaker_tripped = False
-        self._max_stream_consecutive_failures = int(
-            os.getenv("PUMPFUN_STREAM_MAX_RETRIES")
-            or os.getenv("PUMPFUN_WS_MAX_RETRIES", "5")
+        stream_retries_env = os.getenv("PUMPFUN_STREAM_MAX_RETRIES") or os.getenv(
+            "PUMPFUN_WS_MAX_RETRIES", "5"
         )
+        self._max_stream_consecutive_failures = int(stream_retries_env or "5")
 
         self._exit_retry_queue: dict[str, dict[str, Any]] = {}
         self.max_exit_retries = int(os.getenv("PUMPFUN_MAX_EXIT_RETRIES", "5"))
@@ -372,7 +372,9 @@ class TradingBot:
                 circuit_breaker_cooldown_seconds=self.config.rpc_pool_circuit_breaker_cooldown_seconds,
                 broadcast_concurrency=self.config.rpc_pool_broadcast_concurrency,
             )
-            self.rpc_pool = RpcConnectionPool(endpoints=endpoints_list, config=pool_cfg)
+            self.rpc_pool = RpcConnectionPool(
+                endpoints=tuple(endpoints_list), config=pool_cfg
+            )
 
         self.logger = setup_structured_logging(
             logger_name="pumpfun_trading.bot",
@@ -848,30 +850,30 @@ class TradingBot:
         self._write_status_snapshot()
 
     def _record_latency_ms(self, latency_ms: float) -> None:
-        if "latency_ms" not in self._metrics or not isinstance(
-            self._metrics["latency_ms"], dict
-        ):
-            self._metrics["latency_ms"] = {
+        lat = self._metrics.get("latency_ms")
+        if not isinstance(lat, dict):
+            lat = {
                 "samples": 0,
                 "avg_ms": 0.0,
                 "last_ms": 0.0,
                 "max_ms": 0.0,
                 "total_ms": 0.0,
             }
-        lat = self._metrics["latency_ms"]
-        lat["samples"] += 1
-        lat["total_ms"] += float(latency_ms)
+            self._metrics["latency_ms"] = lat
+        lat["samples"] = int(lat.get("samples", 0)) + 1
+        lat["total_ms"] = float(lat.get("total_ms", 0.0)) + float(latency_ms)
         lat["last_ms"] = float(latency_ms)
-        lat["max_ms"] = max(lat["max_ms"], float(latency_ms))
-        lat["avg_ms"] = lat["total_ms"] / lat["samples"]
+        lat["max_ms"] = max(float(lat.get("max_ms", 0.0)), float(latency_ms))
+        lat["avg_ms"] = float(lat["total_ms"]) / int(lat["samples"])
 
     def _record_metric(self, name: str, value: float | int = 1) -> None:
         if name in {"latency_ms", "last_latency_ms"}:
             self._record_latency_ms(float(value))
             return
 
-        if name in self._metrics and isinstance(self._metrics[name], int):
-            self._metrics[name] += int(value)
+        current_val = self._metrics.get(name)
+        if isinstance(current_val, (int, float)):
+            self._metrics[name] = int(current_val + value)
         else:
             self._metrics[name] = int(value)
 
@@ -956,10 +958,7 @@ class TradingBot:
         if self.dry_run:
             return True
         try:
-            if hasattr(self.execution, "get_balance_sol"):
-                balance_sol = await self.execution.get_balance_sol()
-            else:
-                balance_sol = await self.execution.get_wallet_balance_sol()
+            balance_sol = await self.execution.get_balance_sol()
             self.wallet_balance_sol = balance_sol
             open_val_sol = self.position_manager.calculate_total_open_value()
             self.daily_equity_tracker.update_valuation(balance_sol, open_val_sol)
@@ -989,10 +988,7 @@ class TradingBot:
         if self.dry_run:
             return True
         try:
-            if hasattr(self.execution, "get_balance_sol"):
-                balance = await self.execution.get_balance_sol()
-            else:
-                balance = await self.execution.get_wallet_balance_sol()
+            balance = await self.execution.get_balance_sol()
             self.wallet_balance_sol = balance
             return balance >= self.min_balance_sol
         except Exception:
@@ -1002,7 +998,7 @@ class TradingBot:
         """Evaluates daily drawdown baseline and engages circuit breaker if breached."""
         try:
             if not self.dry_run:
-                balance_sol = await self.execution.get_wallet_balance_sol()
+                balance_sol = await self.execution.get_balance_sol()
                 self.wallet_balance_sol = balance_sol
             open_val_sol = self.position_manager.calculate_total_open_value()
             self.daily_equity_tracker.update_valuation(

@@ -4,7 +4,7 @@ from typing import Any
 
 from pumpfun_trading.strategies.base import TradingBotConfig
 
-DEFAULT_PRESETS: dict[str, dict[str, float | int | bool]] = {
+DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
     "conservative": {
         "buy_amount_sol": 0.005,
         "take_profit": 1.35,
@@ -292,7 +292,7 @@ def resolve_strategy_config(
             base.get("raydium_max_entry_latency_seconds", 30.0)
         ),
         enable_copy_trading=bool(base.get("enable_copy_trading", True)),
-        copy_trading_wallets=tuple(base.get("copy_trading_wallets", ())),
+        copy_trading_wallets=tuple(base.get("copy_trading_wallets") or ()),
         copy_trading_sizing_mode=str(
             base.get("copy_trading_sizing_mode", "proportional")
         ),
@@ -308,7 +308,7 @@ def resolve_strategy_config(
             base.get("copy_trading_require_anti_rug_screen", True)
         ),
         enable_rpc_pool=bool(base.get("enable_rpc_pool", True)),
-        rpc_endpoints=tuple(base.get("rpc_endpoints", ())),
+        rpc_endpoints=tuple(base.get("rpc_endpoints") or ()),
         rpc_pool_health_check_interval_seconds=float(
             base.get("rpc_pool_health_check_interval_seconds", 30.0)
         ),

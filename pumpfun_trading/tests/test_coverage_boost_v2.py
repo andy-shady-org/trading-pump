@@ -194,7 +194,9 @@ def test_alert_dispatcher_auto_detection_and_providers():
     # Missing URLs for explicitly set providers
     assert not AlertDispatcher(provider="slack", slack_webhook_url=None).enabled
     assert not AlertDispatcher(provider="telegram", telegram_bot_token=None).enabled
-    assert not AlertDispatcher(provider="telegram", telegram_bot_token="t", telegram_chat_id=None).enabled
+    assert not AlertDispatcher(
+        provider="telegram", telegram_bot_token="t", telegram_chat_id=None
+    ).enabled
 
     # Empty payload handling
     assert not d_auto.send_alert("")
@@ -224,24 +226,25 @@ async def test_alert_dispatcher_async_send():
 
 
 def make_test_pool_keys() -> RaydiumPoolKeys:
+    pk = str(Pubkey.default())
     return RaydiumPoolKeys(
-        amm_id="Amm111",
-        amm_authority="Auth111",
-        amm_open_orders="Open111",
-        amm_target_orders="Target111",
-        pool_coin_token_account="CoinVault111",
-        pool_pc_token_account="PcVault111",
-        serum_program_id="Serum111",
-        serum_market="Market111",
-        serum_bids="Bids111",
-        serum_asks="Asks111",
-        serum_event_queue="Events111",
-        serum_coin_vault="SerumCoin111",
-        serum_pc_vault="SerumPc111",
-        serum_vault_signer="Signer111",
+        amm_id=pk,
+        amm_authority=pk,
+        amm_open_orders=pk,
+        amm_target_orders=pk,
+        pool_coin_token_account=pk,
+        pool_pc_token_account=pk,
+        serum_program_id=pk,
+        serum_market=pk,
+        serum_bids=pk,
+        serum_asks=pk,
+        serum_event_queue=pk,
+        serum_coin_vault=pk,
+        serum_pc_vault=pk,
+        serum_vault_signer=pk,
         coin_mint=SAMPLE_MINT,
         pc_mint=SAMPLE_MINT_2,
-        lp_mint="LpMint111",
+        lp_mint=pk,
     )
 
 
@@ -337,7 +340,9 @@ async def test_order_executor_raydium_and_exceptions():
     assert res_dry.dry_run is True
 
     # Raydium buy swap exception
-    exec_client.swap_raydium = AsyncMock(side_effect=RuntimeError("Raydium pool locked"))
+    exec_client.swap_raydium = AsyncMock(
+        side_effect=RuntimeError("Raydium pool locked")
+    )
     res_ray_err = await executor.execute_raydium_buy(SAMPLE_MINT, pool_keys, 0.05)
     assert res_ray_err.success is False
     assert "raydium_buy_failed" in (res_ray_err.error or "")
@@ -390,7 +395,9 @@ async def test_order_liquidator_branches():
     # Mock execute_sell success and failure
     async def mock_sell(mint, token_amount, slippage_bps=None, reason=""):
         if mint == SAMPLE_MINT:
-            return ExecutionResult(success=True, mint=mint, amount_sol=0.06, token_amount=token_amount)
+            return ExecutionResult(
+                success=True, mint=mint, amount_sol=0.06, token_amount=token_amount
+            )
         raise RuntimeError("Liquidate fail")
 
     executor.execute_sell = AsyncMock(side_effect=mock_sell)
@@ -451,9 +458,24 @@ def test_strategy_signal_generation_all_branches():
     )
 
     # Disabled flags -> signals return False
-    assert generate_momentum_buy_signal(cfg, momentum_signal=mom_sig, active_positions=0, buy_attempts=0) is False
-    assert generate_graduation_buy_signal(cfg, graduation_signal=grad_sig, active_positions=0, buy_attempts=0) is False
-    assert generate_copy_trade_buy_signal(cfg, copy_trade_signal=copy_sig, active_positions=0, buy_attempts=0) is False
+    assert (
+        generate_momentum_buy_signal(
+            cfg, momentum_signal=mom_sig, active_positions=0, buy_attempts=0
+        )
+        is False
+    )
+    assert (
+        generate_graduation_buy_signal(
+            cfg, graduation_signal=grad_sig, active_positions=0, buy_attempts=0
+        )
+        is False
+    )
+    assert (
+        generate_copy_trade_buy_signal(
+            cfg, copy_trade_signal=copy_sig, active_positions=0, buy_attempts=0
+        )
+        is False
+    )
 
     # Enabled flags
     cfg_enabled = TradingBotConfig(
@@ -465,10 +487,35 @@ def test_strategy_signal_generation_all_branches():
         enable_copy_trading=True,
     )
 
-    assert generate_buy_signal(cfg_enabled, market_cap_sol=10.0, active_positions=0, mint_seen_recently=False, buy_attempts=0, momentum_signal=mom_sig) is True
-    assert generate_momentum_buy_signal(cfg_enabled, momentum_signal=mom_sig, active_positions=0, buy_attempts=0) is True
-    assert generate_graduation_buy_signal(cfg_enabled, graduation_signal=grad_sig, active_positions=0, buy_attempts=0) is True
-    assert generate_copy_trade_buy_signal(cfg_enabled, copy_trade_signal=copy_sig, active_positions=0, buy_attempts=0) is True
+    assert (
+        generate_buy_signal(
+            cfg_enabled,
+            market_cap_sol=10.0,
+            active_positions=0,
+            mint_seen_recently=False,
+            buy_attempts=0,
+            momentum_signal=mom_sig,
+        )
+        is True
+    )
+    assert (
+        generate_momentum_buy_signal(
+            cfg_enabled, momentum_signal=mom_sig, active_positions=0, buy_attempts=0
+        )
+        is True
+    )
+    assert (
+        generate_graduation_buy_signal(
+            cfg_enabled, graduation_signal=grad_sig, active_positions=0, buy_attempts=0
+        )
+        is True
+    )
+    assert (
+        generate_copy_trade_buy_signal(
+            cfg_enabled, copy_trade_signal=copy_sig, active_positions=0, buy_attempts=0
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -583,8 +630,12 @@ def test_copy_trading_and_env_missing_branches():
     with pytest.raises(ValueError, match="Wallet address cannot be empty"):
         reg.register_wallet(TrackedWallet(address=""))
 
-    w1 = TrackedWallet(address="W1", label="One", enabled=True, win_rate=0.75, risk_score=20.0)
-    w2 = TrackedWallet(address="W2", label="Two", enabled=False, win_rate=0.40, risk_score=50.0)
+    w1 = TrackedWallet(
+        address="W1", label="One", enabled=True, win_rate=0.75, risk_score=20.0
+    )
+    w2 = TrackedWallet(
+        address="W2", label="Two", enabled=False, win_rate=0.40, risk_score=50.0
+    )
     reg.register_wallets([w1, w2])
     assert reg.wallet_count == 2
     assert len(reg.list_wallets(only_enabled=True)) == 1
@@ -607,24 +658,43 @@ def test_copy_trading_and_env_missing_branches():
     )
     # Disabled wallet
     w_dis = TrackedWallet(address="W_DIS", label="Dis", enabled=False)
-    assert engine.evaluate_copy_signal(w_dis, SAMPLE_MINT, 1.0, True).reason == "wallet_disabled"
+    assert (
+        engine.evaluate_copy_signal(w_dis, SAMPLE_MINT, 1.0, True).reason
+        == "wallet_disabled"
+    )
 
     # Low win rate
     w_low_wr = TrackedWallet(address="W_LOW", label="Low", enabled=True, win_rate=0.30)
-    assert "below_min" in engine.evaluate_copy_signal(w_low_wr, SAMPLE_MINT, 1.0, True).reason
+    assert (
+        "below_min"
+        in engine.evaluate_copy_signal(w_low_wr, SAMPLE_MINT, 1.0, True).reason
+    )
 
     # High risk score
-    w_high_risk = TrackedWallet(address="W_RISK", label="Risk", enabled=True, win_rate=0.80, risk_score=80.0)
-    assert "exceeds_max" in engine.evaluate_copy_signal(w_high_risk, SAMPLE_MINT, 1.0, True).reason
+    w_high_risk = TrackedWallet(
+        address="W_RISK", label="Risk", enabled=True, win_rate=0.80, risk_score=80.0
+    )
+    assert (
+        "exceeds_max"
+        in engine.evaluate_copy_signal(w_high_risk, SAMPLE_MINT, 1.0, True).reason
+    )
 
     # Mirror sells disabled
     engine_no_mirror = CopyTradeEngine(mirror_sells=False, enabled=True)
-    w_good = TrackedWallet(address="W_GOOD", label="Good", enabled=True, win_rate=0.80, risk_score=20.0)
-    assert engine_no_mirror.evaluate_copy_signal(w_good, SAMPLE_MINT, 1.0, False).reason == "mirror_sells_disabled"
+    w_good = TrackedWallet(
+        address="W_GOOD", label="Good", enabled=True, win_rate=0.80, risk_score=20.0
+    )
+    assert (
+        engine_no_mirror.evaluate_copy_signal(w_good, SAMPLE_MINT, 1.0, False).reason
+        == "mirror_sells_disabled"
+    )
 
     # Engine disabled
     engine_dis = CopyTradeEngine(enabled=False)
-    assert engine_dis.evaluate_copy_signal(w_good, SAMPLE_MINT, 1.0, True).reason == "copy_trading_disabled"
+    assert (
+        engine_dis.evaluate_copy_signal(w_good, SAMPLE_MINT, 1.0, True).reason
+        == "copy_trading_disabled"
+    )
 
     # calculate_copy_size with max_allocation <= 0
     w_good.max_allocation_sol = 0.0
@@ -632,7 +702,10 @@ def test_copy_trading_and_env_missing_branches():
     assert size <= 0.05
 
     # record_and_evaluate on unregistered wallet
-    assert engine.record_and_evaluate("UNREGISTERED", SAMPLE_MINT, 1.0, True).triggered is False
+    assert (
+        engine.record_and_evaluate("UNREGISTERED", SAMPLE_MINT, 1.0, True).triggered
+        is False
+    )
 
 
 def test_trading_bot_validation_errors():
@@ -667,14 +740,22 @@ async def test_trading_bot_facade_and_lifecycle(tmp_path):
         buy_amount_sol=0.02,
         enable_copy_trading=True,
         copy_trading_wallets=[
-            {"address": "WhaleAlpha", "label": "AlphaWhale", "win_rate": 0.85, "risk_score": 15.0}
+            {
+                "address": "WhaleAlpha",
+                "label": "AlphaWhale",
+                "win_rate": 0.85,
+                "risk_score": 15.0,
+            }
         ],
     )
 
-    with patch.dict(os.environ, {
-        "PUMPFUN_BOT_STATUS_PATH": str(status_file),
-        "PUMPFUN_AUDIT_LOG": str(audit_file),
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "PUMPFUN_BOT_STATUS_PATH": str(status_file),
+            "PUMPFUN_AUDIT_LOG": str(audit_file),
+        },
+    ):
         bot = TradingBot(
             private_key_b58=SAMPLE_PRIVATE_KEY,
             rpc_url="https://api.mainnet-beta.solana.com",
@@ -702,7 +783,9 @@ async def test_trading_bot_facade_and_lifecycle(tmp_path):
     assert curr == 45.0
     assert peak == 45.0
 
-    closed, rem = bot.position_manager.record_sell(SAMPLE_MINT, 500_000, is_partial=True)
+    closed, rem = bot.position_manager.record_sell(
+        SAMPLE_MINT, 500_000, is_partial=True
+    )
     assert not closed
     assert rem == 500_000
 
@@ -735,34 +818,38 @@ async def test_trading_bot_facade_and_lifecycle(tmp_path):
     assert mock_ws.send.call_count == 2
 
     # WebSocket handle message with raydium pool data
-    await bot._handle_message({
-        "amm_id": "amm123",
-        "amm_authority": "auth123",
-        "amm_open_orders": "open123",
-        "amm_target_orders": "tgt123",
-        "pool_coin_token_account": "coin123",
-        "pool_pc_token_account": "pc123",
-        "serum_program_id": "serum123",
-        "serum_market": "market123",
-        "coin_mint": SAMPLE_MINT,
-        "pc_mint": SAMPLE_MINT_2,
-    })
-
-    await bot._handle_message({
-        "event": "raydium_pool_created",
-        "poolKeys": {
-            "amm_id": "amm456",
-            "amm_authority": "auth456",
-            "amm_open_orders": "open456",
-            "amm_target_orders": "tgt456",
-            "pool_coin_token_account": "coin456",
-            "pool_pc_token_account": "pc456",
-            "serum_program_id": "serum456",
-            "serum_market": "market456",
+    await bot._handle_message(
+        {
+            "amm_id": "amm123",
+            "amm_authority": "auth123",
+            "amm_open_orders": "open123",
+            "amm_target_orders": "tgt123",
+            "pool_coin_token_account": "coin123",
+            "pool_pc_token_account": "pc123",
+            "serum_program_id": "serum123",
+            "serum_market": "market123",
             "coin_mint": SAMPLE_MINT,
             "pc_mint": SAMPLE_MINT_2,
         }
-    })
+    )
+
+    await bot._handle_message(
+        {
+            "event": "raydium_pool_created",
+            "poolKeys": {
+                "amm_id": "amm456",
+                "amm_authority": "auth456",
+                "amm_open_orders": "open456",
+                "amm_target_orders": "tgt456",
+                "pool_coin_token_account": "coin456",
+                "pool_pc_token_account": "pc456",
+                "serum_program_id": "serum456",
+                "serum_market": "market456",
+                "coin_mint": SAMPLE_MINT,
+                "pc_mint": SAMPLE_MINT_2,
+            },
+        }
+    )
 
     # Test run() with KeyboardInterrupt
     with patch("asyncio.run", side_effect=KeyboardInterrupt):
@@ -796,7 +883,13 @@ async def test_bot_safe_startup_and_edge_branches(tmp_path):
             "stale_data": 1,
             "risk_kills": 0,
             "circuit_breaker_trips": 1,
-            "latency_ms": {"samples": 10, "total_ms": 100.0, "last_ms": 10.0, "max_ms": 20.0, "avg_ms": 10.0},
+            "latency_ms": {
+                "samples": 10,
+                "total_ms": 100.0,
+                "last_ms": 10.0,
+                "max_ms": 20.0,
+                "avg_ms": 10.0,
+            },
         },
     }
     status_file.write_text(json.dumps(snapshot_payload), encoding="utf-8")
@@ -954,7 +1047,9 @@ async def test_rpc_pool_extended_coverage():
     assert pool.endpoint_count == 0
 
     # Requests on empty pool
-    with pytest.raises(RuntimeError, match="No RPC endpoints configured in connection pool"):
+    with pytest.raises(
+        RuntimeError, match="No RPC endpoints configured in connection pool"
+    ):
         await pool.request({"jsonrpc": "2.0", "method": "getVersion"})
 
     with pytest.raises(RuntimeError, match="No RPC endpoints configured for broadcast"):
@@ -965,8 +1060,14 @@ async def test_rpc_pool_extended_coverage():
     mock_session = MagicMock()
     resp_rate_limit = AsyncMock()
     resp_rate_limit.status = 200
-    resp_rate_limit.text = AsyncMock(return_value=json.dumps({"error": {"code": 429, "message": "Too many requests"}}))
-    resp_rate_limit.json = AsyncMock(return_value={"error": {"code": 429, "message": "Too many requests"}})
+    resp_rate_limit.text = AsyncMock(
+        return_value=json.dumps(
+            {"error": {"code": 429, "message": "Too many requests"}}
+        )
+    )
+    resp_rate_limit.json = AsyncMock(
+        return_value={"error": {"code": 429, "message": "Too many requests"}}
+    )
     mock_session.post.return_value.__aenter__.return_value = resp_rate_limit
     pool._session = mock_session
 
@@ -1004,19 +1105,43 @@ async def test_sdk_execution_extended_coverage():
     )
 
     # get_ata_exists with mock accounts
-    client._request_rpc_json = AsyncMock(return_value={
-        "result": {
-            "value": [
-                "not_dict",
-                {"account": "not_dict"},
-                {"account": {"data": "not_dict"}},
-                {"account": {"data": {"parsed": "not_dict"}}},
-                {"account": {"data": {"parsed": {"info": "not_dict"}}}},
-                {"account": {"data": {"parsed": {"info": {"mint": "other_mint", "owner": "other_owner"}}}}},
-                {"account": {"data": {"parsed": {"info": {"mint": SAMPLE_MINT, "owner": str(client.wallet)}}}}},
-            ]
+    client._request_rpc_json = AsyncMock(
+        return_value={
+            "result": {
+                "value": [
+                    "not_dict",
+                    {"account": "not_dict"},
+                    {"account": {"data": "not_dict"}},
+                    {"account": {"data": {"parsed": "not_dict"}}},
+                    {"account": {"data": {"parsed": {"info": "not_dict"}}}},
+                    {
+                        "account": {
+                            "data": {
+                                "parsed": {
+                                    "info": {
+                                        "mint": "other_mint",
+                                        "owner": "other_owner",
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "account": {
+                            "data": {
+                                "parsed": {
+                                    "info": {
+                                        "mint": SAMPLE_MINT,
+                                        "owner": str(client.wallet),
+                                    }
+                                }
+                            }
+                        }
+                    },
+                ]
+            }
         }
-    })
+    )
     assert await client.get_ata_exists(SAMPLE_MINT) is True
 
     # getTokenAccountBalance with missing amount
@@ -1027,7 +1152,9 @@ async def test_sdk_execution_extended_coverage():
     ep1 = RpcEndpoint(url="https://rpc1.solana.com")
     ep2 = RpcEndpoint(url="https://rpc2.solana.com")
     pool = RpcConnectionPool(endpoints=[ep1, ep2])
-    pool.broadcast_transaction = AsyncMock(return_value="sig_broadcast_12345678901234567890")
+    pool.broadcast_transaction = AsyncMock(
+        return_value="sig_broadcast_12345678901234567890"
+    )
     client.rpc_pool = pool
 
     msg = MessageV0.try_compile(
@@ -1042,12 +1169,26 @@ async def test_sdk_execution_extended_coverage():
     assert sig == "sig_broadcast_12345678901234567890"
 
     # confirm_transaction branches: None result, [None] status, err in status
-    client._request_rpc_json = AsyncMock(side_effect=[
-        {"result": {"value": None}},
-        {"result": {"value": [None]}},
-        {"result": {"value": [{"confirmationStatus": "confirmed", "err": {"InstructionError": 1}}]}},
-    ])
-    assert await client.confirm_transaction("sig_test", max_retries=3, interval=0.01) is False
+    client._request_rpc_json = AsyncMock(
+        side_effect=[
+            {"result": {"value": None}},
+            {"result": {"value": [None]}},
+            {
+                "result": {
+                    "value": [
+                        {
+                            "confirmationStatus": "confirmed",
+                            "err": {"InstructionError": 1},
+                        }
+                    ]
+                }
+            },
+        ]
+    )
+    assert (
+        await client.confirm_transaction("sig_test", max_retries=3, interval=0.01)
+        is False
+    )
 
     # raydium_buy with should_jito=False
     pool_keys = make_test_pool_keys()
@@ -1069,7 +1210,12 @@ async def test_bot_raydium_and_trade_updates_deep():
         enable_copy_trading=True,
         enable_raydium_migration_sniping=True,
         copy_trading_wallets=[
-            {"address": "Whale1", "label": "WhaleAlpha", "win_rate": 0.85, "risk_score": 15.0}
+            {
+                "address": "Whale1",
+                "label": "WhaleAlpha",
+                "win_rate": 0.85,
+                "risk_score": 15.0,
+            }
         ],
     )
     bot = TradingBot(
@@ -1090,11 +1236,17 @@ async def test_bot_raydium_and_trade_updates_deep():
 
     # 3. _buy_raydium_token when execution fails
     bot._check_account_equity_guard = AsyncMock(return_value=True)
-    bot.executor.execute_raydium_buy = AsyncMock(return_value=ExecutionResult(success=False, error="Slippage"))
+    bot.executor.execute_raydium_buy = AsyncMock(
+        return_value=ExecutionResult(success=False, error="Slippage")
+    )
     assert await bot._buy_raydium_token(SAMPLE_MINT, pool_keys) is False
 
     # 4. _buy_raydium_token success
-    bot.executor.execute_raydium_buy = AsyncMock(return_value=ExecutionResult(success=True, signature="sig_ok", token_amount=1000))
+    bot.executor.execute_raydium_buy = AsyncMock(
+        return_value=ExecutionResult(
+            success=True, signature="sig_ok", token_amount=1000
+        )
+    )
     assert await bot._buy_raydium_token(SAMPLE_MINT, pool_keys) is True
 
     # 5. _handle_trade_update on active position with smart money sell mirror exit
@@ -1124,26 +1276,34 @@ async def test_bot_raydium_and_trade_updates_deep():
 
     # 7. Copy-trade buy rejected due to anti-rug screening
     bot.position_manager.clear()
-    with patch.object(bot, "_enrich_and_screen_token", new_callable=AsyncMock) as mock_screen:
-        mock_screen.return_value = TokenScreeningVerdict(mint=SAMPLE_MINT, passed=False, risk_score=90.0)
-        await bot._handle_trade_update({
-            "mint": SAMPLE_MINT,
-            "is_buy": True,
-            "user": "Whale1",
-            "sol_amount": 1.0,
-            "market_cap_sol": 25.0,
-        })
+    with patch.object(
+        bot, "_enrich_and_screen_token", new_callable=AsyncMock
+    ) as mock_screen:
+        mock_screen.return_value = TokenScreeningVerdict(
+            mint=SAMPLE_MINT, passed=False, risk_score=90.0
+        )
+        await bot._handle_trade_update(
+            {
+                "mint": SAMPLE_MINT,
+                "is_buy": True,
+                "user": "Whale1",
+                "sol_amount": 1.0,
+                "market_cap_sol": 25.0,
+            }
+        )
         assert not bot.position_manager.has_position(SAMPLE_MINT)
 
     # 8. Copy-trade buy rejected due to _should_buy
     with patch.object(bot, "_should_buy", return_value=False):
-        await bot._handle_trade_update({
-            "mint": SAMPLE_MINT,
-            "is_buy": True,
-            "user": "Whale1",
-            "sol_amount": 1.0,
-            "market_cap_sol": 25.0,
-        })
+        await bot._handle_trade_update(
+            {
+                "mint": SAMPLE_MINT,
+                "is_buy": True,
+                "user": "Whale1",
+                "sol_amount": 1.0,
+                "market_cap_sol": 25.0,
+            }
+        )
 
     await bot.close()
 
@@ -1162,10 +1322,14 @@ async def test_bot_stream_and_execution_deep_branches():
     )
 
     # _check_account_equity_guard branches
-    bot.execution.get_balance_sol = AsyncMock(return_value=0.05)  # 0.05 - 0.02 < 0.10 reserve
+    bot.execution.get_balance_sol = AsyncMock(
+        return_value=0.05
+    )  # 0.05 - 0.02 < 0.10 reserve
     assert await bot._check_account_equity_guard(0.02) is False
 
-    bot.execution.get_balance_sol = AsyncMock(side_effect=RuntimeError("RPC balance error"))
+    bot.execution.get_balance_sol = AsyncMock(
+        side_effect=RuntimeError("RPC balance error")
+    )
     assert await bot._check_account_equity_guard(0.02) is False
 
     # _validate_balance live
@@ -1180,13 +1344,17 @@ async def test_bot_stream_and_execution_deep_branches():
     assert await bot._buy_token(SAMPLE_MINT, 30.0, "Coin") is False
 
     bot._check_account_equity_guard = AsyncMock(return_value=True)
-    bot.executor.execute_buy = AsyncMock(return_value=ExecutionResult(success=False, error="RPC Timeout"))
+    bot.executor.execute_buy = AsyncMock(
+        return_value=ExecutionResult(success=False, error="RPC Timeout")
+    )
     assert await bot._buy_token(SAMPLE_MINT, 30.0, "Coin") is False
 
     # _sell_token live balance fetch error
     bot.position_manager.record_buy(SAMPLE_MINT, 1000, 0.02, 30.0)
     bot.active_positions = bot.position_manager.get_all_positions()
-    bot.execution.get_token_balance = AsyncMock(side_effect=RuntimeError("Token balance RPC err"))
+    bot.execution.get_token_balance = AsyncMock(
+        side_effect=RuntimeError("Token balance RPC err")
+    )
     assert await bot._sell_token(SAMPLE_MINT) is False
     assert SAMPLE_MINT in bot._exit_retry_queue
 
@@ -1211,7 +1379,9 @@ async def test_bot_stream_and_execution_deep_branches():
     await bot._process_exit_retry_queue()
 
     # _reconcile_positions_on_startup live
-    bot.active_positions = {"Pos1": {"name": "P1", "entry_market_cap": 30.0, "peak_market_cap": 30.0}}
+    bot.active_positions = {
+        "Pos1": {"name": "P1", "entry_market_cap": 30.0, "peak_market_cap": 30.0}
+    }
     bot.execution.get_token_balance = AsyncMock(return_value=0)
     reconciled = await bot._reconcile_positions_on_startup()
     assert "Pos1" in reconciled
@@ -1234,7 +1404,9 @@ async def test_bot_stream_and_execution_deep_branches():
 
     # start() exception and breaker trip
     bot.geyser_client = MagicMock()
-    bot.geyser_client.listen = MagicMock(side_effect=RuntimeError("Geyser stream severed"))
+    bot.geyser_client.listen = MagicMock(
+        side_effect=RuntimeError("Geyser stream severed")
+    )
     bot.geyser_client.start = AsyncMock()
     bot.geyser_client.stop = AsyncMock()
     bot._max_stream_consecutive_failures = 1
@@ -1246,7 +1418,10 @@ async def test_bot_stream_and_execution_deep_branches():
 
 def test_graduation_and_api_client_deep():
     from pumpfun_trading.api.client import PumpFunApiClient
-    from pumpfun_trading.strategies.graduation import GraduationEngine, GraduationTracker
+    from pumpfun_trading.strategies.graduation import (
+        GraduationEngine,
+        GraduationTracker,
+    )
 
     # GraduationSignal to_dict
     sig = GraduationSignal(
@@ -1286,7 +1461,6 @@ def test_graduation_and_api_client_deep():
 
 @pytest.mark.asyncio
 async def test_api_client_and_replay_and_main_branches():
-    from aiohttp import ClientError
     from pumpfun_trading.api.client import PumpFunApiClient
     from pumpfun_trading.cli.main import main
     from pumpfun_trading.engines.replay import (
@@ -1313,14 +1487,20 @@ async def test_api_client_and_replay_and_main_branches():
     api.post = AsyncMock(return_value=[{"mint": SAMPLE_MINT, "name": "CoinList"}])
     assert (await api.get_coin(SAMPLE_MINT))["name"] == "CoinList"
 
-    api.post = AsyncMock(return_value={"data": [{"mint": SAMPLE_MINT, "name": "CoinData"}]})
+    api.post = AsyncMock(
+        return_value={"data": [{"mint": SAMPLE_MINT, "name": "CoinData"}]}
+    )
     assert (await api.get_coin(SAMPLE_MINT))["name"] == "CoinData"
 
-    api.post = AsyncMock(return_value={"items": [{"mint": SAMPLE_MINT, "name": "CoinItems"}]})
+    api.post = AsyncMock(
+        return_value={"items": [{"mint": SAMPLE_MINT, "name": "CoinItems"}]}
+    )
     assert (await api.get_coin(SAMPLE_MINT))["name"] == "CoinItems"
 
     api.post = AsyncMock(return_value={"data": []})
-    with pytest.raises(RuntimeError, match="not found via the public Pump.fun metadata endpoints"):
+    with pytest.raises(
+        RuntimeError, match="not found via the public Pump.fun metadata endpoints"
+    ):
         await api.get_coin(SAMPLE_MINT)
 
     # get_holder_counts when get_coin returns non-dict
@@ -1394,7 +1574,10 @@ async def test_api_client_and_replay_and_main_branches():
     with patch("sys.argv", ["pumpfun_trading", "--help"]), pytest.raises(SystemExit):
         main()
 
-    with patch("sys.argv", ["pumpfun_trading", "replay", "--help"]), pytest.raises(SystemExit):
+    with (
+        patch("sys.argv", ["pumpfun_trading", "replay", "--help"]),
+        pytest.raises(SystemExit),
+    ):
         main()
 
 
@@ -1402,7 +1585,9 @@ async def test_api_client_and_replay_and_main_branches():
 async def test_rpc_pool_factories_and_error_edges():
     # Health loop lifecycle
     ep = RpcEndpoint(url="https://rpc.err.solana.com")
-    pool = RpcConnectionPool(endpoints=[ep], config=RpcPoolConfig(health_check_interval_seconds=0.01))
+    pool = RpcConnectionPool(
+        endpoints=[ep], config=RpcPoolConfig(health_check_interval_seconds=0.01)
+    )
     await pool.start_health_loop()
     await pool.start_health_loop()  # idempotent
     await asyncio.sleep(0.05)
@@ -1450,11 +1635,14 @@ async def test_final_coverage_push():
         ("telegram", "PUMPFUN_TELEGRAM_BOT_TOKEN", "token123"),
         ("webhook", "PUMPFUN_ALERT_WEBHOOK_URL", "https://webhook.site/test"),
     ]:
-        with patch.dict(os.environ, {
-            "PUMPFUN_ALERT_PROVIDER": prov,
-            env_key: env_val,
-            "PUMPFUN_TELEGRAM_CHAT_ID": "chat123",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "PUMPFUN_ALERT_PROVIDER": prov,
+                env_key: env_val,
+                "PUMPFUN_TELEGRAM_CHAT_ID": "chat123",
+            },
+        ):
             b = TradingBot(
                 private_key_b58=SAMPLE_PRIVATE_KEY,
                 rpc_url="https://api.mainnet-beta.solana.com",
@@ -1469,7 +1657,13 @@ async def test_final_coverage_push():
         rpc_url="https://api.mainnet-beta.solana.com",
         config=TradingBotConfig(dry_run=False),
     )
-    bot.active_positions = {SAMPLE_MINT: {"token_amount": 1000, "entry_market_cap": 30.0, "peak_market_cap": 30.0}}
+    bot.active_positions = {
+        SAMPLE_MINT: {
+            "token_amount": 1000,
+            "entry_market_cap": 30.0,
+            "peak_market_cap": 30.0,
+        }
+    }
     bot.position_manager["SAMPLE_MINT"] = bot.active_positions[SAMPLE_MINT]
     bot.execution.get_token_balance = AsyncMock(return_value=500)
     reconciled = await bot._reconcile_positions_on_startup()
@@ -1489,7 +1683,9 @@ async def test_final_coverage_push():
         rpc_url="https://api.mainnet-beta.solana.com",
         config=cfg_tiered,
     )
-    bot_tiered.position_manager.record_buy(SAMPLE_MINT, 1000, 0.02, 30.0, name="TierCoin")
+    bot_tiered.position_manager.record_buy(
+        SAMPLE_MINT, 1000, 0.02, 30.0, name="TierCoin"
+    )
     bot_tiered.active_positions = bot_tiered.position_manager.get_all_positions()
 
     # Tier 1 (2.0x -> 60.0 mc)
@@ -1528,13 +1724,50 @@ async def test_final_coverage_push():
     exec_client.calculate_dynamic_jito_tip = AsyncMock(return_value=10_000)
     exec_client.build_sell_tx = AsyncMock()
     exec_client.send_jito_bundle_with_fallback = AsyncMock(return_value="sig_jito_sell")
-    sig_sell = await exec_client.sell(SAMPLE_MINT, "curve1", 1000, min_sol_output=1_000_000_000, use_jito=True)
+    sig_sell = await exec_client.sell(
+        SAMPLE_MINT, "curve1", 1000, min_sol_output=1_000_000_000, use_jito=True
+    )
     assert sig_sell == "sig_jito_sell"
 
     exec_client.build_raydium_buy_tx = AsyncMock()
-    exec_client.send_jito_bundle_with_fallback = AsyncMock(return_value="sig_jito_ray_buy")
+    exec_client.send_jito_bundle_with_fallback = AsyncMock(
+        return_value="sig_jito_ray_buy"
+    )
     sig_ray = await exec_client.raydium_buy(make_test_pool_keys(), 0.05, use_jito=True)
     assert sig_ray == "sig_jito_ray_buy"
+
+    # Swap Raydium buy & sell branches
+    sig_swap_buy = await exec_client.swap_raydium(
+        make_test_pool_keys(), 50_000_000, is_buy=True, use_jito=True
+    )
+    assert sig_swap_buy == "sig_jito_ray_buy"
+
+    exec_client.build_raydium_sell_tx = AsyncMock()
+    sig_swap_sell = await exec_client.swap_raydium(
+        make_test_pool_keys(), 1000, is_buy=False, use_jito=True
+    )
+    assert sig_swap_sell == "sig_jito_ray_buy"
+
+    exec_client.send_transaction = AsyncMock(return_value="sig_rpc_ray_sell")
+    sig_swap_sell_rpc = await exec_client.swap_raydium(
+        make_test_pool_keys(), 1000, is_buy=False, use_jito=False
+    )
+    assert sig_swap_sell_rpc == "sig_rpc_ray_sell"
+
+    # build_raydium_sell_tx builder
+    exec_client_fresh = PumpFunExecutionClient(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+    )
+    with patch.object(
+        exec_client_fresh, "_build_tx_with_instructions", new_callable=AsyncMock
+    ) as mock_builder:
+        mock_builder.return_value = MagicMock()
+        await exec_client_fresh.build_raydium_sell_tx(make_test_pool_keys(), 1000)
+        assert mock_builder.called
+    exec_client_fresh.get_balance_sol = AsyncMock(return_value=1.5)
+    assert await exec_client_fresh.get_wallet_balance_sol() == 1.5
+    await exec_client_fresh.close()
 
     # 6. EventRouter with None callbacks
     router_empty = EventRouter()
@@ -1556,7 +1789,9 @@ async def test_final_coverage_push():
 
     # 7. Liquidator live mode
     mock_exec = MagicMock(spec=OrderExecutor)
-    mock_exec.execute_sell = AsyncMock(return_value=ExecutionResult(success=True, mint=SAMPLE_MINT, amount_sol=0.05))
+    mock_exec.execute_sell = AsyncMock(
+        return_value=ExecutionResult(success=True, mint=SAMPLE_MINT, amount_sol=0.05)
+    )
     pm_liq = PositionManager(TradingBotConfig())
     pm_liq.record_buy(SAMPLE_MINT, 1000, 0.05, 30.0, dry_run=False)
     liquidator_live = OrderLiquidator(executor=mock_exec, position_manager=pm_liq)

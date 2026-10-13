@@ -71,6 +71,7 @@ This project uses `nox` to manage the standard development tasks. The repository
 $ nox -s tests
 $ nox -s lint
 $ nox -s audit
+$ nox -s mypy
 $ nox -s format
 ```
 

@@ -130,7 +130,7 @@ class TokenEnricher:
             or coin_data.get("dev_holding_pct")
         )
         creator_pct = (
-            float(creator_holding_val) if creator_holding_val is not None else None
+            float(creator_holding_val) if creator_holding_val is not None else 0.0
         )
 
         if isinstance(holders_data, list):
@@ -152,7 +152,7 @@ class TokenEnricher:
                 bonding_curve_address=bonding_curve_pda,
                 top_holders=top_holders_list,
             )
-        elif creator_pct is not None:
+        elif creator_holding_val is not None:
             holder_distribution = HolderDistribution(
                 creator_initial_pct=creator_pct,
                 bonding_curve_address=bonding_curve_pda,

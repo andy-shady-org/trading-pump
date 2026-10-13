@@ -105,6 +105,7 @@ async def test_bot_rpc_pool_transparent_query_failover() -> None:
     mock_session.post = MagicMock(
         side_effect=lambda url, **kwargs: MockPostContext(url)
     )
+    assert bot.rpc_pool is not None
     bot.rpc_pool._session = mock_session
 
     blockhash = await bot.execution.get_latest_blockhash()
@@ -155,6 +156,7 @@ async def test_bot_rpc_pool_lifecycle_and_health_loop() -> None:
             pass
 
     mock_session.post = MagicMock(return_value=MockPostContext())
+    assert bot.rpc_pool is not None
     bot.rpc_pool._session = mock_session
 
     # Start health loop

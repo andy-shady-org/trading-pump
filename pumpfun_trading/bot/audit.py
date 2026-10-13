@@ -146,10 +146,10 @@ def filter_audit_records(
 
 def summarize_audit_records(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
     records_list = list(records)
-    by_type = Counter()
-    by_state = Counter()
-    by_reason = Counter()
-    by_status = Counter()
+    by_type: Counter[str] = Counter()
+    by_state: Counter[str] = Counter()
+    by_reason: Counter[str] = Counter()
+    by_status: Counter[str] = Counter()
 
     for record in records_list:
         record_type = str(record.get("type") or "unknown")

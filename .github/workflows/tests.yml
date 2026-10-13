@@ -28,8 +28,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install nox
 
-      - name: Run lint, tests, and coverage
-        run: nox -s tests lint audit
+      - name: Run lint, tests, typing, and coverage
+        run: nox -s tests lint audit mypy
 
       - name: Upload coverage report
         uses: codecov/codecov-action@v4

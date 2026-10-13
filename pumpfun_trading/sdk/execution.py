@@ -1,7 +1,7 @@
 import asyncio
 import base64
 import json
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 import base58
@@ -288,7 +288,7 @@ class PumpFunExecutionClient:
                 endpoints_list.insert(0, rpc_url)
             if not endpoints_list:
                 endpoints_list = ["https://api.mainnet-beta.solana.com"]
-            self.rpc_pool = RpcConnectionPool(endpoints=endpoints_list)
+            self.rpc_pool = RpcConnectionPool(endpoints=tuple(endpoints_list))
             self.rpc_url = endpoints_list[0]
 
         self.priority_fee_lamports = priority_fee_lamports
@@ -388,6 +388,10 @@ class PumpFunExecutionClient:
         result = parsed.get("result") or {}
         lamports = int(result.get("value", 0)) if isinstance(result, dict) else 0
         return lamports / 1_000_000_000.0
+
+    async def get_wallet_balance_sol(self) -> float:
+        """Alias for get_balance_sol for backward compatibility."""
+        return await self.get_balance_sol()
 
     async def get_ata_address(self, mint: str, owner: Optional[str] = None) -> str:
         owner_pubkey = self._to_pubkey(owner or str(self.wallet))
@@ -810,6 +814,29 @@ class PumpFunExecutionClient:
             instructions, tip_lamports=tip_lamports
         )
 
+    async def build_raydium_sell_tx(
+        self,
+        pool_keys: RaydiumPoolKeys,
+        token_amount: int,
+        *,
+        slippage_bps: Optional[int] = None,
+        min_sol_output: int | float = 1,
+        tip_lamports: Optional[int] = None,
+    ) -> VersionedTransaction:
+        """Construct a versioned Raydium AMM swap sell transaction."""
+        instructions = [
+            self.build_raydium_swap_instruction(
+                pool_keys=pool_keys,
+                amount_in_lamports=token_amount,
+                min_amount_out=int(min_sol_output),
+                user_source_token_account=None,
+                user_destination_token_account=None,
+            )
+        ]
+        return await self._build_tx_with_instructions(
+            instructions, tip_lamports=tip_lamports
+        )
+
     async def _build_tx_with_instructions(
         self,
         instructions,
@@ -950,6 +977,7 @@ class PumpFunExecutionClient:
     async def send_transaction(self, tx: VersionedTransaction) -> str:
         async with self._execution_lock:
             encoded_tx = base64.b64encode(bytes(tx)).decode("utf-8")
+            result: Any = None
             if self.rpc_pool is not None and self.rpc_pool.endpoint_count > 1:
                 result = await self.rpc_pool.broadcast_transaction(
                     encoded_tx,
@@ -1071,6 +1099,46 @@ class PumpFunExecutionClient:
         if should_jito:
             return await self.send_jito_bundle_with_fallback([tx])
         return await self.send_transaction(tx)
+
+    async def swap_raydium(
+        self,
+        pool_keys: RaydiumPoolKeys,
+        amount_in: int,
+        *,
+        is_buy: bool = True,
+        min_amount_out: int = 1,
+        slippage_bps: Optional[int] = None,
+        use_jito: Optional[bool] = None,
+        conviction_score: float = 1.0,
+    ) -> str:
+        """Execute a Raydium AMM v4 swap (buy or sell)."""
+        if is_buy:
+            sol_amount = float(amount_in) / 1_000_000_000.0
+            return await self.raydium_buy(
+                pool_keys=pool_keys,
+                sol_amount=sol_amount,
+                slippage_bps=slippage_bps,
+                min_amount_out=min_amount_out,
+                use_jito=use_jito,
+                conviction_score=conviction_score,
+            )
+        else:
+            should_jito = self.use_jito if use_jito is None else use_jito
+            tip_lamports = None
+            if should_jito:
+                tip_lamports = await self.calculate_dynamic_jito_tip(
+                    trade_amount_sol=0.01, conviction_score=conviction_score
+                )
+            tx = await self.build_raydium_sell_tx(
+                pool_keys=pool_keys,
+                token_amount=amount_in,
+                slippage_bps=slippage_bps,
+                min_sol_output=min_amount_out,
+                tip_lamports=tip_lamports,
+            )
+            if should_jito:
+                return await self.send_jito_bundle_with_fallback([tx])
+            return await self.send_transaction(tx)
 
     async def sell(
         self,

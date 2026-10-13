@@ -36,7 +36,7 @@ def get_configured_console(file: Any = None, **kwargs: Any) -> Console:
     """Return a Rich Console instance configured for NO_COLOR and TTY conditions."""
     target = file or sys.stdout
     color_enabled = is_color_enabled(target)
-    defaults = {
+    defaults: dict[str, Any] = {
         "file": target,
         "no_color": not color_enabled,
         "highlight": color_enabled,

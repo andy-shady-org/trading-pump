@@ -4,7 +4,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
 from pumpfun_trading.strategies.base import TradingBotConfig
 
@@ -156,7 +156,7 @@ class DevWalletProfile:
         return self.tokens_launched_24h > max_24h or self.rug_history_count > 0
 
 
-def calculate_gini_coefficient(balances: list[int | float]) -> float:
+def calculate_gini_coefficient(balances: Sequence[int | float]) -> float:
     """Calculate the Gini coefficient over non-negative wealth/token balances.
 
     A Gini of 0.0 expresses maximal equality; 1.0 expresses maximal inequality.
@@ -196,11 +196,12 @@ class HolderDistribution:
 
     def compute_top5_non_curve_pct(self, bonding_curve_pda: str | None = None) -> float:
         curve_addr = bonding_curve_pda or self.bonding_curve_address
-        filtered_holders = [
-            (addr, bal)
-            for addr, bal in self.top_holders
-            if curve_addr is None or addr != curve_addr
-        ]
+        if curve_addr:
+            filtered_holders = [
+                (addr, bal) for addr, bal in self.top_holders if addr != curve_addr
+            ]
+        else:
+            filtered_holders = list(self.top_holders)
         # Sort descending by balance
         filtered_holders.sort(key=lambda x: x[1], reverse=True)
         top5 = filtered_holders[:5]

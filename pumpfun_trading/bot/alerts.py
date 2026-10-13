@@ -21,9 +21,12 @@ class AlertDispatcher:
         telegram_bot_token: Optional[str] = None,
         telegram_chat_id: Optional[str] = None,
     ) -> None:
-        self.provider = (
-            (provider or os.getenv("PUMPFUN_ALERT_PROVIDER", "none")).lower().strip()
+        raw_provider = (
+            provider
+            if provider is not None
+            else os.getenv("PUMPFUN_ALERT_PROVIDER", "none")
         )
+        self.provider = (raw_provider or "none").lower().strip()
         self.discord_webhook_url = discord_webhook_url or os.getenv(
             "PUMPFUN_ALERT_DISCORD_WEBHOOK_URL"
         )

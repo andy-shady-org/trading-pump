@@ -14,7 +14,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import aiohttp
 
@@ -194,7 +194,7 @@ class RpcEndpoint:
 class RpcPoolConfig:
     """Configuration for multi-provider RPC connection pool."""
 
-    endpoints: tuple[str, ...] = ()
+    endpoints: tuple[str | RpcEndpoint, ...] = ()
     health_check_interval_seconds: float = 30.0
     circuit_breaker_threshold: int = 3
     circuit_breaker_cooldown_seconds: float = 60.0
@@ -205,7 +205,9 @@ class RpcPoolConfig:
     def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary."""
         return {
-            "endpoints": list(self.endpoints),
+            "endpoints": [
+                e.url if isinstance(e, RpcEndpoint) else e for e in self.endpoints
+            ],
             "health_check_interval_seconds": self.health_check_interval_seconds,
             "circuit_breaker_threshold": self.circuit_breaker_threshold,
             "circuit_breaker_cooldown_seconds": self.circuit_breaker_cooldown_seconds,
@@ -219,8 +221,10 @@ class RpcPoolConfig:
         """Create RpcPoolConfig from dictionary."""
         endpoints = data.get("endpoints", ())
         if isinstance(endpoints, (list, tuple)):
-            normalized_endpoints = tuple(
-                str(e).strip() for e in endpoints if str(e).strip()
+            normalized_endpoints: tuple[str | RpcEndpoint, ...] = tuple(
+                e if isinstance(e, RpcEndpoint) else str(e).strip()
+                for e in endpoints
+                if (isinstance(e, RpcEndpoint) or str(e).strip())
             )
         elif isinstance(endpoints, str):
             normalized_endpoints = tuple(
@@ -249,9 +253,7 @@ class RpcConnectionPool:
 
     def __init__(
         self,
-        endpoints: Optional[
-            list[str | RpcEndpoint] | tuple[str | RpcEndpoint, ...] | str
-        ] = None,
+        endpoints: Optional[Sequence[str | RpcEndpoint] | str] = None,
         config: Optional[RpcPoolConfig] = None,
         session: Optional[aiohttp.ClientSession] = None,
     ) -> None:
@@ -504,7 +506,9 @@ class RpcConnectionPool:
 
         healthy = self.get_healthy_endpoints()
         if not healthy:
-            healthy = [self.get_best_endpoint()] if self.get_best_endpoint() else []
+            best_ep = self.get_best_endpoint()
+            if best_ep:
+                healthy = [best_ep]
 
         selected = healthy[: max(1, concurrency)]
         if not selected:
