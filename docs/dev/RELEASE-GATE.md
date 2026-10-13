@@ -680,6 +680,24 @@ pumpfun_trading/tests/test_audit_full.py ...                                    
 
 Executes a non-stop, 72-hour paper-trading pilot on live Solana mainnet/devnet streams within the `runtime/` environment to verify memory stability, real-time event loop latency, and alerting integration under real market traffic.
 
+#### Required Streaming Configuration
+To ingest real-time market events, **at least one** stream source must be configured in `runtime/.envrc` or `configs/preprod_pilot.json`:
+
+1. **Option A: Yellowstone Geyser gRPC (High-Speed Mainnet / Devnet Feed)**
+   ```bash
+   export PUMPFUN_GEYSER_ENDPOINT="https://grpc.mainnet.helius-rpc.com"  # Or your Yellowstone gRPC endpoint
+   export PUMPFUN_GEYSER_X_TOKEN="<your-geyser-x-token>"                # Optional auth header
+   ```
+2. **Option B: WebSocket Event Feed (PumpPortal / Public Stream)**
+   ```bash
+   export PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"
+   ```
+
+> **Important Stream Requirement**: If neither `PUMPFUN_GEYSER_ENDPOINT` nor `PUMPFUN_STREAM_URL` is set, the bot defaults to `http://127.0.0.1:10000` (offline testing stub), resulting in zero live market events.
+>
+> **Note on Dashboard Stream URL Display**: 
+> In the Rich terminal dashboard, `Stream URL` displays the WebSocket endpoint (`bot.stream_url`, default `http://127.0.0.1:10000`), while `Geyser endpoint` displays the Yellowstone gRPC endpoint (`bot.geyser_endpoint`). When running with Yellowstone Geyser without setting `PUMPFUN_STREAM_URL`, the `Stream URL` row remains `http://127.0.0.1:10000` because WebSocket streaming is inactive while all market events are ingested directly via the Yellowstone Geyser gRPC connection.
+
 #### Execution Command
 ```bash
 # Start 72-Hour Live Paper Pilot in Background from runtime/ directory

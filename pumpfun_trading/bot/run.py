@@ -112,6 +112,14 @@ class TradingBot:
             },
         )
         base = config or resolved
+        env_stream_url = os.getenv("PUMPFUN_STREAM_URL") or os.getenv("PUMPFUN_WS_URL")
+        effective_stream_url = stream_url
+        if effective_stream_url == "http://127.0.0.1:10000" and env_stream_url:
+            effective_stream_url = env_stream_url
+        elif base.stream_url and base.stream_url != "http://127.0.0.1:10000":
+            effective_stream_url = base.stream_url
+        elif env_stream_url:
+            effective_stream_url = env_stream_url
 
         self.config = TradingBotConfig(
             buy_amount_sol=float(base.buy_amount_sol),
@@ -128,7 +136,7 @@ class TradingBot:
             dry_run=bool(base.dry_run or dry_run or paper_trade),
             paper_trade=bool(base.paper_trade or paper_trade),
             verbose=bool(base.verbose and verbose),
-            stream_url=str(stream_url if stream_url else base.stream_url),
+            stream_url=str(effective_stream_url),
             api_base_url=str(api_base_url if api_base_url else base.api_base_url),
             strategy_preset=str(base.strategy_preset),
             max_total_exposure_sol=float(getattr(base, "max_total_exposure_sol", 0.25)),

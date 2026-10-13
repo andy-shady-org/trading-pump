@@ -94,6 +94,11 @@ def get_runtime_env(**overrides: Any) -> dict[str, Any]:
         "PUMPFUN_RPC_URL": os.getenv("PUMPFUN_RPC_URL") or os.getenv("HELIUS_RPC_URL"),
         "PUMPFUN_RPC_URLS": os.getenv("PUMPFUN_RPC_URLS")
         or os.getenv("SOLANA_RPC_URLS"),
+        "PUMPFUN_STREAM_URL": os.getenv("PUMPFUN_STREAM_URL")
+        or os.getenv("PUMPFUN_WS_URL"),
+        "PUMPFUN_GEYSER_ENDPOINT": os.getenv("PUMPFUN_GEYSER_ENDPOINT"),
+        "PUMPFUN_GEYSER_X_TOKEN": os.getenv("PUMPFUN_GEYSER_X_TOKEN")
+        or os.getenv("PUMPFUN_GEYSER_TOKEN"),
         "PUMPFUN_ALERT_PROVIDER": os.getenv("PUMPFUN_ALERT_PROVIDER"),
         "PUMPFUN_AUDIT_LOG": os.getenv("PUMPFUN_AUDIT_LOG"),
         "PUMPFUN_BOT_STATUS_PATH": os.getenv("PUMPFUN_BOT_STATUS_PATH"),

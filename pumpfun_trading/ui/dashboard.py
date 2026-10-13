@@ -67,6 +67,12 @@ def build_dashboard(bot: Any) -> Panel:
         ),
     )
     bot_status.add_row("Stream URL", bot.stream_url)
+    if (
+        getattr(bot, "geyser_endpoint", None)
+        and bot.geyser_endpoint != bot.stream_url
+        and bot.geyser_endpoint != "http://127.0.0.1:10000"
+    ):
+        bot_status.add_row("Geyser endpoint", str(bot.geyser_endpoint))
     bot_status.add_row("Audit log", str(bot.audit_log_path))
     bot_status.add_row("Last new token", bot._last_new_token_name)
 
@@ -156,6 +162,12 @@ def build_dashboard(bot: Any) -> Panel:
     )
     runtime.add_row("Last token", bot._last_new_token_name)
     runtime.add_row("Stream URL", bot.stream_url)
+    if (
+        getattr(bot, "geyser_endpoint", None)
+        and bot.geyser_endpoint != bot.stream_url
+        and bot.geyser_endpoint != "http://127.0.0.1:10000"
+    ):
+        runtime.add_row("Geyser endpoint", str(bot.geyser_endpoint))
     runtime.add_row("Observed", str(len(bot._recent_events)))
 
     metrics = bot._metrics_snapshot()

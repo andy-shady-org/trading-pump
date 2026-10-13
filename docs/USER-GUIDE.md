@@ -126,9 +126,14 @@ The engine supports granular configuration via environment variables across netw
 | `PUMPFUN_PRIVATE_KEY` | `SOLANA_PRIVATE_KEY` | **Yes** (Live) | `None` | Base58-encoded private key of the active trading wallet. |
 | `PUMPFUN_RPC_URL` | `HELIUS_RPC_URL` | **Yes** | `https://api.mainnet-beta.solana.com` | Primary Solana JSON-RPC HTTP endpoint. |
 | `PUMPFUN_RPC_URLS` | `SOLANA_RPC_URLS` | Optional | `None` | Comma-separated list of secondary/failover Solana RPC endpoints for dynamic load balancing and multi-RPC fallback. |
-| `PUMPFUN_GEYSER_ENDPOINT` | — | Optional | `None` | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market data ingestion. |
+| `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | **Required*** | `wss://pumpportal.fun/api/data` | WebSocket streaming endpoint (e.g. PumpPortal public event feed) for real-time market data ingestion. (*At least one stream source required). |
+| `PUMPFUN_GEYSER_ENDPOINT` | — | **Required*** | `None` | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market data ingestion. (*At least one stream source required). |
 | `PUMPFUN_GEYSER_X_TOKEN` | `PUMPFUN_GEYSER_TOKEN` | Optional | `None` | Authentication header / X-Token for Yellowstone Geyser gRPC connections. |
 | `PUMPFUN_STREAM_MAX_RETRIES` | `PUMPFUN_WS_MAX_RETRIES` | Optional | `5` | Maximum consecutive stream reconnection attempts before tripping the streaming circuit breaker. |
+
+> **Important Stream Requirement**: To ingest live market events, **at least one** stream source must be configured (`PUMPFUN_GEYSER_ENDPOINT` for Yellowstone Geyser gRPC OR `PUMPFUN_STREAM_URL` for WebSocket streaming). If neither is configured, the bot defaults to `http://127.0.0.1:10000` (offline testing stub).
+> 
+> *Note on Stream Display*: `PUMPFUN_STREAM_URL` sets the WebSocket endpoint (`bot.stream_url`), while `PUMPFUN_GEYSER_ENDPOINT` sets the Yellowstone gRPC endpoint (`bot.geyser_endpoint`). When Yellowstone Geyser is used without an explicit WebSocket override, the dashboard displays the active `Geyser endpoint` while `Stream URL` displays the underlying WebSocket default.
 
 #### 2. Jito MEV & Transaction Execution
 

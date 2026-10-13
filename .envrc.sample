@@ -13,6 +13,14 @@ export PUMPFUN_RPC_URL="https://mainnet.helius-rpc.com/?api-key=<your-rpc-api-ke
 # Optional legacy alias accepted by the bot runtime.
 # export HELIUS_RPC_URL="$PUMPFUN_RPC_URL"
 
+# Stream Ingestion: At least one of PUMPFUN_STREAM_URL or PUMPFUN_GEYSER_ENDPOINT must be configured for live trading/paper pilot.
+# Option A: WebSocket stream URL (e.g. PumpPortal public event feed)
+export PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"
+
+# Option B: Yellowstone Geyser gRPC endpoint for sub-millisecond on-chain streaming
+# export PUMPFUN_GEYSER_ENDPOINT="https://grpc.mainnet.helius-rpc.com"
+# export PUMPFUN_GEYSER_X_TOKEN="<your-geyser-x-token>"
+
 # Optional: alerting provider. Set to one of: none, discord, slack, telegram.
 # Use "none" to disable alerts entirely.
 export PUMPFUN_ALERT_PROVIDER="none"
