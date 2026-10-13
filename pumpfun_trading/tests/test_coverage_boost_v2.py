@@ -6,6 +6,7 @@ import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from solders.pubkey import Pubkey
 
@@ -1263,6 +1264,9 @@ async def test_bot_raydium_and_trade_updates_deep():
 
     # 6. _handle_trade_update on new token with smart money buy (copy-trade entry)
     bot.position_manager.clear()
+    bot._enrich_and_screen_token = AsyncMock(
+        return_value=TokenScreeningVerdict(mint=SAMPLE_MINT_2, passed=True, risk_score=10.0)
+    )
     trade_buy_msg = {
         "mint": SAMPLE_MINT_2,
         "is_buy": True,
@@ -1403,10 +1407,14 @@ async def test_bot_stream_and_execution_deep_branches():
     await bot._handle_bonding_curve_state_update(update_low_mc)
 
     # start() exception and breaker trip
+    bot.geyser_endpoint = "https://mock.geyser"
     bot.geyser_client = MagicMock()
-    bot.geyser_client.listen = MagicMock(
-        side_effect=RuntimeError("Geyser stream severed")
-    )
+
+    async def mock_err_listen():
+        raise RuntimeError("Geyser stream severed")
+        yield None
+
+    bot.geyser_client.listen = mock_err_listen
     bot.geyser_client.start = AsyncMock()
     bot.geyser_client.stop = AsyncMock()
     bot._max_stream_consecutive_failures = 1
@@ -1629,6 +1637,7 @@ async def test_rpc_pool_factories_and_error_edges():
 async def test_final_coverage_push():
     from pumpfun_trading.bot.run import main as bot_main
 
+    print("Step 1: alert provider")
     # 1. TradingBot init with various alert providers in env
     for prov, env_key, env_val in [
         ("slack", "PUMPFUN_SLACK_WEBHOOK_URL", "https://slack.com/hook"),
@@ -1651,12 +1660,15 @@ async def test_final_coverage_push():
             assert b.alert_provider == prov or b.alert_enabled is True
             await b.close()
 
+    print("Step 2: reconcile")
     # 2. _reconcile_positions_on_startup with balance > 0 and position difference
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
         config=TradingBotConfig(dry_run=False),
+        verbose=False,
     )
+    bot.execution.get_balance_sol = AsyncMock(return_value=1.5)
     bot.active_positions = {
         SAMPLE_MINT: {
             "token_amount": 1000,
@@ -1666,9 +1678,13 @@ async def test_final_coverage_push():
     }
     bot.position_manager["SAMPLE_MINT"] = bot.active_positions[SAMPLE_MINT]
     bot.execution.get_token_balance = AsyncMock(return_value=500)
+    bot.execution.get_bonding_curve_state = AsyncMock(
+        return_value={"market_cap_sol": 30.0}
+    )
     reconciled = await bot._reconcile_positions_on_startup()
     assert reconciled.get(SAMPLE_MINT) == {"status": "active", "balance": 500}
 
+    print("Step 3: evaluate exit")
     # 3. _evaluate_and_execute_exit with Tier 1 and Tier 2 partial take profit
     cfg_tiered = TradingBotConfig(
         dry_run=True,
@@ -1696,6 +1712,7 @@ async def test_final_coverage_push():
     bot_tiered.position_manager.update_price(SAMPLE_MINT, 105.0)
     assert await bot_tiered._evaluate_and_execute_exit(SAMPLE_MINT, 105.0) is True
 
+    print("Step 4: loops")
     # 4. _run_health_loop and _render_loop task handling
     bot.verbose = False
     task_render = asyncio.create_task(bot._render_loop())
@@ -1715,6 +1732,7 @@ async def test_final_coverage_push():
     except asyncio.CancelledError:
         pass
 
+    print("Step 5: exec client")
     # 5. SDK execution sell and raydium_buy with use_jito=True
     exec_client = PumpFunExecutionClient(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -1769,6 +1787,7 @@ async def test_final_coverage_push():
     assert await exec_client_fresh.get_wallet_balance_sol() == 1.5
     await exec_client_fresh.close()
 
+    print("Step 6: router empty")
     # 6. EventRouter with None callbacks
     router_empty = EventRouter()
     curve_up = BondingCurveStateUpdate(
@@ -1787,6 +1806,7 @@ async def test_final_coverage_push():
     await router_empty.route_geyser_curve_update(curve_up)
     await router_empty.route_ws_message({"type": "other"})
 
+    print("Step 7: liquidator")
     # 7. Liquidator live mode
     mock_exec = MagicMock(spec=OrderExecutor)
     mock_exec.execute_sell = AsyncMock(
@@ -1798,6 +1818,7 @@ async def test_final_coverage_push():
     res_liq = await liquidator_live.liquidate_all_positions(reason="live_panic")
     assert res_liq == [SAMPLE_MINT]
 
+    print("Step 8: start loop geyser")
     # 8. Start loop consuming all event types from geyser
     async def mock_geyser_events():
         yield {"event": "test_dict"}
@@ -1826,6 +1847,13 @@ async def test_final_coverage_push():
     bot.geyser_client.start = AsyncMock()
     bot.geyser_client.stop = AsyncMock()
     bot.geyser_client.listen = mock_geyser_events
+    bot._reconcile_positions_on_startup = AsyncMock(return_value={})
+    bot._enrich_and_screen_token = AsyncMock(
+        return_value=TokenScreeningVerdict(mint=SAMPLE_MINT, passed=True, risk_score=10.0)
+    )
+    bot.executor.execute_sell = AsyncMock(return_value=ExecutionResult(success=True))
+    bot.executor.execute_buy = AsyncMock(return_value=ExecutionResult(success=True))
+    bot.dry_run = True
     bot._stop_requested = False
 
     # Run start for 1 cycle
@@ -1836,6 +1864,7 @@ async def test_final_coverage_push():
     asyncio.create_task(stop_later())
     await bot.start()
 
+    print("Step 9: bot main")
     # 9. main() entrypoint helper
     with patch.object(TradingBot, "from_env") as mock_from_env:
         mock_bot = MagicMock()
@@ -1843,6 +1872,114 @@ async def test_final_coverage_push():
         bot_main()
         assert mock_bot.run.called
 
+    print("Step 10: bot ws")
+    # 10. WebSocket streaming tests in TradingBot
+    bot_ws = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        stream_url="wss://pumpportal.fun/api/data",
+        config=TradingBotConfig(dry_run=True),
+    )
+    bot_ws.geyser_endpoint = None
+    bot_ws.reconnect_delay_seconds = 0.01
+    bot_ws._enrich_and_screen_token = AsyncMock(
+        return_value=TokenScreeningVerdict(mint=SAMPLE_MINT, passed=True, risk_score=10.0)
+    )
+    bot_ws._reconcile_positions_on_startup = AsyncMock(return_value={})
+
+    class MockWSMessage:
+        def __init__(self, msg_type, data):
+            self.type = msg_type
+            self.data = data
+
+    class MockWebSocketContext:
+        def __init__(self, messages):
+            self.messages = messages
+            self.closed = False
+            self.exception_mock = None
+
+        def exception(self):
+            return self.exception_mock
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            self.closed = True
+
+        async def send_json(self, msg):
+            pass
+
+        async def send_str(self, msg):
+            pass
+
+        async def send(self, msg):
+            pass
+
+        async def __aiter__(self):
+            for m in self.messages:
+                yield m
+
+    class MockSessionContext:
+        def __init__(self, ws_ctx):
+            self.ws_ctx = ws_ctx
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        def ws_connect(self, url):
+            return self.ws_ctx
+
+    ws_messages = [
+        MockWSMessage(
+            aiohttp.WSMsgType.TEXT,
+            json.dumps({"txType": "create", "mint": SAMPLE_MINT, "name": "SolCat"}),
+        ),
+        MockWSMessage(aiohttp.WSMsgType.TEXT, "invalid json {"),
+        MockWSMessage(aiohttp.WSMsgType.ERROR, "err"),
+        MockWSMessage(aiohttp.WSMsgType.CLOSED, ""),
+    ]
+    mock_ws_ctx = MockWebSocketContext(ws_messages)
+    mock_session = MockSessionContext(mock_ws_ctx)
+
+    with patch("aiohttp.ClientSession", return_value=mock_session):
+        async def stop_ws():
+            await asyncio.sleep(0.05)
+            bot_ws._stop_requested = True
+
+        asyncio.create_task(stop_ws())
+        await bot_ws._run_websocket_stream()
+        assert bot_ws._last_message_at > 0
+
+    bot_ws._stop_requested = False
+    bot_ws._max_stream_consecutive_failures = 1
+    with patch(
+        "aiohttp.ClientSession", side_effect=RuntimeError("connection dropped")
+    ):
+        async def stop_ws_err():
+            await asyncio.sleep(0.05)
+            bot_ws._stop_requested = True
+
+        asyncio.create_task(stop_ws_err())
+        await bot_ws._run_websocket_stream()
+        assert bot_ws._circuit_breaker_tripped is True
+        assert bot_ws._health_ok is False
+
+    bot_ws._stop_requested = False
+    bot_ws.geyser_endpoint = None
+    bot_ws._run_websocket_stream = AsyncMock()
+    async def stop_start_ws():
+        await asyncio.sleep(0.05)
+        bot_ws._stop_requested = True
+
+    asyncio.create_task(stop_start_ws())
+    await bot_ws.start()
+    assert bot_ws._run_websocket_stream.called
+
+    await bot_ws.close()
     await bot.close()
     await bot_tiered.close()
     await exec_client.close()

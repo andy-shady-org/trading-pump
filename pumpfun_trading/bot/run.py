@@ -10,6 +10,7 @@ import time
 from collections import deque
 from typing import Any, Optional
 
+import aiohttp
 from dotenv import load_dotenv
 from rich.live import Live
 
@@ -337,14 +338,15 @@ class TradingBot:
         self.console = get_configured_console(file=sys.stdout)
 
         self.geyser_endpoint = (
-            geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT") or self.stream_url
+            geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
         )
         self.geyser_x_token = geyser_x_token or os.getenv("PUMPFUN_GEYSER_X_TOKEN")
         self.geyser_client = geyser_client or YellowstoneGeyserClient(
-            endpoint=self.geyser_endpoint,
+            endpoint=self.geyser_endpoint or self.stream_url,
             x_token=self.geyser_x_token,
             reconnect_initial_backoff=self.reconnect_delay_seconds,
         )
+        self._active_ws: Optional[Any] = None
 
         self._stream_consecutive_failures = 0
         self._circuit_breaker_tripped = False
@@ -2192,19 +2194,142 @@ class TradingBot:
                     pass
         await self.event_router.route_ws_message(data, websocket)
 
-    async def _subscribe_to_token_trades(self, websocket: Any, mint: str) -> None:
+    async def _subscribe_to_token_trades(
+        self, websocket: Any = None, mint: str = ""
+    ) -> None:
+        ws = websocket or self._active_ws
+        if ws is None or not mint:
+            return
         try:
             msg = {"method": "subscribeTokenTrade", "keys": [mint]}
-            await websocket.send(json.dumps(msg))
+            if hasattr(ws, "send") and not isinstance(
+                ws, aiohttp.ClientWebSocketResponse
+            ):
+                await ws.send(json.dumps(msg))
+            elif hasattr(ws, "send_json"):
+                await ws.send_json(msg)
+            elif hasattr(ws, "send_str"):
+                await ws.send_str(json.dumps(msg))
+            elif hasattr(ws, "send"):
+                await ws.send(json.dumps(msg))
         except Exception:
             pass
 
-    async def _unsubscribe_from_token_trades(self, websocket: Any, mint: str) -> None:
+    async def _unsubscribe_from_token_trades(
+        self, websocket: Any = None, mint: str = ""
+    ) -> None:
+        ws = websocket or self._active_ws
+        if ws is None or not mint:
+            return
         try:
             msg = {"method": "unsubscribeTokenTrade", "keys": [mint]}
-            await websocket.send(json.dumps(msg))
+            if hasattr(ws, "send") and not isinstance(
+                ws, aiohttp.ClientWebSocketResponse
+            ):
+                await ws.send(json.dumps(msg))
+            elif hasattr(ws, "send_json"):
+                await ws.send_json(msg)
+            elif hasattr(ws, "send_str"):
+                await ws.send_str(json.dumps(msg))
+            elif hasattr(ws, "send"):
+                await ws.send(json.dumps(msg))
         except Exception:
             pass
+
+    async def _run_websocket_stream(self) -> None:
+        """Connects to the WebSocket endpoint and ingests real-time events."""
+        backoff = self.reconnect_delay_seconds
+        while not self._stop_requested:
+            try:
+                self._log(f"Connecting to WebSocket stream at {self.stream_url}...")
+                timeout = aiohttp.ClientTimeout(total=None, sock_read=60.0)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.ws_connect(self.stream_url) as ws:
+                        self._active_ws = ws
+                        self._log(f"Connected to WebSocket stream at {self.stream_url}")
+                        self._circuit_breaker_tripped = False
+                        self._stream_consecutive_failures = 0
+                        self._last_status = "monitoring active tokens"
+                        self._health_ok = True
+
+                        # Subscribe to token creation events
+                        if hasattr(ws, "send_json"):
+                            await ws.send_json({"method": "subscribeNewToken"})
+                        elif hasattr(ws, "send_str"):
+                            await ws.send_str(json.dumps({"method": "subscribeNewToken"}))
+                        elif hasattr(ws, "send"):
+                            await ws.send(json.dumps({"method": "subscribeNewToken"}))
+
+                        # Resubscribe to active holding tokens if any
+                        for mint in list(self.active_positions.keys()):
+                            await self._subscribe_to_token_trades(ws, mint)
+
+                        backoff = self.reconnect_delay_seconds
+
+                        async for msg in ws:
+                            if self._stop_requested:
+                                break
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                try:
+                                    data = json.loads(msg.data)
+                                except json.JSONDecodeError:
+                                    continue
+                                self._last_message_at = time.monotonic()
+                                self._circuit_breaker_tripped = False
+                                self._stream_consecutive_failures = 0
+                                await self._handle_message(data, ws)
+                            elif msg.type == aiohttp.WSMsgType.ERROR:
+                                self._stream_consecutive_failures += 1
+                                self._log(
+                                    f"WebSocket connection error: {ws.exception()}",
+                                    level=logging.WARNING,
+                                )
+                                break
+                            elif msg.type in (
+                                aiohttp.WSMsgType.CLOSED,
+                                aiohttp.WSMsgType.CLOSING,
+                            ):
+                                self._log(
+                                    "WebSocket connection closed by remote server.",
+                                    level=logging.INFO,
+                                )
+                                break
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._stream_consecutive_failures += 1
+                self._log(
+                    f"WebSocket stream error: {exc}. Reconnecting in {backoff:.1f}s (attempt {self._stream_consecutive_failures})...",
+                    level=logging.WARNING,
+                )
+                if (
+                    self._stream_consecutive_failures
+                    >= self._max_stream_consecutive_failures
+                ):
+                    self._circuit_breaker_tripped = True
+                    self._health_ok = False
+                    self._last_status = "degraded: stream circuit breaker active"
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    break
+                backoff = min(backoff * 2.0, 30.0)
+            else:
+                if not self._stop_requested:
+                    if (
+                        self._stream_consecutive_failures
+                        >= self._max_stream_consecutive_failures
+                    ):
+                        self._circuit_breaker_tripped = True
+                        self._health_ok = False
+                        self._last_status = "degraded: stream circuit breaker active"
+                    try:
+                        await asyncio.sleep(backoff)
+                    except asyncio.CancelledError:
+                        break
+                    backoff = min(backoff * 2.0, 30.0)
+            finally:
+                self._active_ws = None
 
     async def _run_health_loop(self) -> None:
         """Periodic background task evaluating health, equity, and reconciliations."""
@@ -2256,15 +2381,28 @@ class TradingBot:
             render_task = asyncio.create_task(self._render_loop())
 
         try:
-            if self.geyser_client and self.geyser_endpoint:
-                self.geyser_client.on_bonding_curve(
-                    self.event_router.route_geyser_curve_update
+            if self.geyser_client and (
+                self.geyser_endpoint
+                or (
+                    hasattr(self.geyser_client, "listen")
+                    and getattr(self.geyser_client, "listen")
+                    != YellowstoneGeyserClient.listen
                 )
-                self.geyser_client.on_trade(self.event_router.route_geyser_trade_update)
-                self.geyser_client.on_complete(
-                    self.event_router.route_geyser_complete_update
-                )
-                await self.geyser_client.start()
+            ):
+                if hasattr(self.geyser_client, "on_bonding_curve"):
+                    self.geyser_client.on_bonding_curve(
+                        self.event_router.route_geyser_curve_update
+                    )
+                if hasattr(self.geyser_client, "on_trade"):
+                    self.geyser_client.on_trade(
+                        self.event_router.route_geyser_trade_update
+                    )
+                if hasattr(self.geyser_client, "on_complete"):
+                    self.geyser_client.on_complete(
+                        self.event_router.route_geyser_complete_update
+                    )
+                if hasattr(self.geyser_client, "start"):
+                    await self.geyser_client.start()
                 async for event in self.geyser_client.listen():
                     if self._stop_requested:
                         break
@@ -2281,8 +2419,17 @@ class TradingBot:
                         await self.event_router.route_geyser_complete_update(event)
                     if self._stop_requested:
                         break
+            elif (
+                self.stream_url
+                and self.stream_url.startswith(("ws://", "wss://", "http://", "https://"))
+                and self.stream_url != "http://127.0.0.1:10000"
+            ):
+                await self._run_websocket_stream()
             else:
-                self._log("No Geyser stream configured; idling.", level=logging.WARNING)
+                self._log(
+                    "No Geyser or WebSocket stream configured; idling.",
+                    level=logging.WARNING,
+                )
                 while not self._stop_requested:
                     await asyncio.sleep(0.5)
         except asyncio.CancelledError:
