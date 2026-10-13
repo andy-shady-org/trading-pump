@@ -168,7 +168,10 @@ def build_dashboard(bot: Any) -> Panel:
         and bot.geyser_endpoint != "http://127.0.0.1:10000"
     ):
         runtime.add_row("Geyser endpoint", str(bot.geyser_endpoint))
-    runtime.add_row("Observed", str(len(bot._recent_events)))
+    observed_count = getattr(bot, "_observed_tokens_count", 0) or len(
+        getattr(bot, "_seen_mints", {})
+    )
+    runtime.add_row("Observed", str(observed_count))
 
     metrics = bot._metrics_snapshot()
     metrics_table = Table.grid(expand=True)

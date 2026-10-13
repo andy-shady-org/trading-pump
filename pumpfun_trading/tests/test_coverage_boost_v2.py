@@ -1637,7 +1637,6 @@ async def test_rpc_pool_factories_and_error_edges():
 async def test_final_coverage_push():
     from pumpfun_trading.bot.run import main as bot_main
 
-    print("Step 1: alert provider")
     # 1. TradingBot init with various alert providers in env
     for prov, env_key, env_val in [
         ("slack", "PUMPFUN_SLACK_WEBHOOK_URL", "https://slack.com/hook"),
@@ -1660,7 +1659,6 @@ async def test_final_coverage_push():
             assert b.alert_provider == prov or b.alert_enabled is True
             await b.close()
 
-    print("Step 2: reconcile")
     # 2. _reconcile_positions_on_startup with balance > 0 and position difference
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -1684,7 +1682,6 @@ async def test_final_coverage_push():
     reconciled = await bot._reconcile_positions_on_startup()
     assert reconciled.get(SAMPLE_MINT) == {"status": "active", "balance": 500}
 
-    print("Step 3: evaluate exit")
     # 3. _evaluate_and_execute_exit with Tier 1 and Tier 2 partial take profit
     cfg_tiered = TradingBotConfig(
         dry_run=True,
@@ -1712,7 +1709,6 @@ async def test_final_coverage_push():
     bot_tiered.position_manager.update_price(SAMPLE_MINT, 105.0)
     assert await bot_tiered._evaluate_and_execute_exit(SAMPLE_MINT, 105.0) is True
 
-    print("Step 4: loops")
     # 4. _run_health_loop and _render_loop task handling
     bot.verbose = False
     task_render = asyncio.create_task(bot._render_loop())
@@ -1732,7 +1728,6 @@ async def test_final_coverage_push():
     except asyncio.CancelledError:
         pass
 
-    print("Step 5: exec client")
     # 5. SDK execution sell and raydium_buy with use_jito=True
     exec_client = PumpFunExecutionClient(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -1787,7 +1782,6 @@ async def test_final_coverage_push():
     assert await exec_client_fresh.get_wallet_balance_sol() == 1.5
     await exec_client_fresh.close()
 
-    print("Step 6: router empty")
     # 6. EventRouter with None callbacks
     router_empty = EventRouter()
     curve_up = BondingCurveStateUpdate(
@@ -1806,7 +1800,6 @@ async def test_final_coverage_push():
     await router_empty.route_geyser_curve_update(curve_up)
     await router_empty.route_ws_message({"type": "other"})
 
-    print("Step 7: liquidator")
     # 7. Liquidator live mode
     mock_exec = MagicMock(spec=OrderExecutor)
     mock_exec.execute_sell = AsyncMock(
@@ -1818,7 +1811,6 @@ async def test_final_coverage_push():
     res_liq = await liquidator_live.liquidate_all_positions(reason="live_panic")
     assert res_liq == [SAMPLE_MINT]
 
-    print("Step 8: start loop geyser")
     # 8. Start loop consuming all event types from geyser
     async def mock_geyser_events():
         yield {"event": "test_dict"}
@@ -1864,7 +1856,6 @@ async def test_final_coverage_push():
     asyncio.create_task(stop_later())
     await bot.start()
 
-    print("Step 9: bot main")
     # 9. main() entrypoint helper
     with patch.object(TradingBot, "from_env") as mock_from_env:
         mock_bot = MagicMock()
@@ -1872,7 +1863,6 @@ async def test_final_coverage_push():
         bot_main()
         assert mock_bot.run.called
 
-    print("Step 10: bot ws")
     # 10. WebSocket streaming tests in TradingBot
     bot_ws = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,

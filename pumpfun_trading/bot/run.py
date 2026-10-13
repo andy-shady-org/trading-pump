@@ -286,6 +286,7 @@ class TradingBot:
         self._last_event = "waiting for new token stream"
         self._last_new_token = "-"
         self._last_new_token_name = "-"
+        self._observed_tokens_count = 0
         self._last_status = "initializing"
         self._display_live: Optional[Live] = None
         self._trade_ledger: list[dict[str, Any]] = []
@@ -560,6 +561,7 @@ class TradingBot:
                 "last_message_at": self._last_message_at,
                 "last_new_token": self._last_new_token,
                 "last_new_token_name": self._last_new_token_name,
+                "observed_tokens": self._observed_tokens_count,
                 "audit_log_path": self.audit_log_path,
                 "bot_status_path": self.bot_status_path,
                 "metrics": self._metrics_snapshot(),
@@ -653,6 +655,12 @@ class TradingBot:
         self._last_new_token = str(snapshot.get("last_new_token", self._last_new_token))
         self._last_new_token_name = str(
             snapshot.get("last_new_token_name", self._last_new_token_name)
+        )
+        self._observed_tokens_count = int(
+            snapshot.get(
+                "observed_tokens",
+                snapshot.get("metrics", {}).get("observed_tokens", self._observed_tokens_count),
+            )
         )
         self._trade_sequence = max(
             int(snapshot.get("trade_sequence", self._trade_sequence)),
@@ -1669,6 +1677,9 @@ class TradingBot:
         self._record_metric("latency_ms", latency_ms)
 
         mint = update.mint
+        self._observed_tokens_count += 1
+        self._last_new_token = mint
+        self._last_new_token_name = f"{mint[:8]}..."
         current_market_cap = update.market_cap_sol
 
         real_sol = update.real_sol_reserves / 1_000_000_000.0
@@ -1742,6 +1753,7 @@ class TradingBot:
         self._record_metric("latency_ms", latency_ms)
 
         mint = update.mint
+        self._observed_tokens_count += 1
         ts = float(update.timestamp if update.timestamp > 0 else update.received_at)
         self.order_flow_engine.record_trade(
             mint=mint,
@@ -1990,6 +2002,7 @@ class TradingBot:
         if not mint:
             return
 
+        self._observed_tokens_count += 1
         current_market_cap = float(
             data.get("market_cap", 0.0)
             or data.get("marketCapSol", 0.0)
@@ -1997,6 +2010,10 @@ class TradingBot:
             or 0.0
         )
         token_name = data.get("name") or mint
+        self._last_new_token = mint
+        self._last_new_token_name = (
+            f"{token_name} ({mint[:6]}...)" if len(mint) > 6 else token_name
+        )
 
         if mint in self.active_positions:
             return
@@ -2031,6 +2048,14 @@ class TradingBot:
         mint = data.get("mint")
         if not mint:
             return
+
+        self._observed_tokens_count += 1
+        token_name = data.get("name")
+        if token_name:
+            self._last_new_token = mint
+            self._last_new_token_name = (
+                f"{token_name} ({mint[:6]}...)" if len(mint) > 6 else token_name
+            )
 
         is_buy = bool(
             data.get("is_buy")
