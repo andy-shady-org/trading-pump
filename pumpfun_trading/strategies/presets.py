@@ -48,6 +48,26 @@ DEFAULT_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "momentum_min_net_inflow_sol": 1.0,
         "momentum_baseline_window_seconds": 300,
         "momentum_max_token_age_seconds": 900,
+        "enable_raydium_migration_sniping": True,
+        "raydium_pre_migration_sol_threshold": 82.0,
+        "raydium_buy_amount_sol": 0.01,
+        "raydium_slippage_bps": 300,
+        "raydium_priority_fee_lamports": 50_000,
+        "raydium_max_entry_latency_seconds": 15.0,
+        "enable_copy_trading": True,
+        "copy_trading_wallets": (),
+        "copy_trading_sizing_mode": "proportional",
+        "copy_trading_scale_factor": 0.8,
+        "copy_trading_min_wallet_win_rate": 0.70,
+        "copy_trading_max_wallet_risk_score": 30.0,
+        "copy_trading_mirror_sells": True,
+        "copy_trading_require_anti_rug_screen": True,
+        "enable_rpc_pool": True,
+        "rpc_endpoints": (),
+        "rpc_pool_health_check_interval_seconds": 30.0,
+        "rpc_pool_circuit_breaker_threshold": 2,
+        "rpc_pool_circuit_breaker_cooldown_seconds": 90.0,
+        "rpc_pool_broadcast_concurrency": 2,
     },
     "balanced": {
         "buy_amount_sol": 0.01,
@@ -92,6 +112,26 @@ DEFAULT_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "momentum_min_net_inflow_sol": 0.5,
         "momentum_baseline_window_seconds": 300,
         "momentum_max_token_age_seconds": 1800,
+        "enable_raydium_migration_sniping": True,
+        "raydium_pre_migration_sol_threshold": 80.0,
+        "raydium_buy_amount_sol": 0.02,
+        "raydium_slippage_bps": 500,
+        "raydium_priority_fee_lamports": 100_000,
+        "raydium_max_entry_latency_seconds": 30.0,
+        "enable_copy_trading": True,
+        "copy_trading_wallets": (),
+        "copy_trading_sizing_mode": "proportional",
+        "copy_trading_scale_factor": 1.0,
+        "copy_trading_min_wallet_win_rate": 0.60,
+        "copy_trading_max_wallet_risk_score": 40.0,
+        "copy_trading_mirror_sells": True,
+        "copy_trading_require_anti_rug_screen": True,
+        "enable_rpc_pool": True,
+        "rpc_endpoints": (),
+        "rpc_pool_health_check_interval_seconds": 30.0,
+        "rpc_pool_circuit_breaker_threshold": 3,
+        "rpc_pool_circuit_breaker_cooldown_seconds": 60.0,
+        "rpc_pool_broadcast_concurrency": 3,
     },
     "aggressive": {
         "buy_amount_sol": 0.02,
@@ -136,6 +176,26 @@ DEFAULT_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "momentum_min_net_inflow_sol": 0.25,
         "momentum_baseline_window_seconds": 300,
         "momentum_max_token_age_seconds": 3600,
+        "enable_raydium_migration_sniping": True,
+        "raydium_pre_migration_sol_threshold": 75.0,
+        "raydium_buy_amount_sol": 0.05,
+        "raydium_slippage_bps": 800,
+        "raydium_priority_fee_lamports": 200_000,
+        "raydium_max_entry_latency_seconds": 60.0,
+        "enable_copy_trading": True,
+        "copy_trading_wallets": (),
+        "copy_trading_sizing_mode": "proportional",
+        "copy_trading_scale_factor": 1.5,
+        "copy_trading_min_wallet_win_rate": 0.50,
+        "copy_trading_max_wallet_risk_score": 50.0,
+        "copy_trading_mirror_sells": True,
+        "copy_trading_require_anti_rug_screen": True,
+        "enable_rpc_pool": True,
+        "rpc_endpoints": (),
+        "rpc_pool_health_check_interval_seconds": 20.0,
+        "rpc_pool_circuit_breaker_threshold": 4,
+        "rpc_pool_circuit_breaker_cooldown_seconds": 45.0,
+        "rpc_pool_broadcast_concurrency": 4,
     },
 }
 
@@ -216,6 +276,50 @@ def resolve_strategy_config(
         ),
         momentum_max_token_age_seconds=int(
             base.get("momentum_max_token_age_seconds", 1800)
+        ),
+        enable_raydium_migration_sniping=bool(
+            base.get("enable_raydium_migration_sniping", True)
+        ),
+        raydium_pre_migration_sol_threshold=float(
+            base.get("raydium_pre_migration_sol_threshold", 80.0)
+        ),
+        raydium_buy_amount_sol=float(base.get("raydium_buy_amount_sol", 0.02)),
+        raydium_slippage_bps=int(base.get("raydium_slippage_bps", 500)),
+        raydium_priority_fee_lamports=int(
+            base.get("raydium_priority_fee_lamports", 100_000)
+        ),
+        raydium_max_entry_latency_seconds=float(
+            base.get("raydium_max_entry_latency_seconds", 30.0)
+        ),
+        enable_copy_trading=bool(base.get("enable_copy_trading", True)),
+        copy_trading_wallets=tuple(base.get("copy_trading_wallets", ())),
+        copy_trading_sizing_mode=str(
+            base.get("copy_trading_sizing_mode", "proportional")
+        ),
+        copy_trading_scale_factor=float(base.get("copy_trading_scale_factor", 1.0)),
+        copy_trading_min_wallet_win_rate=float(
+            base.get("copy_trading_min_wallet_win_rate", 0.60)
+        ),
+        copy_trading_max_wallet_risk_score=float(
+            base.get("copy_trading_max_wallet_risk_score", 40.0)
+        ),
+        copy_trading_mirror_sells=bool(base.get("copy_trading_mirror_sells", True)),
+        copy_trading_require_anti_rug_screen=bool(
+            base.get("copy_trading_require_anti_rug_screen", True)
+        ),
+        enable_rpc_pool=bool(base.get("enable_rpc_pool", True)),
+        rpc_endpoints=tuple(base.get("rpc_endpoints", ())),
+        rpc_pool_health_check_interval_seconds=float(
+            base.get("rpc_pool_health_check_interval_seconds", 30.0)
+        ),
+        rpc_pool_circuit_breaker_threshold=int(
+            base.get("rpc_pool_circuit_breaker_threshold", 3)
+        ),
+        rpc_pool_circuit_breaker_cooldown_seconds=float(
+            base.get("rpc_pool_circuit_breaker_cooldown_seconds", 60.0)
+        ),
+        rpc_pool_broadcast_concurrency=int(
+            base.get("rpc_pool_broadcast_concurrency", 3)
         ),
     )
     if config.buy_amount_sol <= 0:

@@ -19,10 +19,14 @@ from pumpfun_trading.strategies.filters import (
     evaluate_token_heuristics,
     token_is_eligible,
 )
+from pumpfun_trading.strategies.copy_trading import CopyTradeEngine, CopyTradeSignal
+from pumpfun_trading.strategies.graduation import GraduationEngine, GraduationSignal
 from pumpfun_trading.strategies.momentum import MomentumSignal, OrderFlowEngine
 from pumpfun_trading.strategies.risk_validation import validate_risk_limits
 from pumpfun_trading.strategies.signal import (
     generate_buy_signal,
+    generate_copy_trade_buy_signal,
+    generate_graduation_buy_signal,
     generate_momentum_buy_signal,
 )
 
@@ -84,6 +88,70 @@ class TradingStrategy:
             token_creation_timestamp=token_creation_timestamp,
             max_token_age_seconds=self.config.momentum_max_token_age_seconds,
             current_time=current_time,
+        )
+
+    def should_buy_graduation(
+        self,
+        *,
+        graduation_signal: GraduationSignal,
+        active_positions: int,
+        buy_attempts: int,
+        mint_seen_recently: bool = False,
+    ) -> bool:
+        return generate_graduation_buy_signal(
+            self.config,
+            graduation_signal=graduation_signal,
+            active_positions=active_positions,
+            buy_attempts=buy_attempts,
+            mint_seen_recently=mint_seen_recently,
+        )
+
+    def evaluate_graduation(
+        self,
+        engine: GraduationEngine,
+        mint: str,
+        *,
+        require_pool_ready: bool = False,
+        current_time: float | None = None,
+    ) -> GraduationSignal:
+        return engine.evaluate_graduation_signal(
+            mint,
+            pre_migration_threshold_sol=self.config.raydium_pre_migration_sol_threshold,
+            require_pool_ready=require_pool_ready,
+            current_time=current_time,
+        )
+
+    def should_buy_copy_trade(
+        self,
+        *,
+        copy_trade_signal: CopyTradeSignal,
+        active_positions: int,
+        buy_attempts: int,
+        mint_seen_recently: bool = False,
+    ) -> bool:
+        return generate_copy_trade_buy_signal(
+            self.config,
+            copy_trade_signal=copy_trade_signal,
+            active_positions=active_positions,
+            buy_attempts=buy_attempts,
+            mint_seen_recently=mint_seen_recently,
+        )
+
+    def evaluate_copy_trade(
+        self,
+        engine: CopyTradeEngine,
+        user: str,
+        mint: str,
+        sol_amount: float,
+        is_buy: bool,
+        timestamp: float | None = None,
+    ) -> CopyTradeSignal:
+        return engine.record_and_evaluate(
+            user=user,
+            mint=mint,
+            sol_amount=sol_amount,
+            is_buy=is_buy,
+            timestamp=timestamp,
         )
 
     def should_sell(

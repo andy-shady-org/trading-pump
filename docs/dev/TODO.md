@@ -267,41 +267,51 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add unit tests verifying order flow sliding window math and Z-score triggers
 
 #### 22. Raydium Migration Sniping & Graduation Momentum (FEAT-05)
-- [ ] Implement bonding curve graduation monitor in `pumpfun_trading/strategies/signal.py`:
-  - [ ] Track SOL reserve accumulation approaching threshold (~85 SOL / $69k market cap completion)
-  - [ ] Detect bonding curve state transition `complete == True` in real-time
-- [ ] Implement Raydium migration listener:
-  - [ ] Monitor Solana transaction stream for Raydium AMM Program ID (`675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`) `CreatePool` / `Initialize2` instructions
-  - [ ] Extract initialized AMM pool address, base mint, and quote mint
-- [ ] Build Raydium AMM swap execution builder in `pumpfun_trading/sdk/execution.py`
-- [ ] Add momentum entry logic with high compute priority fee to capture post-migration liquidity surge
-- [ ] Add simulation tests for graduation detection and AMM pool parsing
+- [x] Implement bonding curve graduation monitor in `pumpfun_trading/strategies/graduation.py` and `signal.py`:
+  - [x] Track SOL reserve accumulation approaching threshold (~85 SOL / $69k market cap completion)
+  - [x] Detect bonding curve state transition `complete == True` in real-time
+- [x] Implement Raydium migration listener:
+  - [x] Monitor Solana transaction stream for Raydium AMM Program ID (`675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`) `CreatePool` / `Initialize2` instructions
+  - [x] Extract initialized AMM pool address, base mint, and quote mint
+- [x] Build Raydium AMM swap execution builder in `pumpfun_trading/sdk/execution.py`
+- [x] Add momentum entry logic with high compute priority fee to capture post-migration liquidity surge
+- [x] Add simulation tests for graduation detection and AMM pool parsing
 
 #### 23. Smart Money Tracking & Copy-Trading Engine (FEAT-06)
-- [ ] Create wallet tracking repository and configuration in `pumpfun_trading/strategies/copy_trading.py`:
-  - [ ] Support static address list and dynamic performance-ranked trader database
-  - [ ] Store historical win rate, average return, and risk score per tracked wallet
-- [ ] Implement real-time transaction mirror listener:
-  - [ ] Stream incoming transactions for tracked wallets via Geyser or WebSocket filters
-  - [ ] Parse token mint, transaction direction (buy/sell), and SOL capital committed
-- [ ] Implement proportional position sizing and risk validation:
-  - [ ] Scale trade sizing relative to bot equity vs. tracked wallet bankroll
-  - [ ] Verify token passes all standard risk filters and concentration caps before executing mirrored buy
-  - [ ] Trigger mirrored sell when tracked wallet closes or reduces position
-- [ ] Add copy-trading unit tests and replay simulation harness
+- [x] Create wallet tracking repository and configuration in `pumpfun_trading/strategies/copy_trading.py`:
+  - [x] Support static address list and dynamic performance-ranked trader database
+  - [x] Store historical win rate, average return, and risk score per tracked wallet
+- [x] Implement real-time transaction mirror listener:
+  - [x] Stream incoming transactions for tracked wallets via Geyser or WebSocket filters
+  - [x] Parse token mint, transaction direction (buy/sell), and SOL capital committed
+- [x] Implement proportional position sizing and risk validation:
+  - [x] Scale trade sizing relative to bot equity vs. tracked wallet bankroll
+  - [x] Verify token passes all standard risk filters and concentration caps before executing mirrored buy
+  - [x] Trigger mirrored sell when tracked wallet closes or reduces position
+- [x] Add copy-trading unit tests and replay simulation harness
 
 #### 24. Multi-RPC Dynamic Load Balancing & Latency-Based Failover (FEAT-08)
-- [ ] Implement multi-provider RPC connection pool in `pumpfun_trading/infra/rpc_pool.py`:
-  - [ ] Support simultaneous RPC endpoints (e.g. Helius, QuickNode, Triton, Shyft, standard cluster)
-  - [ ] Perform background health checks and rolling latency measurements (p50, p95, p99)
-- [ ] Implement intelligent query routing:
-  - [ ] Route state reads and account queries to endpoint with lowest rolling latency
-  - [ ] Implement automatic circuit breaking on HTTP 429 (rate limit) or 5xx errors
-- [ ] Implement multi-RPC transaction broadcast:
-  - [ ] Concurrently broadcast signed transactions across all healthy RPC endpoints to maximize validator inclusion probability
-- [ ] Add comprehensive test suite covering RPC failover, latency scoring, and broadcast deduplication
+- [x] Implement multi-provider RPC connection pool in `pumpfun_trading/infra/rpc_pool.py`:
+  - [x] Support simultaneous RPC endpoints (e.g. Helius, QuickNode, Triton, Shyft, standard cluster)
+  - [x] Perform background health checks and rolling latency measurements (p50, p95, p99)
+- [x] Implement intelligent query routing:
+  - [x] Route state reads and account queries to endpoint with lowest rolling latency
+  - [x] Implement automatic circuit breaking on HTTP 429 (rate limit) or 5xx errors
+- [x] Implement multi-RPC transaction broadcast:
+  - [x] Concurrently broadcast signed transactions across all healthy RPC endpoints to maximize validator inclusion probability
+- [x] Add comprehensive test suite covering RPC failover, latency scoring, and broadcast deduplication
 
-#### 25. Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot (FEAT-10)
+#### 25. Core Runtime Decomposition & SOLID Architecture Refactoring (FEAT-12)
+- [x] Decompose `TradingBot` in `pumpfun_trading/bot/run.py` to adhere strictly to Python design principles, SOLID, SRP, DRY, OCP, LSP, and ISP
+- [x] Extract `PositionManager` in `pumpfun_trading/bot/position_manager.py` to isolate position lifecycles, lot scaling tiers, and trailing stop metrics
+- [x] Extract `OrderExecutor` and `OrderLiquidator` in `pumpfun_trading/execution/executor.py` and `liquidator.py` for buy/sell order dispatch and emergency exits
+- [x] Extract `TokenEnricher` in `pumpfun_trading/bot/enrichment.py` for anti-rug screening, creator profiling, and Gini holder analysis
+- [x] Extract `EventRouter` in `pumpfun_trading/bot/event_router.py` to decouple Geyser/WebSocket stream ingestion from trade execution
+- [x] Extract `StatusPersistenceManager` in `pumpfun_trading/bot/persistence.py` and `AlertDispatcher` in `pumpfun_trading/bot/alerts.py`
+- [x] Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP
+- [x] Update existing unit and integration test suites to verify complete behavioral equivalence and 100% test pass rate
+
+#### 26. Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot (FEAT-10)
 - [ ] Implement interactive Telegram bot in `pumpfun_trading/ui/telegram_bot.py`:
   - [ ] Remote commands: `/status`, `/positions`, `/pnl`, `/pause`, `/resume`, `/sell_all`, `/config`
   - [ ] Admin token and chat ID whitelist verification
@@ -390,11 +400,11 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add unit and mock integration tests for Yellowstone Geyser gRPC streaming and binary bonding curve parsing
 - [x] Add tests for Jito tip calculations, bundle packing, and confirmation polling
 - [x] Add tests for dynamic trailing stop and multi-tier partial exit calculations
-- [ ] Add tests for dev wallet screening, holder concentration limits, and metadata verification filters
-- [ ] Add tests for Raydium AMM graduation detection and pool initialization parsers
-- [ ] Add tests for smart money copy-trading signal extraction and proportional position sizing
+- [x] Add tests for dev wallet screening, holder concentration limits, and metadata verification filters
+- [x] Add tests for Raydium AMM graduation detection and pool initialization parsers
+- [x] Add tests for smart money copy-trading signal extraction and proportional position sizing
 - [x] Add tests for rolling order flow window aggregations and trade velocity Z-score anomalies
-- [ ] Add tests for multi-RPC latency scoring, health checks, failover routing, and broadcast deduplication
+- [x] Add tests for multi-RPC latency scoring, health checks, failover routing, and broadcast deduplication
 - [x] Add tests for daily equity baseline tracking, drawdown limits, and portfolio emergency lock triggers
 - [ ] Add tests for Telegram command authentication and FastAPI/WebSocket status streaming
 
@@ -407,19 +417,19 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 ### `pumpfun_trading/sdk/` & `pumpfun_trading/execution/`
 - [x] Implement Jito JSON-RPC bundle client with tip account rotation and dynamic fee percentile estimation
 - [x] Implement atomic bundle packaging for buy/sell instructions + compute budget + validator tip transfer
-- [ ] Add Raydium AMM pool swap instruction builder for post-graduation liquidity trades
+- [x] Add Raydium AMM pool swap instruction builder for post-graduation liquidity trades
 - [x] Implement bundle status polling with fallback fast-path execution on bundle timeouts
 
 ### `pumpfun_trading/filters/` & `pumpfun_trading/strategies/`
-- [ ] Implement pre-trade screening pipeline: dev wallet history, creator supply cap (<10%), top 5 holder cap (<15%), and social links
+- [x] Implement pre-trade screening pipeline: dev wallet history, creator supply cap (<10%), top 5 holder cap (<15%), and social links
 - [x] Implement dynamic trailing stop-loss (activation at +50%, trail drop 15%) and multi-tier profit taking (50% at 2x, 25% at 3.5x, 25% moonbag)
-- [ ] Implement Raydium migration monitor tracking curve completion and AMM pool initialization
-- [ ] Implement smart money copy-trading module with wallet performance ranking and proportional sizing
+- [x] Implement Raydium migration monitor tracking curve completion and AMM pool initialization
+- [x] Implement smart money copy-trading module with wallet performance ranking and proportional sizing
 - [x] Implement order flow momentum strategy computing rolling buy/sell volume ratios, buyer counts, and trade velocity Z-scores
 
 ### `pumpfun_trading/infra/` & `pumpfun_trading/ops/`
-- [ ] Implement multi-provider RPC connection pool with health probes and latency-based read routing
-- [ ] Implement multi-RPC transaction broadcast engine for simultaneous validator dispatch
+- [x] Implement multi-provider RPC connection pool with health probes and latency-based read routing
+- [x] Implement multi-RPC transaction broadcast engine for simultaneous validator dispatch
 - [x] Implement portfolio-level daily equity loss tracker and 24-hour hard-lock circuit breaker (liquidate all & pause on >15% daily drawdown)
 - [x] Add alerting dispatchers for emergency circuit breakers, liquidation events, and RPC degradation
 
@@ -538,20 +548,29 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 ### Sprint 13: Order Flow Momentum & Raydium Graduation Sniping
 - [x] Implement sliding window order flow analytics computing buy/sell volume ratios and net SOL inflow (FEAT-07)
 - [x] Implement trade velocity tracker and Z-score anomaly detector for momentum entry triggers (FEAT-07)
-- [ ] Implement bonding curve completion monitor tracking SOL reserve threshold (~85 SOL / $69k cap) (FEAT-05)
-- [ ] Implement Raydium AMM pool initialization listener (`CreatePool`/`Initialize2`) and swap execution builder (FEAT-05)
-- [ ] Integrate momentum and graduation signals into modular strategy decision engine
-- [ ] Add unit and replay simulation tests for order flow velocity metrics and Raydium migration sniping
+- [x] Implement bonding curve completion monitor tracking SOL reserve threshold (~85 SOL / $69k cap) (FEAT-05)
+- [x] Implement Raydium AMM pool initialization listener (`CreatePool`/`Initialize2`) and swap execution builder (FEAT-05)
+- [x] Integrate momentum and graduation signals into modular strategy decision engine
+- [x] Add unit and replay simulation tests for order flow velocity metrics and Raydium migration sniping
 
 ### Sprint 14: Smart Money Copy-Trading & High-Availability Infrastructure
-- [ ] Create smart money wallet tracking registry with historical win rates and performance ranking (FEAT-06)
-- [ ] Implement real-time transaction mirror listener with proportional position sizing and risk validation (FEAT-06)
-- [ ] Implement multi-provider RPC connection pool with latency-based query routing (FEAT-08)
-- [ ] Implement multi-RPC concurrent transaction broadcast engine for high-reliability validator inclusion (FEAT-08)
-- [ ] Implement automatic RPC rate-limit circuit breaking and failover fallback logic (FEAT-08)
-- [ ] Add unit and integration tests for copy-trading trade mirroring and multi-RPC connection pooling
+- [x] Create smart money wallet tracking registry with historical win rates and performance ranking (FEAT-06)
+- [x] Implement real-time transaction mirror listener with proportional position sizing and risk validation (FEAT-06)
+- [x] Implement multi-provider RPC connection pool with latency-based query routing (FEAT-08)
+- [x] Implement multi-RPC concurrent transaction broadcast engine for high-reliability validator inclusion (FEAT-08)
+- [x] Implement automatic RPC rate-limit circuit breaking and failover fallback logic (FEAT-08)
+- [x] Add unit and integration tests for copy-trading trade mirroring and multi-RPC connection pooling
 
-### Sprint 15: Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot
+### Sprint 15: Core Runtime Decomposition & SOLID Architecture Refactoring
+- [x] Extract `PositionManager` in `pumpfun_trading/bot/position_manager.py` to isolate position lifecycles, partial scaling tiers, and trailing stop metrics
+- [x] Extract `OrderExecutor` and `OrderLiquidator` in `pumpfun_trading/execution/executor.py` and `liquidator.py` for buy/sell order dispatch and emergency exits
+- [x] Extract `TokenEnricher` in `pumpfun_trading/bot/enrichment.py` for anti-rug screening, creator profiling, and Gini holder analysis
+- [x] Extract `EventRouter` in `pumpfun_trading/bot/event_router.py` to decouple Geyser/WebSocket stream ingestion from trade execution
+- [x] Extract `StatusPersistenceManager` in `pumpfun_trading/bot/persistence.py` and `AlertDispatcher` in `pumpfun_trading/bot/alerts.py`
+- [x] Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP
+- [x] Update existing unit and integration test suites to verify complete behavioral equivalence and 100% test pass rate
+
+### Sprint 16: Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot
 - [ ] Implement interactive Telegram bot for remote mobile control (`/status`, `/positions`, `/sell_all`, `/pause`, `/resume`, `/config`) (FEAT-10)
 - [ ] Implement full-featured FastAPI web backend with asynchronous WebSocket state streaming (FEAT-10)
 - [ ] Build interactive browser dashboard for full bot control, live portfolio equity curves, and hot config adjustment (FEAT-10)

@@ -34,6 +34,14 @@ def get_env_int(name: str, default: int = 0) -> int:
         return default
 
 
+def get_env_list(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Parse comma-separated environment variable into tuple of strings."""
+    value = os.getenv(name)
+    if not value:
+        return default
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
 def mask_secret(value: str | None, *, hidden: str = "********") -> str:
     if not value:
         return "<unset>"
@@ -48,6 +56,8 @@ def get_runtime_env(**overrides: Any) -> dict[str, Any]:
         "PUMPFUN_PRIVATE_KEY": os.getenv("PUMPFUN_PRIVATE_KEY")
         or os.getenv("SOLANA_PRIVATE_KEY"),
         "PUMPFUN_RPC_URL": os.getenv("PUMPFUN_RPC_URL") or os.getenv("HELIUS_RPC_URL"),
+        "PUMPFUN_RPC_URLS": os.getenv("PUMPFUN_RPC_URLS")
+        or os.getenv("SOLANA_RPC_URLS"),
         "PUMPFUN_ALERT_PROVIDER": os.getenv("PUMPFUN_ALERT_PROVIDER"),
         "PUMPFUN_AUDIT_LOG": os.getenv("PUMPFUN_AUDIT_LOG"),
         "PUMPFUN_BOT_STATUS_PATH": os.getenv("PUMPFUN_BOT_STATUS_PATH"),
@@ -74,7 +84,14 @@ def validate_required_runtime_env(
     """Ensure required runtime env vars are configured before startup."""
     env = get_runtime_env()
     names = list(required or ("PUMPFUN_PRIVATE_KEY", "PUMPFUN_RPC_URL"))
-    missing = [name for name in names if not env.get(name)]
+    missing: list[str] = []
+    for name in names:
+        if name == "PUMPFUN_RPC_URL":
+            if not env.get("PUMPFUN_RPC_URL") and not env.get("PUMPFUN_RPC_URLS"):
+                missing.append(name)
+        elif not env.get(name):
+            missing.append(name)
+
     if missing:
         raise ValueError(
             "Missing required environment variables: " + ", ".join(missing)
@@ -86,6 +103,7 @@ __all__ = [
     "get_env_bool",
     "get_env_float",
     "get_env_int",
+    "get_env_list",
     "get_runtime_env",
     "mask_secret",
     "sanitize_env_for_logging",

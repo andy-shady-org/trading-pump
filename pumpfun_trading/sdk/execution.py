@@ -16,11 +16,18 @@ from spl.token.instructions import (
     get_associated_token_address,
 )
 
+from pumpfun_trading.infra.rpc_pool import (
+    RpcConnectionPool,
+)
 from .jito import (
     JITO_BLOCK_ENGINE_ENDPOINTS,
     JITO_TIP_ACCOUNTS,
     JitoClient,
     JitoTipConfig,
+)
+from .raydium import (
+    RaydiumPoolKeys,
+    build_raydium_swap_instruction,
 )
 
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
@@ -247,8 +254,10 @@ class PumpFunExecutionClient:
     def __init__(
         self,
         private_key_b58: str,
-        rpc_url: str,
+        rpc_url: Optional[str] = None,
         *,
+        rpc_pool: Optional[RpcConnectionPool] = None,
+        rpc_urls: Optional[list[str] | tuple[str, ...]] = None,
         priority_fee_lamports: int = 5000,
         compute_unit_limit: int = 200_000,
         compute_unit_price_micro_lamports: Optional[int] = None,
@@ -262,7 +271,26 @@ class PumpFunExecutionClient:
         default_slippage_bps: int = 500,
     ):
         self.private_key_b58 = private_key_b58
-        self.rpc_url = rpc_url
+
+        # Initialize multi-provider RPC connection pool
+        if rpc_pool is not None:
+            self.rpc_pool = rpc_pool
+            self.rpc_url = rpc_url or (
+                rpc_pool.endpoints[0].url
+                if rpc_pool.endpoints
+                else "https://api.mainnet-beta.solana.com"
+            )
+        else:
+            endpoints_list: list[str] = []
+            if rpc_urls:
+                endpoints_list.extend(rpc_urls)
+            if rpc_url and rpc_url not in endpoints_list:
+                endpoints_list.insert(0, rpc_url)
+            if not endpoints_list:
+                endpoints_list = ["https://api.mainnet-beta.solana.com"]
+            self.rpc_pool = RpcConnectionPool(endpoints=endpoints_list)
+            self.rpc_url = endpoints_list[0]
+
         self.priority_fee_lamports = priority_fee_lamports
         self.compute_unit_limit = compute_unit_limit
         self.compute_unit_price_micro_lamports = compute_unit_price_micro_lamports
@@ -294,55 +322,16 @@ class PumpFunExecutionClient:
         max_retries: int = 3,
         timeout_seconds: float = 20.0,
     ) -> dict:
-        last_error: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(
-                        self.rpc_url,
-                        json=payload,
-                        headers={"Content-Type": "application/json"},
-                    ) as resp:
-                        body = await resp.text()
-                        if resp.status != 200:
-                            raise RuntimeError(
-                                f"RPC request failed: HTTP {resp.status}: {body[:500]}"
-                            )
-                        try:
-                            parsed = json.loads(body)
-                        except json.JSONDecodeError as exc:
-                            raise RuntimeError(
-                                f"RPC response was not valid JSON: {body[:500]}"
-                            ) from exc
-                        if isinstance(parsed, dict):
-                            return parsed
-                        raise RuntimeError(
-                            f"RPC response was not a JSON object: {body[:500]}"
-                        )
-            except Exception as exc:
-                last_error = exc
-                classification = self.classify_execution_error(exc)
-                self.failed_execution_attempts += 1
-                self.execution_health_score = max(
-                    0.0, self.execution_health_score - 10.0
-                )
-                if classification not in {
-                    "rpc_timeout",
-                    "rate_limited",
-                    "network_error",
-                    "server_error",
-                }:
-                    raise
-                if attempt >= max_retries:
-                    break
-                backoff = 0.5 * (2**attempt)
-                await asyncio.sleep(backoff)
-        if last_error is not None:
-            raise RuntimeError(
-                f"RPC request failed after retries: {last_error}"
-            ) from last_error
-        raise RuntimeError("RPC request failed after retries without a captured error")
+        try:
+            parsed = await self.rpc_pool.request(
+                payload, max_retries=max_retries, timeout_seconds=timeout_seconds
+            )
+            self.execution_health_score = min(100.0, self.execution_health_score + 1.0)
+            return parsed
+        except Exception as exc:
+            self.failed_execution_attempts += 1
+            self.execution_health_score = max(0.0, self.execution_health_score - 10.0)
+            raise RuntimeError(f"RPC request failed after retries: {exc}") from exc
 
     @staticmethod
     def is_valid_pubkey(value: str) -> bool:
@@ -751,6 +740,76 @@ class PumpFunExecutionClient:
             instructions, tip_lamports=tip_lamports
         )
 
+    def build_raydium_swap_instruction(
+        self,
+        pool_keys: RaydiumPoolKeys,
+        amount_in_lamports: int,
+        min_amount_out: int = 1,
+        user_source_token_account: Optional[str] = None,
+        user_destination_token_account: Optional[str] = None,
+    ) -> Instruction:
+        """Construct Raydium AMM v4 swap instruction for this client wallet."""
+        source_account = (
+            user_source_token_account
+            if user_source_token_account is not None
+            else str(
+                get_associated_token_address(
+                    self.wallet, self._to_pubkey(pool_keys.pc_mint), TOKEN_PROGRAM_ID
+                )
+            )
+        )
+        dest_account = (
+            user_destination_token_account
+            if user_destination_token_account is not None
+            else str(
+                get_associated_token_address(
+                    self.wallet, self._to_pubkey(pool_keys.coin_mint), TOKEN_PROGRAM_ID
+                )
+            )
+        )
+        return build_raydium_swap_instruction(
+            pool_keys=pool_keys,
+            user_wallet=self.wallet,
+            user_source_token_account=source_account,
+            user_destination_token_account=dest_account,
+            amount_in_lamports=amount_in_lamports,
+            min_amount_out=min_amount_out,
+        )
+
+    async def build_raydium_buy_tx(
+        self,
+        pool_keys: RaydiumPoolKeys,
+        sol_amount: float,
+        *,
+        slippage_bps: Optional[int] = None,
+        min_amount_out: int = 1,
+        tip_lamports: Optional[int] = None,
+    ) -> VersionedTransaction:
+        """Construct a versioned Raydium AMM swap transaction with priority fees and ATA creation."""
+        lamports = self.sol_to_lamports(sol_amount)
+        instructions = []
+
+        # Ensure destination ATA exists
+        if not await self.get_ata_exists(pool_keys.coin_mint):
+            instructions.append(
+                create_associated_token_account(
+                    payer=self.wallet,
+                    owner=self.wallet,
+                    mint=self._to_pubkey(pool_keys.coin_mint),
+                )
+            )
+
+        instructions.append(
+            self.build_raydium_swap_instruction(
+                pool_keys=pool_keys,
+                amount_in_lamports=lamports,
+                min_amount_out=min_amount_out,
+            )
+        )
+        return await self._build_tx_with_instructions(
+            instructions, tip_lamports=tip_lamports
+        )
+
     async def _build_tx_with_instructions(
         self,
         instructions,
@@ -890,24 +949,32 @@ class PumpFunExecutionClient:
 
     async def send_transaction(self, tx: VersionedTransaction) -> str:
         async with self._execution_lock:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "sendTransaction",
-                "params": [
-                    base64.b64encode(bytes(tx)).decode("utf-8"),
-                    {
-                        "skipPreflight": True,
-                        "preflightCommitment": "confirmed",
-                        "encoding": "base64",
-                        "maxRetries": 3,
-                    },
-                ],
-            }
-            parsed = await self._request_rpc_json(payload)
-            result = parsed.get("result")
+            encoded_tx = base64.b64encode(bytes(tx)).decode("utf-8")
+            if self.rpc_pool is not None and self.rpc_pool.endpoint_count > 1:
+                result = await self.rpc_pool.broadcast_transaction(
+                    encoded_tx,
+                    skip_preflight=True,
+                    preflight_commitment="confirmed",
+                )
+            else:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "sendTransaction",
+                    "params": [
+                        encoded_tx,
+                        {
+                            "skipPreflight": True,
+                            "preflightCommitment": "confirmed",
+                            "encoding": "base64",
+                            "maxRetries": 3,
+                        },
+                    ],
+                }
+                parsed = await self._request_rpc_json(payload)
+                result = parsed.get("result")
             if not isinstance(result, str) or len(result) < 20:
-                raise RuntimeError(f"Invalid sendTransaction result: {parsed}")
+                raise RuntimeError(f"Invalid sendTransaction result: {result}")
             self.execution_health_score = min(100.0, self.execution_health_score + 5.0)
             return result
 
@@ -920,39 +987,32 @@ class PumpFunExecutionClient:
             "method": "getSignatureStatuses",
             "params": [[signature], {"searchTransactionHistory": True}],
         }
-        async with aiohttp.ClientSession() as session:
-            for _ in range(max_retries):
-                try:
-                    async with session.post(
-                        self.rpc_url,
-                        json=payload,
-                        headers={"Content-Type": "application/json"},
-                    ) as resp:
-                        if resp.status != 200:
-                            continue
-                        parsed = await resp.json()
-                        result = (parsed.get("result") or {}).get("value")
-                        if not result:
-                            await asyncio.sleep(interval)
-                            continue
-                        status = result[0]
-                        if not status:
-                            await asyncio.sleep(interval)
-                            continue
-                        confirmation_status = status.get("confirmationStatus")
-                        if confirmation_status in {
-                            "processed",
-                            "confirmed",
-                            "finalized",
-                        }:
-                            if status.get("err") is None:
-                                return True
-                            raise RuntimeError(
-                                f"On-chain transaction failed: {status.get('err')}"
-                            )
-                except Exception:
-                    pass
-                await asyncio.sleep(interval)
+        for _ in range(max_retries):
+            try:
+                parsed = await self._request_rpc_json(payload, timeout_seconds=5.0)
+                result = (parsed.get("result") or {}).get("value")
+                if not result:
+                    await asyncio.sleep(interval)
+                    continue
+                status = result[0]
+                if not status:
+                    await asyncio.sleep(interval)
+                    continue
+                confirmation_status = status.get("confirmationStatus")
+                if confirmation_status in {
+                    "processed",
+                    "confirmed",
+                    "finalized",
+                }:
+                    if status.get("err") is None:
+                        return True
+                    return False
+            except RuntimeError as exc:
+                if "On-chain transaction failed" in str(exc):
+                    raise
+            except Exception:
+                pass
+            await asyncio.sleep(interval)
         return False
 
     async def buy(
@@ -978,6 +1038,34 @@ class PumpFunExecutionClient:
             sol_amount,
             token_amount=token_amount,
             slippage_bps=slippage_bps,
+            tip_lamports=tip_lamports,
+        )
+        if should_jito:
+            return await self.send_jito_bundle_with_fallback([tx])
+        return await self.send_transaction(tx)
+
+    async def raydium_buy(
+        self,
+        pool_keys: RaydiumPoolKeys,
+        sol_amount: float,
+        *,
+        slippage_bps: Optional[int] = None,
+        min_amount_out: int = 1,
+        use_jito: Optional[bool] = None,
+        conviction_score: float = 1.0,
+    ) -> str:
+        """Execute a Raydium AMM v4 swap buy using Jito bundle or standard transaction."""
+        should_jito = self.use_jito if use_jito is None else use_jito
+        tip_lamports = None
+        if should_jito:
+            tip_lamports = await self.calculate_dynamic_jito_tip(
+                trade_amount_sol=sol_amount, conviction_score=conviction_score
+            )
+        tx = await self.build_raydium_buy_tx(
+            pool_keys=pool_keys,
+            sol_amount=sol_amount,
+            slippage_bps=slippage_bps,
+            min_amount_out=min_amount_out,
             tip_lamports=tip_lamports,
         )
         if should_jito:
@@ -1017,9 +1105,11 @@ class PumpFunExecutionClient:
         return await self.send_transaction(tx)
 
     async def close(self) -> None:
-        """Close external client connections including Jito client session."""
+        """Close external client connections including Jito client and RPC pool."""
         if self.jito_client is not None:
             await self.jito_client.close()
+        if self.rpc_pool is not None:
+            await self.rpc_pool.close()
 
     async def get_token_balance(self, mint: str, owner: Optional[str] = None) -> int:
         """Return the token balance for the wallet ATA for a given mint, in raw token units."""

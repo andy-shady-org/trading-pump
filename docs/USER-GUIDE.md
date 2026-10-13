@@ -117,25 +117,65 @@ Terminal operators configure the bot using a `.env` file in the project root or 
 
 ### Environment Variable Matrix
 
-| Variable Name | Required | Default | Description |
-| :--- | :---: | :---: | :--- |
-| `PUMPFUN_PRIVATE_KEY` | **Yes** (Live) | `None` | Base58-encoded private key of the trading wallet. |
-| `PUMPFUN_RPC_URL` | **Yes** | `https://api.mainnet-beta.solana.com` | High-performance Solana JSON-RPC HTTP endpoint. |
-| `PUMPFUN_GEYSER_ENDPOINT` | Optional | `None` | Yellowstone Geyser gRPC endpoint for sub-millisecond streaming. |
-| `PUMPFUN_GEYSER_TOKEN` | Optional | `None` | Authentication / X-Token header for Yellowstone Geyser gRPC. |
-| `PUMPFUN_USE_JITO` | Optional | `true` | Enables private mempool bundle submission via Jito Block Engine. |
-| `PUMPFUN_JITO_BLOCK_ENGINE_URL` | Optional | `https://mainnet.block-engine.jito.wtf` | Jito Block Engine URL for MEV protection. |
-| `PUMPFUN_JITO_TIP_LAMPORTS` | Optional | `100000` | Base validator tip in Lamports (0.0001 SOL minimum recommended). |
-| `PUMPFUN_JITO_CONFIRMATION_TIMEOUT` | Optional | `15.0` | Timeout in seconds before falling back to direct RPC submission. |
-| `PUMPFUN_JITO_FALLBACK_TO_RPC` | Optional | `true` | Automatically fallback to high-priority RPC if Jito bundle times out. |
-| `PUMPFUN_BASE_BUY_SOL` | Optional | `0.1` | Default trade buy allocation in SOL. |
-| `PUMPFUN_SLIPPAGE_BPS` | Optional | `250` | Maximum slippage tolerance in basis points (`250` = 2.5%). |
-| `PUMPFUN_STRATEGY_PRESET` | Optional | `balanced` | Strategy profile: `conservative`, `balanced`, or `aggressive`. |
-| `PUMPFUN_DRY_RUN` | Optional | `false` | Paper trading mode: simulates executions without broadcasting transactions. |
-| `PUMPFUN_ALERT_PROVIDER` | Optional | `None` | Alert channel: `discord`, `slack`, or `telegram`. |
-| `PUMPFUN_ALERT_WEBHOOK_URL` | Optional | `None` | Webhook URL for Discord or Slack trade event notifications. |
-| `PUMPFUN_TELEGRAM_BOT_TOKEN` | Optional | `None` | Telegram Bot API token for mobile push alerts. |
-| `PUMPFUN_TELEGRAM_CHAT_ID` | Optional | `None` | Authorized Telegram Chat ID for alerts and command access. |
+The engine supports granular configuration via environment variables across network, execution, strategy, persistence, and alerting subsystems:
+
+#### 1. Core Wallet & Network Connectivity
+
+| Variable Name | Alias / Fallback | Required | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `PUMPFUN_PRIVATE_KEY` | `SOLANA_PRIVATE_KEY` | **Yes** (Live) | `None` | Base58-encoded private key of the active trading wallet. |
+| `PUMPFUN_RPC_URL` | `HELIUS_RPC_URL` | **Yes** | `https://api.mainnet-beta.solana.com` | Primary Solana JSON-RPC HTTP endpoint. |
+| `PUMPFUN_RPC_URLS` | `SOLANA_RPC_URLS` | Optional | `None` | Comma-separated list of secondary/failover Solana RPC endpoints for dynamic load balancing and multi-RPC fallback. |
+| `PUMPFUN_GEYSER_ENDPOINT` | — | Optional | `None` | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market data ingestion. |
+| `PUMPFUN_GEYSER_X_TOKEN` | `PUMPFUN_GEYSER_TOKEN` | Optional | `None` | Authentication header / X-Token for Yellowstone Geyser gRPC connections. |
+| `PUMPFUN_STREAM_MAX_RETRIES` | `PUMPFUN_WS_MAX_RETRIES` | Optional | `5` | Maximum consecutive stream reconnection attempts before tripping the streaming circuit breaker. |
+
+#### 2. Jito MEV & Transaction Execution
+
+| Variable Name | Alias / Fallback | Required | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `PUMPFUN_USE_JITO` | — | Optional | `true` | Enables private mempool bundle routing via Jito Block Engine to eliminate sandwich attacks and frontrunning. |
+| `PUMPFUN_JITO_BLOCK_ENGINE_URL` | — | Optional | `https://mainnet.block-engine.jito.wtf` | Jito Block Engine endpoint URL for MEV protection. |
+| `PUMPFUN_JITO_TIP_LAMPORTS` | — | Optional | `100000` | Validator tip in Lamports (0.0001 SOL base recommendation for fast bundle inclusion). |
+| `PUMPFUN_JITO_CONFIRMATION_TIMEOUT` | — | Optional | `12.0` | Timeout in seconds before falling back to direct RPC transaction dispatch. |
+| `PUMPFUN_JITO_FALLBACK_TO_RPC` | — | Optional | `true` | Automatically fall back to high-priority RPC broadcast if Jito bundle confirmation times out. |
+| `PUMPFUN_COMPUTE_UNIT_LIMIT` | — | Optional | `200000` | Compute budget unit limit per swap transaction instruction. |
+
+#### 3. Trading Strategy & Risk Controls
+
+| Variable Name | Alias / Fallback | Required | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `PUMPFUN_BASE_BUY_SOL` | `PUMPFUN_BUY_AMOUNT_SOL` | Optional | `0.1` | Base buy allocation per trade in SOL. |
+| `PUMPFUN_SLIPPAGE_BPS` | — | Optional | `250` | Maximum entry slippage tolerance in basis points (`250` = 2.5%). |
+| `PUMPFUN_BASE_EXIT_SLIPPAGE_BPS` | — | Optional | `500` | Base exit slippage tolerance in basis points (`500` = 5.0%) for initial sell attempts. |
+| `PUMPFUN_MAX_EXIT_SLIPPAGE_BPS` | — | Optional | `5000` | Maximum dynamic slippage cap in basis points (`5000` = 50.0%) during high-volatility exit retries. |
+| `PUMPFUN_MAX_EXIT_RETRIES` | — | Optional | `5` | Maximum number of retry attempts for failed exit executions before escalating to emergency liquidation. |
+| `PUMPFUN_STRATEGY_PRESET` | `PUMPFUN_PRESET` | Optional | `balanced` | Preconfigured strategy profile: `conservative`, `balanced`, or `aggressive`. |
+| `PUMPFUN_DRY_RUN` | — | Optional | `false` | Paper trading mode: ingests real-time feeds and simulates execution without broadcasting on-chain transactions. |
+
+#### 4. Persistence, State Snapshots & Audit Logging
+
+| Variable Name | Alias / Fallback | Required | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `PUMPFUN_AUDIT_LOG_PATH` | `PUMPFUN_AUDIT_LOG` | Optional | `runtime/audit_trail.jsonl` | Append-only JSONL audit trail destination path for forensic event tracking, trade accounting, and telemetry. |
+| `PUMPFUN_STATUS_PATH` | `PUMPFUN_BOT_STATUS_PATH` | Optional | `runtime/bot_status.json` | Atomic JSON snapshot file path for live bot status, active positions, performance metrics, and crash recovery. |
+| `PUMPFUN_CONFIG_PATH` | `PUMPFUN_CONFIG` | Optional | `None` | Path to external JSON strategy and risk configuration file (alternative to CLI `--config`). |
+
+#### 5. Multi-Channel Alerting & Webhooks
+
+| Variable Name | Alias / Fallback | Required | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `PUMPFUN_ALERT_PROVIDER` | — | Optional | `none` | Notification provider: `none`, `discord`, `slack`, or `telegram`. |
+| `PUMPFUN_ALERT_DISCORD_WEBHOOK_URL` | `PUMPFUN_ALERT_WEBHOOK_URL` | Optional | `None` | Discord incoming webhook URL for trade entries, exits, and risk alert notifications. |
+| `PUMPFUN_ALERT_SLACK_WEBHOOK_URL` | — | Optional | `None` | Slack incoming webhook URL for team channel notifications. |
+| `PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN` | `PUMPFUN_TELEGRAM_BOT_TOKEN` | Optional | `None` | Telegram Bot API token for direct push notifications and remote commands. |
+| `PUMPFUN_ALERT_TELEGRAM_CHAT_ID` | `PUMPFUN_TELEGRAM_CHAT_ID` | Optional | `None` | Authorized Telegram Chat/Channel ID for alert reception. |
+
+#### 6. Terminal & Logging Controls
+
+| Variable Name | Alias / Fallback | Required | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `NO_COLOR` | — | Optional | `None` | Disables ANSI color sequences in terminal console logs and Rich tables when set. |
 
 ### Wallet Security & Capital Management Best Practices
 

@@ -202,3 +202,53 @@ This document provides a comprehensive and accurate overview of all features and
 - **Live Yellowstone Geyser Stream Integration**: Seamlessly routes live on-chain `TradeEventUpdate` and WebSocket trades into `OrderFlowEngine`, evaluating momentum signals for unowned tokens and triggering automated buy orders with reason `momentum_spike`.
 - **Historical Paper Trading & Backtesting**: Full support in `PaperTradingEngine` for backtesting momentum strategies against multi-trade snapshot datasets.
 - **Preset Sensitivity Profiles**: Configurable parameters across `conservative` ($Z \ge 3.0$, ratio $\ge 4.0$, 5 buyers), `balanced` ($Z \ge 2.5$, ratio $\ge 3.0$, 3 buyers), and `aggressive` ($Z \ge 2.0$, ratio $\ge 2.0$, 2 buyers).
+
+---
+
+## 16. Raydium Migration Sniping & Graduation Momentum Engine (FEAT-05)
+
+- **Real-Time SOL Reserve & Completion Monitoring**: Sub-millisecond tracking of bonding curve real and virtual SOL reserves (`GraduationEngine`, `GraduationTracker`), automatically staging candidates reaching pre-migration threshold ($\ge 80.0\text{ SOL}$ or $\ge 95\%$ curve progress).
+- **Sub-Slot Raydium AMM v4 Decoding**: Zero-copy binary parser and transaction decoder (`RaydiumPoolKeys`, `parse_raydium_initialize2_accounts`, `parse_raydium_pool_from_tx`) extracting AMM ID, token vaults, LP mint, and OpenBook market state from on-chain `Initialize2` transactions within $<0.2\text{ms}$.
+- **Native Raydium Swap Instruction Serialization**: Constructs byte-exact Solana instructions (`build_raydium_swap_instruction`) for Raydium AMM v4 `SwapBaseIn` (discriminator `9`), handling associated token account creation, compute budget priority fees, and slippage calculations (`calculate_raydium_swap_out`).
+- **Private Jito MEV Bundle Delivery**: Packages Raydium swaps into private atomic Jito bundles with dynamic validator tip calculation, completely bypassing the public mempool to prevent sandwich frontrunning during migration liquidity surges.
+- **Unified Risk & Anti-Rug Guard**: Enforces complete pre-trade anti-rug screening (creator launch history, initial holdings cap, holder concentration Gini coefficient) and portfolio exposure limits before executing Raydium graduation buys.
+- **Live Bot Stream Event Routing**: Directly connects Geyser `BondingCurveStateUpdate`, `CompleteEventUpdate`, and Raydium pool creation streams in `TradingBot`, triggering automated curve position liquidations on graduation and sniping newly initialized Raydium pools with reason `raydium_graduation_snipe`.
+- **Historical Paper Trading Replay**: Simulates bonding curve graduation and Raydium pool entries in `PaperTradingEngine` for backtesting migration capture strategies.
+- **Preset Sensitivity Profiles**: Configured thresholds across `conservative` (0.01 SOL buy, 300 bps slippage, 82 SOL threshold), `balanced` (0.02 SOL buy, 500 bps slippage, 80 SOL threshold), and `aggressive` (0.05 SOL buy, 800 bps slippage, 75 SOL threshold, 200k priority fee).
+
+---
+
+## 17. Smart Money Tracking & Copy-Trading Engine (FEAT-06)
+
+- **Tracked Wallet Registry & Performance Profiling**: In-memory thread-safe registry (`TrackedWallet`, `WalletRegistry`, `CopyTradeEngine`) supporting dynamic performance tracking (historical win rate, total trade count, average ROI %, and risk scoring).
+- **Sub-Millisecond On-Chain Swap Matching**: Intercepts on-chain trade events from Yellowstone Geyser gRPC (`TradeEventUpdate`) and WebSocket streams, identifying tracked smart money traders in $O(1)$ lookup time ($<0.05\text{ms}$).
+- **Proportional Position Sizing**: Dynamically sizes entry orders proportional to the tracked wallet's trade size relative to their reference bankroll ($\text{Entry} = \text{Base} \times S_{\text{factor}} \times (\text{Trade} / \text{Bankroll}_{\text{ref}})$) with strict wallet allocation and portfolio position caps.
+- **Scaled & Conviction-Weighted Sizing**: Supports alternative sizing modes (`proportional`, `fixed`, `scaled`), weighting allocation by historical win rate and conviction factors ($0.5\text{x}$ to $2.0\text{x}$).
+- **Mirrored Sell & Exit Synchronization**: Immediately detects smart money sell transactions on active holdings and triggers automated position liquidation or scale-outs when `copy_trading_mirror_sells` is enabled.
+- **Pre-Trade Anti-Rug Heuristic Screening**: Mandates anti-rug screening verification (developer launch history, creator initial supply cap, top holder concentration Gini coefficient) prior to executing any mirrored buy order.
+- **Live Stream Event Routing in TradingBot**: Integrated directly into Geyser `_handle_trade_event_update` and WebSocket `_handle_trade_update`, dispatching buy orders with reason `copy_trade_<wallet>` and sell orders with `copy_trade_exit_<wallet>`.
+- **Historical Paper Trading Replay**: Full support in `PaperTradingEngine` for simulating smart money entries and exits in historical market backtests.
+- **Preset Sensitivity Profiles**: Tailored parameters across `conservative` (win rate $\ge 70\%$, risk score $\le 30$, 0.8x scale), `balanced` (win rate $\ge 60\%$, risk score $\le 40$, 1.0x scale), and `aggressive` (win rate $\ge 50\%$, risk score $\le 50$, 1.5x scale).
+
+---
+
+## 18. Multi-RPC Dynamic Load Balancing & Latency-Based Failover Engine (FEAT-08)
+
+- **Native In-Process Connection Pooling**: Asynchronous connection pool (`RpcConnectionPool`, `RpcEndpoint`, `RpcPoolConfig` in `pumpfun_trading/infra/rpc_pool.py`) providing high-availability networking across multiple Solana RPC providers (e.g., Helius, QuickNode, Triton, Shyft, standard cluster).
+- **Rolling Latency Percentile Profiling**: Bounded sliding window latency tracking ($N = 100$ samples) calculating rolling mean ($\mu$), median ($p_{50}$), $p_{95}$, and $p_{99}$ latency metrics in real time.
+- **Dynamic Circuit Breaker State Machine**: Four-state circuit breaker (`HEALTHY`, `DEGRADED`, `OPEN`, `HALF_OPEN`) with immediate tripping on HTTP 429 rate limits or consecutive server errors ($\ge 3$), engaging a configurable cooldown backoff window ($60\text{s}$) with half-open recovery probes.
+- **Intelligent Latency-Weighted Read Routing**: Automatically directs state reads (`getLatestBlockhash`, `getBalance`, `getTokenAccountsByOwner`, `getAccountInfo`, `getSignatureStatuses`) to the lowest-latency healthy endpoint with zero-overhead transparent failover to secondary endpoints upon transient errors.
+- **Concurrent Multi-RPC Transaction Broadcasting**: Dispatches signed transactions concurrently across healthy endpoints using asynchronous scatter-gather (`broadcast_transaction`), deduplicating responses and confirming immediately upon the fastest signature response to maximize validator inclusion probability and minimize slot latency.
+- **Execution Client & Builder Integration**: Fully wired into `PumpFunExecutionClient` and `ExecutionBuilder`, supporting multi-RPC configuration via comma-separated environment variables (`PUMPFUN_RPC_URLS`, `SOLANA_RPC_URLS`) alongside single `PUMPFUN_RPC_URL`.
+- **Bot Lifecycle & Telemetry Integration**: Background periodic health checking and comprehensive telemetry reporting in `bot_status.json`, terminal dashboard metrics, and audit logs.
+---
+
+## 19. Core Runtime Decomposition & SOLID Architecture Refactoring (FEAT-12)
+
+- **Decoupled SOLID Subsystem Architecture**: Fully decomposes the monolithic `TradingBot` runtime into dedicated, single-responsibility modules adhering strictly to Python design principles (SRP, OCP, LSP, ISP, DRY).
+- **Position Lifecycle Manager (`PositionManager`)**: Encapsulates open positions, lot tracking, entry cost bases, peak price tracking, trailing stop activations, multi-tier partial take-profit state transitions, and disk serialization/restoration in `pumpfun_trading/bot/position_manager.py`.
+- **Order Execution Subsystem (`OrderExecutor` & `OrderLiquidator`)**: Encapsulates single-token buy/sell order dispatching, Jito MEV bundling, slippage retries, per-token execution locks (`_trade_locks`), direct RPC fallbacks, and emergency portfolio liquidation in `pumpfun_trading/execution/executor.py` and `liquidator.py`.
+- **Token Enrichment & Screening Engine (`TokenEnricher`)**: Encapsulates off-chain token metadata queries, creator deployment history profiling, top holder Gini concentration scoring, and thread-safe screening verdict caching (`ScreeningCache`) in `pumpfun_trading/bot/enrichment.py`.
+- **Stream Event Routing (`EventRouter`)**: Decouples stream networking from business logic, routing Yellowstone Geyser gRPC updates (`BondingCurveStateUpdate`, `TradeEventUpdate`, `CompleteEventUpdate`) and WebSocket messages to registered strategy handlers in `pumpfun_trading/bot/event_router.py`.
+- **Telemetry, Persistence & Multi-Channel Alerting**: Extracted `StatusPersistenceManager` (`pumpfun_trading/bot/persistence.py`) and `AlertDispatcher` (`pumpfun_trading/bot/alerts.py`) for atomic snapshot writing, append-only audit logging, and isolated webhook notifications.
+- **Lightweight Orchestrator Facade**: Refactors `TradingBot` in `pumpfun_trading/bot/run.py` into a clean orchestrator facade retaining 100% backward compatibility for all public APIs, CLI commands, and test suites.

@@ -2,6 +2,8 @@ import json
 import time
 from unittest.mock import AsyncMock
 
+import pytest
+
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import (
     TradingBotConfig,
@@ -10,6 +12,7 @@ from pumpfun_trading.bot.strategy import (
 )
 
 
+@pytest.mark.asyncio
 async def test_bot_kill_switches_when_health_stale_or_balance_check_fails():
     bot = TradingBot(
         "11111111111111111111111111111111111111111111111111111111111111111",
@@ -38,6 +41,7 @@ async def test_bot_kill_switches_when_health_stale_or_balance_check_fails():
     assert "risk kill: API balance check failed" in bot._last_event
 
 
+@pytest.mark.asyncio
 async def test_bot_resolves_names_and_tracks_position_metadata():
     bot = TradingBot(
         "11111111111111111111111111111111111111111111111111111111111111111",
@@ -60,6 +64,7 @@ async def test_bot_resolves_names_and_tracks_position_metadata():
     assert position["current_market_cap"] == 30.0
 
 
+@pytest.mark.asyncio
 async def test_websocket_failure_sets_risk_kill_and_reconnect_status():
     bot = TradingBot(
         "11111111111111111111111111111111111111111111111111111111111111111",
@@ -295,6 +300,7 @@ def test_bot_restores_persisted_state(tmp_path):
     assert "restored" in list(bot._recent_events)
 
 
+@pytest.mark.asyncio
 async def test_concurrent_mint_events_do_not_exceed_max_positions():
     import asyncio
 

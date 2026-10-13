@@ -10,6 +10,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.strategies.copy_trading import CopyTradeEngine
+from pumpfun_trading.strategies.graduation import GraduationEngine
 from pumpfun_trading.strategies.momentum import OrderFlowEngine
 
 
@@ -28,6 +30,8 @@ class PaperTradingEngine:
         stop_loss: float = 0.85,
         strategy_config: TradingBotConfig | None = None,
         enable_order_flow_momentum: bool = False,
+        enable_raydium_graduation: bool = False,
+        enable_copy_trading: bool = False,
     ) -> None:
         self.initial_cash = float(initial_cash)
         self.max_positions = int(max_positions)
@@ -40,7 +44,21 @@ class PaperTradingEngine:
         self.enable_order_flow_momentum = enable_order_flow_momentum or (
             bool(strategy_config.enable_momentum_signals) if strategy_config else False
         )
+        self.enable_raydium_graduation = enable_raydium_graduation or (
+            bool(strategy_config.enable_raydium_migration_sniping)
+            if strategy_config
+            else False
+        )
+        self.enable_copy_trading = enable_copy_trading or (
+            bool(strategy_config.enable_copy_trading) if strategy_config else False
+        )
         self.order_flow_engine = OrderFlowEngine()
+        self.graduation_engine = GraduationEngine()
+        self.copy_trade_engine = CopyTradeEngine()
+        if strategy_config and getattr(strategy_config, "copy_trading_wallets", None):
+            self.copy_trade_engine.registry.register_wallets(
+                list(strategy_config.copy_trading_wallets)
+            )
 
     @staticmethod
     def _coerce_records(payload: Any) -> list[dict[str, Any]]:
@@ -139,13 +157,18 @@ class PaperTradingEngine:
         )
 
     @staticmethod
-    def _buy_signal(snapshot: dict[str, Any], momentum_triggered: bool = False) -> bool:
+    def _buy_signal(
+        snapshot: dict[str, Any],
+        momentum_triggered: bool = False,
+        graduation_triggered: bool = False,
+        copy_trade_triggered: bool = False,
+    ) -> bool:
         if isinstance(snapshot.get("buy_signal"), bool):
             return bool(snapshot["buy_signal"])
         if isinstance(snapshot.get("signal"), str):
             if snapshot["signal"].lower() in {"buy", "long", "entry"}:
                 return True
-        if momentum_triggered:
+        if momentum_triggered or graduation_triggered or copy_trade_triggered:
             return True
         return bool(snapshot.get("should_buy"))
 
@@ -154,7 +177,14 @@ class PaperTradingEngine:
         if isinstance(snapshot.get("sell_signal"), bool):
             return bool(snapshot["sell_signal"])
         if isinstance(snapshot.get("signal"), str):
-            return snapshot["signal"].lower() in {"sell", "exit", "close"}
+            if snapshot["signal"].lower() in {"sell", "exit", "close"}:
+                return True
+        if (
+            snapshot.get("complete") is True
+            or snapshot.get("txType") == "complete"
+            or snapshot.get("event") == "complete"
+        ):
+            return True
         return bool(snapshot.get("should_sell"))
 
     def run(self, snapshots: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -173,17 +203,29 @@ class PaperTradingEngine:
 
             last_prices[mint] = price
 
+            ts_raw = self._snapshot_timestamp(snapshot)
+            try:
+                ts = float(ts_raw)
+            except (TypeError, ValueError):
+                ts = float(index)
+
             # Process order flow recording and momentum signal evaluation
             momentum_triggered = False
+            copy_trade_buy_triggered = False
+            copy_trade_sell_triggered = False
+            copy_wallet_label = ""
             if (
                 "txType" in snapshot
                 or "is_buy" in snapshot
                 or "sol_amount" in snapshot
                 or "solAmount" in snapshot
             ):
-                is_buy = snapshot.get("txType") == "buy" or bool(
-                    snapshot.get("is_buy", True)
-                )
+                if "txType" in snapshot:
+                    is_buy = str(snapshot.get("txType")).lower() == "buy"
+                elif "is_buy" in snapshot:
+                    is_buy = bool(snapshot.get("is_buy"))
+                else:
+                    is_buy = True
                 sol_amount = float(
                     snapshot.get("sol_amount") or snapshot.get("solAmount") or 0.0
                 )
@@ -192,11 +234,6 @@ class PaperTradingEngine:
                     or snapshot.get("traderPublicKey")
                     or "replay_trader"
                 )
-                ts_raw = self._snapshot_timestamp(snapshot)
-                try:
-                    ts = float(ts_raw)
-                except (TypeError, ValueError):
-                    ts = float(index)
 
                 self.order_flow_engine.record_trade(
                     mint=mint,
@@ -221,6 +258,55 @@ class PaperTradingEngine:
                         )
                         momentum_triggered = signal.triggered
 
+                if self.enable_copy_trading and user:
+                    copy_sig = self.copy_trade_engine.record_and_evaluate(
+                        user=user,
+                        mint=mint,
+                        sol_amount=sol_amount,
+                        is_buy=is_buy,
+                        timestamp=ts,
+                    )
+                    if copy_sig.triggered:
+                        copy_wallet_label = (
+                            copy_sig.wallet_label or copy_sig.wallet_address[:8]
+                        )
+                        if copy_sig.is_buy:
+                            copy_trade_buy_triggered = True
+                        else:
+                            copy_trade_sell_triggered = True
+
+            # Process bonding curve graduation tracking
+            graduation_triggered = False
+            real_sol = self._snapshot_float(
+                snapshot, "real_sol_reserves", "realSolReserves"
+            )
+            virt_sol = self._snapshot_float(
+                snapshot, "virtual_sol_reserves", "virtualSolReserves"
+            )
+            is_curve_complete = bool(
+                snapshot.get("complete") is True
+                or snapshot.get("txType") == "complete"
+                or snapshot.get("event") == "complete"
+            )
+
+            if real_sol > 0 or is_curve_complete:
+                self.graduation_engine.update_bonding_curve(
+                    mint=mint,
+                    bonding_curve=str(snapshot.get("bonding_curve") or ""),
+                    real_sol_reserves=real_sol,
+                    virtual_sol_reserves=virt_sol,
+                    market_cap_sol=price,
+                    complete=is_curve_complete,
+                    timestamp=ts,
+                )
+
+            if (
+                snapshot.get("event") == "raydium_pool_created"
+                or "poolKeys" in snapshot
+                or snapshot.get("raydium_pool")
+            ):
+                graduation_triggered = self.enable_raydium_graduation
+
             if mint in positions:
                 position = positions[mint]
                 performance = (price - position["entry_price"]) / position[
@@ -230,12 +316,17 @@ class PaperTradingEngine:
                     self._sell_signal(snapshot)
                     or performance >= self.take_profit
                     or performance <= -abs(self.stop_loss)
+                    or copy_trade_sell_triggered
                 )
                 if should_sell:
                     exit_value = position["quantity"] * price
                     pnl = exit_value - position["cost_basis"]
                     reason = "sell_signal"
-                    if self._sell_signal(snapshot):
+                    if copy_trade_sell_triggered:
+                        reason = f"copy_trade_exit_{copy_wallet_label}"
+                    elif is_curve_complete:
+                        reason = "bonding_curve_graduated"
+                    elif self._sell_signal(snapshot):
                         reason = "sell_signal"
                     elif performance >= self.take_profit:
                         reason = "take_profit"
@@ -263,7 +354,12 @@ class PaperTradingEngine:
 
             if (
                 mint not in positions
-                and self._buy_signal(snapshot, momentum_triggered=momentum_triggered)
+                and self._buy_signal(
+                    snapshot,
+                    momentum_triggered=momentum_triggered,
+                    graduation_triggered=graduation_triggered,
+                    copy_trade_triggered=copy_trade_buy_triggered,
+                )
                 and len(positions) < self.max_positions
             ):
                 buy_amount = max(0.0, min(cash * self.buy_fraction, cash))
@@ -281,9 +377,14 @@ class PaperTradingEngine:
                             "cost_basis": gross_cost,
                         }
                         cash -= gross_cost
-                        buy_reason = (
-                            "momentum_spike" if momentum_triggered else "buy_signal"
-                        )
+                        if copy_trade_buy_triggered:
+                            buy_reason = f"copy_trade_{copy_wallet_label}"
+                        elif graduation_triggered:
+                            buy_reason = "raydium_graduation_snipe"
+                        elif momentum_triggered:
+                            buy_reason = "momentum_spike"
+                        else:
+                            buy_reason = "buy_signal"
                         trades.append(
                             {
                                 "index": len(trades),

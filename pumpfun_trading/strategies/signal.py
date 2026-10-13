@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Optional
 
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.strategies.copy_trading import CopyTradeSignal
+from pumpfun_trading.strategies.graduation import GraduationSignal
 from pumpfun_trading.strategies.momentum import MomentumSignal
 
 
@@ -46,4 +48,46 @@ def generate_momentum_buy_signal(
     )
 
 
-__all__ = ["generate_buy_signal", "generate_momentum_buy_signal"]
+def generate_graduation_buy_signal(
+    config: TradingBotConfig,
+    *,
+    graduation_signal: GraduationSignal,
+    active_positions: int,
+    buy_attempts: int,
+    mint_seen_recently: bool = False,
+) -> bool:
+    if not config.enable_raydium_migration_sniping:
+        return False
+    return (
+        not mint_seen_recently
+        and active_positions < config.max_active_positions
+        and buy_attempts < config.max_buy_attempts_per_mint
+        and graduation_signal.triggered
+    )
+
+
+def generate_copy_trade_buy_signal(
+    config: TradingBotConfig,
+    *,
+    copy_trade_signal: CopyTradeSignal,
+    active_positions: int,
+    buy_attempts: int,
+    mint_seen_recently: bool = False,
+) -> bool:
+    if not config.enable_copy_trading:
+        return False
+    return (
+        not mint_seen_recently
+        and active_positions < config.max_active_positions
+        and buy_attempts < config.max_buy_attempts_per_mint
+        and copy_trade_signal.triggered
+        and copy_trade_signal.is_buy
+    )
+
+
+__all__ = [
+    "generate_buy_signal",
+    "generate_momentum_buy_signal",
+    "generate_graduation_buy_signal",
+    "generate_copy_trade_buy_signal",
+]

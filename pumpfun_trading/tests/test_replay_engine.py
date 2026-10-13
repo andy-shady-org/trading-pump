@@ -243,3 +243,105 @@ def test_paper_trading_engine_with_order_flow_momentum():
     assert summary["trades"][0]["reason"] == "momentum_spike"
     assert summary["trades"][1]["action"] == "sell"
     assert summary["trades"][1]["reason"] == "take_profit"
+
+
+def test_paper_trading_engine_with_raydium_graduation():
+    from pumpfun_trading.strategies.base import TradingBotConfig
+
+    config = TradingBotConfig(
+        enable_raydium_migration_sniping=True,
+        take_profit=1.5,
+        stop_loss=0.85,
+    )
+    engine = PaperTradingEngine(
+        initial_cash=100.0,
+        strategy_config=config,
+        enable_raydium_graduation=True,
+    )
+
+    snapshots = [
+        # Bonding curve progression
+        {
+            "mint": "GradToken",
+            "name": "GradToken",
+            "price": 50.0,
+            "real_sol_reserves": 50.0,
+            "timestamp": 1000,
+        },
+        # Raydium pool created -> trigger snipe
+        {
+            "mint": "GradToken",
+            "name": "GradToken",
+            "price": 69.0,
+            "event": "raydium_pool_created",
+            "timestamp": 1010,
+        },
+        # Price climbs -> take profit exit
+        {
+            "mint": "GradToken",
+            "name": "GradToken",
+            "price": 180.0,
+            "timestamp": 1020,
+        },
+    ]
+
+    summary = engine.run(snapshots)
+    assert summary["total_trades"] == 2
+    assert summary["trades"][0]["action"] == "buy"
+    assert summary["trades"][0]["reason"] == "raydium_graduation_snipe"
+    assert summary["trades"][1]["action"] == "sell"
+    assert summary["trades"][1]["reason"] == "take_profit"
+
+
+def test_paper_trading_engine_with_copy_trading():
+    from pumpfun_trading.strategies.base import TradingBotConfig
+
+    config = TradingBotConfig(
+        enable_copy_trading=True,
+        copy_trading_wallets=(
+            {
+                "address": "SmartWhale999",
+                "label": "Whale999",
+                "win_rate": 0.80,
+                "risk_score": 10.0,
+                "enabled": True,
+            },
+        ),
+        take_profit=1.5,
+        stop_loss=0.85,
+    )
+    engine = PaperTradingEngine(
+        initial_cash=100.0,
+        strategy_config=config,
+        enable_copy_trading=True,
+    )
+
+    snapshots = [
+        # Tracked smart money buy event
+        {
+            "mint": "CopyToken",
+            "name": "CopyToken",
+            "price": 20.0,
+            "txType": "buy",
+            "sol_amount": 5.0,
+            "user": "SmartWhale999",
+            "timestamp": 1000,
+        },
+        # Tracked smart money sell event (triggers exit)
+        {
+            "mint": "CopyToken",
+            "name": "CopyToken",
+            "price": 25.0,
+            "txType": "sell",
+            "sol_amount": 5.0,
+            "user": "SmartWhale999",
+            "timestamp": 1010,
+        },
+    ]
+
+    summary = engine.run(snapshots)
+    assert summary["total_trades"] == 2
+    assert summary["trades"][0]["action"] == "buy"
+    assert summary["trades"][0]["reason"] == "copy_trade_Whale999"
+    assert summary["trades"][1]["action"] == "sell"
+    assert summary["trades"][1]["reason"] == "copy_trade_exit_Whale999"

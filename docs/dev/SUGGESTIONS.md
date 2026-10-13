@@ -128,5 +128,7 @@ To maximize capital preservation, operational efficiency, and risk-adjusted alph
    - *Rationale:* Captures high-frequency alpha from trade velocity spikes and post-graduation liquidity transitions on top of existing Geyser and Jito infrastructure.
 4. **Priority 4: Sprint 14 — Smart Money Copy-Trading & Multi-RPC Failover Pool (FEAT-06, FEAT-08)**
    - *Rationale:* Diversifies signal generation through proven trader tracking while hardening execution availability with multi-provider RPC pooling.
-5. **Priority 5: Sprint 15 — Full-Featured Web Control Dashboard, FastAPI Portal & Telegram Bot (FEAT-10)**
+5. **Priority 5: Sprint 15 — Core Runtime Decomposition & SOLID Architecture Refactoring (FEAT-12)**
+   - *Rationale:* Decomposes the monolithic `run.py` runtime into decoupled modules (position manager, order executor, token enricher, event router) adhering to SOLID principles before adding Web UI complexity.
+6. **Priority 6: Sprint 16 — Full-Featured Web Control Dashboard, FastAPI Portal & Telegram Bot (FEAT-10)**
    - *Rationale:* Delivers the comprehensive browser-based command center, hot config management, and embedded documentation reader.

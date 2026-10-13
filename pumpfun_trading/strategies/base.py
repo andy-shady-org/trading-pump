@@ -60,6 +60,26 @@ class TradingBotConfig:
     momentum_min_net_inflow_sol: float = 0.5
     momentum_baseline_window_seconds: int = 300
     momentum_max_token_age_seconds: int = 1800
+    enable_raydium_migration_sniping: bool = True
+    raydium_pre_migration_sol_threshold: float = 80.0
+    raydium_buy_amount_sol: float = 0.02
+    raydium_slippage_bps: int = 500
+    raydium_priority_fee_lamports: int = 100_000
+    raydium_max_entry_latency_seconds: float = 30.0
+    enable_copy_trading: bool = True
+    copy_trading_wallets: tuple[dict[str, Any], ...] = ()
+    copy_trading_sizing_mode: str = "proportional"
+    copy_trading_scale_factor: float = 1.0
+    copy_trading_min_wallet_win_rate: float = 0.60
+    copy_trading_max_wallet_risk_score: float = 40.0
+    copy_trading_mirror_sells: bool = True
+    copy_trading_require_anti_rug_screen: bool = True
+    enable_rpc_pool: bool = True
+    rpc_endpoints: tuple[str, ...] = ()
+    rpc_pool_health_check_interval_seconds: float = 30.0
+    rpc_pool_circuit_breaker_threshold: int = 3
+    rpc_pool_circuit_breaker_cooldown_seconds: float = 60.0
+    rpc_pool_broadcast_concurrency: int = 3
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +135,26 @@ class TradingBotConfig:
             "momentum_min_net_inflow_sol": self.momentum_min_net_inflow_sol,
             "momentum_baseline_window_seconds": self.momentum_baseline_window_seconds,
             "momentum_max_token_age_seconds": self.momentum_max_token_age_seconds,
+            "enable_raydium_migration_sniping": self.enable_raydium_migration_sniping,
+            "raydium_pre_migration_sol_threshold": self.raydium_pre_migration_sol_threshold,
+            "raydium_buy_amount_sol": self.raydium_buy_amount_sol,
+            "raydium_slippage_bps": self.raydium_slippage_bps,
+            "raydium_priority_fee_lamports": self.raydium_priority_fee_lamports,
+            "raydium_max_entry_latency_seconds": self.raydium_max_entry_latency_seconds,
+            "enable_copy_trading": self.enable_copy_trading,
+            "copy_trading_wallets": list(self.copy_trading_wallets),
+            "copy_trading_sizing_mode": self.copy_trading_sizing_mode,
+            "copy_trading_scale_factor": self.copy_trading_scale_factor,
+            "copy_trading_min_wallet_win_rate": self.copy_trading_min_wallet_win_rate,
+            "copy_trading_max_wallet_risk_score": self.copy_trading_max_wallet_risk_score,
+            "copy_trading_mirror_sells": self.copy_trading_mirror_sells,
+            "copy_trading_require_anti_rug_screen": self.copy_trading_require_anti_rug_screen,
+            "enable_rpc_pool": self.enable_rpc_pool,
+            "rpc_endpoints": list(self.rpc_endpoints),
+            "rpc_pool_health_check_interval_seconds": self.rpc_pool_health_check_interval_seconds,
+            "rpc_pool_circuit_breaker_threshold": self.rpc_pool_circuit_breaker_threshold,
+            "rpc_pool_circuit_breaker_cooldown_seconds": self.rpc_pool_circuit_breaker_cooldown_seconds,
+            "rpc_pool_broadcast_concurrency": self.rpc_pool_broadcast_concurrency,
         }
 
     @classmethod
