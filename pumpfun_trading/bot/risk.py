@@ -82,25 +82,20 @@ class DailyEquityTracker:
         open_positions_valuation_sol: float = 0.0,
         now_utc: datetime.datetime | None = None,
     ) -> float:
-        """Calculates current drawdown percentage from peak daily equity or baseline."""
+        """Calculates current drawdown percentage from peak daily equity."""
         self.initialize_or_rollover(
             current_wallet_balance_sol, open_positions_valuation_sol, now_utc
         )
         current_equity = max(
             0.0, float(current_wallet_balance_sol) + float(open_positions_valuation_sol)
         )
-        reference_equity = (
-            self.starting_equity_sol
-            if self.starting_equity_sol > 0
-            else self.peak_daily_equity_sol
-        )
-        if reference_equity <= 0:
+        if self.peak_daily_equity_sol <= 0:
             return 0.0
 
         drawdown_amount = self.peak_daily_equity_sol - current_equity
         if drawdown_amount <= 0:
             return 0.0
-        return drawdown_amount / reference_equity
+        return drawdown_amount / self.peak_daily_equity_sol
 
     def evaluate_circuit_breaker(
         self,

@@ -35,18 +35,45 @@ def test_position_dataclass_properties():
         initial_token_amount=1_000_000,
         remaining_token_amount=1_000_000,
         cost_sol=0.1,
+        buy_price=0.0001,
     )
     assert pos.token_amount == 1_000_000
     assert pos.performance == 2.0
     assert pos.peak_performance == 2.0
+    assert pos.buy_price == 0.0001
+    assert pos.entry_price == 0.0001
+
+    pos.entry_price = 0.0002
+    assert pos.buy_price == 0.0002
 
     pos_dict = pos.to_dict()
     assert pos_dict["name"] == "TestToken"
     assert pos_dict["entry_market_cap"] == 30.0
+    assert pos_dict["buy_price"] == 0.0002
+    assert pos_dict["entry_price"] == 0.0002
 
     restored = Position.from_dict("Mint111", pos_dict)
     assert restored.mint == "Mint111"
     assert restored.performance == 2.0
+    assert restored.buy_price == 0.0002
+    assert restored.entry_price == 0.0002
+
+
+def test_position_manager_buy_price_recording(base_config: TradingBotConfig):
+    pm = PositionManager(base_config)
+    pos = pm.record_buy(
+        mint="MintBuyP",
+        token_amount=2_000_000,
+        cost_sol=0.2,
+        entry_market_cap=40.0,
+        name="BuyPToken",
+        buy_price=0.0001,
+    )
+    assert pos["buy_price"] == 0.0001
+    assert pos["entry_price"] == 0.0001
+    fetched = pm.get_position("MintBuyP")
+    assert fetched is not None
+    assert fetched["buy_price"] == 0.0001
 
 
 def test_position_manager_buy_and_get(base_config: TradingBotConfig):

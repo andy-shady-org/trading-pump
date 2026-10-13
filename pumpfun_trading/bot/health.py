@@ -19,6 +19,8 @@ def health_ok_for_trading(bot: Any) -> bool:
         bot._health_ok = False
         bot._risk_killed = True
         bot._last_event = "risk kill: health timeout"
+        if hasattr(bot, "_record_event"):
+            bot._record_event("risk kill: health timeout", alert=True)
         return False
     return True
 
@@ -40,5 +42,7 @@ def update_health_state(bot: Any) -> None:
             bot._risk_killed = True
             bot._last_status = "health timeout"
             bot._last_event = "risk kill: stream stale"
+            if hasattr(bot, "_record_event"):
+                bot._record_event("risk kill: stream stale", alert=True)
     else:
         mark_health_check(bot)

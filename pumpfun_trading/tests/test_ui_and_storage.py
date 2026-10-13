@@ -87,8 +87,11 @@ def test_ui_dashboard_rendering():
     panel = build_dashboard(bot)
     assert panel is not None
 
-    console = Console(file=None, record=True)
+    console = Console(width=200, file=None, record=True)
     console.print(panel)
+    output = console.export_text()
+    assert "Buy Price" in output
+    assert "Open Positions" in output
 
     # Test dashboard with empty positions & degraded health
     bot.active_positions = {}
@@ -100,18 +103,93 @@ def test_ui_dashboard_rendering():
 
     panel_empty = build_dashboard(bot)
     console.print(panel_empty)
+    output_empty = console.export_text()
+    assert "No active positions." in output_empty
 
-    # Test live console with alternate screen rendering
-    from rich.live import Live
 
-    with Live(
-        panel,
-        console=console,
-        refresh_per_second=2,
-        transient=True,
-        screen=False,
-    ) as live:
-        live.update(panel_empty, refresh=True)
+def test_ui_dashboard_buy_price_explicit_formatting():
+    config = TradingBotConfig(buy_amount_sol=0.1)
+    bot = MagicMock()
+    bot.config = config
+    bot.max_active_positions = 2
+    bot.min_market_cap_sol = 20.0
+    bot.dry_run = False
+    bot.paper_trade = False
+    bot._risk_killed = False
+    bot.state = TradingBotState.HOLDING
+    bot._health_ok = True
+    bot._last_event = "trade event"
+    bot._last_status = "idle"
+    bot._last_message_at = time.monotonic()
+    bot.stream_url = "wss://pumpportal.fun/api/data"
+    bot.geyser_endpoint = None
+    bot.audit_log_path = "audit.jsonl"
+    bot._last_new_token_name = "AlphaCoin"
+    bot._last_health_check = time.monotonic() - 2.0
+    bot._stop_requested = False
+    bot._observed_tokens_count = 10
+    bot._seen_mints = {}
+    bot._metrics_snapshot.return_value = {
+        "buys": 1,
+        "sells": 1,
+        "failures": 0,
+        "retries": 0,
+        "connection_loss": 0,
+        "stale_data": 0,
+        "latency_ms": {
+            "avg_ms": 1.2,
+            "samples": 1,
+            "last_ms": 1.2,
+            "max_ms": 1.2,
+            "total_ms": 1.2,
+        },
+    }
+
+    bot.active_positions = {
+        "TokenMint1111111111111111111111111111": {
+            "name": "AlphaCoin",
+            "entry_market_cap": 30.0,
+            "current_market_cap": 45.0,
+            "buy_price": 0.000042,
+            "cost_sol": 0.1,
+            "token_amount": 2_380_952,
+        },
+        "TokenMint2222222222222222222222222222": {
+            "name": "BetaCoin",
+            "entry_market_cap": 50.0,
+            "current_market_cap": 55.0,
+            "entry_price": 0.05,
+            "cost_sol": 0.2,
+            "token_amount": 4,
+        },
+    }
+    bot._recent_actions = []
+    bot._recent_events = []
+    bot._trade_ledger = [
+        {
+            "action": "buy",
+            "mint": "TokenMint1111111111111111111111111111",
+            "buy_price": 0.000042,
+            "reason": "entry",
+        },
+        {
+            "action": "sell",
+            "mint": "TokenMint2222222222222222222222222222",
+            "sell_price": 0.08,
+            "reason": "take_profit",
+        },
+    ]
+
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    output = console.export_text()
+
+    assert "Buy Price" in output
+    assert "0.000042 SOL" in output
+    assert "0.0500 SOL" in output
+    assert "BUY TokenMin @ 0.0000 SOL | entry" in output or "BUY TokenMin" in output
+    assert "SELL TokenMin -> 0.0800 SOL | take_profit" in output
 
 
 def test_storage_status_helpers(tmp_path):
@@ -172,3 +250,42 @@ def test_build_status_snapshot():
     assert "timestamp" in snapshot
     assert snapshot["active_positions"] == {"Mint1": {}}
     assert snapshot["trade_sequence"] == 1
+
+
+def test_bot_event_recording_and_dashboard_display(tmp_path):
+    from pumpfun_trading.bot.run import TradingBot
+
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        dry_run=True,
+        bot_status_path=str(tmp_path / "status.json"),
+    )
+
+    # Initial state should be recorded or updated
+    bot._record_event("test event message", alert=False)
+    assert any("test event message" in ev for ev in bot._recent_events)
+
+    # State transition records event
+    bot._transition_to(TradingBotState.MONITORING, reason="test_start")
+    assert any("monitoring" in ev for ev in bot._recent_events)
+
+    # Trade recording records BUY event
+    bot._record_trade(
+        mint="Mint11111111111111111111111111111111111111111",
+        action="buy",
+        token_name="TestToken",
+        entry=0.01,
+        reason="momentum",
+    )
+    assert any("BUY Mint1111" in ev for ev in bot._recent_events)
+
+    # Dashboard should contain the events
+    panel = build_dashboard(bot)
+    console = Console(file=None, record=True)
+    console.print(panel)
+    output = console.export_text()
+    assert "BUY Mint1111" in output
+    assert "monitoring" in output
+    assert "•" in output

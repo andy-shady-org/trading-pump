@@ -128,6 +128,7 @@ def build_dashboard(bot: Any) -> Panel:
     positions_table.add_column("Mint", style="green")
     positions_table.add_column("Entry MC", justify="right")
     positions_table.add_column("Current MC", justify="right")
+    positions_table.add_column("Buy Price", justify="right")
     positions_table.add_column("Cost", justify="right")
     positions_table.add_column("Perf", justify="right")
     positions_table.add_column("Reason", style="yellow")
@@ -143,6 +144,31 @@ def build_dashboard(bot: Any) -> Panel:
                 or getattr(bot.config, "buy_amount_sol", 0.0)
                 or 0.0
             )
+            raw_tokens = (
+                position.get("initial_token_amount")
+                or position.get("token_amount")
+                or position.get("remaining_token_amount")
+                or 0
+            )
+            buy_price = float(
+                position.get("buy_price")
+                or position.get("entry_price")
+                or position.get("price")
+                or (
+                    cost / float(raw_tokens)
+                    if raw_tokens and float(raw_tokens) > 0 and cost > 0
+                    else 0.0
+                )
+                or 0.0
+            )
+            if buy_price > 0:
+                buy_price_str = (
+                    f"{buy_price:.6f} SOL"
+                    if buy_price < 0.0001
+                    else f"{buy_price:.4f} SOL"
+                )
+            else:
+                buy_price_str = "-"
             performance = (current / entry) if entry > 0 else 1.0
             reason = str(position.get("reason") or "watch")
             positions_table.add_row(
@@ -150,12 +176,15 @@ def build_dashboard(bot: Any) -> Panel:
                 mint[:8] + "...",
                 f"{entry:.2f} SOL",
                 f"{current:.2f} SOL",
+                buy_price_str,
                 f"{cost:.4f} SOL",
                 f"{performance:.2%}",
                 reason,
             )
     else:
-        positions_table.add_row("No active positions.", "-", "-", "-", "-", "-", "-")
+        positions_table.add_row(
+            "No active positions.", "-", "-", "-", "-", "-", "-", "-"
+        )
 
     runtime = Table.grid(expand=True)
     runtime.add_column(justify="left")
@@ -204,13 +233,25 @@ def build_dashboard(bot: Any) -> Panel:
         action = record.get("action", "trade")
         reason = record.get("reason") or "unknown"
         mint = record.get("mint", "-")[:8]
-        if action == "buy":
+        if action == "buy" or "buy" in action:
+            buy_val = float(
+                record.get("buy_price")
+                or record.get("entry_price")
+                or record.get("entry")
+                or 0.0
+            )
             ledger_lines.append(
-                f"{action.upper()} {mint} @ {record.get('entry')} | {reason}"
+                f"{action.upper()} {mint} @ {buy_val:.4f} SOL | {reason}"
             )
         else:
+            sell_val = float(
+                record.get("sell_price")
+                or record.get("exit_price")
+                or record.get("exit")
+                or 0.0
+            )
             ledger_lines.append(
-                f"{action.upper()} {mint} -> {record.get('exit')} | {reason}"
+                f"{action.upper()} {mint} -> {sell_val:.4f} SOL | {reason}"
             )
     if not ledger_lines:
         ledger_lines = ["No trades recorded yet."]

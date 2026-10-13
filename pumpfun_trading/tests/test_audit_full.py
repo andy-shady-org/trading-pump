@@ -112,3 +112,74 @@ def test_audit_summarize_render_and_export(tmp_path):
     export_path = tmp_path / "out.json"
     export_audit_records(records, str(export_path))
     assert export_path.exists()
+
+
+def test_audit_buy_and_sell_prices_rendering_and_filters():
+    records = [
+        {
+            "timestamp": 1700000000.0,
+            "type": "trade",
+            "state": "buying",
+            "mint": "MintBuy1",
+            "payload": {
+                "token_name": "BuyCoin",
+                "action": "buy",
+                "buy_price": 0.000035,
+                "reason": "signal_entry",
+                "status": "success",
+            },
+        },
+        {
+            "timestamp": 1700000100.0,
+            "type": "trade",
+            "state": "selling",
+            "mint": "MintSell1",
+            "payload": {
+                "token_name": "SellCoin",
+                "action": "sell",
+                "buy_price": 0.000035,
+                "sell_price": 0.000085,
+                "reason": "take_profit",
+                "status": "success",
+            },
+        },
+        {
+            "timestamp": 1700000200.0,
+            "type": "trade",
+            "state": "selling",
+            "mint": "MintSell2",
+            "payload": {
+                "token_name": "BigCoin",
+                "action": "sell",
+                "entry_price": 1.25,
+                "exit_price": 2.50,
+                "reason": "moonbag_trailing",
+                "status": "success",
+            },
+        },
+    ]
+
+    console = Console(width=200, file=None, record=True)
+    render_audit_table(records, console)
+    rendered = console.export_text()
+
+    assert "Buy Price" in rendered
+    assert "Sell Price" in rendered
+    assert "0.000035 SOL" in rendered
+    assert "0.000085 SOL" in rendered
+    assert "1.2500 SOL" in rendered
+    assert "2.5000 SOL" in rendered
+
+    # Filter by min_buy_price
+    assert len(filter_audit_records(records, min_buy_price=0.5)) == 1
+    # Filter by max_buy_price
+    assert len(filter_audit_records(records, max_buy_price=0.0001)) == 2
+    # Filter by min_sell_price
+    assert len(filter_audit_records(records, min_sell_price=1.0)) == 1
+    # Filter by max_sell_price
+    assert len(filter_audit_records(records, max_sell_price=0.001)) == 1
+    # Filter combined
+    assert (
+        len(filter_audit_records(records, min_buy_price=0.00001, max_sell_price=0.0001))
+        == 1
+    )

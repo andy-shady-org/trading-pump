@@ -28,6 +28,7 @@ class Position:
     remaining_token_amount: int
     cost_sol: float = 0.0
     entry_sol: float = 0.0
+    buy_price: float = 0.0
     buy_signature: str | None = None
     first_seen: float = field(default_factory=time.time)
     entry_reason: str = "entry"
@@ -37,6 +38,14 @@ class Position:
     moonbag_active: bool = False
     trailing_stop_active: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def entry_price(self) -> float:
+        return self.buy_price
+
+    @entry_price.setter
+    def entry_price(self, value: float) -> None:
+        self.buy_price = float(value)
 
     @property
     def token_amount(self) -> int:
@@ -69,6 +78,8 @@ class Position:
             "token_amount": self.remaining_token_amount,
             "cost_sol": self.cost_sol,
             "entry_sol": self.entry_sol or self.cost_sol,
+            "buy_price": self.buy_price,
+            "entry_price": self.buy_price,
             "buy_signature": self.buy_signature,
             "first_seen": self.first_seen,
             "entry_reason": self.entry_reason,
@@ -102,6 +113,17 @@ class Position:
         )
         cost_sol = float(data.get("cost_sol") or data.get("entry_sol", 0.0) or 0.0)
         entry_sol = float(data.get("entry_sol") or data.get("cost_sol", 0.0) or 0.0)
+        buy_p = float(
+            data.get("buy_price")
+            or data.get("entry_price")
+            or data.get("price")
+            or (
+                cost_sol / initial_tokens
+                if initial_tokens > 0 and cost_sol > 0
+                else 0.0
+            )
+            or 0.0
+        )
 
         return cls(
             mint=str(mint),
@@ -113,6 +135,7 @@ class Position:
             remaining_token_amount=remaining_tokens,
             cost_sol=cost_sol,
             entry_sol=entry_sol,
+            buy_price=buy_p,
             buy_signature=data.get("buy_signature"),
             first_seen=float(data.get("first_seen") or time.time()),
             entry_reason=str(data.get("entry_reason") or "entry"),
@@ -181,8 +204,25 @@ class PositionManager:
         buy_signature: str | None = None,
         reason: str = "entry",
         dry_run: bool = False,
+        buy_price: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        meta_price = (
+            metadata.get("buy_price")
+            or metadata.get("entry_price")
+            or metadata.get("price")
+            if metadata
+            else None
+        )
+        if buy_price is not None:
+            effective_buy_price = float(buy_price)
+        elif meta_price is not None:
+            effective_buy_price = float(meta_price)
+        elif int(token_amount) > 0 and float(cost_sol) > 0:
+            effective_buy_price = float(cost_sol) / int(token_amount)
+        else:
+            effective_buy_price = float(cost_sol or 0.0)
+
         pos_dict: dict[str, Any] = {
             "name": name.strip() or mint,
             "entry_market_cap": float(entry_market_cap or 30.0),
@@ -193,6 +233,8 @@ class PositionManager:
             "token_amount": int(token_amount),
             "cost_sol": float(cost_sol),
             "entry_sol": float(cost_sol),
+            "buy_price": float(effective_buy_price),
+            "entry_price": float(effective_buy_price),
             "buy_signature": buy_signature,
             "first_seen": time.time(),
             "entry_reason": reason or "entry",

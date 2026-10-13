@@ -46,6 +46,68 @@ def _payload_for(record: dict[str, Any]) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _extract_buy_price(record: dict[str, Any]) -> float | None:
+    payload = _payload_for(record)
+    val = (
+        payload.get("buy_price")
+        or payload.get("entry_price")
+        or record.get("buy_price")
+        or record.get("entry_price")
+        or (
+            payload.get("entry")
+            if str(record.get("type") or payload.get("action") or "").lower()
+            in {"trade", "buy", "raydium_buy"}
+            or "buy" in str(payload.get("action", ""))
+            else None
+        )
+        or (
+            record.get("entry")
+            if str(record.get("type") or record.get("action") or "").lower()
+            in {"trade", "buy", "raydium_buy"}
+            or "buy" in str(record.get("action", ""))
+            else None
+        )
+    )
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return f if f > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_sell_price(record: dict[str, Any]) -> float | None:
+    payload = _payload_for(record)
+    val = (
+        payload.get("sell_price")
+        or payload.get("exit_price")
+        or record.get("sell_price")
+        or record.get("exit_price")
+        or (
+            payload.get("exit")
+            if str(record.get("type") or payload.get("action") or "").lower()
+            in {"trade", "sell", "partial_sell"}
+            or "sell" in str(payload.get("action", ""))
+            else None
+        )
+        or (
+            record.get("exit")
+            if str(record.get("type") or record.get("action") or "").lower()
+            in {"trade", "sell", "partial_sell"}
+            or "sell" in str(record.get("action", ""))
+            else None
+        )
+    )
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return f if f > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def load_audit_records(path: str | Path) -> list[dict[str, Any]]:
     file_path = Path(path)
     if not file_path.exists():
@@ -76,6 +138,10 @@ def filter_audit_records(
     mint_name: str | None = None,
     reason: str | None = None,
     status: str | None = None,
+    min_buy_price: float | None = None,
+    max_buy_price: float | None = None,
+    min_sell_price: float | None = None,
+    max_sell_price: float | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     filtered: list[dict[str, Any]] = []
@@ -137,6 +203,26 @@ def filter_audit_records(
         if status and status_value != status.strip().lower():
             continue
 
+        buy_price_val = _extract_buy_price(record)
+        if min_buy_price is not None and (
+            buy_price_val is None or buy_price_val < min_buy_price
+        ):
+            continue
+        if max_buy_price is not None and (
+            buy_price_val is None or buy_price_val > max_buy_price
+        ):
+            continue
+
+        sell_price_val = _extract_sell_price(record)
+        if min_sell_price is not None and (
+            sell_price_val is None or sell_price_val < min_sell_price
+        ):
+            continue
+        if max_sell_price is not None and (
+            sell_price_val is None or sell_price_val > max_sell_price
+        ):
+            continue
+
         filtered.append(record)
 
     if limit is not None:
@@ -194,6 +280,8 @@ def render_audit_table(
     table.add_column("State")
     table.add_column("Mint Name")
     table.add_column("Mint")
+    table.add_column("Buy Price", justify="right")
+    table.add_column("Sell Price", justify="right")
     table.add_column("Reason")
     table.add_column("Status")
 
@@ -211,6 +299,20 @@ def render_audit_table(
             or "-"
         )
         mint_address = str(payload.get("mint") or record.get("mint") or "-")
+        buy_p = _extract_buy_price(record)
+        sell_p = _extract_sell_price(record)
+
+        buy_p_str = (
+            (f"{buy_p:.6f} SOL" if buy_p < 0.0001 else f"{buy_p:.4f} SOL")
+            if buy_p is not None
+            else "-"
+        )
+        sell_p_str = (
+            (f"{sell_p:.6f} SOL" if sell_p < 0.0001 else f"{sell_p:.4f} SOL")
+            if sell_p is not None
+            else "-"
+        )
+
         table.add_row(
             _format_record_time(record),
             str(record.get("type") or "-"),
@@ -222,6 +324,8 @@ def render_audit_table(
             ),
             mint_name,
             mint_address,
+            buy_p_str,
+            sell_p_str,
             str(payload.get("reason") or payload.get("trade_reason") or "-"),
             str(payload.get("status") or payload.get("outcome") or "-"),
         )

@@ -19,6 +19,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-09** | Low | Tooling / Pytest Config | **RESOLVED** | Pytest addopts decoupled from forced pytest-cov flags in standalone environments |
 | **BUG-10** | Low | Logging / Formatting | **RESOLVED** | Console ANSI stripping formatter (`AnsiStrippingFormatter`) & `NO_COLOR` / non-TTY compliance |
 | **BUG-11** | Medium | UI / Terminal Rendering | **RESOLVED** | Alternate screen buffer (`screen=self.console.is_terminal`) & overview panel padding prevent duplicate header scroll artifacts |
+| **BUG-12** | High | Bot / Risk Management | **RESOLVED** | Trailing peak equity denominator in portfolio drawdown calculation (`DailyEquityTracker.calculate_drawdown`) |
 
 ---
 
@@ -51,6 +52,13 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Description:** In the main WebSocket loop, incoming trade/mint events trigger `asyncio.create_task(self.handle_event(data))` without limiting the number of concurrent tasks or checking active positions with an atomic lock. If multiple token mint events arrive in the same block or burst, multiple concurrent tasks can pass the `active_positions < max_active_positions` check simultaneously.
 * **Impact:** The bot can exceed maximum active positions and commit excess wallet balance into positions, violating portfolio risk limits.
 * **Remedy:** Use an `asyncio.Semaphore` or acquire `self._execution_lock` before evaluating active positions and initiating buy sequences.
+
+### BUG-12: Erroneous Portfolio Drawdown Denominator Causes Premature Circuit Breaker Liquidation [RESOLVED]
+* **Location:** `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.calculate_drawdown`, `DailyEquityTracker.evaluate_circuit_breaker`)
+* **Status:** **Fixed** — Updated `DailyEquityTracker.calculate_drawdown` to divide peak equity drop (`peak_daily_equity_sol - current_equity`) by `peak_daily_equity_sol` rather than `starting_equity_sol`.
+* **Description:** When calculating portfolio drawdown percentage in `DailyEquityTracker.calculate_drawdown`, the numerator was calculated as the drop from the daily peak (`peak_daily_equity_sol - current_equity`), but the denominator used `starting_equity_sol` (baseline). If a portfolio achieved substantial intraday gains from a modest starting baseline (e.g., from 0.20 SOL up to 37.38 SOL), any minor normal pullback (e.g., 0.69 SOL, representing only a ~1.85% retracement from peak) was divided by the starting capital (0.20 SOL), yielding an artificially inflated drawdown percentage (345.18%).
+* **Impact:** The inflated drawdown calculation falsely breached the configured `max_daily_drawdown_pct` threshold (e.g., 15–20%), prematurely triggering emergency circuit breakers, locking out trading, and force-liquidating active open positions during profitable runs.
+* **Remedy:** Use `peak_daily_equity_sol` as the reference denominator for trailing peak drawdown calculations, ensuring drawdown percentage accurately reflects intraday equity retracement relative to peak equity.
 
 ---
 

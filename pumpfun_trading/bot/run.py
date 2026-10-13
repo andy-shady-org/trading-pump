@@ -291,7 +291,7 @@ class TradingBot:
         self._display_live: Optional[Live] = None
         self._trade_ledger: list[dict[str, Any]] = []
         self._recent_actions: deque[dict[str, Any]] = deque(maxlen=50)
-        self._recent_events: deque[str] = deque(maxlen=8)
+        self._recent_events: deque[str] = deque(maxlen=20)
         self._trade_sequence = 0
         self._health_ok = True
         self._risk_killed = False
@@ -617,7 +617,7 @@ class TradingBot:
 
         recent_events = snapshot.get("recent_events", [])
         if isinstance(recent_events, list):
-            self._recent_events = deque(maxlen=8)
+            self._recent_events = deque(maxlen=20)
             for item in recent_events:
                 self._recent_events.append(str(item))
 
@@ -728,6 +728,11 @@ class TradingBot:
         }
         self._recent_actions.append(event)
         self._write_audit_record("state_transition", event)
+        self._record_event(
+            f"state: {current.value} -> {next_state.value}"
+            + (f" ({reason})" if reason else ""),
+            alert=False,
+        )
         self._write_status_snapshot()
         if self.alert_enabled and next_state in {
             TradingBotState.BUYING,
@@ -793,6 +798,7 @@ class TradingBot:
     def request_shutdown(self) -> None:
         self._stop_requested = True
         self._last_status = "shutdown requested"
+        self._record_event("shutdown requested", alert=False)
         if hasattr(self, "geyser_client") and self.geyser_client is not None:
             self.geyser_client._running = False
         if self.state != TradingBotState.SHUTDOWN:
@@ -838,15 +844,44 @@ class TradingBot:
         reason: str | None = None,
         trade_id: str | None = None,
         position_id: str | None = None,
+        buy_price: float | None = None,
+        sell_price: float | None = None,
+        entry_price: float | None = None,
+        exit_price: float | None = None,
     ) -> None:
         trade_id = trade_id or position_id or self._next_trade_id()
         position_id = position_id or trade_id
+        pos_info = self.active_positions.get(mint, {})
         name = (
             token_name
             or mint_name
-            or self.active_positions.get(mint, {}).get("name")
+            or pos_info.get("name")
             or (self._last_new_token_name if self._last_new_token == mint else None)
         )
+        if buy_price is not None:
+            effective_buy_price = float(buy_price)
+        elif entry_price is not None:
+            effective_buy_price = float(entry_price)
+        elif entry is not None and float(entry) > 0:
+            effective_buy_price = float(entry)
+        else:
+            effective_buy_price = float(
+                pos_info.get("buy_price")
+                or pos_info.get("entry_price")
+                or pos_info.get("cost_sol")
+                or pos_info.get("entry_sol")
+                or 0.0
+            )
+
+        if sell_price is not None:
+            effective_sell_price = float(sell_price)
+        elif exit_price is not None:
+            effective_sell_price = float(exit_price)
+        elif exit_value is not None:
+            effective_sell_price = float(exit_value)
+        else:
+            effective_sell_price = 0.0
+
         record = {
             "id": trade_id,
             "trade_id": trade_id,
@@ -860,6 +895,10 @@ class TradingBot:
             "side": action,
             "entry": float(entry or 0.0),
             "exit": float(exit_value or 0.0),
+            "buy_price": float(effective_buy_price),
+            "sell_price": float(effective_sell_price),
+            "entry_price": float(effective_buy_price),
+            "exit_price": float(effective_sell_price),
             "reason": reason or "",
             "timestamp": time.time(),
         }
@@ -869,8 +908,16 @@ class TradingBot:
         self._recent_actions.append(record)
         if action == "buy" or "buy" in action:
             self._record_metric("buys")
+            self._record_event(
+                f"BUY {mint[:8]} @ {record['entry']:.4f} SOL ({name or mint[:8]})",
+                alert=True,
+            )
         elif "sell" in action:
             self._record_metric("sells")
+            self._record_event(
+                f"SELL {mint[:8]} -> {record['exit']:.4f} SOL ({reason or 'exit'})",
+                alert=True,
+            )
         self._write_audit_record("trade", record)
         self._write_status_snapshot()
 
@@ -910,17 +957,18 @@ class TradingBot:
             snapshot["latency_ms"] = dict(self._metrics["latency_ms"])
         return snapshot
 
-    def _record_event(self, event_message: str) -> None:
+    def _record_event(self, event_message: str, alert: bool = True) -> None:
         formatted = f"[{time.strftime('%H:%M:%S')}] {event_message}"
         self._recent_events.append(formatted)
         self._last_event = event_message
-        if getattr(self, "alert_enabled", False):
+        if alert and getattr(self, "alert_enabled", False):
             self._send_alert(event_message)
 
     def _record_stale_data(self, reason: str = "") -> None:
         self._record_metric("stale_data")
         if reason:
             self._log(f"Stale data recorded: {reason}", level=logging.WARNING)
+            self._record_event(f"stale data: {reason}", alert=False)
 
     def _record_failure(
         self, reason: str = "", category: str = "", **kwargs: Any
@@ -928,9 +976,11 @@ class TradingBot:
         self._record_metric("failures")
         msg = category or reason or "unknown"
         self._log(f"Failure recorded: {msg}", level=logging.WARNING)
+        self._record_event(f"failure: {msg}", alert=False)
 
     def _record_connection_loss(self) -> None:
         self._record_metric("connection_loss")
+        self._record_event("stream connection loss", alert=False)
 
     def _next_position_id(self) -> str:
         return self._next_trade_id()
@@ -964,6 +1014,10 @@ class TradingBot:
             new_baseline_sol=baseline, force=force
         )
         self._risk_killed = False
+        self._record_event(
+            f"circuit breaker reset (baseline: {baseline:.2f} SOL)",
+            alert=True,
+        )
         self._transition_to(TradingBotState.MONITORING, reason="circuit_breaker_reset")
 
     def _check_risk_limits(
@@ -1105,6 +1159,18 @@ class TradingBot:
                     ),
                     "peak_market_cap": float(
                         position.get("peak_market_cap", 0.0) or 0.0
+                    ),
+                    "buy_price": float(
+                        position.get("buy_price")
+                        or position.get("entry_price")
+                        or position.get("cost_sol", 0.0)
+                        or 0.0
+                    ),
+                    "entry_price": float(
+                        position.get("buy_price")
+                        or position.get("entry_price")
+                        or position.get("cost_sol", 0.0)
+                        or 0.0
                     ),
                     "token_amount": int(
                         position.get("remaining_token_amount")
@@ -1395,6 +1461,7 @@ class TradingBot:
                 "reason": reason,
                 "slippage_bps": slippage,
             }
+            self._record_event(f"exit retry #1: {mint[:8]} ({reason})", alert=False)
         else:
             entry = self._exit_retry_queue[mint]
             entry["retries"] = (
@@ -1415,6 +1482,10 @@ class TradingBot:
                 self.base_exit_slippage_bps + (entry["retry_count"] * 500),
             )
             entry["next_retry_at"] = time.monotonic() + (2.0 ** entry["retry_count"])
+            self._record_event(
+                f"exit retry #{entry['retry_count']}: {mint[:8]} ({reason})",
+                alert=False,
+            )
 
     async def _process_exit_retry_queue(self, websocket: Any = None) -> None:
         now = time.monotonic()
@@ -1590,13 +1661,34 @@ class TradingBot:
         )
         self.active_positions = self.position_manager.get_all_positions()
 
+        pos_entry = float(
+            position.get("buy_price")
+            or position.get("entry_price")
+            or position.get("cost_sol")
+            or position.get("entry_sol")
+            or 0.0
+        )
+        sell_p = float(
+            getattr(exec_res, "amount_sol", 0.0)
+            or getattr(exec_res, "sol_amount", 0.0)
+            or (
+                float(getattr(exec_res, "min_sol_lamports", 0)) / 1e9
+                if getattr(exec_res, "min_sol_lamports", 0) > 0
+                else 0.0
+            )
+            or 0.0
+        )
+
         if is_partial:
             self._record_trade(
                 mint=mint,
                 action="partial_sell",
                 token_name=pos_name,
                 mint_name=pos_name,
-                entry=0.0,
+                entry=pos_entry,
+                exit_value=sell_p,
+                buy_price=pos_entry,
+                sell_price=sell_p,
                 reason=reason,
             )
             self._transition_to(
@@ -1610,7 +1702,10 @@ class TradingBot:
             action="sell",
             token_name=pos_name,
             mint_name=pos_name,
-            entry=0.0,
+            entry=pos_entry,
+            exit_value=sell_p,
+            buy_price=pos_entry,
+            sell_price=sell_p,
             reason=reason,
         )
         self._transition_to(TradingBotState.MONITORING, reason=f"sell_complete {mint}")
@@ -1720,7 +1815,15 @@ class TradingBot:
                     self._log(
                         f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
                     )
-                    self._last_event = f"screen_rejected {mint[:8]}"
+                    reasons_str = (
+                        screening_verdict.reasons[0]
+                        if screening_verdict.reasons
+                        else "anti-rug"
+                    )
+                    self._record_event(
+                        f"screen_rejected {mint[:8]}: {reasons_str}",
+                        alert=False,
+                    )
                     return
 
                 if not self._should_buy(
@@ -2051,7 +2154,16 @@ class TradingBot:
             self._log(
                 f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
             )
+            reasons_str = (
+                screening_verdict.reasons[0]
+                if screening_verdict.reasons
+                else "anti-rug"
+            )
             self._last_event = f"screen_rejected {mint[:8]}"
+            self._record_event(
+                f"screen_rejected {mint[:8]}: {reasons_str}",
+                alert=False,
+            )
             return
 
         bought = await self._buy_token(
@@ -2319,6 +2431,9 @@ class TradingBot:
                     async with session.ws_connect(self.stream_url) as ws:
                         self._active_ws = ws
                         self._log(f"Connected to WebSocket stream at {self.stream_url}")
+                        self._record_event(
+                            f"stream connected: {self.stream_url}", alert=False
+                        )
                         self._last_message_at = time.monotonic()
                         self._circuit_breaker_tripped = False
                         self._stream_consecutive_failures = 0
@@ -2474,6 +2589,10 @@ class TradingBot:
         self._last_message_at = time.monotonic()
         self._last_health_check = time.monotonic()
 
+        self._record_event(
+            f"bot started ({self.config.strategy_preset} preset, {'paper' if self.paper_trade else 'live'})",
+            alert=False,
+        )
         self._transition_to(TradingBotState.MONITORING, reason="bot_started")
         await self._reconcile_positions_on_startup()
 
@@ -2508,6 +2627,9 @@ class TradingBot:
                     )
                 if hasattr(self.geyser_client, "start"):
                     await self.geyser_client.start()
+                self._record_event(
+                    f"geyser stream started: {self.geyser_endpoint}", alert=False
+                )
                 async for event in self.geyser_client.listen():
                     if self._stop_requested:
                         break

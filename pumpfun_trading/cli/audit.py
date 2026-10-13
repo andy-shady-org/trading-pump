@@ -39,6 +39,30 @@ def build_parser(
         "--status", default=None, help="Filter by record outcome/status"
     )
     parser.add_argument(
+        "--min-buy-price",
+        type=float,
+        default=None,
+        help="Minimum buy price in SOL",
+    )
+    parser.add_argument(
+        "--max-buy-price",
+        type=float,
+        default=None,
+        help="Maximum buy price in SOL",
+    )
+    parser.add_argument(
+        "--min-sell-price",
+        type=float,
+        default=None,
+        help="Minimum sell price in SOL",
+    )
+    parser.add_argument(
+        "--max-sell-price",
+        type=float,
+        default=None,
+        help="Maximum sell price in SOL",
+    )
+    parser.add_argument(
         "--limit", type=int, default=None, help="Maximum records to return"
     )
     parser.add_argument(
@@ -77,6 +101,10 @@ def run_audit_cli(args: argparse.Namespace | None = None) -> None:
         mint_name=getattr(args, "mint_name", None),
         reason=args.reason,
         status=args.status,
+        min_buy_price=getattr(args, "min_buy_price", None),
+        max_buy_price=getattr(args, "max_buy_price", None),
+        min_sell_price=getattr(args, "min_sell_price", None),
+        max_sell_price=getattr(args, "max_sell_price", None),
         limit=args.limit,
     )
 

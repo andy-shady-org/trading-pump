@@ -58,15 +58,13 @@ To prevent over-exposure to idiosyncratic microcap volatility, portfolio limits 
 
 ## 3. Daily Hard-Stop Circuit Breakers (FEAT-09)
 
-To guard against high-volatility market crashes and cascading token exploit waves, the bot monitors cumulative daily portfolio drawdown:
+To guard against high-volatility market crashes and cascading token exploit waves, the bot monitors cumulative daily portfolio drawdown from intraday peak equity:
 
-$$\text{Daily PnL} = \text{Realized Daily PnL} + \text{Unrealized Open PnL}$$
-
-$$\text{Daily Drawdown \%} = \frac{-\text{Daily PnL}}{\text{Starting Day Equity}} \times 100$$
+$$\text{Daily Drawdown \%} = \frac{\text{Peak Daily Equity} - \text{Current Equity}}{\text{Peak Daily Equity}} \times 100$$
 
 ### Circuit Breaker Trigger Actions
 
-If daily drawdown breaches the configured threshold (default: $15.0\%$ of starting daily equity):
+If daily drawdown breaches the configured threshold (default: $15.0\%$ of peak daily equity):
 1. **Immediate Ingestion Halting**: Ingestion of new token mint events and buy triggers is locked.
 2. **Emergency Position Liquidation**: An automated panic liquidation command is dispatched, enqueuing market sell orders across all open positions.
 3. **24-Hour Trading Lockout**: The bot transitions to a locked state for 24 hours, requiring explicit operator reset or next UTC day rollover.

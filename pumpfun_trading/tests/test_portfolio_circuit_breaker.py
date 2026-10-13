@@ -55,11 +55,53 @@ def test_equity_updates_and_drawdown_calculation():
     assert dd == 0.0
 
     # Valuation drops to 10.2 SOL from peak of 12.0 SOL
-    # Drop = 1.8 SOL -> Drawdown = 1.8 / 10.0 (baseline) = 18%
+    # Drop = 1.8 SOL -> Drawdown = 1.8 / 12.0 (peak) = 15%
     current_eq, dd = tracker.update_valuation(10.2, 0.0, now_utc=day)
     assert current_eq == 10.2
     assert tracker.peak_daily_equity_sol == 12.0
-    assert pytest.approx(dd, 0.001) == 0.18
+    assert pytest.approx(dd, 0.001) == 0.15
+
+
+def test_drawdown_calculation_with_low_baseline_high_peak():
+    """
+    Regression test for BUG-12: Small starting baseline (0.20 SOL) with large peak (37.3841 SOL).
+    A minor pullback from peak (e.g. 0.6904 SOL to 36.6937 SOL) must be ~1.85% drawdown,
+    NOT >100% or falsely tripping the circuit breaker limit (20.00%).
+    """
+    tracker = DailyEquityTracker()
+    assert tracker.calculate_drawdown(0.0, 0.0) == 0.0
+
+    day = datetime.datetime(2026, 10, 12, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    tracker.initialize_or_rollover(0.20, 0.0, now_utc=day)
+    assert tracker.starting_equity_sol == 0.20
+    assert tracker.peak_daily_equity_sol == 0.20
+
+    # Equity grows to 37.3841 SOL
+    current_eq, dd = tracker.update_valuation(37.3841, 0.0, now_utc=day)
+    assert current_eq == 37.3841
+    assert tracker.peak_daily_equity_sol == 37.3841
+    assert dd == 0.0
+
+    # Equity pulls back to 36.6937 SOL (drop = 0.6904 SOL)
+    current_eq, dd = tracker.update_valuation(36.6937, 0.0, now_utc=day)
+    assert current_eq == 36.6937
+    assert tracker.peak_daily_equity_sol == 37.3841
+    # 0.6904 / 37.3841 = 0.0184676... (~1.85%)
+    expected_dd = (37.3841 - 36.6937) / 37.3841
+    assert pytest.approx(dd, 1e-6) == expected_dd
+    assert dd < 0.02  # Less than 2%
+
+    # Evaluate circuit breaker with 20% max allowed limit
+    locked, reason = tracker.evaluate_circuit_breaker(
+        max_daily_drawdown_pct=0.20,
+        emergency_hard_lock_hours=24.0,
+        current_wallet_balance_sol=36.6937,
+        open_positions_valuation_sol=0.0,
+        now_utc=day,
+    )
+    assert not locked
+    assert reason == ""
+    assert not tracker.circuit_breaker_engaged
 
 
 def test_circuit_breaker_trigger_and_auto_unlock():
