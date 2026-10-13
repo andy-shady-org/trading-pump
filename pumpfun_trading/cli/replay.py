@@ -25,7 +25,12 @@ def build_parser(
     else:
         parser = argparse.ArgumentParser(description="Run historical replay analysis")
     parser.add_argument(
-        "--path", required=True, help="Path to a JSON/JSONL replay dataset"
+        "--path", default=None, help="Path to a JSON/JSONL replay dataset"
+    )
+    parser.add_argument(
+        "--replay-path",
+        default=None,
+        help="Path to a JSON/JSONL replay dataset (alias for --path)",
     )
     parser.add_argument(
         "--mode",
@@ -33,9 +38,30 @@ def build_parser(
         default="dashboard",
         help="Historic replay output mode",
     )
+    parser.add_argument(
+        "--replay-mode",
+        choices=["summary", "trades", "dashboard"],
+        default=None,
+        help="Historic replay output mode (alias for --mode)",
+    )
+    parser.add_argument(
+        "--config", type=str, default=None, help="Path to a JSON bot config file"
+    )
+    parser.add_argument(
+        "--preset",
+        choices=["conservative", "balanced", "aggressive"],
+        default=None,
+        help="Trading strategy preset",
+    )
     parser.add_argument("--mint", default=None, help="Filter by mint address")
     parser.add_argument("--mint-name", default=None, help="Filter by mint name")
     parser.add_argument("--token-name", default=None, help="Filter by token name")
+    parser.add_argument(
+        "--initial-cash",
+        type=float,
+        default=100.0,
+        help="Initial cash balance in SOL",
+    )
     return parser
 
 
@@ -51,10 +77,43 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
 
     target_path = getattr(args, "path", None) or getattr(args, "replay_path", None)
     if not target_path:
-        raise SystemExit("--path is required")
+        raise SystemExit("--path (or --replay-path) is required")
+
+    config = None
+    config_path = getattr(args, "config", None)
+    preset = getattr(args, "preset", None)
+    if config_path:
+        from pumpfun_trading.strategies.base import TradingBotConfig
+
+        config = TradingBotConfig.from_file(config_path)
+    elif preset:
+        from pumpfun_trading.strategies.presets import resolve_strategy_config
+
+        config = resolve_strategy_config(preset)
+
+    initial_cash_val = getattr(args, "initial_cash", None)
+
+    from pumpfun_trading.engines.replay import PaperTradingEngine
+
+    engine: PaperTradingEngine | None = None
+    if config is not None or initial_cash_val is not None:
+        initial_cash = (
+            float(initial_cash_val) if initial_cash_val is not None else 100.0
+        )
+        take_profit = config.take_profit if config is not None else 1.5
+        stop_loss = config.stop_loss if config is not None else 0.85
+        max_positions = config.max_active_positions if config is not None else 1
+        engine = PaperTradingEngine(
+            initial_cash=initial_cash,
+            take_profit=take_profit,
+            stop_loss=stop_loss,
+            max_positions=max_positions,
+            strategy_config=config,
+        )
 
     summary = run_replay(
         target_path,
+        engine=engine,
         mint=getattr(args, "mint", None),
         mint_name=getattr(args, "mint_name", None),
         token_name=getattr(args, "token_name", None),

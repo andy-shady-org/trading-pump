@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,9 +9,8 @@ import pytest
 import pumpfun_trading.cli as cli_init
 import pumpfun_trading.cli.audit as cli_audit
 import pumpfun_trading.cli.bot as cli_bot
+import pumpfun_trading.cli.main as cli_main_mod
 import pumpfun_trading.cli.replay as cli_replay
-
-cli_main_mod = sys.modules["pumpfun_trading.cli.main"]
 
 
 def test_cli_init_exports():
@@ -194,6 +192,18 @@ def test_cli_replay_subcommand(tmp_path):
     args.mint_name = None
     cli_replay.run_replay_cli(args)
 
+    # Config file and preset
+    cfg = tmp_path / "bot_replay.json"
+    cfg.write_text(json.dumps({"take_profit": 2.5, "stop_loss": 0.8}), encoding="utf-8")
+    args.config = str(cfg)
+    args.preset = None
+    args.initial_cash = 250.0
+    cli_replay.run_replay_cli(args)
+
+    args.config = None
+    args.preset = "conservative"
+    cli_replay.run_replay_cli(args)
+
     # Missing path
     args_empty = argparse.Namespace(path=None, replay_path=None)
     with pytest.raises(SystemExit):
@@ -202,7 +212,15 @@ def test_cli_replay_subcommand(tmp_path):
     # Replay main with sys.argv
     with patch(
         "sys.argv",
-        ["replay_cli", "--path", str(dataset_file), "--mode", "summary"],
+        [
+            "replay_cli",
+            "--path",
+            str(dataset_file),
+            "--mode",
+            "summary",
+            "--config",
+            str(cfg),
+        ],
     ):
         cli_replay.main()
 

@@ -235,11 +235,12 @@ def main() -> None:
         return
 
     if args.command == "replay":
-        if not args.path:
+        target_path = getattr(args, "path", None) or getattr(args, "replay_path", None)
+        if not target_path:
             raise SystemExit("--path is required when using the replay subcommand")
         from pumpfun_trading.cli.replay import run_replay_cli
 
-        run_replay_cli(argparse.Namespace(replay_path=args.path, replay_mode=args.mode))
+        run_replay_cli(args)
         return
 
     if args.mode == "latest-coins":

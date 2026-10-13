@@ -33,6 +33,14 @@ class PaperTradingEngine:
         enable_raydium_graduation: bool = False,
         enable_copy_trading: bool = False,
     ) -> None:
+        if strategy_config is not None:
+            if take_profit == 1.5 and hasattr(strategy_config, "take_profit"):
+                take_profit = strategy_config.take_profit
+            if stop_loss == 0.85 and hasattr(strategy_config, "stop_loss"):
+                stop_loss = strategy_config.stop_loss
+            if max_positions == 1 and hasattr(strategy_config, "max_active_positions"):
+                max_positions = strategy_config.max_active_positions
+
         self.initial_cash = float(initial_cash)
         self.max_positions = int(max_positions)
         self.fee_bps = int(fee_bps)

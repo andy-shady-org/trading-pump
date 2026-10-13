@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,11 +13,8 @@ from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.cli import bot as cli_bot
-from pumpfun_trading.sdk.execution import (
-    PumpFunExecutionClient,
-)
-
-cli_main_mod = sys.modules["pumpfun_trading.cli.main"]
+import pumpfun_trading.cli.main as cli_main_mod
+from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 
 SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
 SAMPLE_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
