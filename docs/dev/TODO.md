@@ -612,6 +612,18 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [ ] Add storage maintenance CLI commands (`pumpfun ops prune`, `pumpfun ops status`) in `pumpfun_trading/cli/main.py` (FEAT-22)
 - [ ] Add comprehensive test suites for log rotation, retention manager, compressed audit querying, and chunked replay datasets (`test_logging_rotation.py`, `test_ops_retention.py`, `test_audit_tool.py`, `test_market_recorder.py`) (FEAT-22)
 
+### Sprint 19: Comprehensive CLI Commands Reference & Terminal UI Observability Documentation
+- [x] Create comprehensive CLI reference manual in `docs/CLI-COMMANDS.md`:
+  - [x] Document CLI architecture: dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`) vs unified `pumpfun` dispatcher
+  - [x] Clarify operational purpose and multi-mode utility of `pumpfun-recorder` / `pumpfun record` (zero-capital live stream harvesting, synthetic dataset generation, and REST trade exports)
+  - [x] Document complete parameter and flag matrices across all CLI commands with types, defaults, and aliases
+  - [x] Provide practical execution recipes and real-world workflows for each tool
+- [x] Overhaul and expand Terminal UI manual in `docs/TERMINAL-UI.md`:
+  - [x] Create high-fidelity ASCII visual representation of the active Rich dashboard layout
+  - [x] Document complete field-by-field breakdown for Strategy, Risk, Bot Status, Health Check, Open Positions, Coin Polling, Events, Trade Ledger, and Metrics panels
+  - [x] Document visual styling, color codes, unit formatting (SOL / µSOL), lifecycle states, and headless execution
+- [x] Link `docs/CLI-COMMANDS.md` and `docs/TERMINAL-UI.md` in `docs/USER-GUIDE.md`, `AGENTS.md`, and `docs/dev/README.md`
+
 ## Definition of done for a “serious” bot
 
 The bot is production-worthy and alpha-ready when it can:

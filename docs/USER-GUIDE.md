@@ -13,6 +13,7 @@ All system documentation radiates from this guide in a structured star topology:
 ``` mermaid
 graph TD
     UG["docs/USER-GUIDE.md<br/>(Central Knowledge & User Portal)"]
+    CLI["docs/CLI-COMMANDS.md<br/>(Complete CLI Reference)"]
     STRAT["docs/STRATEGY.md<br/>(Wealth Generation & Math Strategy)"]
     RISK["docs/RISK.md<br/>(Capital Protection & Circuit Breakers)"]
     WUI["docs/WEB-UI.md<br/>(Web Dashboard & Hosted Instances)"]
@@ -21,6 +22,7 @@ graph TD
     REPLAY["docs/REPLAY-ENGINE.md<br/>(Backtesting & Strategy Playback)"]
     AUDIT["docs/AUDIT-TOOL.md<br/>(Forensic Audit & Trade Accounting)"]
 
+    UG --> CLI
     UG --> STRAT
     UG --> RISK
     UG --> WUI
@@ -31,10 +33,11 @@ graph TD
 ```
 
 ### Specialized Documentation Directory
+* [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md): Exhaustive command-line documentation for all dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`) and unified `pumpfun` subcommands, including parameter tables, options, and operational recipes.
+* [**Terminal Operations & Self-Funding Guide (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md): Zero-dependency console monitor (`pumpbot`), sub-millisecond slot latency telemetry, complete visual dashboard field descriptions, alternate-screen buffer rendering, and multi-channel alerting (Discord, Slack, Telegram).
 * [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](STRATEGY.md): Constant-product bonding curve mathematics, fractional Kelly bankroll management, dynamic trailing stop-loss mechanics, multi-tier take-profit scaling (2.0x / 3.5x / Moonbag), and anti-rug heuristic filters.
 * [**Capital Protection & Risk Management (`docs/RISK.md`)**](RISK.md): Multi-tier risk hierarchy, maximum portfolio exposure caps, daily hard-stop circuit breakers (FEAT-09), private mempool Jito MEV protection, and startup on-chain position reconciliation.
 * [**Web Dashboard & Hosted User Blueprint (`docs/WEB-UI.md`)**](WEB-UI.md): Modern FastAPI browser control center (FEAT-10), isolated user sandboxes, volatile in-memory key upload architecture (zero plaintext disk storage), hot configuration mutation, and live equity analytics.
-* [**Terminal Operations & Self-Funding Guide (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md): Zero-dependency console monitor (`pumpbot`), sub-millisecond slot latency telemetry, alternate-screen buffer rendering, and multi-channel alerting (Discord, Slack, Telegram).
 * [**Standardized Feature Catalog (`docs/FEATURES.md`)**](FEATURES.md): Comprehensive reference catalog for all architectural capabilities (FEAT-01 through FEAT-21).
 * [**Replay Engine & Backtesting (`docs/REPLAY-ENGINE.md`)**](REPLAY-ENGINE.md): Historical market simulation tool (`pumpfun-replay`) for backtesting strategies and tuning parameter profiles against recorded bonding curve datasets.
 * [**Forensic Audit Tool (`docs/AUDIT-TOOL.md`)**](AUDIT-TOOL.md): Trade accounting and telemetry inspector (`pumpfun-audit`) for analyzing execution performance, slippage, and state transitions.
@@ -265,7 +268,7 @@ pumpfun record --from-mint <MINT_ADDRESS> --output runtime/token_history.jsonl -
 
 ## 7. Complete CLI Command & Flag Matrix
 
-The system provides dedicated binary entry points as well as the unified `pumpfun-cli` interface:
+The system provides dedicated binary entry points as well as the unified `pumpfun-cli` interface. For comprehensive parameter documentation, recipe guides, and advanced examples, see [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md).
 
 | Command | Subcommand / Option | Allowed Values | Description |
 | :--- | :--- | :--- | :--- |
@@ -276,6 +279,7 @@ The system provides dedicated binary entry points as well as the unified `pumpfu
 | | `--record-replay` | File path (`.jsonl`) | Asynchronously persists live market quotes and trade events into replay dataset (FEAT-21). |
 | | `--dry-run` | Flag | Simulates order execution without submitting transactions. |
 | | `--paper-trade` | Flag | Runs bot in paper trading mode. |
+| | `--headless` | Flag | Runs without interactive terminal UI (structured logs). |
 | | `--config` | File path (`.json`) | Loads a custom strategy and risk configuration file. |
 | `pumpfun-replay` | `--path` | File path (`.json`, `.jsonl`) | Path to historical market data snapshot dataset. |
 | | `--mode` | `dashboard`, `summary`, `trades` | Visual output mode for replay results. |
@@ -298,9 +302,10 @@ The system provides dedicated binary entry points as well as the unified `pumpfu
 ## 8. Navigating to Next Steps
 
 To maximize your risk-adjusted returns and operational safety, review the specialized guides in sequence:
-1. Understand the core mathematical algorithms in [**Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](STRATEGY.md).
-2. Configure your capital safeguards in [**Risk Controls & Capital Protection (`docs/RISK.md`)**](RISK.md).
-3. Master terminal monitoring in [**Terminal UI & Observability (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md).
-4. Review the hosted instance roadmap in [**Web Dashboard Architecture (`docs/WEB-UI.md`)**](WEB-UI.md).
-5. Explore the full architectural capabilities in [**Standardized Feature Catalog (`docs/FEATURES.md`)**](FEATURES.md).
-6. If contributing to or operating internal infrastructure, consult the [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](dev/README.md).
+1. Review all command-line options and recipes in [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md).
+2. Understand the core mathematical algorithms in [**Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](STRATEGY.md).
+3. Configure your capital safeguards in [**Risk Controls & Capital Protection (`docs/RISK.md`)**](RISK.md).
+4. Master terminal monitoring and panel fields in [**Terminal UI & Observability (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md).
+5. Review the hosted instance roadmap in [**Web Dashboard Architecture (`docs/WEB-UI.md`)**](WEB-UI.md).
+6. Explore the full architectural capabilities in [**Standardized Feature Catalog (`docs/FEATURES.md`)**](FEATURES.md).
+7. If contributing to or operating internal infrastructure, consult the [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](dev/README.md).

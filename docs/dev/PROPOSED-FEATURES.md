@@ -99,6 +99,47 @@ All features documented here represent proposed capabilities that have **not yet
   - Protects 24/7 continuous trading execution from unexpected disk exhaustion, dropped transactions, and corrupted state snapshots.
   - Reduces disk storage consumption for historical market replays and audit trails by up to 80–90% through background gzip compression while preserving full historical queryability.
 
+### FEAT-29: Adaptive Realized-Ratchet & Dual-Tier Portfolio Drawdown Engine
+* **Goal:** Eliminate premature circuit breaker lockouts and false-positive panic liquidations on winning trading sessions (such as volatile multi-tier take-profit runners) while enforcing institutional-grade downside principal preservation and locking in accumulated profits.
+* **Architecture & Capabilities:**
+  - **Realized Profit Ratchet & Guaranteed Equity Baseline:**
+    - Decouples volatile unrealized mark-to-market spikes from permanent portfolio baseline ratcheting.
+    - When positions exit with net realized gains, a configurable profit retention ratio ($\alpha \in [0.0, 1.0]$, e.g. `profit_ratchet_ratio = 0.50`) permanently ratchets the **Effective Equity Baseline Floor**:
+      $$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Cumulative Realized PnL})$$
+  - **Dual-Zone Risk Evaluation Engine:**
+    - **Principal Protection Zone (`Current Equity < Starting Capital`):** Strict capital preservation rules apply. If portfolio equity drops below $\text{Starting Capital} \times (1 - \text{max\_daily\_drawdown\_pct})$ (e.g. 15%–20% loss), emergency risk actions engage to preserve the initial bankroll.
+    - **Profit Run Zone (`Current Equity >= Starting Capital`):** The bot operates with "house money" under a wider, configurable trailing drawdown buffer (`profit_drawdown_tolerance_pct`, e.g. 35%–45%) measured relative to the realized ratchet baseline. Transient mark-to-market pullbacks on open moonbag tranches no longer trip the daily circuit breaker.
+  - **Tiered Two-Stage Circuit Breaker Actions:**
+    - **Stage 1 (`HALT_NEW_BUYS`):** When the profit-zone trailing drawdown tolerance is breached, the bot pauses new token entries while allowing open positions to exit orderly via their dedicated trailing stop-loss rules (`FEAT-03`) and take-profit targets.
+    - **Stage 2 (`EMERGENCY_LIQUIDATE`):** Full emergency market liquidation (`sell_all`) is strictly reserved for breaches of the hard **Principal Preservation Floor** or catastrophic market-wide dropouts.
+  - **Configurable Risk Policies & Presets:**
+    - Configurable `drawdown_reference_mode`: `"adaptive_ratchet"` (recommended default), `"baseline"` (strict starting principal anchor), or `"trailing_hwm"` (legacy strict peak-to-trough tracking).
+* **System Utility & Financial Impact:**
+  - Solves the critical drawdown lockout paradox where high-performing bots (+115% net PnL days) were prematurely frozen due to mark-to-market retracements on parabolic runners.
+  - Guarantees complete capital preservation on losing streaks while giving winning trades the necessary breathing room to maximize upside compounding.
+
+### FEAT-30: Structured Diagnostic Event Logging & Runtime Telemetry Persistence
+* **Goal:** Capture comprehensive, microsecond-timestamped runtime events, internal state transitions, streaming network telemetry, and strategy decision matrices into dedicated, structured persistent log files (`events.jsonl` / `diagnostics.log`), enabling granular performance tuning, telemetry analysis, and rapid root-cause debugging far beyond standard financial audit ledgers and status snapshots.
+* **Architecture & Capabilities:**
+  - **Comprehensive Multi-Subsystem Event Instrumentation:**
+    - Emits structured event payloads across all key engine phases:
+      1. *Streaming Feed Telemetry:* Geyser gRPC / WebSocket slot latency, reconnection backoffs, dropped message counters, and parse latencies.
+      2. *Candidate Discovery & Scoring:* Raw token detection, metadata resolution, anti-rug heuristic scoring breakdown (Gini coefficient, creator history, initial buy distribution), and exact pass/reject decision reasons.
+      3. *Strategy & Sizing Pipeline:* Order flow momentum Z-scores, price velocity calculations, Kelly allocation fractions, and entry condition evaluations.
+      4. *Execution SDK & MEV Routing:* Jito bundle assembly, tip tier calculations, confirmation timeouts, RPC fallback triggers, and on-chain compute unit usage.
+      5. *Risk & Lifecycle Management:* Position state changes, trailing stop ratchet events, take-profit tier triggers, and circuit breaker evaluation snapshots.
+  - **High-Throughput Non-Blocking JSONL Sink:**
+    - Asynchronous event writer utilizing `RotatedFileSink` and background worker tasks (`asyncio.to_thread`), ensuring high-volume event emission (up to 5,000+ events/sec during volatile market bursts) introduces zero latency jitter into the critical trading execution loop.
+  - **Configurable Subsystem Filters & Verbosity Levels:**
+    - Granular environment and config variables (`PUMPFUN_EVENT_LOG_PATH`, `PUMPFUN_EVENT_LOG_LEVEL`, `PUMPFUN_EVENT_SUBSYSTEMS=stream,strategy,execution,risk`) allowing operators to toggle tracing depth without cluttering operational console logs.
+  - **Seamless Rollover & Compression Integration (FEAT-22):**
+    - Automatically integrates with `LogRetentionManager` for automated file size rollover, background `.gz` compression, and age-based pruning.
+  - **Diagnostic Event Inspection CLI (`pumpfun-events` / `pumpfun ops events`):**
+    - Dedicated CLI inspection commands supporting live tailing (`--tail`), mint filtering (`--mint <mint>`), error tracing (`--errors-only`), and timing latency analysis (`--latency-stats`).
+* **System Utility & Reliability Impact:**
+  - Provides complete, forensic-grade observability into *why* the bot entered or rejected specific tokens, *how* network latency affected execution, and *where* bottlenecks or failures occurred.
+  - Drastically accelerates developer troubleshooting and algorithm calibration by providing empirical telemetry data that financial audit trails (`audit.jsonl`) and state snapshots (`bot_status.json`) cannot capture.
+
 ---
 
 ## 4. User Interface, Remote Control & Web Infrastructure
@@ -145,3 +186,7 @@ To maximize capital preservation, operational efficiency, and risk-adjusted alph
    - *Rationale:* Automates continuous Bayesian/genetic calibration of Kelly allocations and trailing thresholds over historical replay datasets to prevent edge decay.
 8. **Priority 8: Sprint 24 — Atomic Jito Back-Running & Cross-Venue Arbitrage Engine (FEAT-28)**
    - *Rationale:* Unlocks an uncorrelated, zero-directional-risk alpha stream capturing mispricings across Pump.fun bonding curves and external AMM pools.
+9. **Priority 9: Sprint 25 — Adaptive Realized-Ratchet & Dual-Tier Drawdown Engine (FEAT-29)**
+   - *Rationale:* Eliminates false-positive circuit breaker lockouts on highly profitable trading sessions while enforcing robust principal preservation and profit ratcheting.
+10. **Priority 10: Sprint 26 — Structured Diagnostic Event Logging & Runtime Telemetry Persistence (FEAT-30)**
+   - *Rationale:* Delivers forensic-grade runtime observability, candidate rejection logging, and streaming telemetry for rapid debugging and strategy fine-tuning.

@@ -1,0 +1,377 @@
+# PumpFun Trading System: Complete CLI Reference Manual
+
+Welcome to the comprehensive command-line interface (CLI) reference manual for `pumpfun-trading`. The system provides a suite of dedicated, high-performance CLI utilities and a unified command dispatcher designed for automated trading, market data harvesting, historical strategy backtesting, forensic trade auditing, and real-time Solana on-chain discovery.
+
+---
+
+## 1. CLI Architecture & Command Surface
+
+The package exposes two operational paradigms for command-line execution:
+
+1. **Dedicated Standalone Binaries**: Direct, purpose-built executables installed in your Python environment path:
+   * `pumpbot`: Live and paper-trading runtime orchestrator with Rich alternate-screen console monitoring.
+   * `pumpfun-recorder`: Non-blocking market stream harvester, synthetic scenario generator, and historical trade exporter.
+   * `pumpfun-replay`: Historical market replay and strategy backtesting simulation engine.
+   * `pumpfun-audit`: Forensic JSONL audit trail query, filter, and accounting inspector.
+
+2. **Unified CLI Wrapper (`pumpfun` / `pumpfun-cli`)**: A consolidated multi-subcommand dispatcher offering a unified interface for all bot operations, analytics, and coin discovery tools:
+   * `pumpfun bot [options]`: Alias for `pumpbot`.
+   * `pumpfun record [options]`: Alias for `pumpfun-recorder`.
+   * `pumpfun replay [options]`: Alias for `pumpfun-replay`.
+   * `pumpfun audit [options]`: Alias for `pumpfun-audit`.
+   * `pumpfun latest-coins [options]`: Queries and displays newly created Pump.fun coins via REST API.
+   * `pumpfun market-info [options]`: Fetches detailed bonding curve metrics for a specific token mint.
+
+```
+                                  +-------------------+
+                                  |    pumpfun-cli    |
+                                  |    (`pumpfun`)    |
+                                  +---------+---------+
+                                            |
+         +-----------------+----------------+----------------+-----------------+
+         |                 |                |                |                 |
+         v                 v                v                v                 v
+    +---------+     +-------------+    +----------+    +-----------+    +-------------+
+    |   bot   |     |   record    |    |  replay  |    |   audit   |    | coin / mkt  |
+    | pumpbot |     | -recorder   |    |  -replay |    |  -audit   |    | discovery   |
+    +---------+     +-------------+    +----------+    +-----------+    +-------------+
+```
+
+---
+
+## 2. Market Stream Recorder (`pumpfun-recorder` / `pumpfun record`)
+
+### Purpose & Operational Utility
+The `pumpfun-recorder` utility (also available via `pumpfun record`) is a high-throughput, non-blocking telemetry and market data capture engine. It addresses three critical operational needs:
+
+1. **Zero-Capital Live Market Harvester**: Ingests real-time bonding curve account updates, token creation announcements, and trade events directly from Yellowstone Geyser gRPC streams or PumpPortal WebSockets. It records these streams into structured, timestamped `.jsonl` datasets without executing trades or risking capital.
+2. **Deterministic Synthetic Scenario Generator**: Generates mathematical, reproducible price trajectory datasets (e.g. parabolic rallies with multi-tier take-profits, flash developer rugs, gradual liquidity grinds, stagnant curves, and pump-and-dump scenarios) for unit testing, offline strategy calibration, and regression validation.
+3. **Historical REST Trade Exporter**: Queries Pump.fun REST endpoints to retrieve historical transaction logs for a specific token mint address and formats them into standard replay datasets for backtesting.
+
+Datasets captured by `pumpfun-recorder` can be directly loaded into `pumpfun-replay` to backtest algorithms, evaluate Kelly position sizing, and tune trailing stop parameters against real-world or adversarial market conditions.
+
+### Command Syntax
+```bash
+# Standalone binary
+pumpfun-recorder [OPTIONS]
+
+# Unified CLI subcommand
+pumpfun record [OPTIONS]
+```
+
+### Options & Parameter Reference
+
+| Flag | Short | Type | Default | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| `--output` | `-o` | String | `market_replay.jsonl` | Destination file path for the recorded `.jsonl` replay dataset. |
+| `--duration` | `-d` | Float | `None` (Infinite) | Maximum recording duration in seconds before automatically stopping. |
+| `--limit` | `-l` | Integer | `None` (Infinite) | Maximum number of market snapshot records to capture before stopping. |
+| `--geyser-endpoint` | — | URL | `None` (Env) | Yellowstone Geyser gRPC streaming endpoint (overrides `PUMPFUN_GEYSER_ENDPOINT`). |
+| `--ws-url` | — | URL | `None` (Env) | WebSocket streaming URL (default: `wss://pumpportal.fun/api/data`). |
+| `--batch-size` | — | Integer | `50` | In-memory record batch threshold before flushing writes to disk. |
+| `--synthetic` | — | Choice | `None` | Generates synthetic market scenario. Choices: `pump_and_dump`, `stagnant_curve`, `multi_tier_take_profit`, `gradual_grind`, `flash_rug`. |
+| `--synthetic-steps`| — | Integer | `60` | Number of price update steps generated in synthetic scenarios. |
+| `--from-mint` | — | Base58 | `None` | Exports historical trades for a specific token mint via Pump.fun REST API. |
+
+### Execution Examples & Recipes
+
+#### Recipe 1: Harvest Live Yellowstone Geyser gRPC Market Stream
+Capture 10 minutes of live on-chain market stream data for backtesting:
+```bash
+pumpfun-recorder \
+  --output runtime/geyser_harvest_10m.jsonl \
+  --duration 600 \
+  --geyser-endpoint http://your-geyser-grpc.helius.xyz:10000
+```
+
+#### Recipe 2: Harvest Live PumpPortal WebSocket Stream with Record Cap
+Capture the next 1,000 market quote events from WebSocket:
+```bash
+pumpfun record \
+  --output runtime/ws_stream_1000.jsonl \
+  --limit 1000 \
+  --ws-url wss://pumpportal.fun/api/data
+```
+
+#### Recipe 3: Generate Synthetic Multi-Tier Take-Profit Scenario
+Create a 120-step synthetic dataset simulating a parabolic 4.0x runner to test multi-tier scale-outs and trailing stop-losses:
+```bash
+pumpfun record \
+  --synthetic multi_tier_take_profit \
+  --synthetic-steps 120 \
+  --output runtime/synth_runner.jsonl
+```
+
+#### Recipe 4: Generate Synthetic Flash Rug Scenario
+Create an adversarial dataset where the developer dumps 90% of supply after a brief pump:
+```bash
+pumpfun record \
+  --synthetic flash_rug \
+  --synthetic-steps 50 \
+  --output runtime/synth_rug.jsonl
+```
+
+#### Recipe 5: Export Historical Token Trades from REST API
+Download historical trades for a specific token mint for offline forensic inspection:
+```bash
+pumpfun record \
+  --from-mint 7EYnhcWvdqPB2DdJ6DXZsMvT8GqgE4F8V9m1pump \
+  --output runtime/token_history.jsonl \
+  --limit 250
+```
+
+---
+
+## 3. Trading Bot Runtime (`pumpbot` / `pumpfun bot`)
+
+### Purpose & Operational Utility
+The `pumpbot` CLI launches the core automated trading bot runtime. It establishes sub-millisecond Geyser/WebSocket streaming feeds, applies anti-rug screening algorithms, manages position sizing, builds private Jito MEV bundles, and renders real-time state telemetry via an interactive Rich alternate-screen console dashboard.
+
+### Command Syntax
+```bash
+# Standalone binary
+pumpbot [OPTIONS]
+
+# Unified CLI subcommand
+pumpfun bot [OPTIONS]
+```
+
+### Options & Parameter Reference
+
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--preset` | Choice | `balanced` | Trading strategy profile: `conservative`, `balanced`, or `aggressive`. |
+| `--buy-amount-sol` | Float | Preset Default | SOL to allocate per token entry (e.g. `0.10`). |
+| `--take-profit` | Float | Preset Default | Take-profit price multiplier (e.g. `2.0` = +100%). |
+| `--stop-loss` | Float | Preset Default | Stop-loss price floor multiplier (e.g. `0.85` = -15%). |
+| `--min-market-cap-sol` | Float | Preset Default | Minimum bonding curve market cap in SOL before buying. |
+| `--min-balance-sol` | Float | `0.10` | Minimum wallet SOL reserve buffer required to trade. |
+| `--slippage-bps` | Integer | `250` | Maximum entry slippage tolerance in basis points (`250` = 2.5%). |
+| `--dry-run` | Flag | `false` | Ingests live data and runs full logic without broadcasting transactions. |
+| `--paper-trade` | Flag | `false` | Runs simulated paper trading with mock balances. |
+| `--headless` | Flag | `false` | Disables interactive terminal UI; emits structured logs (ideal for VPS services). |
+| `--config` | File Path | `None` | Path to custom JSON strategy and risk configuration file. |
+| `--record-replay` | File Path | `None` | Asynchronously logs market quotes and trades to `.jsonl` for replay backtesting. |
+
+### Execution Examples & Recipes
+
+#### Recipe 1: Standard Live Execution with Balanced Preset
+Launch the live bot with the default balanced strategy and interactive terminal dashboard:
+```bash
+pumpbot --preset balanced
+```
+
+#### Recipe 2: Aggressive Alpha Hunt with Custom Buy Sizing
+Execute with an aggressive preset, 0.25 SOL per trade, and 3.5% slippage tolerance:
+```bash
+pumpbot --preset aggressive --buy-amount-sol 0.25 --take-profit 3.0 --stop-loss 0.80
+```
+
+#### Recipe 3: Safe Paper Trading & Live Market Replay Recording
+Run paper trading while simultaneously saving streaming market data to a replay file:
+```bash
+pumpbot \
+  --dry-run \
+  --preset balanced \
+  --record-replay runtime/live_harvest.jsonl
+```
+
+#### Recipe 4: Headless Background VPS Deployment
+Run the bot headlessly inside a systemd service or background tmux session:
+```bash
+pumpbot \
+  --preset conservative \
+  --headless \
+  --config configs/production.json
+```
+
+---
+
+## 4. Historical Replay Engine (`pumpfun-replay` / `pumpfun replay`)
+
+### Purpose & Operational Utility
+The `pumpfun-replay` utility executes recorded market datasets (`.jsonl`) through the exact same trading state machine, Kelly sizing rules, and trailing stop algorithms used in live trading. It generates comprehensive quantitative performance reports including total PnL, win rate, profit factor, max drawdown, Sharpe ratio, and average trade duration.
+
+### Command Syntax
+```bash
+# Standalone binary
+pumpfun-replay --path <DATASET_PATH> [OPTIONS]
+
+# Unified CLI subcommand
+pumpfun replay --path <DATASET_PATH> [OPTIONS]
+```
+
+### Options & Parameter Reference
+
+| Flag | Alias | Type | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `--path` | `--replay-path` | File Path | **Required** | Path to the `.jsonl` or `.json` replay dataset. |
+| `--mode` | `--replay-mode` | Choice | `dashboard` | Output presentation mode: `dashboard`, `summary`, or `trades`. |
+| `--preset` | — | Choice | `None` | Overrides strategy preset (`conservative`, `balanced`, `aggressive`). |
+| `--config` | — | File Path | `None` | Path to custom strategy JSON configuration file. |
+| `--initial-cash` | — | Float | `100.0` | Initial starting capital in SOL for the backtest. |
+| `--mint` | — | Base58 | `None` | Filters replay execution to a single token mint address. |
+| `--mint-name` | `--token-name` | String | `None` | Filters replay execution by token symbol or display name. |
+
+### Execution Examples & Recipes
+
+#### Recipe 1: Interactive Backtest Dashboard
+Run a full interactive backtest with summary tables and trade ledgers:
+```bash
+pumpfun-replay --path runtime/market_replay.jsonl --mode dashboard
+```
+
+#### Recipe 2: Condensed Financial Performance Summary
+Quickly inspect high-level ROI, Sharpe ratio, and profit factors across an entire dataset:
+```bash
+pumpfun-replay --path runtime/geyser_harvest_10m.jsonl --mode summary
+```
+
+#### Recipe 3: Detailed Trade Ledger for a Specific Token
+Inspect individual buy/sell executions and exit reasons for a specific token:
+```bash
+pumpfun-replay \
+  --path runtime/market_replay.jsonl \
+  --mode trades \
+  --mint-name SolCat
+```
+
+#### Recipe 4: Strategy Parameter Sensitivity Analysis
+Backtest a recorded dataset using a custom aggressive configuration profile:
+```bash
+pumpfun-replay \
+  --path runtime/market_replay.jsonl \
+  --config configs/aggressive_tuning.json \
+  --initial-cash 10.0
+```
+
+---
+
+## 5. Forensic Audit Inspector (`pumpfun-audit` / `pumpfun audit`)
+
+### Purpose & Operational Utility
+The `pumpfun-audit` CLI provides forensic trade accounting and incident analysis over persistent JSONL audit trails (`audit_trail.jsonl`). It enables auditors and operators to filter trades by time, token, execution price, slippage, and exit trigger rationale (e.g. `take_profit`, `stop_loss`, `circuit_breaker`, `manual`), export structured data to JSON, and inspect aggregated financial metrics.
+
+### Command Syntax
+```bash
+# Standalone binary
+pumpfun-audit --path <AUDIT_PATH> [OPTIONS]
+
+# Unified CLI subcommand
+pumpfun audit --path <AUDIT_PATH> [OPTIONS]
+```
+
+### Options & Parameter Reference
+
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--path` | File Path | **Required** | Path to the `audit_trail.jsonl` audit file. |
+| `--summary` | Flag | `false` | Displays aggregated performance statistics and win rate JSON. |
+| `--mint` | Base58 | `None` | Filters audit records to a specific mint address. |
+| `--mint-name` | String | `None` | Filters audit records by token display name. |
+| `--record-type` | String | `None` | Filters by record type (`trade`, `state_change`, `reconciliation`). |
+| `--reason` | String | `None` | Filters by trade reason (e.g. `take_profit`, `stop_loss`, `risk_kill`). |
+| `--status` | String | `None` | Filters by execution status (`success`, `failed`, `skipped`). |
+| `--date-from` | ISO Date / Ts | `None` | Start datetime filter (e.g. `2026-10-12T00:00:00`). |
+| `--date-to` | ISO Date / Ts | `None` | End datetime filter (e.g. `2026-10-12T23:59:59`). |
+| `--min-buy-price` | Float | `None` | Minimum buy price filter in SOL. |
+| `--max-buy-price` | Float | `None` | Maximum buy price filter in SOL. |
+| `--min-sell-price` | Float | `None` | Minimum sell price filter in SOL. |
+| `--max-sell-price` | Float | `None` | Maximum sell price filter in SOL. |
+| `--limit` | Integer | `None` | Limits the number of records displayed. |
+| `--json` | Flag | `false` | Emits filtered records as raw JSON to stdout. |
+| `--export` | File Path | `None` | Exports filtered audit records to a target JSON file. |
+
+### Execution Examples & Recipes
+
+#### Recipe 1: Render Interactive Audit Table
+Display the last 50 audit entries formatted in a Rich color-coded terminal table:
+```bash
+pumpfun-audit --path runtime/audit_trail.jsonl --limit 50
+```
+
+#### Recipe 2: Generate Aggregate Performance Statistics
+Output aggregated win rate, net SOL PnL, and trade distribution metrics:
+```bash
+pumpfun-audit --path runtime/audit_trail.jsonl --summary
+```
+
+#### Recipe 3: Investigate Stop-Loss and Risk-Kill Exits
+Filter audit records exclusively for loss events to analyze exit timing and slippage:
+```bash
+pumpfun-audit \
+  --path runtime/audit_trail.jsonl \
+  --reason stop_loss \
+  --status success
+```
+
+#### Recipe 4: Export Filtered Audit Trail to JSON
+Export all trades for a specific token to an external file for external reporting:
+```bash
+pumpfun-audit \
+  --path runtime/audit_trail.jsonl \
+  --mint 7EYnhcWvdqPB2DdJ6DXZsMvT8GqgE4F8V9m1pump \
+  --export reports/solcat_audit.json
+```
+
+---
+
+## 6. Real-Time Token & Market Discovery (`pumpfun`)
+
+### Subcommands: `latest-coins` and `market-info`
+The unified CLI includes lightweight, high-speed inspection commands for querying Pump.fun bonding curves directly via public REST endpoints without initializing the full bot state machine.
+
+### `pumpfun latest-coins`
+Fetches and formats newly launched Pump.fun bonding curves in a structured table:
+```bash
+pumpfun latest-coins [--limit 25]
+```
+*Output Fields*: Name, Symbol, Mint Address, Market Cap (SOL/USD), Current Price, and Holder Count.
+
+### `pumpfun market-info`
+Fetches comprehensive bonding curve telemetry for a single token mint:
+```bash
+pumpfun market-info --mint <MINT_ADDRESS>
+```
+*Output Fields*: Token Name, Symbol, Creator Address, Virtual SOL Reserves, Virtual Token Reserves, Real Token Reserves, Current Price, 24h Volume, Market Cap, Bonding Curve Completion Percentage, and Social Metadata links.
+
+---
+
+## 7. Complete CLI Parameter Matrix
+
+The table below summarizes all supported options across the complete CLI command surface:
+
+| Category | Flag / Option | Supported Commands | Description |
+| :--- | :--- | :--- | :--- |
+| **Strategy & Risk** | `--preset` | `pumpbot`, `replay` | Selects strategy preset: `conservative`, `balanced`, `aggressive`. |
+| | `--buy-amount-sol` | `pumpbot` | Overrides base buy size in SOL per trade. |
+| | `--take-profit` | `pumpbot` | Overrides take-profit price multiplier. |
+| | `--stop-loss` | `pumpbot` | Overrides stop-loss floor multiplier. |
+| | `--min-market-cap-sol` | `pumpbot` | Minimum launch market cap threshold in SOL. |
+| | `--min-balance-sol` | `pumpbot` | Minimum wallet SOL reserve buffer. |
+| | `--config` | `pumpbot`, `replay` | Path to JSON strategy/risk configuration file. |
+| **Execution Mode** | `--dry-run` | `pumpbot` | Simulates trading logic without on-chain execution. |
+| | `--paper-trade` | `pumpbot` | Executes paper trading simulation. |
+| | `--headless` | `pumpbot` | Runs without Rich TUI (structured log output). |
+| **Data Streams** | `--geyser-endpoint` | `pumpbot`, `record` | Yellowstone Geyser gRPC streaming URL. |
+| | `--ws-url` | `record` | PumpPortal WebSocket streaming URL. |
+| | `--record-replay` | `pumpbot` | Path to record streaming market data into `.jsonl`. |
+| **Recording** | `--output`, `-o` | `record` | Destination path for recorded replay dataset. |
+| | `--duration`, `-d` | `record` | Maximum recording duration in seconds. |
+| | `--limit`, `-l` | `record` | Maximum record capture count. |
+| | `--batch-size` | `record` | Batch size threshold before flushing disk writes. |
+| | `--synthetic` | `record` | Generates synthetic market scenario dataset. |
+| | `--synthetic-steps` | `record` | Step count for synthetic scenario generation. |
+| | `--from-mint` | `record` | Exports historical trades for a mint via REST API. |
+| **Replay & Backtest** | `--path` | `replay`, `audit` | Input file path for `.jsonl` dataset. |
+| | `--mode` | `replay` | Replay presentation: `dashboard`, `summary`, `trades`. |
+| | `--initial-cash` | `replay` | Starting capital in SOL for backtesting. |
+| **Audit & Forensics** | `--summary` | `audit` | Generates aggregate statistical summary JSON. |
+| | `--record-type` | `audit` | Filters records by type (`trade`, `state_change`). |
+| | `--reason` | `audit` | Filters by exit reason (`take_profit`, `stop_loss`). |
+| | `--status` | `audit` | Filters by execution outcome (`success`, `failed`). |
+| | `--date-from` / `--date-to`| `audit` | Datetime boundary filters. |
+| | `--json` | `audit` | Emits filtered records as JSON to stdout. |
+| | `--export` | `audit` | Exports filtered audit records to target file. |
+| **Token Filtering** | `--mint` | `replay`, `audit`, `market-info` | Filters operation to a specific mint address. |
+| | `--mint-name` | `replay`, `audit` | Filters operation by token symbol or display name. |
