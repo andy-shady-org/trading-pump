@@ -29,7 +29,10 @@ from pumpfun_trading.bot.lifecycle import (
     VALID_STATE_TRANSITIONS,
 )
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
-from pumpfun_trading.bot.position_manager import PositionManager
+from pumpfun_trading.bot.position_manager import (
+    CapitalDisplacementEngine,
+    PositionManager,
+)
 from pumpfun_trading.bot.recorder import ReplayRecorder
 from pumpfun_trading.bot.risk import (
     CircuitBreakerAction,
@@ -51,6 +54,7 @@ from pumpfun_trading.bot.strategy import (
     TradingStrategy,
     resolve_strategy_config,
 )
+from pumpfun_trading.config.env import get_env_bool, get_env_int
 from pumpfun_trading.execution.builder import build_execution_client
 from pumpfun_trading.execution.executor import OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
@@ -64,6 +68,7 @@ from pumpfun_trading.ops.logging import (
     get_configured_console,
     setup_structured_logging,
 )
+from pumpfun_trading.ops.retention import LogRetentionManager, RetentionPolicy
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -272,6 +277,44 @@ class TradingBot:
                     else None
                 )
             ),
+            drawdown_reference_mode=str(
+                getattr(base, "drawdown_reference_mode", "adaptive_ratchet")
+            ),
+            profit_ratchet_ratio=float(getattr(base, "profit_ratchet_ratio", 0.50)),
+            profit_drawdown_tolerance_pct=float(
+                getattr(base, "profit_drawdown_tolerance_pct", 0.35)
+            ),
+            enable_diagnostic_events=bool(
+                getattr(base, "enable_diagnostic_events", True)
+            ),
+            event_log_path=str(getattr(base, "event_log_path", "events.jsonl")),
+            event_log_subsystems=tuple(
+                getattr(base, "event_log_subsystems", ())
+                or (
+                    "stream",
+                    "screening",
+                    "strategy",
+                    "execution",
+                    "risk",
+                    "lifecycle",
+                )
+            ),
+            log_file=getattr(base, "log_file", "bot.log"),
+            log_max_bytes=int(getattr(base, "log_max_bytes", 10 * 1024 * 1024)),
+            log_backup_count=int(getattr(base, "log_backup_count", 5)),
+            log_rotation_type=str(getattr(base, "log_rotation_type", "size")),
+            log_compress=bool(getattr(base, "log_compress", True)),
+            audit_max_bytes=int(getattr(base, "audit_max_bytes", 10 * 1024 * 1024)),
+            audit_backup_count=int(getattr(base, "audit_backup_count", 10)),
+            audit_retention_days=int(getattr(base, "audit_retention_days", 30)),
+            audit_compress=bool(getattr(base, "audit_compress", True)),
+            replay_max_bytes=int(getattr(base, "replay_max_bytes", 50 * 1024 * 1024)),
+            replay_backup_count=int(getattr(base, "replay_backup_count", 10)),
+            replay_retention_days=int(getattr(base, "replay_retention_days", 30)),
+            replay_compress=bool(getattr(base, "replay_compress", True)),
+            retention_check_interval_seconds=float(
+                getattr(base, "retention_check_interval_seconds", 3600.0)
+            ),
         )
 
         if self.config.buy_amount_sol <= 0:
@@ -325,6 +368,9 @@ class TradingBot:
         # Subsystems & Engines
         self.position_manager = PositionManager(self.config)
         self.active_positions = self.position_manager.get_all_positions()
+        self.displacement_engine = CapitalDisplacementEngine(
+            self.config, self.position_manager
+        )
 
         self.strategy = TradingStrategy(self.config)
         self.order_flow_engine = OrderFlowEngine(
@@ -415,10 +461,24 @@ class TradingBot:
         # We suppress raw console StreamHandler writes during interactive Live UI rendering,
         # enabling console logging only in headless mode or when verbose logging is disabled.
         enable_console_logging = bool(self.headless or not self.verbose)
+        log_max_bytes = get_env_int("PUMPFUN_LOG_MAX_BYTES", self.config.log_max_bytes)
+        log_backup_count = get_env_int(
+            "PUMPFUN_LOG_BACKUP_COUNT", self.config.log_backup_count
+        )
+        log_rotation_type = os.getenv(
+            "PUMPFUN_LOG_ROTATION_TYPE", self.config.log_rotation_type
+        )
+        log_compress = get_env_bool("PUMPFUN_LOG_COMPRESS", self.config.log_compress)
+        effective_log_file = log_file if log_file is not None else self.config.log_file
+
         self.logger = setup_structured_logging(
             logger_name="pumpfun_trading.bot",
-            log_file=log_file,
+            log_file=effective_log_file,
             console=enable_console_logging,
+            max_bytes=log_max_bytes,
+            backup_count=log_backup_count,
+            rotation_type=log_rotation_type,
+            compress=log_compress,
         )
 
         self._metrics = {
@@ -458,9 +518,28 @@ class TradingBot:
 
         self.bot_status_path = bot_status_path or os.getenv("PUMPFUN_STATUS_PATH")
         self.audit_log_path = audit_log_path or os.getenv("PUMPFUN_AUDIT_LOG_PATH")
+        audit_max_bytes = get_env_int(
+            "PUMPFUN_AUDIT_MAX_BYTES", self.config.audit_max_bytes
+        )
+        audit_backup_count = get_env_int(
+            "PUMPFUN_AUDIT_BACKUP_COUNT", self.config.audit_backup_count
+        )
+        audit_retention_days = get_env_int(
+            "PUMPFUN_AUDIT_RETENTION_DAYS", self.config.audit_retention_days
+        )
+        audit_compress = get_env_bool(
+            "PUMPFUN_AUDIT_COMPRESS", self.config.audit_compress
+        )
+        self.audit_policy = RetentionPolicy(
+            max_bytes=audit_max_bytes,
+            max_files=audit_backup_count,
+            max_age_days=audit_retention_days,
+            compress_archives=audit_compress,
+        )
         self.persistence = StatusPersistenceManager(
             bot_status_path=self.bot_status_path,
             audit_log_path=self.audit_log_path,
+            policy=self.audit_policy,
         )
 
         # Diagnostic Telemetry Event Logger (FEAT-30)
@@ -506,11 +585,57 @@ class TradingBot:
         self.replay_log_path = (
             Path(resolved_replay_path) if resolved_replay_path else None
         )
+        replay_max_bytes = get_env_int(
+            "PUMPFUN_REPLAY_MAX_BYTES", self.config.replay_max_bytes
+        )
+        replay_backup_count = get_env_int(
+            "PUMPFUN_REPLAY_BACKUP_COUNT", self.config.replay_backup_count
+        )
+        replay_retention_days = get_env_int(
+            "PUMPFUN_REPLAY_RETENTION_DAYS", self.config.replay_retention_days
+        )
+        replay_compress = get_env_bool(
+            "PUMPFUN_REPLAY_COMPRESS", self.config.replay_compress
+        )
+        self.replay_policy = RetentionPolicy(
+            max_bytes=replay_max_bytes,
+            max_files=replay_backup_count,
+            max_age_days=replay_retention_days,
+            compress_archives=replay_compress,
+        )
         self.replay_recorder = (
-            ReplayRecorder(output_path=self.replay_log_path)
+            ReplayRecorder(output_path=self.replay_log_path, policy=self.replay_policy)
             if self.replay_log_path
             else None
         )
+
+        # Retention managers and background pruning
+        self._last_retention_check = time.monotonic()
+        self.retention_check_interval_seconds = float(
+            os.getenv(
+                "PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS",
+                str(getattr(self.config, "retention_check_interval_seconds", 3600.0)),
+            )
+        )
+        managed_dirs: set[Path] = set()
+        for p in (
+            effective_log_file,
+            self.audit_log_path,
+            effective_event_log_path,
+            self.replay_log_path,
+        ):
+            if p:
+                p_path = Path(p)
+                parent = p_path.parent if str(p_path.parent) != "" else Path(".")
+                managed_dirs.add(parent)
+        self.retention_managers = [
+            LogRetentionManager(
+                target_directory=d,
+                policy=self.audit_policy,
+                file_patterns=("*.log*", "*.jsonl*"),
+            )
+            for d in managed_dirs
+        ]
 
         self.api = PumpFunApiClient(base_url=self.api_base_url)
 
@@ -1760,6 +1885,75 @@ class TradingBot:
         )
         return True
 
+    async def _evaluate_and_trigger_displacement(
+        self,
+        candidate_mint: str,
+        market_cap_sol: float,
+        candidate_signal: Any | None = None,
+        conviction_percentile: float = 0.95,
+        token_name: str | None = None,
+        screening_verdict: TokenScreeningVerdict | None = None,
+    ) -> bool:
+        """Evaluate if an incoming breakout candidate should displace the weakest active holding."""
+        if not getattr(self.config, "enable_capital_rotation", True):
+            return False
+
+        if candidate_mint in self.active_positions:
+            return False
+
+        if screening_verdict is not None and not screening_verdict.passed:
+            return False
+
+        decision = self.displacement_engine.evaluate_displacement(
+            candidate_mint=candidate_mint,
+            candidate_signal=candidate_signal,
+            conviction_percentile=conviction_percentile,
+        )
+
+        if not decision.displace or not decision.displaced_mint:
+            return False
+
+        displaced_mint = decision.displaced_mint
+        self._log(
+            f"Opportunistic capital displacement triggered: displacing {displaced_mint[:8]} for breakout candidate {candidate_mint[:8]} (EV delta: +{decision.ev_delta:.4f})"
+        )
+
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.STRATEGY,
+                severity=EventSeverity.INFO,
+                event_name="capital_displacement",
+                mint=displaced_mint,
+                data={
+                    "displaced_mint": displaced_mint,
+                    "candidate_mint": candidate_mint,
+                    "ev_delta": decision.ev_delta,
+                    "candidate_ev": decision.candidate_ev,
+                    "weakest_ev": decision.weakest_ev,
+                    "friction_sol": decision.estimated_friction_sol,
+                    "reason": decision.reason,
+                },
+            )
+
+        self.displacement_engine.request_displacement_exit(
+            displaced_mint, candidate_mint
+        )
+        sell_success = await self._sell_token(
+            mint=displaced_mint,
+            reason="capital_displacement",
+        )
+        self.displacement_engine.clear_displacement(displaced_mint)
+
+        if sell_success or self.dry_run:
+            return await self._buy_token(
+                mint=candidate_mint,
+                market_cap_sol=market_cap_sol,
+                token_name=token_name,
+                screening_verdict=screening_verdict,
+                reason="capital_displacement_entry",
+            )
+        return False
+
     def _enqueue_exit_retry(self, mint: str, reason: str = "") -> None:
         if mint not in self._exit_retry_queue:
             retry_count = 1
@@ -2180,8 +2374,11 @@ class TradingBot:
         performance = curr_mc / entry_mc if entry_mc > 0 else 1.0
         peak_ratio = peak_mc / entry_mc if entry_mc > 0 else 1.0
 
+        cand = self.graduation_engine.get_candidate(mint)
+        curve_prog = cand.progress_pct if cand else None
+
         exit_decision = self.position_manager.evaluate_exit(
-            mint, current_market_cap=current_market_cap
+            mint, current_market_cap=current_market_cap, curve_progress_pct=curve_prog
         )
         if not exit_decision:
             return False
@@ -2278,6 +2475,68 @@ class TradingBot:
             ):
                 self._last_event = "circuit_breaker_active"
                 return
+
+            # Pre-graduation acceleration harvesting evaluation (FEAT-25)
+            if (
+                self.config.enable_pre_graduation_harvesting
+                and mint not in self.active_positions
+                and not self._is_recently_seen(mint)
+            ):
+                min_p = (
+                    self.config.pre_graduation_entry_progress_pct * 100.0
+                    if self.config.pre_graduation_entry_progress_pct <= 1.0
+                    else self.config.pre_graduation_entry_progress_pct
+                )
+                max_p = (
+                    self.config.pre_graduation_max_entry_progress_pct * 100.0
+                    if self.config.pre_graduation_max_entry_progress_pct <= 1.0
+                    else self.config.pre_graduation_max_entry_progress_pct
+                )
+                grad_sig = (
+                    self.graduation_engine.evaluate_pre_graduation_harvesting_entry(
+                        mint=mint,
+                        min_progress_pct=min_p,
+                        max_progress_pct=max_p,
+                        min_acceleration=self.config.pre_graduation_min_acceleration,
+                        current_time=update.timestamp,
+                    )
+                )
+                if grad_sig.triggered:
+                    async with self._trade_lock:
+                        if mint in self.active_positions or self._is_recently_seen(
+                            mint
+                        ):
+                            return
+                        screening_verdict = await self._enrich_and_screen_token(mint)
+                        if not screening_verdict.passed:
+                            return
+                        if not self._should_buy(
+                            mint,
+                            current_market_cap,
+                            screening_verdict=screening_verdict,
+                        ):
+                            if getattr(self.config, "enable_capital_rotation", True):
+                                await self._evaluate_and_trigger_displacement(
+                                    candidate_mint=mint,
+                                    market_cap_sol=current_market_cap,
+                                    conviction_percentile=0.98,
+                                    screening_verdict=screening_verdict,
+                                )
+                            return
+                        self._log(
+                            f"Pre-graduation harvesting entry triggered for {mint}: {grad_sig.reason}"
+                        )
+                        self._last_event = f"pre-grad entry {mint[:8]}"
+                        bought = await self._buy_token(
+                            mint,
+                            current_market_cap,
+                            None,
+                            screening_verdict=screening_verdict,
+                            reason="pre_graduation_harvesting_entry",
+                        )
+                        if bought:
+                            self._record_event(f"bought pre-graduation {mint[:8]}")
+                            return
 
             async with self._trade_lock:
                 if self._is_recently_seen(mint):
@@ -2497,6 +2756,16 @@ class TradingBot:
                     if not self._should_buy(
                         mint, current_market_cap, screening_verdict=screening_verdict
                     ):
+                        if getattr(self.config, "enable_capital_rotation", True):
+                            displaced = await self._evaluate_and_trigger_displacement(
+                                candidate_mint=mint,
+                                market_cap_sol=current_market_cap,
+                                candidate_signal=mom_signal,
+                                conviction_percentile=0.95,
+                                screening_verdict=screening_verdict,
+                            )
+                            if displaced:
+                                self._record_event(f"displaced for momentum {mint[:8]}")
                         return
 
                     self._log(
@@ -3123,10 +3392,32 @@ class TradingBot:
                 await self._check_and_enforce_circuit_breaker()
                 self._prune_seen_mints()
                 self._write_status_snapshot()
+                await self._run_retention_prune()
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 self._log(f"Health loop exception: {exc}", level=logging.DEBUG)
+
+    async def _run_retention_prune(self) -> None:
+        """Periodic background evaluation of disk retention quotas and archive pruning."""
+        now_mono = time.monotonic()
+        if (
+            now_mono - self._last_retention_check
+            < self.retention_check_interval_seconds
+        ):
+            return
+        self._last_retention_check = now_mono
+        for mgr in getattr(self, "retention_managers", []):
+            try:
+                pruned = await mgr.prune_expired_async()
+                if pruned:
+                    self._log(
+                        f"Retention policy pruned {len(pruned)} expired log/audit archives in {mgr.target_directory}",
+                        level=logging.DEBUG,
+                    )
+                await asyncio.to_thread(mgr.compress_uncompressed_archives)
+            except Exception as exc:
+                self._log(f"Retention manager exception: {exc}", level=logging.DEBUG)
 
     async def _render_loop(self) -> None:
         """Background loop rendering the Rich terminal dashboard."""
@@ -3271,6 +3562,8 @@ class TradingBot:
                     self.rpc_pool.stop()
                 elif hasattr(self.rpc_pool, "close"):
                     await self.rpc_pool.close()
+            if hasattr(self, "event_logger") and self.event_logger is not None:
+                await self.event_logger.flush_and_close()
             if self.replay_recorder is not None:
                 await self.replay_recorder.close()
             self.persistence.close()

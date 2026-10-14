@@ -149,3 +149,4 @@ cython_debug/
 
 # repository specific
 bot_status.json
+events.jsonl

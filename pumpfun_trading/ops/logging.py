@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import gzip
 import logging
+import logging.handlers
 import os
 import re
+import shutil
 import sys
 from typing import Any
 
@@ -13,6 +16,23 @@ from rich.console import Console
 from pumpfun_trading.config.env import sanitize_env_for_logging
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def gzip_rotator(source: str, dest: str) -> None:
+    """Compress rotated log file to destination gzip archive and remove original."""
+    with open(source, "rb") as f_in, gzip.open(dest, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    try:
+        os.remove(source)
+    except OSError:
+        pass
+
+
+def gzip_namer(default_name: str) -> str:
+    """Append .gz suffix to rotated log file name if not present."""
+    if not default_name.endswith(".gz"):
+        return default_name + ".gz"
+    return default_name
 
 
 def strip_ansi(text: str) -> str:
@@ -59,6 +79,13 @@ def setup_structured_logging(
     log_level: int = logging.INFO,
     log_file: str | None = None,
     console: bool = False,
+    max_bytes: int = 10 * 1024 * 1024,
+    backup_count: int = 5,
+    rotation_type: str = "size",
+    compress: bool = True,
+    when: str = "midnight",
+    interval: int = 1,
+    utc: bool = True,
 ) -> logging.Logger:
     """Configure a consistent logger with JSON-like text fields and safe metadata."""
     logger = logging.getLogger(logger_name)
@@ -75,7 +102,34 @@ def setup_structured_logging(
         directory = os.path.dirname(log_file)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
+
+        norm_rotation = (rotation_type or "size").strip().lower()
+        file_handler: logging.Handler
+        if norm_rotation == "size" and max_bytes > 0:
+            file_handler = logging.handlers.RotatingFileHandler(
+                log_file,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+            if compress:
+                file_handler.rotator = gzip_rotator  # type: ignore[assignment]
+                file_handler.namer = gzip_namer  # type: ignore[assignment]
+        elif norm_rotation == "time":
+            file_handler = logging.handlers.TimedRotatingFileHandler(
+                log_file,
+                when=when,
+                interval=interval,
+                backupCount=backup_count,
+                utc=utc,
+                encoding="utf-8",
+            )
+            if compress:
+                file_handler.rotator = gzip_rotator  # type: ignore[assignment]
+                file_handler.namer = gzip_namer  # type: ignore[assignment]
+        else:
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
@@ -112,6 +166,8 @@ def log_runtime_event(
 __all__ = [
     "AnsiStrippingFormatter",
     "get_configured_console",
+    "gzip_namer",
+    "gzip_rotator",
     "is_color_enabled",
     "log_runtime_event",
     "setup_structured_logging",

@@ -17,6 +17,7 @@ from pumpfun_trading.cli.events import build_events_parser, run_events_cli
 from pumpfun_trading.cli.record import build_record_parser, run_record_cli
 from pumpfun_trading.cli.replay import build_replay_parser
 from pumpfun_trading.ops.logging import get_configured_console
+from pumpfun_trading.ops.retention import LogRetentionManager, RetentionPolicy
 
 console = get_configured_console()
 
@@ -142,6 +143,105 @@ def _render_market_info(payload) -> None:
         console.print(Panel(detail_table, title="Details", border_style="blue"))
 
 
+def build_ops_parser(
+    subparsers: argparse._SubParsersAction | None = None,
+) -> argparse.ArgumentParser:
+    if subparsers is not None:
+        parser = subparsers.add_parser(
+            "ops", help="Storage retention, compression, and maintenance operations"
+        )
+    else:
+        parser = argparse.ArgumentParser(
+            description="Storage retention, compression, and maintenance operations"
+        )
+    ops_subparsers = parser.add_subparsers(dest="ops_command")
+
+    prune_p = ops_subparsers.add_parser(
+        "prune", help="Prune expired log, audit, and replay archives"
+    )
+    prune_p.add_argument(
+        "--target",
+        default=".",
+        help="Target directory to prune (default: current directory)",
+    )
+    prune_p.add_argument(
+        "--days", type=int, default=30, help="Maximum archive retention in days"
+    )
+    prune_p.add_argument(
+        "--max-files", type=int, default=10, help="Maximum archive file count limit"
+    )
+    prune_p.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help="Maximum total storage bytes allowed",
+    )
+    prune_p.add_argument(
+        "--compress",
+        action="store_true",
+        help="Compress uncompressed rotated files to .gz",
+    )
+
+    status_p = ops_subparsers.add_parser(
+        "status", help="Inspect storage consumption and archive metrics"
+    )
+    status_p.add_argument(
+        "--target",
+        default=".",
+        help="Target directory to inspect (default: current directory)",
+    )
+    status_p.add_argument(
+        "--json", action="store_true", help="Emit storage telemetry as JSON"
+    )
+    return parser
+
+
+def run_ops_cli(args: argparse.Namespace) -> None:
+    ops_cmd = getattr(args, "ops_command", None) or "status"
+    target_dir = getattr(args, "target", ".") or "."
+    policy = RetentionPolicy(
+        max_age_days=getattr(args, "days", 30) or 30,
+        max_files=getattr(args, "max_files", 10) or 10,
+        total_max_bytes=getattr(args, "max_bytes", None),
+        compress_archives=getattr(args, "compress", True),
+    )
+    manager = LogRetentionManager(target_directory=target_dir, policy=policy)
+
+    if ops_cmd == "prune":
+        pruned = manager.prune_expired()
+        compressed = []
+        if getattr(args, "compress", False):
+            compressed = manager.compress_uncompressed_archives()
+        console.print(
+            f"[green]Successfully pruned {len(pruned)} expired files in {target_dir}.[/green]"
+        )
+        if compressed:
+            console.print(
+                f"[cyan]Compressed {len(compressed)} archive files to .gz.[/cyan]"
+            )
+        return
+
+    if ops_cmd == "status":
+        stats = manager.get_storage_stats()
+        if getattr(args, "json", False):
+            console.print(json.dumps(stats, indent=2, sort_keys=True))
+            return
+        table = Table(
+            title=f"Log Storage Telemetry: {stats['directory']}",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        table.add_column("Metric", style="bold")
+        table.add_column("Value")
+        table.add_row("Directory Exists", str(stats["exists"]))
+        table.add_row("Total Files", str(stats["file_count"]))
+        table.add_row("Compressed (.gz)", str(stats["compressed_count"]))
+        table.add_row("Total Storage", stats["total_human"])
+        table.add_row("Total Bytes", f"{stats['total_bytes']:,} B")
+        console.print(table)
+        return
+
+
 def _render_raw_json(payload) -> None:
     console.print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
@@ -155,6 +255,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build_events_parser(subparsers)
     build_replay_parser(subparsers)
     build_record_parser(subparsers)
+    build_ops_parser(subparsers)
 
     parser.add_argument("--mint", type=str, help="Mint address to inspect")
     parser.add_argument(
@@ -256,6 +357,10 @@ def main() -> None:
 
     if args.command == "record":
         run_record_cli(args)
+        return
+
+    if args.command == "ops":
+        run_ops_cli(args)
         return
 
     if args.command == "replay":

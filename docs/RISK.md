@@ -139,3 +139,16 @@ When network congestion or sudden volatility causes a sell transaction to fail:
 | `max_slippage_bps` | `250` | Basis Points | Maximum allowable slippage (`250` = 2.5%). |
 | `exit_retry_max_attempts` | `5` | Count | Maximum automated retry count for failed sells. |
 | `screening_cache_ttl_seconds` | `60` | Seconds | In-memory anti-rug screening cache validity window. |
+| `max_cluster_concentration_pct` | `25.0` | Percent | Maximum supply fraction held by multi-wallet insider clusters (FEAT-26). |
+| `max_single_cluster_pct` | `20.0` | Percent | Maximum supply fraction held by any single funding cluster (FEAT-26). |
+| `max_sybil_wash_ratio` | `20.0` | Percent | Maximum volume churn ratio before triggering sybil wash reject (FEAT-26). |
+
+---
+
+## 7. On-Chain Funding Cluster Graph & Sybil Wash Defense (FEAT-26)
+
+Insider syndicates frequently disperse pre-bought tokens across multiple seemingly independent wallets to bypass basic top-holder checks. `pumpfun-trading` neutralizes this risk through graph-based funding origin analysis:
+
+1. **Common Ancestor Resolution**: Upstream funding links are traced through splitters and intermediary wallets to identify common funding roots.
+2. **Cluster Concentration Cap**: Tokens where linked multi-wallet clusters control $\ge 25.0\%$ of supply or where a single dominant cluster holds $\ge 20.0\%$ are immediately rejected.
+3. **Sybil Wash Churn Elimination**: Circular buy/sell patterns and alternating ping-pong swaps are detected in streaming trade feeds, preventing capital deployment into manipulated volume surges.

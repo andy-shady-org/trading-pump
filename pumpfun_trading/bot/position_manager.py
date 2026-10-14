@@ -430,6 +430,7 @@ class PositionManager:
         token_balance: int | None = None,
         *,
         now: float | None = None,
+        curve_progress_pct: float | None = None,
     ) -> ExitDecision | None:
         """Evaluates exit conditions against current position state and configuration."""
         if mint not in self._positions:
@@ -446,12 +447,14 @@ class PositionManager:
             current_market_cap=current_market_cap,
             token_balance=token_balance,
             now=now,
+            curve_progress_pct=curve_progress_pct,
         )
 
         pos["trailing_stop_active"] = exit_state.trailing_stop_active
         pos["tier_1_executed"] = exit_state.tier_1_executed
         pos["tier_2_executed"] = exit_state.tier_2_executed
         pos["moonbag_active"] = exit_state.moonbag_active
+        pos["executed_pre_grad_tranches"] = list(exit_state.executed_pre_grad_tranches)
         pos["last_price_change_at"] = exit_state.last_price_change_at
         pos["last_price"] = exit_state.last_price
 
@@ -514,6 +517,21 @@ class PositionManager:
     def remove_position(self, mint: str) -> dict[str, Any] | None:
         return self._positions.pop(mint, None)
 
+    def total_cost_sol(self) -> float:
+        """Calculate total active SOL exposure across all open positions."""
+        total = 0.0
+        default_cost = float(getattr(self.config, "buy_amount_sol", 0.0) or 0.0)
+        for pos in self._positions.values():
+            cost = pos.get("cost_sol")
+            if cost is None:
+                cost = pos.get("entry_sol")
+            if cost is None:
+                cost = default_cost
+            cost_sol = float(cost or 0.0)
+            fraction = _extract_position_fraction(pos)
+            total += cost_sol * fraction
+        return total
+
     def clear(self) -> None:
         self._positions.clear()
 
@@ -542,3 +560,163 @@ class PositionManager:
             normalized["peak_market_cap"] = peak_mc
             restored_positions[str(mint)] = normalized
         self._positions = restored_positions
+
+
+@dataclass(frozen=True)
+class DisplacementDecision:
+    """Decision details for an autonomous opportunistic capital displacement."""
+
+    displace: bool
+    displaced_mint: str | None = None
+    target_mint: str | None = None
+    ev_delta: float = 0.0
+    estimated_friction_sol: float = 0.0
+    candidate_ev: float = 0.0
+    weakest_ev: float = 0.0
+    reason: str = ""
+
+
+class CapitalDisplacementEngine:
+    """Evaluates incoming high-conviction breakout signals against lowest-EV open positions."""
+
+    def __init__(
+        self,
+        config: TradingBotConfig,
+        position_manager: PositionManager,
+        ev_evaluator: Any | None = None,
+    ) -> None:
+        self.config = config
+        self.position_manager = position_manager
+        if ev_evaluator is not None:
+            self.ev_evaluator = ev_evaluator
+        else:
+            from pumpfun_trading.strategies.decision import PositionEvEvaluator
+
+            self.ev_evaluator = PositionEvEvaluator(config)
+        self._pending_displacements: dict[str, str] = (
+            {}
+        )  # displaced_mint -> candidate_mint
+
+    def is_displacement_pending(self, mint: str) -> bool:
+        """Check if a position is currently pending exit for displacement."""
+        return mint in self._pending_displacements
+
+    def get_pending_displacement_target(self, mint: str) -> str | None:
+        """Retrieve candidate mint waiting on displacement exit of given mint."""
+        return self._pending_displacements.get(mint)
+
+    def request_displacement_exit(
+        self, displaced_mint: str, candidate_mint: str
+    ) -> None:
+        """Register a displacement intention."""
+        self._pending_displacements[displaced_mint] = candidate_mint
+
+    def clear_displacement(self, mint: str) -> None:
+        """Clear pending displacement for a mint."""
+        self._pending_displacements.pop(mint, None)
+
+    def evaluate_displacement(
+        self,
+        candidate_mint: str,
+        candidate_signal: Any | None = None,
+        *,
+        current_time: float | None = None,
+        conviction_percentile: float = 0.95,
+        buy_amount_sol: float | None = None,
+    ) -> DisplacementDecision:
+        """Evaluate if an incoming breakout candidate should displace the weakest active holding."""
+        if not getattr(self.config, "enable_capital_rotation", True):
+            return DisplacementDecision(
+                displace=False, reason="capital_rotation_disabled"
+            )
+
+        if candidate_mint in self.position_manager:
+            return DisplacementDecision(displace=False, reason="candidate_already_held")
+
+        now = time.time() if current_time is None else float(current_time)
+        active_count = len(self.position_manager)
+        max_positions = int(self.config.max_active_positions)
+        total_exposure = self.position_manager.total_cost_sol()
+        max_exposure = float(self.config.max_total_exposure_sol)
+        trade_size = (
+            buy_amount_sol
+            if buy_amount_sol is not None
+            else float(self.config.buy_amount_sol)
+        )
+
+        is_capacity_saturated = (
+            active_count >= max_positions
+            or (total_exposure + trade_size) > max_exposure
+        )
+
+        if not is_capacity_saturated:
+            return DisplacementDecision(displace=False, reason="portfolio_has_capacity")
+
+        # Rank current positions by EV
+        ranked_scores = self.ev_evaluator.rank_positions_by_ev(
+            self.position_manager.get_all_positions(),
+            current_time=now,
+        )
+
+        # Filter displaceable positions
+        displaceable = [
+            s
+            for s in ranked_scores
+            if s.is_displaceable and not self.is_displacement_pending(s.mint)
+        ]
+        if not displaceable:
+            return DisplacementDecision(
+                displace=False, reason="no_displaceable_positions"
+            )
+
+        weakest = displaceable[0]
+        min_percentile = getattr(
+            self.config, "displacement_min_conviction_percentile", 0.95
+        )
+        candidate_ev = self.ev_evaluator.evaluate_candidate(
+            candidate_mint,
+            momentum_signal=candidate_signal,
+            conviction_percentile=conviction_percentile,
+        )
+
+        # Calculate roundtrip execution friction (2x slippage + hurdle rate)
+        slippage_fraction = (
+            float(getattr(self.config, "min_slippage_bps", 100)) / 10_000.0
+        )
+        hurdle_rate = float(getattr(self.config, "displacement_hurdle_rate_pct", 0.03))
+        friction_pct = (2.0 * slippage_fraction) + hurdle_rate
+        estimated_friction_sol = friction_pct * trade_size
+
+        ev_delta = candidate_ev - weakest.ev_score
+
+        if conviction_percentile < min_percentile:
+            return DisplacementDecision(
+                displace=False,
+                candidate_ev=candidate_ev,
+                weakest_ev=weakest.ev_score,
+                ev_delta=ev_delta,
+                reason=f"conviction_below_min_percentile_{min_percentile:.2f}",
+            )
+
+        if ev_delta <= friction_pct:
+            return DisplacementDecision(
+                displace=False,
+                displaced_mint=weakest.mint,
+                target_mint=candidate_mint,
+                candidate_ev=candidate_ev,
+                weakest_ev=weakest.ev_score,
+                ev_delta=ev_delta,
+                estimated_friction_sol=estimated_friction_sol,
+                reason="insufficient_ev_hurdle_delta",
+            )
+
+        return DisplacementDecision(
+            displace=True,
+            displaced_mint=weakest.mint,
+            target_mint=candidate_mint,
+            candidate_ev=candidate_ev,
+            weakest_ev=weakest.ev_score,
+            ev_delta=ev_delta,
+            estimated_friction_sol=estimated_friction_sol,
+            reason="positive_ev_displacement",
+        )

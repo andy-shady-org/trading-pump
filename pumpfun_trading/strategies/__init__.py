@@ -19,6 +19,7 @@ from pumpfun_trading.strategies.filters import (
     TokenScreeningVerdict,
     buy_attempts_within_limit,
     calculate_gini_coefficient,
+    evaluate_cluster_heuristics,
     evaluate_creator_holdings,
     evaluate_dev_wallet,
     evaluate_holder_distribution,
@@ -28,6 +29,15 @@ from pumpfun_trading.strategies.filters import (
     passes_market_cap_filter,
     token_is_eligible,
     token_is_recently_seen,
+)
+from pumpfun_trading.strategies.cluster import (
+    ClusterAnalysisVerdict,
+    FundingCluster,
+    FundingClusterAnalyzer,
+    FundingClusterGraph,
+    SybilWashTradingDetector,
+    SybilWashVerdict,
+    WalletNode,
 )
 from pumpfun_trading.strategies.presets import DEFAULT_PRESETS, resolve_strategy_config
 from pumpfun_trading.strategies.momentum import (
@@ -58,12 +68,16 @@ from pumpfun_trading.strategies.signal import (
 )
 
 __all__ = [
+    "ClusterAnalysisVerdict",
     "CopyTradeEngine",
     "CopyTradeSignal",
     "DEFAULT_PRESETS",
     "DevWalletProfile",
     "ExitAction",
     "ExitDecision",
+    "FundingCluster",
+    "FundingClusterAnalyzer",
+    "FundingClusterGraph",
     "GraduationCandidate",
     "GraduationEngine",
     "GraduationSignal",
@@ -75,6 +89,8 @@ __all__ = [
     "RaydiumPoolKeys",
     "ScreeningCache",
     "ScreeningVerdict",
+    "SybilWashTradingDetector",
+    "SybilWashVerdict",
     "TokenMetadata",
     "TokenOrderFlowTracker",
     "TokenScreeningVerdict",
@@ -82,10 +98,12 @@ __all__ = [
     "TradeRecord",
     "TradingBotConfig",
     "TradingStrategy",
+    "WalletNode",
     "WalletRegistry",
     "WindowMetrics",
     "buy_attempts_within_limit",
     "calculate_gini_coefficient",
+    "evaluate_cluster_heuristics",
     "evaluate_creator_holdings",
     "evaluate_dev_wallet",
     "evaluate_exit_strategy",

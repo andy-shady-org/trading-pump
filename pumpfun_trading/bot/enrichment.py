@@ -158,12 +158,45 @@ class TokenEnricher:
                 bonding_curve_address=bonding_curve_pda,
             )
 
+        cluster_analysis = None
+        if active_config.enable_cluster_analysis:
+            funding_links = (
+                coin_data.get("funding_links") or coin_data.get("fundingLinks") or []
+            )
+            cluster_trades = (
+                coin_data.get("trades") or coin_data.get("recent_trades") or []
+            )
+            if funding_links or coin_data.get("cluster_analysis"):
+                if isinstance(coin_data.get("cluster_analysis"), dict):
+                    # Direct verdict passed
+                    pass
+                top_h = holder_distribution.top_holders if holder_distribution else []
+                total_supp = (
+                    holder_distribution.total_supply
+                    if holder_distribution
+                    else 1_000_000_000_000_000
+                )
+                cluster_analysis = self.strategy.evaluate_cluster_graph(
+                    mint,
+                    top_holders=top_h,
+                    creator_wallet=str(creator) if creator else None,
+                    creator_balance=(
+                        int(creator_pct * total_supp) if creator_pct > 0 else 0
+                    ),
+                    total_supply=total_supp,
+                    funding_links=(
+                        funding_links if isinstance(funding_links, list) else None
+                    ),
+                    trades=cluster_trades if isinstance(cluster_trades, list) else None,
+                )
+
         verdict = self.strategy.screen_token(
             mint,
             metadata=metadata,
             dev_profile=dev_profile,
             holder_distribution=holder_distribution,
             bonding_curve_pda=bonding_curve_pda,
+            cluster_analysis=cluster_analysis,
             cache=self.screening_cache,
             use_cache=True,
         )

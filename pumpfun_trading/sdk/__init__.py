@@ -2,6 +2,8 @@ from .curve import (
     INITIAL_VIRTUAL_SOL_LAMPORTS,
     INITIAL_VIRTUAL_TOKEN_RAW,
     TOTAL_TOKEN_SUPPLY_RAW,
+    BondingCurveVolatilityEstimator,
+    CurveObservation,
     calculate_buy_execution_slippage,
     calculate_buy_price_impact,
     calculate_buy_tokens_out,
@@ -35,6 +37,8 @@ from .raydium import (
 )
 
 __all__ = [
+    "BondingCurveVolatilityEstimator",
+    "CurveObservation",
     "DEFAULT_TIP_FLOOR_URL",
     "INITIAL_VIRTUAL_SOL_LAMPORTS",
     "INITIAL_VIRTUAL_TOKEN_RAW",

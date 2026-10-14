@@ -394,7 +394,7 @@ async def test_order_liquidator_branches():
     pm.record_buy(SAMPLE_MINT_2, 2000, 0.10, 40.0, dry_run=True)
 
     # Mock execute_sell success and failure
-    async def mock_sell(mint, token_amount, slippage_bps=None, reason=""):
+    async def mock_sell(mint, token_amount, *args, **kwargs):
         if mint == SAMPLE_MINT:
             return ExecutionResult(
                 success=True, mint=mint, amount_sol=0.06, token_amount=token_amount

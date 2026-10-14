@@ -601,16 +601,16 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add unit tests and replay engine compatibility validation (`test_market_recorder.py`) (FEAT-21)
 
 ### Sprint 18: Automated Log File Retention, Rollover & Multi-Sink Compression (FEAT-22)
-- [ ] Implement size-based and time-based application log rotation with custom gzip rotator and namer in `pumpfun_trading/ops/logging.py` (FEAT-22)
-- [ ] Add log rotation environment variables (`PUMPFUN_LOG_MAX_BYTES`, `PUMPFUN_LOG_BACKUP_COUNT`, `PUMPFUN_LOG_ROTATION_TYPE`, `PUMPFUN_LOG_COMPRESS`) to `pumpfun_trading/config/env.py` and `TradingBotConfig` (FEAT-22)
-- [ ] Create centralized retention management engine and async-safe rotating file sink in `pumpfun_trading/ops/retention.py` (`RetentionPolicy`, `RotatedFileSink`, `LogRetentionManager`) (FEAT-22)
-- [ ] Integrate `RotatedFileSink` with configurable rollover and retention into `StatusPersistenceManager` for `audit.jsonl` in `pumpfun_trading/bot/persistence.py` (FEAT-22)
-- [ ] Integrate `RotatedFileSink` into `ReplayRecorder` in `pumpfun_trading/bot/recorder.py` for chunked market replay recordings and background compression (FEAT-22)
-- [ ] Wire retention management and periodic background pruning into `TradingBot` runtime lifecycle in `pumpfun_trading/bot/run.py` (FEAT-22)
-- [ ] Upgrade `load_audit_records` in `pumpfun_trading/bot/audit.py` and `pumpfun_trading/cli/audit.py` to transparently read `.gz` files and directory datasets (FEAT-22)
-- [ ] Upgrade `PaperTradingEngine.load_history` and `run_replay` in `pumpfun_trading/engines/replay.py` and `pumpfun_trading/cli/replay.py` to support compressed `.jsonl.gz` datasets and multi-part replay directories (FEAT-22)
-- [ ] Add storage maintenance CLI commands (`pumpfun ops prune`, `pumpfun ops status`) in `pumpfun_trading/cli/main.py` (FEAT-22)
-- [ ] Add comprehensive test suites for log rotation, retention manager, compressed audit querying, and chunked replay datasets (`test_logging_rotation.py`, `test_ops_retention.py`, `test_audit_tool.py`, `test_market_recorder.py`) (FEAT-22)
+- [x] Implement size-based and time-based application log rotation with custom gzip rotator and namer in `pumpfun_trading/ops/logging.py` (FEAT-22)
+- [x] Add log rotation environment variables (`PUMPFUN_LOG_MAX_BYTES`, `PUMPFUN_LOG_BACKUP_COUNT`, `PUMPFUN_LOG_ROTATION_TYPE`, `PUMPFUN_LOG_COMPRESS`) to `pumpfun_trading/config/env.py` and `TradingBotConfig` (FEAT-22)
+- [x] Create centralized retention management engine and async-safe rotating file sink in `pumpfun_trading/ops/retention.py` (`RetentionPolicy`, `RotatedFileSink`, `LogRetentionManager`) (FEAT-22)
+- [x] Integrate `RotatedFileSink` with configurable rollover and retention into `StatusPersistenceManager` for `audit.jsonl` in `pumpfun_trading/bot/persistence.py` (FEAT-22)
+- [x] Integrate `RotatedFileSink` into `ReplayRecorder` in `pumpfun_trading/bot/recorder.py` for chunked market replay recordings and background compression (FEAT-22)
+- [x] Wire retention management and periodic background pruning into `TradingBot` runtime lifecycle in `pumpfun_trading/bot/run.py` (FEAT-22)
+- [x] Upgrade `load_audit_records` in `pumpfun_trading/bot/audit.py` and `pumpfun_trading/cli/audit.py` to transparently read `.gz` files and directory datasets (FEAT-22)
+- [x] Upgrade `PaperTradingEngine.load_history` and `run_replay` in `pumpfun_trading/engines/replay.py` and `pumpfun_trading/cli/replay.py` to support compressed `.jsonl.gz` datasets and multi-part replay directories (FEAT-22)
+- [x] Add storage maintenance CLI commands (`pumpfun ops prune`, `pumpfun ops status`) in `pumpfun_trading/cli/main.py` (FEAT-22)
+- [x] Add comprehensive test suites for log rotation, retention manager, compressed audit querying, and chunked replay datasets (`test_logging_rotation.py`, `test_ops_retention.py`, `test_audit_tool.py`, `test_market_recorder.py`, `test_ops_cli.py`) (FEAT-22)
 
 ### Sprint 19: Comprehensive CLI Commands Reference & Terminal UI Observability Documentation
 - [x] Create comprehensive CLI reference manual in `docs/CLI-COMMANDS.md`:
@@ -633,6 +633,27 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Instrument core subsystems with structured diagnostic telemetry events (`streams/`, `enrichment.py`, `strategy.py`, `executor.py`, `sdk/jito.py`, `position_manager.py`, `risk.py`) (FEAT-30)
 - [x] Build standalone `pumpfun-events` CLI tool and unified `pumpfun events` subcommand with Rich formatting, tailing, filters, and latency analytics (FEAT-30)
 - [x] Add comprehensive test suites for realized-ratchet drawdown math, dual-tier circuit breakers, event logger stress tests, and CLI querying (`test_risk_adaptive_ratchet.py`, `test_diagnostic_events.py`, `test_events_cli.py`) (FEAT-29, FEAT-30)
+
+### Sprint 21: Quantitative Alpha Engines (FEAT-23, FEAT-24 & FEAT-25)
+- [x] Implement `BondingCurveVolatilityEstimator` in `pumpfun_trading/sdk/curve.py` calculating price velocity, rolling volatility, depth consumption, and price impact (FEAT-23)
+- [x] Implement `AdaptiveExecutionPolicy` in `pumpfun_trading/execution/policy.py` resolving dynamic slippage bounds and urgency-tiered compute unit / Jito tip scaling (FEAT-23)
+- [x] Integrate dynamic slippage and priority fees into `OrderExecutor`, `PumpFunExecutionClient`, and `OrderLiquidator` (FEAT-23)
+- [x] Implement `PositionEvEvaluator` in `pumpfun_trading/strategies/decision.py` calculating Expected Value (EV) scores based on momentum Z-scores, net inflows, duration, and stagnation factors (FEAT-24)
+- [x] Implement `CapitalDisplacementEngine` in `pumpfun_trading/bot/position_manager.py` evaluating candidate EV vs. weakest holding EV overcoming roundtrip friction (FEAT-24)
+- [x] Integrate atomic capital displacement and position rotation into `TradingBot` runtime event loop in `pumpfun_trading/bot/run.py` (FEAT-24)
+- [x] Implement curve reserve accumulation acceleration ($a_{\text{curve}} = \Delta^2 \text{SOL} / \Delta t^2$) and trajectory classification in `pumpfun_trading/strategies/graduation.py` (FEAT-25)
+- [x] Implement staged pre-graduation entry triggers (70%–85% progress with positive acceleration) and multi-tranche take-profit scaling (92%, 97%, moonbag) in `pumpfun_trading/strategies/exits.py` (FEAT-25)
+- [x] Add configuration parameters to `TradingBotConfig`, presets, environment variables, and historical replay simulator in `PaperTradingEngine` (FEAT-23, FEAT-24, FEAT-25)
+- [x] Add comprehensive unit and integration test suites (`test_dynamic_execution_policy.py`, `test_capital_displacement.py`, `test_graduation_harvester.py`) (FEAT-23, FEAT-24, FEAT-25)
+
+### Sprint 22: On-Chain Funding Cluster Graph & Sybil Wash-Trading Detector (FEAT-26)
+- [x] Implement `FundingClusterGraph` in `pumpfun_trading/strategies/cluster.py` resolving root funding origins, common ancestor chains, and calculating the Insider Cluster Concentration Index ($0.0–1.0$) (FEAT-26)
+- [x] Implement `SybilWashTradingDetector` in `pumpfun_trading/strategies/cluster.py` detecting circular buy/sell patterns, alternating ping-pong swaps, and rapid zero-profit wallet churn (FEAT-26)
+- [x] Implement `FundingClusterAnalyzer` in `pumpfun_trading/strategies/cluster.py` producing composite screening verdicts with risk penalties and hard rejection flags (`insider_cluster_detected`, `dominant_cluster_detected`, `sybil_wash_detected`) (FEAT-26)
+- [x] Integrate cluster and sybil wash heuristics into `evaluate_cluster_heuristics`, `evaluate_token_heuristics`, and `passes_anti_rug_screening` in `pumpfun_trading/strategies/filters.py` (FEAT-26)
+- [x] Integrate cluster graph evaluation into `TradingStrategy` (`strategies/decision.py`) and `TokenEnricher` (`bot/enrichment.py`) (FEAT-26)
+- [x] Add configuration parameters to `TradingBotConfig` (`strategies/base.py`), strategy presets (`conservative`, `balanced`, `aggressive`), and environment variable parser in `config/env.py` (FEAT-26)
+- [x] Add unit and integration test suite in `pumpfun_trading/tests/test_funding_cluster_and_sybil.py` verifying graph building, cycle protection, sybil detection, anti-rug integration, and presets (FEAT-26)
 
 ## Definition of done for a “serious” bot
 

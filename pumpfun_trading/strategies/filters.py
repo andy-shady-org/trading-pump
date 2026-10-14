@@ -4,9 +4,12 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from pumpfun_trading.strategies.base import TradingBotConfig
+
+if TYPE_CHECKING:
+    from pumpfun_trading.strategies.cluster import ClusterAnalysisVerdict
 
 # Regex patterns for social links
 _TWITTER_PATTERN = re.compile(
@@ -231,6 +234,7 @@ class TokenScreeningVerdict:
     dev_profile: DevWalletProfile | None = None
     holder_distribution: HolderDistribution | None = None
     metadata: TokenMetadata | None = None
+    cluster_analysis: ClusterAnalysisVerdict | None = None
 
     @property
     def is_clean(self) -> bool:
@@ -408,6 +412,66 @@ def evaluate_metadata_socials(
     return True, 0.0, []
 
 
+def evaluate_cluster_heuristics(
+    cluster_analysis: ClusterAnalysisVerdict | None,
+    *,
+    max_cluster_concentration_pct: float = 0.25,
+    max_single_cluster_pct: float = 0.20,
+    max_sybil_wash_ratio: float = 0.20,
+) -> tuple[bool, float, list[str], dict[str, Any]]:
+    """Evaluates multi-wallet insider cluster concentration and sybil wash volume."""
+    if cluster_analysis is None:
+        return True, 0.0, [], {}
+
+    reasons: list[str] = []
+    flags: dict[str, Any] = {}
+    penalty = 0.0
+    passed = True
+
+    concentration = cluster_analysis.cluster_concentration_index
+    if concentration >= max_cluster_concentration_pct:
+        excess = concentration - max_cluster_concentration_pct
+        p = min(50.0, 30.0 + (excess / max(0.01, max_cluster_concentration_pct)) * 20.0)
+        penalty += p
+        reasons.append(
+            f"Insider cluster concentration {concentration:.1%} exceeds limit {max_cluster_concentration_pct:.1%}"
+        )
+        flags["insider_cluster_detected"] = True
+        passed = False
+    elif concentration > 0.10:
+        penalty += concentration * 30.0
+        reasons.append(
+            f"Moderate insider cluster concentration: {concentration:.1%} of supply in linked wallets"
+        )
+
+    max_single = cluster_analysis.max_single_cluster_fraction
+    if max_single >= max_single_cluster_pct:
+        excess_single = max_single - max_single_cluster_pct
+        p_single = min(
+            40.0, 25.0 + (excess_single / max(0.01, max_single_cluster_pct)) * 15.0
+        )
+        penalty += p_single
+        reasons.append(
+            f"Dominant single funding cluster holds {max_single:.1%} of supply (cap: {max_single_cluster_pct:.1%})"
+        )
+        flags["dominant_cluster_detected"] = True
+        passed = False
+
+    if cluster_analysis.is_sybil_wash:
+        wash_ratio = cluster_analysis.wash_volume_ratio
+        if wash_ratio >= max_sybil_wash_ratio:
+            penalty += min(60.0, 35.0 + wash_ratio * 30.0)
+            reasons.append(
+                f"Sybil wash-trading confirmed: {wash_ratio:.1%} volume churn exceeds threshold {max_sybil_wash_ratio:.1%}"
+            )
+            flags["sybil_wash_detected"] = True
+            passed = False
+        else:
+            penalty += wash_ratio * 25.0
+
+    return passed, penalty, reasons, flags
+
+
 def evaluate_token_heuristics(
     config: TradingBotConfig,
     mint: str,
@@ -416,6 +480,7 @@ def evaluate_token_heuristics(
     dev_profile: DevWalletProfile | None = None,
     holder_distribution: HolderDistribution | None = None,
     bonding_curve_pda: str | None = None,
+    cluster_analysis: ClusterAnalysisVerdict | None = None,
     cache: ScreeningCache | None = None,
     use_cache: bool = True,
 ) -> TokenScreeningVerdict:
@@ -429,9 +494,7 @@ def evaluate_token_heuristics(
     parsed_metadata = (
         metadata
         if isinstance(metadata, TokenMetadata)
-        else TokenMetadata.from_dict(metadata)
-        if isinstance(metadata, dict)
-        else None
+        else TokenMetadata.from_dict(metadata) if isinstance(metadata, dict) else None
     )
 
     if not config.enable_anti_rug_filters:
@@ -444,6 +507,7 @@ def evaluate_token_heuristics(
             dev_profile=dev_profile,
             holder_distribution=holder_distribution,
             metadata=parsed_metadata,
+            cluster_analysis=cluster_analysis,
         )
         if use_cache:
             active_cache.set(mint, verdict, ttl=config.screening_cache_ttl_seconds)
@@ -503,6 +567,27 @@ def evaluate_token_heuristics(
         if config.require_social_links:
             hard_failed = True
 
+    # 5. On-Chain Funding Cluster Graph & Sybil Wash-Trading (FEAT-26)
+    if (
+        getattr(config, "enable_cluster_analysis", True)
+        and cluster_analysis is not None
+    ):
+        cluster_pass, cluster_penalty, cluster_reasons, cluster_flags = (
+            evaluate_cluster_heuristics(
+                cluster_analysis,
+                max_cluster_concentration_pct=getattr(
+                    config, "max_cluster_concentration_pct", 0.25
+                ),
+                max_single_cluster_pct=getattr(config, "max_single_cluster_pct", 0.20),
+                max_sybil_wash_ratio=getattr(config, "max_sybil_wash_ratio", 0.20),
+            )
+        )
+        total_risk_score += cluster_penalty
+        all_reasons.extend(cluster_reasons)
+        flags.update(cluster_flags)
+        if not cluster_pass:
+            hard_failed = True
+
     # Normalize total risk score (0.0 to 100.0)
     normalized_risk_score = min(100.0, max(0.0, total_risk_score))
     passed = not hard_failed and (
@@ -524,6 +609,7 @@ def evaluate_token_heuristics(
         dev_profile=dev_profile,
         holder_distribution=holder_distribution,
         metadata=parsed_metadata,
+        cluster_analysis=cluster_analysis,
     )
 
     if use_cache:
@@ -540,6 +626,7 @@ def passes_anti_rug_screening(
     dev_profile: DevWalletProfile | None = None,
     holder_distribution: HolderDistribution | None = None,
     bonding_curve_pda: str | None = None,
+    cluster_analysis: ClusterAnalysisVerdict | None = None,
     cache: ScreeningCache | None = None,
 ) -> bool:
     """Convenience helper returning True if token passes all anti-rug checks."""
@@ -550,6 +637,7 @@ def passes_anti_rug_screening(
         dev_profile=dev_profile,
         holder_distribution=holder_distribution,
         bonding_curve_pda=bonding_curve_pda,
+        cluster_analysis=cluster_analysis,
         cache=cache,
     )
     return verdict.passed
@@ -603,6 +691,7 @@ __all__ = [
     "TokenScreeningVerdict",
     "buy_attempts_within_limit",
     "calculate_gini_coefficient",
+    "evaluate_cluster_heuristics",
     "evaluate_creator_holdings",
     "evaluate_dev_wallet",
     "evaluate_holder_distribution",

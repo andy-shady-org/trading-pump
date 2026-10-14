@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from pumpfun_trading.strategies.base import TradingBotConfig
@@ -18,6 +20,10 @@ from pumpfun_trading.strategies.filters import (
     TokenScreeningVerdict,
     evaluate_token_heuristics,
     token_is_eligible,
+)
+from pumpfun_trading.strategies.cluster import (
+    ClusterAnalysisVerdict,
+    FundingClusterAnalyzer,
 )
 from pumpfun_trading.strategies.copy_trading import CopyTradeEngine, CopyTradeSignal
 from pumpfun_trading.strategies.graduation import GraduationEngine, GraduationSignal
@@ -220,6 +226,7 @@ class TradingStrategy:
         dev_profile: DevWalletProfile | None = None,
         holder_distribution: HolderDistribution | None = None,
         bonding_curve_pda: str | None = None,
+        cluster_analysis: ClusterAnalysisVerdict | None = None,
         cache: ScreeningCache | None = None,
         use_cache: bool = True,
     ) -> TokenScreeningVerdict:
@@ -230,9 +237,37 @@ class TradingStrategy:
             dev_profile=dev_profile,
             holder_distribution=holder_distribution,
             bonding_curve_pda=bonding_curve_pda,
+            cluster_analysis=cluster_analysis,
             cache=cache,
             use_cache=use_cache,
         )
+
+    def evaluate_cluster_graph(
+        self,
+        mint: str,
+        *,
+        top_holders: list[tuple[str, int]] | None = None,
+        creator_wallet: str | None = None,
+        creator_balance: int = 0,
+        total_supply: int = 1_000_000_000_000_000,
+        funding_links: list[tuple[str, str, float]] | None = None,
+        trades: list[dict[str, Any]] | None = None,
+        analyzer: FundingClusterAnalyzer | None = None,
+    ) -> ClusterAnalysisVerdict:
+        cluster_analyzer = analyzer or FundingClusterAnalyzer(
+            max_cluster_concentration_pct=self.config.max_cluster_concentration_pct,
+            max_single_cluster_pct=self.config.max_single_cluster_pct,
+            max_sybil_wash_ratio=self.config.max_sybil_wash_ratio,
+            cluster_trace_depth=self.config.cluster_trace_depth,
+        )
+        graph = cluster_analyzer.build_graph(
+            top_holders=top_holders,
+            creator_wallet=creator_wallet,
+            creator_balance=creator_balance,
+            total_supply=total_supply,
+            funding_links=funding_links,
+        )
+        return cluster_analyzer.evaluate(mint, graph, trades=trades)
 
     def validate_risk(
         self,
@@ -291,4 +326,185 @@ class TradingStrategy:
             "momentum_min_net_inflow_sol": self.config.momentum_min_net_inflow_sol,
             "momentum_baseline_window_seconds": self.config.momentum_baseline_window_seconds,
             "momentum_max_token_age_seconds": self.config.momentum_max_token_age_seconds,
+            "enable_cluster_analysis": self.config.enable_cluster_analysis,
+            "max_cluster_concentration_pct": self.config.max_cluster_concentration_pct,
+            "max_single_cluster_pct": self.config.max_single_cluster_pct,
+            "max_sybil_wash_ratio": self.config.max_sybil_wash_ratio,
+            "cluster_trace_depth": self.config.cluster_trace_depth,
         }
+
+
+@dataclass(frozen=True)
+class PositionEvScore:
+    """Expected Value (EV) score and momentum metrics for an active holding."""
+
+    mint: str
+    ev_score: float
+    z_score: float
+    net_inflow_sol: float
+    hold_duration_seconds: float
+    stagnation_factor: float
+    is_displaceable: bool
+    metrics: dict[str, Any] = field(default_factory=dict)
+
+
+class PositionEvEvaluator:
+    """Calculates continuous Expected Value (EV) scores for open positions and breakout candidates."""
+
+    def __init__(
+        self,
+        config: TradingBotConfig | None = None,
+        *,
+        min_hold_seconds: float = 45.0,
+        z_score_weight: float = 0.35,
+        inflow_weight: float = 0.30,
+        pnl_trajectory_weight: float = 0.25,
+        stagnation_penalty_weight: float = 0.20,
+    ) -> None:
+        self.config = config or TradingBotConfig()
+        self.min_hold_seconds = getattr(
+            self.config, "min_hold_before_displacement_seconds", min_hold_seconds
+        )
+        self.z_score_weight = float(z_score_weight)
+        self.inflow_weight = float(inflow_weight)
+        self.pnl_trajectory_weight = float(pnl_trajectory_weight)
+        self.stagnation_penalty_weight = float(stagnation_penalty_weight)
+
+    def evaluate_position(
+        self,
+        position: dict[str, Any],
+        *,
+        current_time: float | None = None,
+        momentum_signal: MomentumSignal | None = None,
+    ) -> PositionEvScore:
+        """Compute the Expected Value (EV) conviction score for an active position."""
+        now = time.time() if current_time is None else float(current_time)
+        mint = str(position.get("mint") or "")
+        entry_time = float(
+            position.get("entry_time") or position.get("first_seen") or now
+        )
+        hold_duration = max(0.0, now - entry_time)
+
+        # Displaceability: protected if held less than min_hold_before_displacement_seconds
+        is_displaceable = hold_duration >= self.min_hold_seconds
+
+        entry_mc = float(position.get("entry_market_cap") or 30.0)
+        curr_mc = float(position.get("current_market_cap") or entry_mc)
+        perf = (curr_mc / entry_mc) if entry_mc > 0 else 1.0
+
+        last_price_change_at = float(position.get("last_price_change_at") or entry_time)
+        flat_duration = max(0.0, now - last_price_change_at)
+
+        # Stagnation factor: scales from 0.0 to 1.0 as position remains flat over time
+        stagnant_timeout = getattr(self.config, "stagnant_timeout_seconds", 120.0)
+        stagnation_factor = (
+            min(1.0, flat_duration / max(10.0, stagnant_timeout))
+            if abs(perf - 1.0) < 0.05
+            else 0.0
+        )
+
+        z_score = 0.0
+        net_inflow = 0.0
+        if momentum_signal is not None:
+            z_score = float(getattr(momentum_signal, "z_score", 0.0))
+            net_inflow = float(
+                getattr(momentum_signal, "net_sol_inflow", None)
+                or getattr(momentum_signal, "net_inflow_sol", 0.0)
+            )
+        elif "z_score" in position:
+            z_score = float(position.get("z_score", 0.0))
+            net_inflow = float(
+                position.get("net_sol_inflow", None)
+                or position.get("net_inflow_sol", 0.0)
+            )
+
+        # Normalized components
+        norm_z = max(-2.0, min(5.0, z_score)) / 5.0
+        norm_inflow = max(-1.0, min(5.0, net_inflow)) / 5.0
+        norm_pnl = max(-1.0, min(3.0, perf - 1.0))
+
+        raw_ev = (
+            (self.z_score_weight * norm_z)
+            + (self.inflow_weight * norm_inflow)
+            + (self.pnl_trajectory_weight * norm_pnl)
+            - (self.stagnation_penalty_weight * stagnation_factor)
+        )
+
+        return PositionEvScore(
+            mint=mint,
+            ev_score=float(raw_ev),
+            z_score=z_score,
+            net_inflow_sol=net_inflow,
+            hold_duration_seconds=hold_duration,
+            stagnation_factor=stagnation_factor,
+            is_displaceable=is_displaceable,
+            metrics={
+                "performance": perf,
+                "flat_duration": flat_duration,
+                "norm_z": norm_z,
+                "norm_inflow": norm_inflow,
+                "norm_pnl": norm_pnl,
+            },
+        )
+
+    def evaluate_candidate(
+        self,
+        candidate_mint: str,
+        *,
+        momentum_signal: MomentumSignal | None = None,
+        conviction_percentile: float = 0.95,
+    ) -> float:
+        """Calculate EV score for an incoming breakout signal."""
+        z_score = (
+            float(getattr(momentum_signal, "z_score", 3.0)) if momentum_signal else 3.0
+        )
+        net_inflow = (
+            float(
+                getattr(momentum_signal, "net_sol_inflow", None)
+                or getattr(momentum_signal, "net_inflow_sol", 1.0)
+            )
+            if momentum_signal
+            else 1.0
+        )
+        buy_ratio = (
+            float(
+                getattr(momentum_signal, "buy_sell_ratio", None)
+                or getattr(momentum_signal, "buy_ratio", 3.0)
+            )
+            if momentum_signal
+            else 3.0
+        )
+
+        norm_z = max(0.0, min(5.0, z_score)) / 5.0
+        norm_inflow = max(0.0, min(5.0, net_inflow)) / 5.0
+        norm_ratio = min(2.0, buy_ratio / 3.0)
+
+        candidate_ev = (
+            (self.z_score_weight * norm_z)
+            + (self.inflow_weight * norm_inflow)
+            + (0.35 * norm_ratio)
+            + (0.10 * (conviction_percentile - 0.50))
+        )
+        return float(candidate_ev)
+
+    def rank_positions_by_ev(
+        self,
+        positions: dict[str, dict[str, Any]],
+        *,
+        current_time: float | None = None,
+    ) -> list[PositionEvScore]:
+        """Rank open positions ascending by EV score (weakest first)."""
+        scores: list[PositionEvScore] = []
+        for mint, pos in positions.items():
+            pos_dict = dict(pos)
+            pos_dict["mint"] = mint
+            scores.append(self.evaluate_position(pos_dict, current_time=current_time))
+        scores.sort(key=lambda s: s.ev_score)
+        return scores
+
+
+__all__ = [
+    "PositionEvEvaluator",
+    "PositionEvScore",
+    "TradingStrategy",
+]

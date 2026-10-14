@@ -749,3 +749,38 @@ async def test_replay_recorder_worker_error(tmp_path: Path):
         await asyncio.sleep(0.15)
 
     await recorder.close()
+
+
+def test_replay_load_history_gzip_and_directory(tmp_path: Path):
+    """Test PaperTradingEngine.load_history with .gz and directory datasets."""
+    import gzip
+
+    # File 1: compressed .jsonl.gz
+    f1 = tmp_path / "replay_01.jsonl.gz"
+    with gzip.open(f1, "wt", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "timestamp": 100,
+                    "mint": "M1",
+                    "price": 0.00000001,
+                    "buy_signal": True,
+                }
+            )
+            + "\n"
+        )
+
+    # File 2: active .jsonl
+    f2 = tmp_path / "replay_02.jsonl"
+    f2.write_text(
+        json.dumps(
+            {"timestamp": 200, "mint": "M2", "price": 0.00000002, "sell_signal": True}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    records = PaperTradingEngine.load_history(tmp_path)
+    assert len(records) == 2
+    assert records[0]["mint"] == "M1"
+    assert records[1]["mint"] == "M2"

@@ -86,6 +86,31 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
             "risk",
             "lifecycle",
         ),
+        "enable_dynamic_slippage": True,
+        "min_slippage_bps": 100,
+        "max_slippage_bps": 350,
+        "max_exit_slippage_bps": 3000,
+        "priority_fee_mode": "adaptive",
+        "volatility_slippage_multiplier": 0.8,
+        "price_impact_slippage_multiplier": 0.8,
+        "enable_capital_rotation": True,
+        "displacement_min_conviction_percentile": 0.98,
+        "displacement_hurdle_rate_pct": 0.04,
+        "min_hold_before_displacement_seconds": 60.0,
+        "displacement_evaluation_interval_seconds": 2.0,
+        "enable_pre_graduation_harvesting": True,
+        "pre_graduation_entry_progress_pct": 0.75,
+        "pre_graduation_max_entry_progress_pct": 0.85,
+        "pre_graduation_min_acceleration": 0.0,
+        "pre_graduation_tranches": (
+            {"progress_pct": 0.90, "sell_fraction": 0.35},
+            {"progress_pct": 0.95, "sell_fraction": 0.35},
+        ),
+        "enable_cluster_analysis": True,
+        "max_cluster_concentration_pct": 0.15,
+        "max_single_cluster_pct": 0.10,
+        "max_sybil_wash_ratio": 0.10,
+        "cluster_trace_depth": 3,
     },
     "balanced": {
         "buy_amount_sol": 0.01,
@@ -168,6 +193,31 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
             "risk",
             "lifecycle",
         ),
+        "enable_dynamic_slippage": True,
+        "min_slippage_bps": 100,
+        "max_slippage_bps": 500,
+        "max_exit_slippage_bps": 5000,
+        "priority_fee_mode": "adaptive",
+        "volatility_slippage_multiplier": 1.0,
+        "price_impact_slippage_multiplier": 1.0,
+        "enable_capital_rotation": True,
+        "displacement_min_conviction_percentile": 0.95,
+        "displacement_hurdle_rate_pct": 0.03,
+        "min_hold_before_displacement_seconds": 45.0,
+        "displacement_evaluation_interval_seconds": 2.0,
+        "enable_pre_graduation_harvesting": True,
+        "pre_graduation_entry_progress_pct": 0.70,
+        "pre_graduation_max_entry_progress_pct": 0.85,
+        "pre_graduation_min_acceleration": 0.0,
+        "pre_graduation_tranches": (
+            {"progress_pct": 0.92, "sell_fraction": 0.30},
+            {"progress_pct": 0.97, "sell_fraction": 0.30},
+        ),
+        "enable_cluster_analysis": True,
+        "max_cluster_concentration_pct": 0.25,
+        "max_single_cluster_pct": 0.20,
+        "max_sybil_wash_ratio": 0.20,
+        "cluster_trace_depth": 2,
     },
     "aggressive": {
         "buy_amount_sol": 0.02,
@@ -250,6 +300,31 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
             "risk",
             "lifecycle",
         ),
+        "enable_dynamic_slippage": True,
+        "min_slippage_bps": 150,
+        "max_slippage_bps": 800,
+        "max_exit_slippage_bps": 6000,
+        "priority_fee_mode": "adaptive",
+        "volatility_slippage_multiplier": 1.5,
+        "price_impact_slippage_multiplier": 1.5,
+        "enable_capital_rotation": True,
+        "displacement_min_conviction_percentile": 0.90,
+        "displacement_hurdle_rate_pct": 0.02,
+        "min_hold_before_displacement_seconds": 30.0,
+        "displacement_evaluation_interval_seconds": 1.0,
+        "enable_pre_graduation_harvesting": True,
+        "pre_graduation_entry_progress_pct": 0.65,
+        "pre_graduation_max_entry_progress_pct": 0.90,
+        "pre_graduation_min_acceleration": 0.0,
+        "pre_graduation_tranches": (
+            {"progress_pct": 0.90, "sell_fraction": 0.25},
+            {"progress_pct": 0.95, "sell_fraction": 0.25},
+        ),
+        "enable_cluster_analysis": True,
+        "max_cluster_concentration_pct": 0.35,
+        "max_single_cluster_pct": 0.30,
+        "max_sybil_wash_ratio": 0.30,
+        "cluster_trace_depth": 2,
     },
 }
 
@@ -403,6 +478,72 @@ def resolve_strategy_config(
                 "lifecycle",
             )
         ),
+        log_file=base.get("log_file", "bot.log"),
+        log_max_bytes=int(base.get("log_max_bytes", 10 * 1024 * 1024)),
+        log_backup_count=int(base.get("log_backup_count", 5)),
+        log_rotation_type=str(base.get("log_rotation_type", "size")),
+        log_compress=bool(base.get("log_compress", True)),
+        audit_max_bytes=int(base.get("audit_max_bytes", 10 * 1024 * 1024)),
+        audit_backup_count=int(base.get("audit_backup_count", 10)),
+        audit_retention_days=int(base.get("audit_retention_days", 30)),
+        audit_compress=bool(base.get("audit_compress", True)),
+        replay_max_bytes=int(base.get("replay_max_bytes", 50 * 1024 * 1024)),
+        replay_backup_count=int(base.get("replay_backup_count", 10)),
+        replay_retention_days=int(base.get("replay_retention_days", 30)),
+        replay_compress=bool(base.get("replay_compress", True)),
+        retention_check_interval_seconds=float(
+            base.get("retention_check_interval_seconds", 3600.0)
+        ),
+        enable_dynamic_slippage=bool(base.get("enable_dynamic_slippage", True)),
+        min_slippage_bps=int(base.get("min_slippage_bps", 100)),
+        max_slippage_bps=int(base.get("max_slippage_bps", 500)),
+        max_exit_slippage_bps=int(base.get("max_exit_slippage_bps", 5000)),
+        priority_fee_mode=str(base.get("priority_fee_mode", "adaptive")),
+        volatility_slippage_multiplier=float(
+            base.get("volatility_slippage_multiplier", 1.0)
+        ),
+        price_impact_slippage_multiplier=float(
+            base.get("price_impact_slippage_multiplier", 1.0)
+        ),
+        enable_capital_rotation=bool(base.get("enable_capital_rotation", True)),
+        displacement_min_conviction_percentile=float(
+            base.get("displacement_min_conviction_percentile", 0.95)
+        ),
+        displacement_hurdle_rate_pct=float(
+            base.get("displacement_hurdle_rate_pct", 0.03)
+        ),
+        min_hold_before_displacement_seconds=float(
+            base.get("min_hold_before_displacement_seconds", 45.0)
+        ),
+        displacement_evaluation_interval_seconds=float(
+            base.get("displacement_evaluation_interval_seconds", 2.0)
+        ),
+        enable_pre_graduation_harvesting=bool(
+            base.get("enable_pre_graduation_harvesting", True)
+        ),
+        pre_graduation_entry_progress_pct=float(
+            base.get("pre_graduation_entry_progress_pct", 0.70)
+        ),
+        pre_graduation_max_entry_progress_pct=float(
+            base.get("pre_graduation_max_entry_progress_pct", 0.85)
+        ),
+        pre_graduation_min_acceleration=float(
+            base.get("pre_graduation_min_acceleration", 0.0)
+        ),
+        pre_graduation_tranches=tuple(
+            base.get("pre_graduation_tranches")
+            or (
+                {"progress_pct": 0.92, "sell_fraction": 0.30},
+                {"progress_pct": 0.97, "sell_fraction": 0.30},
+            )
+        ),
+        enable_cluster_analysis=bool(base.get("enable_cluster_analysis", True)),
+        max_cluster_concentration_pct=float(
+            base.get("max_cluster_concentration_pct", 0.25)
+        ),
+        max_single_cluster_pct=float(base.get("max_single_cluster_pct", 0.20)),
+        max_sybil_wash_ratio=float(base.get("max_sybil_wash_ratio", 0.20)),
+        cluster_trace_depth=int(base.get("cluster_trace_depth", 2)),
     )
     if config.buy_amount_sol <= 0:
         raise ValueError("buy_amount_sol must be greater than zero.")
@@ -429,4 +570,21 @@ def resolve_strategy_config(
         raise ValueError("profit_ratchet_ratio must be between 0.0 and 1.0.")
     if not 0.0 < config.profit_drawdown_tolerance_pct <= 1.0:
         raise ValueError("profit_drawdown_tolerance_pct must be between 0.0 and 1.0.")
+    if config.log_rotation_type not in {"size", "time", "none"}:
+        raise ValueError(
+            f"Invalid log_rotation_type '{config.log_rotation_type}'. "
+            "Must be one of: 'size', 'time', 'none'."
+        )
+    if config.min_slippage_bps < 0 or config.max_slippage_bps < config.min_slippage_bps:
+        raise ValueError(
+            "Invalid slippage bounds: min_slippage_bps must be <= max_slippage_bps and >= 0."
+        )
+    if not 0.0 <= config.max_cluster_concentration_pct <= 1.0:
+        raise ValueError("max_cluster_concentration_pct must be between 0.0 and 1.0.")
+    if not 0.0 <= config.max_single_cluster_pct <= 1.0:
+        raise ValueError("max_single_cluster_pct must be between 0.0 and 1.0.")
+    if not 0.0 <= config.max_sybil_wash_ratio <= 1.0:
+        raise ValueError("max_sybil_wash_ratio must be between 0.0 and 1.0.")
+    if config.cluster_trace_depth < 1:
+        raise ValueError("cluster_trace_depth must be at least 1.")
     return config

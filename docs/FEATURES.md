@@ -305,3 +305,82 @@ This document provides a comprehensive and accurate overview of all features and
 - **Configurable Subsystem Filters & Verbosity**: Environment variable and config support (`PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS`, `PUMPFUN_EVENT_LOG_PATH`, `PUMPFUN_EVENT_SUBSYSTEMS`).
 - **Diagnostic Inspection CLI (`pumpfun-events` / `pumpfun events`)**:
   - Dedicated CLI tool (`pumpfun_trading/cli/events.py`) supporting live log tailing (`--tail`), mint filtering (`--mint <mint>`), category filtering (`--category <cat>`), error isolation (`--errors-only`), latency statistical distribution summaries (`--latency-stats`), and JSON output (`--json`).
+
+---
+
+## 23. Automated Log Retention, Multi-Sink Rollover & Dataset Compression Engine (FEAT-22)
+
+- **Configurable Application Log Rollover & Inline Gzip Compression**:
+  - Size-based (`RotatingFileHandler`) and time-based (`TimedRotatingFileHandler`) rotation with custom non-blocking gzip compression hooks (`_gzip_rotator` / `_gzip_namer`) in `pumpfun_trading/ops/logging.py`.
+  - Configurable file size limits (`PUMPFUN_LOG_MAX_BYTES`, default 10 MB) and backup retention counts (`PUMPFUN_LOG_BACKUP_COUNT`, default 5).
+- **Async Non-Blocking Rotating Sinks (`RotatedFileSink`)**:
+  - Thread-safe, non-blocking file sink in `pumpfun_trading/ops/retention.py` used across forensic audit persistence (`StatusPersistenceManager` / `audit_trail.jsonl`) and Geyser market stream recordings (`ReplayRecorder` / `market_replay.jsonl`).
+  - Decoupled asynchronous background workers (`asyncio.to_thread`) executing atomic file rotations (`os.replace`) and inline gzip compression (`.gz`) without introducing latency jitter into critical trading event loops.
+- **Unified Retention Management Engine (`LogRetentionManager`)**:
+  - Centralized retention policy engine in `pumpfun_trading/ops/retention.py` enforcing retention policies by age (`max_age_days=30`), backup file count caps, and total directory byte limits with automatic expired archive pruning.
+  - Periodic background pruning during bot runtime health loops and graceful shutdown flushing.
+- **Transparent Multi-File & Compressed Dataset Ingestion**:
+  - Native `.gz` decompression and multi-file directory / glob pattern loading across `load_audit_records` (`pumpfun-audit`) and `PaperTradingEngine.load_history` (`pumpfun-replay`).
+- **Storage Operations & Maintenance CLI (`pumpfun ops`)**:
+  - Unified CLI commands (`pumpfun ops prune --target <dir> --days <n>`, `pumpfun ops status`) for on-demand disk quota inspection and archive pruning.
+
+---
+
+## 24. Dynamic Volatility-Aware Slippage & Adaptive Priority Fee Engine (FEAT-23)
+
+- **Real-Time Bonding Curve Volatility Estimator (`BondingCurveVolatilityEstimator`)**:
+  - Computes instantaneous price velocity ($\Delta P / \Delta t$) and rolling standard deviation ($\sigma_{\text{vol}}$) from high-frequency Geyser gRPC state updates.
+  - Computes virtual reserve depth consumption ($\Delta x / x_{\text{virtual}}$) and exact buy/sell price impact in basis points.
+- **Urgency-Tiered Compute Budget & Jito Tip Scaling (`AdaptiveExecutionPolicy`)**:
+  - Resolves dynamic slippage:
+    $$S_{\text{dynamic}} = \operatorname{clamp}\left(S_{\text{base}} + \alpha \cdot \sigma_{\text{volatility}} + \beta \cdot \text{PriceImpact}, S_{\text{min}}, S_{\text{max}}\right)$$
+  - Dynamically scales Solana compute unit limits, compute unit prices, priority fees, and Jito validator tips across urgency tiers:
+    - `NORMAL_ENTRY` (1.0x compute price, 100k tip)
+    - `HIGH_CONVICTION` (1.5x compute price, 150k tip)
+    - `GRADUATION_SNIPE` (2.5x compute price, 250k tip)
+    - `EMERGENCY_EXIT` (4.0x compute price, 400k tip, up to 5000 BPS exit slippage).
+- **Execution & Liquidation Wiring**: Integrated directly into `OrderExecutor`, `PumpFunExecutionClient`, and `OrderLiquidator` with environment variables (`PUMPFUN_DYNAMIC_SLIPPAGE_ENABLED`, `PUMPFUN_MIN_SLIPPAGE_BPS`, `PUMPFUN_MAX_SLIPPAGE_BPS`, `PUMPFUN_MAX_EXIT_SLIPPAGE_BPS`, `PUMPFUN_PRIORITY_FEE_MODE`).
+
+---
+
+## 25. Opportunistic Capital Rotation & High-Conviction Displacement Engine (FEAT-24)
+
+- **Continuous Expected Value (EV) Position Scoring (`PositionEvEvaluator`)**:
+  - Computes multi-factor EV scores across open holdings:
+    $$\text{EV}_{\text{position}} = w_z \cdot Z_{\text{norm}} + w_{\text{inflow}} \cdot \text{Inflow}_{\text{norm}} + w_p \cdot \text{PnL}_{\text{norm}} - w_{\text{stag}} \cdot \text{Stagnation}$$
+  - Enforces minimum holding protection (`min_hold_before_displacement_seconds = 45.0s`), protecting young positions from premature displacement.
+- **Autonomous Capital Displacement Engine (`CapitalDisplacementEngine`)**:
+  - Continuously monitors portfolio saturation (`len(positions) >= max_active_positions` or `total_exposure >= max_total_exposure_sol`).
+  - Evaluates candidate breakout EV against the weakest displaceable holding, requiring the EV delta to overcome roundtrip execution friction ($2 \times \text{slippage} + \text{hurdle\_rate}$).
+- **Atomic Rotation & Telemetry**:
+  - Gracefully exits the weakest stagnant position with high urgency, confirms exit fill, and immediately dispatches entry for the high-conviction candidate with structured telemetry events (`capital_displacement`).
+
+---
+
+## 26. Predictive Graduation Curve Acceleration & Pre-Migration Liquidity Harvester (FEAT-25)
+
+- **Curve Supply Depletion & Acceleration Modeling (`GraduationTracker`)**:
+  - Computes reserve accumulation velocity ($v = \Delta \text{SOL} / \Delta t$) and curve acceleration ($a_{\text{curve}} = \Delta^2 \text{SOL} / \Delta t^2$).
+  - Classifies bonding curves into deterministic trajectory regimes: `organic` (steady positive acceleration), `syndicate_sweep` (single massive whale buy), or `exhaustion` (decelerating volume / sell-off).
+- **Pre-Graduation Acceleration Harvesting Triggers (`GraduationEngine`)**:
+  - Triggers automated entry when curve progress reaches 70%–85% with positive acceleration ($a_{\text{curve}} > 0$) prior to Raydium pool seeding.
+- **Staged Multi-Tranche Take-Profit Scaling (`evaluate_exit_strategy`)**:
+  - Executes limit-style take-profit tranches as the curve completes (e.g. 30% sold at 92% completion, 30% sold at 97% completion, 40% moonbag riding into Raydium AMM seeding).
+- **Paper Trading & Historical Replay**: Fully simulated in `PaperTradingEngine` across empirical datasets.
+
+---
+
+## 27. On-Chain Funding Cluster Graph & Sybil Wash-Trading Detector (FEAT-26)
+
+- **Graph-Based Wallet Relationship Mapping (`FundingClusterGraph`)**:
+  - Traverses directed funding flows (`funder -> recipient`) and root funding origins (e.g. root SOL transfers, intermediary splitters, exchange withdrawal hot-wallets) for top holders and creator wallet at token creation block.
+  - Resolves common ancestors, tracks cluster depths, and calculates the **Insider Cluster Concentration Index ($0.0–1.0$)** measuring what fraction of circulating supply is controlled by common-origin wallet clusters.
+- **Insider Syndicate & Dominant Cluster Rejection**:
+  - Automatically identifies multi-wallet syndicates and flags tokens where multi-wallet clusters exceed configured thresholds (`max_cluster_concentration_pct = 0.25`, `max_single_cluster_pct = 0.20`).
+  - Imposes severe risk penalties and hard-fails screening for tokens with insider syndicate concentration (`insider_cluster_detected`, `dominant_cluster_detected`).
+- **Sybil Wash-Trading & Churn Detector (`SybilWashTradingDetector`)**:
+  - Analyzes trade streams on bonding curves for circular buy/sell patterns, coordinated micro-swaps between clustered wallets, and rapid round-trip churn designed to artificially inflate volume and Z-scores.
+  - Rejects tokens with confirmed sybil volume or wash trading ratios exceeding limits (`max_sybil_wash_ratio = 0.20`).
+- **Composite Screening & Enrichment Integration (`FundingClusterAnalyzer`)**:
+  - Seamlessly integrated into `TokenEnricher` (`bot/enrichment.py`), `TradingStrategy.screen_token` (`strategies/decision.py`), `passes_anti_rug_screening` (`strategies/filters.py`), and `TradingBotConfig` presets.
+  - Configurable via environment variables (`PUMPFUN_CLUSTER_ANALYSIS_ENABLED`, `PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT`, `PUMPFUN_MAX_SINGLE_CLUSTER_PCT`, `PUMPFUN_MAX_SYBIL_WASH_RATIO`, `PUMPFUN_CLUSTER_TRACE_DEPTH`).

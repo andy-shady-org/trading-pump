@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import glob
+import gzip
 import json
 from math import inf
 from pathlib import Path
@@ -77,6 +79,19 @@ class PaperTradingEngine:
                 value = payload.get(key)
                 if isinstance(value, list):
                     return [item for item in value if isinstance(item, dict)]
+            if any(
+                k in payload
+                for k in (
+                    "mint",
+                    "address",
+                    "price",
+                    "market_cap",
+                    "market_cap_sol",
+                    "timestamp",
+                    "time",
+                )
+            ):
+                return [payload]
         return []
 
     @staticmethod
@@ -95,33 +110,87 @@ class PaperTradingEngine:
             return 0.0
 
     @staticmethod
-    def load_history(path: str | Path) -> list[dict[str, Any]]:
-        file_path = Path(path)
-        if not file_path.exists():
+    def _read_records_from_file(file_path: Path) -> list[dict[str, Any]]:
+        if not file_path.exists() or not file_path.is_file():
             return []
 
-        raw = file_path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return []
-
-        if file_path.suffix.lower() == ".jsonl":
-            records: list[dict[str, Any]] = []
-            for line in raw.splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(item, dict):
-                    records.append(item)
-            return records
-
+        is_gz = file_path.name.endswith(".gz") or file_path.suffix.lower() == ".gz"
         try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
+            opener = (
+                gzip.open(file_path, "rt", encoding="utf-8")
+                if is_gz
+                else open(file_path, "r", encoding="utf-8")
+            )
+            with opener as handle:
+                lines = [line.strip() for line in handle if line.strip()]
+                if not lines:
+                    return []
+
+                # If there are multiple lines or file is a jsonl format, parse line-by-line
+                if len(lines) > 1 or ".jsonl" in file_path.name:
+                    records: list[dict[str, Any]] = []
+                    for line_str in lines:
+                        try:
+                            item = json.loads(line_str)
+                            if isinstance(item, dict):
+                                records.append(item)
+                            elif isinstance(item, list):
+                                records.extend(PaperTradingEngine._coerce_records(item))
+                        except json.JSONDecodeError:
+                            continue
+                    if records:
+                        return records
+
+                # Fallback: parse entire joined content as JSON payload
+                full_content = "\n".join(lines)
+                try:
+                    payload = json.loads(full_content)
+                    return PaperTradingEngine._coerce_records(payload)
+                except json.JSONDecodeError:
+                    return []
+        except Exception:
             return []
-        return PaperTradingEngine._coerce_records(payload)
+
+    @staticmethod
+    def load_history(path: str | Path) -> list[dict[str, Any]]:
+        """
+        Loads and aggregates replay snapshots from a single file (.jsonl / .json / .gz),
+        a directory containing chunked archives, or a glob pattern.
+        """
+        target = Path(path)
+        records: list[dict[str, Any]] = []
+
+        if target.is_dir():
+            files = sorted(
+                [f for f in target.glob("*replay*.jsonl*") if f.is_file()]
+                or [f for f in target.glob("*.jsonl*") if f.is_file()]
+                or [f for f in target.glob("*.json*") if f.is_file()],
+                key=lambda p: p.stat().st_mtime,
+            )
+            for f in files:
+                records.extend(PaperTradingEngine._read_records_from_file(f))
+        elif target.is_file():
+            records.extend(PaperTradingEngine._read_records_from_file(target))
+        else:
+            matching = sorted(glob.glob(str(path)))
+            if matching:
+                for m in matching:
+                    mf = Path(m)
+                    if mf.is_file():
+                        records.extend(PaperTradingEngine._read_records_from_file(mf))
+            else:
+                return []
+
+        # Sort chronologically by timestamp if available
+        records.sort(
+            key=lambda r: float(
+                PaperTradingEngine._snapshot_float(
+                    r, "timestamp", "time", "event_time", "ts", "created_at"
+                )
+                or 0.0
+            )
+        )
+        return records
 
     @staticmethod
     def _snapshot_mint(snapshot: dict[str, Any]) -> str:
@@ -170,13 +239,19 @@ class PaperTradingEngine:
         momentum_triggered: bool = False,
         graduation_triggered: bool = False,
         copy_trade_triggered: bool = False,
+        pre_grad_triggered: bool = False,
     ) -> bool:
         if isinstance(snapshot.get("buy_signal"), bool):
             return bool(snapshot["buy_signal"])
         if isinstance(snapshot.get("signal"), str):
             if snapshot["signal"].lower() in {"buy", "long", "entry"}:
                 return True
-        if momentum_triggered or graduation_triggered or copy_trade_triggered:
+        if (
+            momentum_triggered
+            or graduation_triggered
+            or copy_trade_triggered
+            or pre_grad_triggered
+        ):
             return True
         return bool(snapshot.get("should_buy"))
 
@@ -285,6 +360,7 @@ class PaperTradingEngine:
 
             # Process bonding curve graduation tracking
             graduation_triggered = False
+            pre_grad_triggered = False
             real_sol = self._snapshot_float(
                 snapshot, "real_sol_reserves", "realSolReserves"
             )
@@ -307,6 +383,29 @@ class PaperTradingEngine:
                     complete=is_curve_complete,
                     timestamp=ts,
                 )
+                if self.strategy_config and getattr(
+                    self.strategy_config, "enable_pre_graduation_harvesting", False
+                ):
+                    min_p = (
+                        self.strategy_config.pre_graduation_entry_progress_pct * 100.0
+                        if self.strategy_config.pre_graduation_entry_progress_pct <= 1.0
+                        else self.strategy_config.pre_graduation_entry_progress_pct
+                    )
+                    max_p = (
+                        self.strategy_config.pre_graduation_max_entry_progress_pct
+                        * 100.0
+                        if self.strategy_config.pre_graduation_max_entry_progress_pct
+                        <= 1.0
+                        else self.strategy_config.pre_graduation_max_entry_progress_pct
+                    )
+                    grad_sig = self.graduation_engine.evaluate_pre_graduation_harvesting_entry(
+                        mint=mint,
+                        min_progress_pct=min_p,
+                        max_progress_pct=max_p,
+                        min_acceleration=self.strategy_config.pre_graduation_min_acceleration,
+                        current_time=ts,
+                    )
+                    pre_grad_triggered = grad_sig.triggered
 
             if (
                 snapshot.get("event") == "raydium_pool_created"
@@ -378,6 +477,7 @@ class PaperTradingEngine:
                     momentum_triggered=momentum_triggered,
                     graduation_triggered=graduation_triggered,
                     copy_trade_triggered=copy_trade_buy_triggered,
+                    pre_grad_triggered=pre_grad_triggered,
                 )
                 and len(positions) < self.max_positions
             ):
@@ -402,6 +502,8 @@ class PaperTradingEngine:
                             buy_reason = f"copy_trade_{copy_wallet_label}"
                         elif graduation_triggered:
                             buy_reason = "raydium_graduation_snipe"
+                        elif pre_grad_triggered:
+                            buy_reason = "pre_graduation_harvesting_entry"
                         elif momentum_triggered:
                             buy_reason = "momentum_spike"
                         else:

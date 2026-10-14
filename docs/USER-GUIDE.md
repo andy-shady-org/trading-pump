@@ -14,15 +14,17 @@ All system documentation radiates from this guide in a structured star topology:
 graph TD
     UG["docs/USER-GUIDE.md<br/>(Central Knowledge & User Portal)"]
     CLI["docs/CLI-COMMANDS.md<br/>(Complete CLI Reference)"]
+    ENV["docs/ENVIRONMENTAL-VARIABLES.md<br/>(Environment Variables Reference)"]
     STRAT["docs/STRATEGY.md<br/>(Wealth Generation & Math Strategy)"]
     RISK["docs/RISK.md<br/>(Capital Protection & Circuit Breakers)"]
     WUI["docs/WEB-UI.md<br/>(Web Dashboard & Hosted Instances)"]
     TUI["docs/TERMINAL-UI.md<br/>(Terminal UI & Operator Self-Funding)"]
-    FEAT["docs/FEATURES.md<br/>(Complete Feature Catalog FEAT-01..21)"]
+    FEAT["docs/FEATURES.md<br/>(Complete Feature Catalog FEAT-01..30)"]
     REPLAY["docs/REPLAY-ENGINE.md<br/>(Backtesting & Strategy Playback)"]
     AUDIT["docs/AUDIT-TOOL.md<br/>(Forensic Audit & Trade Accounting)"]
 
     UG --> CLI
+    UG --> ENV
     UG --> STRAT
     UG --> RISK
     UG --> WUI
@@ -33,7 +35,8 @@ graph TD
 ```
 
 ### Specialized Documentation Directory
-* [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md): Exhaustive command-line documentation for all dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`) and unified `pumpfun` subcommands, including parameter tables, options, and operational recipes.
+* [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md): Exhaustive command-line documentation for all dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`, `pumpfun-events`) and unified `pumpfun` subcommands, including parameter tables, options, and operational recipes.
+* [**Environment Variables Reference Manual (`docs/ENVIRONMENTAL-VARIABLES.md`)**](ENVIRONMENTAL-VARIABLES.md): Exhaustive reference for all environment variables, fallback aliases, data types, requirement rules, retention policies, and production deployment templates.
 * [**Terminal Operations & Self-Funding Guide (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md): Zero-dependency console monitor (`pumpbot`), sub-millisecond slot latency telemetry, complete visual dashboard field descriptions, alternate-screen buffer rendering, and multi-channel alerting (Discord, Slack, Telegram).
 * [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](STRATEGY.md): Constant-product bonding curve mathematics, fractional Kelly bankroll management, dynamic trailing stop-loss mechanics, multi-tier take-profit scaling (2.0x / 3.5x / Moonbag), and anti-rug heuristic filters.
 * [**Capital Protection & Risk Management (`docs/RISK.md`)**](RISK.md): Multi-tier risk hierarchy, maximum portfolio exposure caps, daily hard-stop circuit breakers (FEAT-09), private mempool Jito MEV protection, and startup on-chain position reconciliation.
@@ -114,78 +117,31 @@ The system accommodates two distinct operating paradigms:
 
 ---
 
-## 5. Environment Variables & Key Configuration (Terminal Operators)
+## 5. Environment Variables & Configuration Overview
 
-Terminal operators configure the bot using a `.env` file in the project root or through standard shell environment variables.
+Terminal operators configure the bot using a `.env` file in the project root or standard shell environment variables. Configuration is automatically loaded on startup via `python-dotenv`.
 
-### Environment Variable Matrix
+> 📖 **Full Reference Manual**: For an exhaustive, authoritative breakdown of all 50+ configuration parameters, fallback aliases, data types, automated retention rules, and copy-paste production templates, see [**`docs/ENVIRONMENTAL-VARIABLES.md`**](ENVIRONMENTAL-VARIABLES.md).
 
-The engine supports granular configuration via environment variables across network, execution, strategy, persistence, and alerting subsystems:
-
-#### 1. Core Wallet & Network Connectivity
+### Core Environment Variables Quick Reference
 
 | Variable Name | Alias / Fallback | Required | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
 | `PUMPFUN_PRIVATE_KEY` | `SOLANA_PRIVATE_KEY` | **Yes** (Live) | `None` | Base58-encoded private key of the active trading wallet. |
 | `PUMPFUN_RPC_URL` | `HELIUS_RPC_URL` | **Yes** | `https://api.mainnet-beta.solana.com` | Primary Solana JSON-RPC HTTP endpoint. |
-| `PUMPFUN_RPC_URLS` | `SOLANA_RPC_URLS` | Optional | `None` | Comma-separated list of secondary/failover Solana RPC endpoints for dynamic load balancing and multi-RPC fallback. |
-| `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | **Required*** | `wss://pumpportal.fun/api/data` | WebSocket streaming endpoint (e.g. PumpPortal public event feed) for real-time market data ingestion. (*At least one stream source required). |
-| `PUMPFUN_GEYSER_ENDPOINT` | — | **Required*** | `None` | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market data ingestion. (*At least one stream source required). |
-| `PUMPFUN_GEYSER_X_TOKEN` | `PUMPFUN_GEYSER_TOKEN` | Optional | `None` | Authentication header / X-Token for Yellowstone Geyser gRPC connections. |
-| `PUMPFUN_STREAM_MAX_RETRIES` | `PUMPFUN_WS_MAX_RETRIES` | Optional | `5` | Maximum consecutive stream reconnection attempts before tripping the streaming circuit breaker. |
-
-> **Important Stream Requirement**: To ingest live market events, **at least one** stream source must be configured (`PUMPFUN_GEYSER_ENDPOINT` for Yellowstone Geyser gRPC OR `PUMPFUN_STREAM_URL` for WebSocket streaming). If neither is configured, the bot defaults to `http://127.0.0.1:10000` (offline testing stub).
-> 
-> *Note on Stream Display*: `PUMPFUN_STREAM_URL` sets the WebSocket endpoint (`bot.stream_url`), while `PUMPFUN_GEYSER_ENDPOINT` sets the Yellowstone gRPC endpoint (`bot.geyser_endpoint`). When Yellowstone Geyser is used without an explicit WebSocket override, the dashboard displays the active `Geyser endpoint` while `Stream URL` displays the underlying WebSocket default.
-
-#### 2. Jito MEV & Transaction Execution
-
-| Variable Name | Alias / Fallback | Required | Default | Description |
-| :--- | :--- | :---: | :---: | :--- |
-| `PUMPFUN_USE_JITO` | — | Optional | `true` | Enables private mempool bundle routing via Jito Block Engine to eliminate sandwich attacks and frontrunning. |
-| `PUMPFUN_JITO_BLOCK_ENGINE_URL` | — | Optional | `https://mainnet.block-engine.jito.wtf` | Jito Block Engine endpoint URL for MEV protection. |
-| `PUMPFUN_JITO_TIP_LAMPORTS` | — | Optional | `100000` | Validator tip in Lamports (0.0001 SOL base recommendation for fast bundle inclusion). |
-| `PUMPFUN_JITO_CONFIRMATION_TIMEOUT` | — | Optional | `12.0` | Timeout in seconds before falling back to direct RPC transaction dispatch. |
-| `PUMPFUN_JITO_FALLBACK_TO_RPC` | — | Optional | `true` | Automatically fall back to high-priority RPC broadcast if Jito bundle confirmation times out. |
-| `PUMPFUN_COMPUTE_UNIT_LIMIT` | — | Optional | `200000` | Compute budget unit limit per swap transaction instruction. |
-
-#### 3. Trading Strategy & Risk Controls
-
-| Variable Name | Alias / Fallback | Required | Default | Description |
-| :--- | :--- | :---: | :---: | :--- |
+| `PUMPFUN_RPC_URLS` | `SOLANA_RPC_URLS` | Optional | `None` | Comma-separated secondary/failover Solana RPC endpoints for dynamic load balancing. |
+| `PUMPFUN_GEYSER_ENDPOINT` | — | **Required\*** | `None` | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market data ingestion. |
+| `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | **Required\*** | `wss://pumpportal.fun/api/data` | WebSocket streaming endpoint for event-driven market data ingestion. |
+| `PUMPFUN_USE_JITO` | — | Optional | `true` | Enables private mempool bundle routing via Jito Block Engine to prevent sandwich attacks. |
 | `PUMPFUN_BASE_BUY_SOL` | `PUMPFUN_BUY_AMOUNT_SOL` | Optional | `0.1` | Base buy allocation per trade in SOL. |
-| `PUMPFUN_SLIPPAGE_BPS` | — | Optional | `250` | Maximum entry slippage tolerance in basis points (`250` = 2.5%). |
-| `PUMPFUN_BASE_EXIT_SLIPPAGE_BPS` | — | Optional | `500` | Base exit slippage tolerance in basis points (`500` = 5.0%) for initial sell attempts. |
-| `PUMPFUN_MAX_EXIT_SLIPPAGE_BPS` | — | Optional | `5000` | Maximum dynamic slippage cap in basis points (`5000` = 50.0%) during high-volatility exit retries. |
-| `PUMPFUN_MAX_EXIT_RETRIES` | — | Optional | `5` | Maximum number of retry attempts for failed exit executions before escalating to emergency liquidation. |
 | `PUMPFUN_STRATEGY_PRESET` | `PUMPFUN_PRESET` | Optional | `balanced` | Preconfigured strategy profile: `conservative`, `balanced`, or `aggressive`. |
-| `PUMPFUN_DRY_RUN` | — | Optional | `false` | Paper trading mode: ingests real-time feeds and simulates execution without broadcasting on-chain transactions. |
-
-#### 4. Persistence, State Snapshots & Audit Logging
-
-| Variable Name | Alias / Fallback | Required | Default | Description |
-| :--- | :--- | :---: | :---: | :--- |
-| `PUMPFUN_AUDIT_LOG_PATH` | `PUMPFUN_AUDIT_LOG` | Optional | `runtime/audit_trail.jsonl` | Append-only JSONL audit trail destination path for forensic event tracking, trade accounting, and telemetry. |
-| `PUMPFUN_STATUS_PATH` | `PUMPFUN_BOT_STATUS_PATH` | Optional | `runtime/bot_status.json` | Atomic JSON snapshot file path for live bot status, active positions, performance metrics, and crash recovery. |
-| `PUMPFUN_REPLAY_LOG_PATH` | — | Optional | `None` | File path for non-blocking asynchronous market quote and trade replay recording (`.jsonl`) for strategy backtesting (FEAT-21). |
-| `PUMPFUN_RECORD_REPLAY` | — | Optional | `false` | Enables asynchronous market stream recording (defaults to `market_replay.jsonl` if set to `true` / `1` without an explicit path). |
-| `PUMPFUN_CONFIG_PATH` | `PUMPFUN_CONFIG` | Optional | `None` | Path to external JSON strategy and risk configuration file (alternative to CLI `--config`). |
-
-#### 5. Multi-Channel Alerting & Webhooks
-
-| Variable Name | Alias / Fallback | Required | Default | Description |
-| :--- | :--- | :---: | :---: | :--- |
+| `PUMPFUN_DRAWDOWN_MODE` | — | Optional | `adaptive_ratchet` | Portfolio drawdown reference mode (`adaptive_ratchet`, `baseline`, `trailing_hwm`). |
+| `PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS` | — | Optional | `true` | Enables high-throughput asynchronous JSONL diagnostic event telemetry (FEAT-30). |
+| `PUMPFUN_LOG_MAX_BYTES` | — | Optional | `10485760` (10 MB) | Maximum size before application log rotates with automated gzip compression (FEAT-22). |
 | `PUMPFUN_ALERT_PROVIDER` | — | Optional | `none` | Notification provider: `none`, `discord`, `slack`, or `telegram`. |
-| `PUMPFUN_ALERT_DISCORD_WEBHOOK_URL` | `PUMPFUN_ALERT_WEBHOOK_URL` | Optional | `None` | Discord incoming webhook URL for trade entries, exits, and risk alert notifications. |
-| `PUMPFUN_ALERT_SLACK_WEBHOOK_URL` | — | Optional | `None` | Slack incoming webhook URL for team channel notifications. |
-| `PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN` | `PUMPFUN_TELEGRAM_BOT_TOKEN` | Optional | `None` | Telegram Bot API token for direct push notifications and remote commands. |
-| `PUMPFUN_ALERT_TELEGRAM_CHAT_ID` | `PUMPFUN_TELEGRAM_CHAT_ID` | Optional | `None` | Authorized Telegram Chat/Channel ID for alert reception. |
+| `PUMPFUN_HEADLESS` | — | Optional | `false` | Run in non-interactive headless mode without the interactive Rich TUI dashboard. |
 
-#### 6. Terminal & Logging Controls
-
-| Variable Name | Alias / Fallback | Required | Default | Description |
-| :--- | :--- | :---: | :---: | :--- |
-| `NO_COLOR` | — | Optional | `None` | Disables ANSI color sequences in terminal console logs and Rich tables when set. |
+*\*Note*: Live trading requires at least one stream source (`PUMPFUN_GEYSER_ENDPOINT` or `PUMPFUN_STREAM_URL`).
 
 ### Wallet Security & Capital Management Best Practices
 
@@ -193,6 +149,7 @@ The engine supports granular configuration via environment variables across netw
 2. **Cold Storage Sweep Workflows**: Routinely extract accumulated profits from the hot wallet to an offline hardware wallet (e.g., Ledger).
 3. **Minimum SOL Reserve Floor**: The system automatically enforces a `0.1 SOL` reserve buffer to guarantee funds remain available for gas fees and account rent.
 4. **Non-Custodial Design**: The software never transmits private keys to third-party servers. In Web UI mode, keys reside exclusively in volatile instance memory.
+5. **Masked Secret Telemetry**: All secret variables (`KEY`, `TOKEN`, `SECRET`, `WEBHOOK`) are automatically masked in diagnostic dumps and state logs.
 
 ---
 

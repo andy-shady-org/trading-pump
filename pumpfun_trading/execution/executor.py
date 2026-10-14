@@ -6,6 +6,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from pumpfun_trading.execution.policy import (
+    AdaptiveExecutionPolicy,
+    DynamicSlippageResult,
+)
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
@@ -40,12 +44,14 @@ class OrderExecutor:
         rpc_pool: RpcConnectionPool | None = None,
         use_jito: bool = False,
         dry_run: bool = False,
+        execution_policy: AdaptiveExecutionPolicy | None = None,
     ) -> None:
         self.execution = execution_client
         self.config = config or TradingBotConfig()
         self.rpc_pool = rpc_pool
         self.use_jito = use_jito
         self.dry_run = dry_run or self.config.dry_run
+        self.execution_policy = execution_policy or AdaptiveExecutionPolicy(self.config)
         self._locks: dict[str, asyncio.Lock] = {}
         self._exit_retry_queue: dict[str, dict[str, Any]] = {}
 
@@ -60,14 +66,34 @@ class OrderExecutor:
         amount_sol: float,
         *,
         slippage_bps: int | None = None,
+        urgency: str = "normal",
         reason: str = "entry",
         token_name: str | None = None,
         dry_run: bool | None = None,
     ) -> ExecutionResult:
         is_dry_run = self.dry_run if dry_run is None else dry_run
 
+        resolved_slippage = slippage_bps
+        dynamic_params: DynamicSlippageResult | None = None
+        if resolved_slippage is None and getattr(
+            self.config, "enable_dynamic_slippage", True
+        ):
+            dynamic_params = self.execution_policy.resolve_parameters(
+                mint,
+                amount_sol,
+                is_buy=True,
+                urgency=urgency,
+            )
+            resolved_slippage = dynamic_params.slippage_bps
+
         if is_dry_run:
-            logger.info("DRY RUN BUY: %s @ %.4f SOL", mint, amount_sol)
+            logger.info(
+                "DRY RUN BUY: %s @ %.4f SOL (slippage_bps=%s, urgency=%s)",
+                mint,
+                amount_sol,
+                resolved_slippage,
+                urgency,
+            )
             simulated_token_amount = 0
             if self.execution is not None:
                 try:
@@ -77,8 +103,8 @@ class OrderExecutor:
                     if v_token > 0 and v_sol > 0:
                         sol_lamports = int(amount_sol * 1_000_000_000)
                         eff_slip = (
-                            slippage_bps
-                            if slippage_bps is not None
+                            resolved_slippage
+                            if resolved_slippage is not None
                             else getattr(self.execution, "default_slippage_bps", 250)
                         )
                         calc_fn = getattr(
@@ -134,13 +160,18 @@ class OrderExecutor:
                     error=f"buy_pda_failed: {exc}",
                 )
 
-            logger.info("Buying %s with %.4f SOL", mint, amount_sol)
+            logger.info(
+                "Buying %s with %.4f SOL (slippage_bps=%s)",
+                mint,
+                amount_sol,
+                resolved_slippage,
+            )
             try:
                 signature = await self.execution.buy(
                     mint,
                     bonding_curve,
                     amount_sol,
-                    slippage_bps=slippage_bps,
+                    slippage_bps=resolved_slippage,
                 )
             except Exception as exc:
                 logger.warning("Buy transaction failed for %s: %s", mint, exc)
@@ -195,13 +226,40 @@ class OrderExecutor:
         *,
         slippage_bps: int | None = None,
         min_sol_output_lamports: int = 0,
+        urgency: str = "normal",
         reason: str = "exit",
         dry_run: bool | None = None,
     ) -> ExecutionResult:
         is_dry_run = self.dry_run if dry_run is None else dry_run
 
+        effective_urgency = urgency
+        if effective_urgency == "normal" and (
+            "emergency" in reason.lower()
+            or "panic" in reason.lower()
+            or "stop_loss" in reason.lower()
+        ):
+            effective_urgency = "emergency"
+
+        resolved_slippage = slippage_bps
+        if resolved_slippage is None and getattr(
+            self.config, "enable_dynamic_slippage", True
+        ):
+            dynamic_params = self.execution_policy.resolve_parameters(
+                mint,
+                0.01,
+                is_buy=False,
+                urgency=effective_urgency,
+            )
+            resolved_slippage = dynamic_params.slippage_bps
+
         if is_dry_run:
-            logger.info("DRY RUN SELL: %s for %d tokens", mint, token_amount)
+            logger.info(
+                "DRY RUN SELL: %s for %d tokens (slippage_bps=%s, urgency=%s)",
+                mint,
+                token_amount,
+                resolved_slippage,
+                effective_urgency,
+            )
             est_sol = (
                 float(min_sol_output_lamports) / 1_000_000_000.0
                 if min_sol_output_lamports > 0
@@ -214,8 +272,8 @@ class OrderExecutor:
                     v_sol = int(curve_state.get("virtual_sol_reserves", 0))
                     if v_token > 0 and v_sol > 0:
                         eff_slip = (
-                            slippage_bps
-                            if slippage_bps is not None
+                            resolved_slippage
+                            if resolved_slippage is not None
                             else getattr(self.execution, "default_slippage_bps", 250)
                         )
                         lamports = self.execution.calculate_sell_sol_output(
@@ -255,8 +313,8 @@ class OrderExecutor:
                 )
 
             effective_slippage_bps = (
-                slippage_bps
-                if slippage_bps is not None
+                resolved_slippage
+                if resolved_slippage is not None
                 else self.execution.default_slippage_bps
             )
             min_sol_lamports = min_sol_output_lamports
@@ -292,6 +350,7 @@ class OrderExecutor:
                     bonding_curve,
                     token_amount,
                     min_sol_output=min_sol_lamports,
+                    slippage_bps=effective_slippage_bps,
                 )
             except Exception as exc:
                 logger.warning("Sell transaction failed for %s: %s", mint, exc)

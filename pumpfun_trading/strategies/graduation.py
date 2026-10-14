@@ -9,8 +9,9 @@ post-migration sniping.
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 
 @dataclass(slots=True)
@@ -116,6 +117,19 @@ class GraduationCandidate:
         }
 
 
+@dataclass(frozen=True)
+class GraduationTrajectory:
+    """Classified trajectory and acceleration dynamics for a bonding curve nearing graduation."""
+
+    mint: str
+    progress_pct: float
+    acceleration_sol_per_sec2: float
+    velocity_sol_per_sec: float
+    trajectory_type: str  # "organic" | "syndicate_sweep" | "exhaustion"
+    recommended_action: str  # "pre_grad_entry" | "hold" | "stage_exit" | "avoid"
+    metrics: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class GraduationSignal:
     """Evaluation result for graduation momentum or Raydium migration sniping."""
@@ -127,6 +141,7 @@ class GraduationSignal:
     real_sol_reserves: float
     pool_keys: Optional[RaydiumPoolKeys] = None
     reason: str = ""
+    trajectory: Optional[GraduationTrajectory] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert graduation signal to dictionary for telemetry and logging."""
@@ -138,13 +153,24 @@ class GraduationSignal:
             "real_sol_reserves": self.real_sol_reserves,
             "pool_keys": self.pool_keys.to_dict() if self.pool_keys else None,
             "reason": self.reason,
+            "trajectory": (
+                {
+                    "progress_pct": self.trajectory.progress_pct,
+                    "acceleration": self.trajectory.acceleration_sol_per_sec2,
+                    "velocity": self.trajectory.velocity_sol_per_sec,
+                    "type": self.trajectory.trajectory_type,
+                    "action": self.trajectory.recommended_action,
+                }
+                if self.trajectory
+                else None
+            ),
         }
 
 
 class GraduationTracker:
     """Manages lifecycle, reserve transitions, and Raydium pool state for a single token."""
 
-    __slots__ = ("candidate", "target_graduation_sol")
+    __slots__ = ("candidate", "target_graduation_sol", "_history")
 
     def __init__(
         self,
@@ -171,6 +197,8 @@ class GraduationTracker:
             created_at=now,
             updated_at=now,
         )
+        self._history: deque[Tuple[float, float]] = deque(maxlen=50)
+        self._history.append((now, float(real_sol_reserves)))
 
     def update_reserves(
         self,
@@ -193,10 +221,91 @@ class GraduationTracker:
             min(100.0, (real_sol / self.target_graduation_sol) * 100.0), 2
         )
         self.candidate.updated_at = now
+        self._history.append((now, real_sol))
         if complete and not self.candidate.is_completed:
             self.candidate.is_completed = True
             self.candidate.completed_at = now
         return self.candidate
+
+    def calculate_acceleration(
+        self, window_seconds: float = 30.0, current_time: Optional[float] = None
+    ) -> tuple[float, float]:
+        """Compute SOL inflow velocity (SOL/s) and reserve accumulation acceleration (SOL/s^2)."""
+        now = float(current_time if current_time is not None else time.time())
+        cutoff = now - max(1.0, float(window_seconds))
+        pts = [(t, s) for t, s in self._history if t >= cutoff]
+        if len(pts) < 2:
+            return (0.0, 0.0)
+
+        dt_total = pts[-1][0] - pts[0][0]
+        if dt_total <= 1e-4:
+            return (0.0, 0.0)
+
+        overall_velocity = (pts[-1][1] - pts[0][1]) / dt_total
+
+        if len(pts) < 3:
+            return (overall_velocity, 0.0)
+
+        mid_idx = len(pts) // 2
+        p_first_half = pts[: mid_idx + 1]
+        p_second_half = pts[mid_idx:]
+
+        dt1 = p_first_half[-1][0] - p_first_half[0][0]
+        dt2 = p_second_half[-1][0] - p_second_half[0][0]
+
+        v1 = (
+            (p_first_half[-1][1] - p_first_half[0][1]) / dt1
+            if dt1 > 1e-4
+            else overall_velocity
+        )
+        v2 = (
+            (p_second_half[-1][1] - p_second_half[0][1]) / dt2
+            if dt2 > 1e-4
+            else overall_velocity
+        )
+
+        dt_mid = ((p_second_half[0][0] + p_second_half[-1][0]) / 2.0) - (
+            (p_first_half[0][0] + p_first_half[-1][0]) / 2.0
+        )
+        acceleration = (v2 - v1) / dt_mid if dt_mid > 1e-4 else 0.0
+
+        return (float(overall_velocity), float(acceleration))
+
+    def classify_trajectory(
+        self, current_time: Optional[float] = None, unique_buyers: int = 1
+    ) -> GraduationTrajectory:
+        """Classify bonding curve trajectory as organic, syndicate sweep, or volume exhaustion."""
+        velocity, accel = self.calculate_acceleration(
+            window_seconds=30.0, current_time=current_time
+        )
+        progress = self.candidate.progress_pct
+
+        if (velocity < -0.01 or accel < -0.05) and progress < 88.0:
+            traj_type = "exhaustion"
+            rec_action = "avoid"
+        elif velocity > 3.0 and unique_buyers <= 1:
+            traj_type = "syndicate_sweep"
+            rec_action = "stage_exit" if progress >= 90.0 else "pre_grad_entry"
+        elif accel >= 0.0 and progress >= 65.0:
+            traj_type = "organic"
+            rec_action = "pre_grad_entry" if progress <= 88.0 else "stage_exit"
+        else:
+            traj_type = "organic"
+            rec_action = "hold"
+
+        return GraduationTrajectory(
+            mint=self.candidate.mint,
+            progress_pct=progress,
+            acceleration_sol_per_sec2=accel,
+            velocity_sol_per_sec=velocity,
+            trajectory_type=traj_type,
+            recommended_action=rec_action,
+            metrics={
+                "velocity": velocity,
+                "acceleration": accel,
+                "real_sol_reserves": self.candidate.real_sol_reserves,
+            },
+        )
 
     def mark_completed(self, timestamp: Optional[float] = None) -> GraduationCandidate:
         """Mark bonding curve as graduated/completed."""
@@ -428,6 +537,103 @@ class GraduationEngine:
             current_time=current_time,
         )
 
+    def evaluate_graduation_trajectory(
+        self,
+        mint: str,
+        current_time: Optional[float] = None,
+        unique_buyers: int = 1,
+    ) -> Optional[GraduationTrajectory]:
+        """Classify and return graduation trajectory for token mint."""
+        tracker = self._trackers.get(mint)
+        if tracker is None:
+            return None
+        return tracker.classify_trajectory(
+            current_time=current_time, unique_buyers=unique_buyers
+        )
+
+    def evaluate_pre_graduation_harvesting_entry(
+        self,
+        mint: str,
+        *,
+        min_progress_pct: float = 70.0,
+        max_progress_pct: float = 85.0,
+        min_acceleration: float = 0.0,
+        current_time: Optional[float] = None,
+        unique_buyers: int = 1,
+    ) -> GraduationSignal:
+        """Evaluate pre-graduation acceleration harvesting entry signal."""
+        tracker = self._trackers.get(mint)
+        if tracker is None:
+            return GraduationSignal(
+                triggered=False,
+                mint=mint,
+                stage="none",
+                market_cap_sol=0.0,
+                real_sol_reserves=0.0,
+                pool_keys=None,
+                reason="candidate_not_tracked",
+            )
+
+        trajectory = tracker.classify_trajectory(
+            current_time=current_time, unique_buyers=unique_buyers
+        )
+        cand = tracker.candidate
+
+        if cand.is_completed or cand.pool_keys is not None:
+            return GraduationSignal(
+                triggered=False,
+                mint=mint,
+                stage="graduated" if cand.is_completed else "raydium_pool_ready",
+                market_cap_sol=cand.market_cap_sol,
+                real_sol_reserves=cand.real_sol_reserves,
+                pool_keys=cand.pool_keys,
+                reason="already_graduated",
+                trajectory=trajectory,
+            )
+
+        if trajectory.trajectory_type == "exhaustion":
+            return GraduationSignal(
+                triggered=False,
+                mint=mint,
+                stage="pre_graduation",
+                market_cap_sol=cand.market_cap_sol,
+                real_sol_reserves=cand.real_sol_reserves,
+                reason="rejected_trajectory_exhaustion",
+                trajectory=trajectory,
+            )
+
+        if not (min_progress_pct <= cand.progress_pct <= max_progress_pct):
+            return GraduationSignal(
+                triggered=False,
+                mint=mint,
+                stage="pre_graduation",
+                market_cap_sol=cand.market_cap_sol,
+                real_sol_reserves=cand.real_sol_reserves,
+                reason=f"progress_outside_window ({cand.progress_pct:.1f}% not in [{min_progress_pct:.1f}%, {max_progress_pct:.1f}%])",
+                trajectory=trajectory,
+            )
+
+        if trajectory.acceleration_sol_per_sec2 < min_acceleration:
+            return GraduationSignal(
+                triggered=False,
+                mint=mint,
+                stage="pre_graduation",
+                market_cap_sol=cand.market_cap_sol,
+                real_sol_reserves=cand.real_sol_reserves,
+                reason=f"insufficient_acceleration ({trajectory.acceleration_sol_per_sec2:.4f} < {min_acceleration:.4f})",
+                trajectory=trajectory,
+            )
+
+        return GraduationSignal(
+            triggered=True,
+            mint=mint,
+            stage="pre_graduation",
+            market_cap_sol=cand.market_cap_sol,
+            real_sol_reserves=cand.real_sol_reserves,
+            reason=f"pre_graduation_acceleration_surge (progress={cand.progress_pct:.1f}%, a={trajectory.acceleration_sol_per_sec2:.4f})",
+            trajectory=trajectory,
+        )
+
     def get_candidate(self, mint: str) -> Optional[GraduationCandidate]:
         """Get candidate state by mint address."""
         tracker = self._trackers.get(mint)
@@ -473,5 +679,6 @@ __all__ = [
     "RaydiumPoolKeys",
     "GraduationSignal",
     "GraduationTracker",
+    "GraduationTrajectory",
     "GraduationEngine",
 ]

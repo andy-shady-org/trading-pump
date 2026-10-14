@@ -100,6 +100,45 @@ class TradingBotConfig:
         "risk",
         "lifecycle",
     )
+    log_file: str | None = "bot.log"
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
+    log_rotation_type: str = "size"
+    log_compress: bool = True
+    audit_max_bytes: int = 10 * 1024 * 1024
+    audit_backup_count: int = 10
+    audit_retention_days: int = 30
+    audit_compress: bool = True
+    replay_max_bytes: int = 50 * 1024 * 1024
+    replay_backup_count: int = 10
+    replay_retention_days: int = 30
+    replay_compress: bool = True
+    retention_check_interval_seconds: float = 3600.0
+    enable_dynamic_slippage: bool = True
+    min_slippage_bps: int = 100
+    max_slippage_bps: int = 500
+    max_exit_slippage_bps: int = 5000
+    priority_fee_mode: str = "adaptive"
+    volatility_slippage_multiplier: float = 1.0
+    price_impact_slippage_multiplier: float = 1.0
+    enable_capital_rotation: bool = True
+    displacement_min_conviction_percentile: float = 0.95
+    displacement_hurdle_rate_pct: float = 0.03
+    min_hold_before_displacement_seconds: float = 45.0
+    displacement_evaluation_interval_seconds: float = 2.0
+    enable_pre_graduation_harvesting: bool = True
+    pre_graduation_entry_progress_pct: float = 0.70
+    pre_graduation_max_entry_progress_pct: float = 0.85
+    pre_graduation_min_acceleration: float = 0.0
+    pre_graduation_tranches: tuple[dict[str, Any], ...] = (
+        {"progress_pct": 0.92, "sell_fraction": 0.30},
+        {"progress_pct": 0.97, "sell_fraction": 0.30},
+    )
+    enable_cluster_analysis: bool = True
+    max_cluster_concentration_pct: float = 0.25
+    max_single_cluster_pct: float = 0.20
+    max_sybil_wash_ratio: float = 0.20
+    cluster_trace_depth: int = 2
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -188,6 +227,42 @@ class TradingBotConfig:
             "enable_diagnostic_events": self.enable_diagnostic_events,
             "event_log_path": self.event_log_path,
             "event_log_subsystems": list(self.event_log_subsystems),
+            "log_file": self.log_file,
+            "log_max_bytes": self.log_max_bytes,
+            "log_backup_count": self.log_backup_count,
+            "log_rotation_type": self.log_rotation_type,
+            "log_compress": self.log_compress,
+            "audit_max_bytes": self.audit_max_bytes,
+            "audit_backup_count": self.audit_backup_count,
+            "audit_retention_days": self.audit_retention_days,
+            "audit_compress": self.audit_compress,
+            "replay_max_bytes": self.replay_max_bytes,
+            "replay_backup_count": self.replay_backup_count,
+            "replay_retention_days": self.replay_retention_days,
+            "replay_compress": self.replay_compress,
+            "retention_check_interval_seconds": self.retention_check_interval_seconds,
+            "enable_dynamic_slippage": self.enable_dynamic_slippage,
+            "min_slippage_bps": self.min_slippage_bps,
+            "max_slippage_bps": self.max_slippage_bps,
+            "max_exit_slippage_bps": self.max_exit_slippage_bps,
+            "priority_fee_mode": self.priority_fee_mode,
+            "volatility_slippage_multiplier": self.volatility_slippage_multiplier,
+            "price_impact_slippage_multiplier": self.price_impact_slippage_multiplier,
+            "enable_capital_rotation": self.enable_capital_rotation,
+            "displacement_min_conviction_percentile": self.displacement_min_conviction_percentile,
+            "displacement_hurdle_rate_pct": self.displacement_hurdle_rate_pct,
+            "min_hold_before_displacement_seconds": self.min_hold_before_displacement_seconds,
+            "displacement_evaluation_interval_seconds": self.displacement_evaluation_interval_seconds,
+            "enable_pre_graduation_harvesting": self.enable_pre_graduation_harvesting,
+            "pre_graduation_entry_progress_pct": self.pre_graduation_entry_progress_pct,
+            "pre_graduation_max_entry_progress_pct": self.pre_graduation_max_entry_progress_pct,
+            "pre_graduation_min_acceleration": self.pre_graduation_min_acceleration,
+            "pre_graduation_tranches": list(self.pre_graduation_tranches),
+            "enable_cluster_analysis": self.enable_cluster_analysis,
+            "max_cluster_concentration_pct": self.max_cluster_concentration_pct,
+            "max_single_cluster_pct": self.max_single_cluster_pct,
+            "max_sybil_wash_ratio": self.max_sybil_wash_ratio,
+            "cluster_trace_depth": self.cluster_trace_depth,
         }
 
     @classmethod

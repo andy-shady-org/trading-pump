@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pumpfun_trading.ops.retention import RetentionPolicy, RotatedFileSink
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,15 +25,23 @@ class ReplayRecorder:
         output_path: str | Path,
         batch_size: int = 50,
         flush_interval_seconds: float = 5.0,
+        policy: RetentionPolicy | None = None,
     ) -> None:
         self.output_path = Path(output_path)
         self.batch_size = max(1, int(batch_size))
         self.flush_interval_seconds = max(0.1, float(flush_interval_seconds))
+        self.policy = policy or RetentionPolicy(
+            max_bytes=50 * 1024 * 1024,
+            max_files=10,
+            max_age_days=30,
+            compress_archives=True,
+        )
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
         self._closed: bool = False
         self._records_written: int = 0
         self._flush_lock = asyncio.Lock()
+        self._sink: RotatedFileSink | None = None
 
     @property
     def is_running(self) -> bool:
@@ -50,6 +60,8 @@ class ReplayRecorder:
         if self._worker_task is None or self._worker_task.done():
             self._closed = False
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._sink is None:
+                self._sink = RotatedFileSink(self.output_path, policy=self.policy)
             self._worker_task = asyncio.create_task(
                 self._flush_worker(), name="replay_recorder_flusher"
             )
@@ -114,9 +126,11 @@ class ReplayRecorder:
                 )
 
     def _sync_append(self, text: str) -> None:
-        with open(self.output_path, "a", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
+        """Append raw text for backward compatibility."""
+        if self._sink is None:
+            self._sink = RotatedFileSink(self.output_path, policy=self.policy)
+        lines = [line for line in text.splitlines() if line]
+        self._sink.write_batch(lines)
 
     async def flush(self) -> None:
         """Force flush all currently enqueued records to disk immediately."""
@@ -142,6 +156,12 @@ class ReplayRecorder:
                 pass
             self._worker_task = None
         await self.flush()
+        if self._sink is not None:
+            try:
+                self._sink.close()
+            except Exception:
+                pass
+            self._sink = None
 
 
 __all__ = ["ReplayRecorder"]

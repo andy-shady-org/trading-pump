@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import glob
+import gzip
 import json
 from collections import Counter
 from datetime import datetime, timezone
@@ -116,21 +118,64 @@ def _extract_sell_price(record: dict[str, Any]) -> float | None:
         return None
 
 
-def load_audit_records(path: str | Path) -> list[dict[str, Any]]:
-    file_path = Path(path)
-    if not file_path.exists():
-        return []
-
+def _read_records_from_single_file(file_path: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for line in file_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict):
-            records.append(record)
+    if not file_path.exists() or not file_path.is_file():
+        return records
+
+    is_gz = file_path.name.endswith(".gz") or file_path.suffix.lower() == ".gz"
+    try:
+        opener = (
+            gzip.open(file_path, "rt", encoding="utf-8")
+            if is_gz
+            else open(file_path, "r", encoding="utf-8")
+        )
+        with opener as handle:
+            for line in handle:
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                try:
+                    record = json.loads(line_str)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    records.append(record)
+    except Exception:
+        pass
+    return records
+
+
+def load_audit_records(path: str | Path) -> list[dict[str, Any]]:
+    """
+    Loads and aggregates audit records from a single file (.jsonl or .gz),
+    a directory containing chunked archives, or a glob pattern.
+    """
+    target = Path(path)
+    records: list[dict[str, Any]] = []
+
+    if target.is_dir():
+        files = sorted(
+            [f for f in target.glob("*.jsonl*") if f.is_file()],
+            key=lambda p: p.stat().st_mtime,
+        )
+        for f in files:
+            records.extend(_read_records_from_single_file(f))
+    elif target.is_file():
+        records.extend(_read_records_from_single_file(target))
+    else:
+        path_str = str(path)
+        matching = sorted(glob.glob(path_str))
+        if matching:
+            for m in matching:
+                mf = Path(m)
+                if mf.is_file():
+                    records.extend(_read_records_from_single_file(mf))
+        else:
+            return []
+
+    # Sort records chronologically
+    records.sort(key=lambda r: float(_as_timestamp(r.get("timestamp")) or 0.0))
     return records
 
 

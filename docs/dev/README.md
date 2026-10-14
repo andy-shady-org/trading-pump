@@ -53,6 +53,7 @@ nox -s tests
 ## 3. Cross-Reference Index
 
 * **User Manual & Operations**: [docs/USER-GUIDE.md](../USER-GUIDE.md)
+* **Environment Variables Reference**: [docs/ENVIRONMENTAL-VARIABLES.md](../ENVIRONMENTAL-VARIABLES.md)
 * **Complete CLI Reference Manual**: [docs/CLI-COMMANDS.md](../CLI-COMMANDS.md)
 * **Financial Strategy & Wealth Blueprint**: [docs/STRATEGY.md](../STRATEGY.md)
 * **Capital Protection & Risk Safeguards**: [docs/RISK.md](../RISK.md)

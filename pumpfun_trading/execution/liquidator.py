@@ -28,7 +28,8 @@ class OrderLiquidator:
         mint: str,
         *,
         reason: str = "emergency_liquidation",
-        slippage_bps: int | None = 2500,
+        slippage_bps: int | None = None,
+        urgency: str = "emergency",
     ) -> bool:
         if not self.position_manager.has_position(mint):
             return False
@@ -39,16 +40,24 @@ class OrderLiquidator:
         )
 
         logger.warning(
-            "Liquidating position for %s (%d tokens, reason: %s)",
+            "Liquidating position for %s (%d tokens, reason: %s, urgency: %s)",
             mint,
             token_amount,
             reason,
+            urgency,
+        )
+
+        eff_slippage = (
+            slippage_bps
+            if slippage_bps is not None
+            else getattr(self.config, "max_exit_slippage_bps", 5000)
         )
 
         result = await self.executor.execute_sell(
             mint=mint,
             token_amount=token_amount,
-            slippage_bps=slippage_bps,
+            slippage_bps=eff_slippage,
+            urgency=urgency,
             reason=reason,
         )
 
@@ -63,16 +72,18 @@ class OrderLiquidator:
         *,
         reason: str = "emergency_liquidation",
         max_concurrency: int = 5,
-        slippage_bps: int | None = 2500,
+        slippage_bps: int | None = None,
+        urgency: str = "emergency",
     ) -> list[str]:
         mints_to_liquidate = self.position_manager.get_mints()
         if not mints_to_liquidate:
             return []
 
         logger.warning(
-            "Engaging emergency liquidation across %d active positions: %s",
+            "Engaging emergency liquidation across %d active positions: %s (urgency=%s)",
             len(mints_to_liquidate),
             reason,
+            urgency,
         )
 
         semaphore = asyncio.Semaphore(max_concurrency)
@@ -84,6 +95,7 @@ class OrderLiquidator:
                     mint=mint,
                     reason=reason,
                     slippage_bps=slippage_bps,
+                    urgency=urgency,
                 )
                 if success:
                     liquidated.append(mint)

@@ -107,7 +107,11 @@ async def test_order_executor_live_sell(
     assert res.signature == "SellSignature111"
     assert res.amount_sol == pytest.approx(0.50)  # 500_000_000 lamports
     mock_exec_client.sell.assert_awaited_once_with(
-        "Mint111", "BondingCurvePubkey111", 500_000, min_sol_output=500_000_000
+        "Mint111",
+        "BondingCurvePubkey111",
+        500_000,
+        min_sol_output=500_000_000,
+        slippage_bps=500,
     )
 
 

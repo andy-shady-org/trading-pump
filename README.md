@@ -78,7 +78,7 @@ cp .envrc.sample .envrc
 # edit .envrc with your real values
 ```
 
-The sample file contains the supported environment variables for bot and execution setup:
+The sample file contains the supported environment variables for bot and execution setup. For an exhaustive, detailed reference of all 50+ configuration parameters, see [**`docs/ENVIRONMENTAL-VARIABLES.md`**](docs/ENVIRONMENTAL-VARIABLES.md).
 
 | Variable                            | Description                                                                                              | Required?                          |
 |-------------------------------------|----------------------------------------------------------------------------------------------------------|------------------------------------|
@@ -86,8 +86,12 @@ The sample file contains the supported environment variables for bot and executi
 | `SOLANA_PRIVATE_KEY`                | Legacy alias accepted by the bot runtime if `PUMPFUN_PRIVATE_KEY` is not set.                            | Optional alias                     |
 | `PUMPFUN_RPC_URL`                   | Solana RPC endpoint for execution and state queries.                                                     | Yes                                |
 | `HELIUS_RPC_URL`                    | Legacy alias accepted by the bot runtime if `PUMPFUN_RPC_URL` is not set.                                | Optional alias                     |
+| `PUMPFUN_GEYSER_ENDPOINT`           | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market feeds.                             | Required*                          |
+| `PUMPFUN_STREAM_URL`                | WebSocket stream URL (e.g. PumpPortal feed) for market ingestion.                                        | Required*                          |
+| `PUMPFUN_USE_JITO`                  | Enable Jito Block Engine private mempool bundling for MEV protection.                                    | Optional                           |
 | `PUMPFUN_AUDIT_LOG`                 | File path for the JSONL audit trail of lifecycle and trade events.                                       | Optional                           |
 | `PUMPFUN_BOT_STATUS_PATH`           | File path for the JSON bot status snapshot used for monitoring and incident review.                      | Optional                           |
+| `PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS`  | Enable high-throughput asynchronous diagnostic event logging.                                            | Optional                           |
 | `PUMPFUN_ALERT_PROVIDER`            | Alerting backend to use. Set to `none`, `discord`, `slack`, or `telegram`. Default is `none` (disabled). | Optional                           |
 | `PUMPFUN_ALERT_DISCORD_WEBHOOK_URL` | Discord webhook URL used when `PUMPFUN_ALERT_PROVIDER=discord`.                                          | Required if provider is `discord`  |
 | `PUMPFUN_ALERT_SLACK_WEBHOOK_URL`   | Slack incoming webhook URL used when `PUMPFUN_ALERT_PROVIDER=slack`.                                     | Required if provider is `slack`    |

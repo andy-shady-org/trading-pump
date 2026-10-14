@@ -25,6 +25,37 @@ def test_load_audit_records_reads_jsonl(tmp_path):
     assert records[0]["type"] == "trade"
 
 
+def test_load_audit_records_reads_gzip_and_directory(tmp_path):
+    import gzip
+
+    # Write chunk 1 as .jsonl.1.gz
+    gz_file = tmp_path / "audit.jsonl.1.gz"
+    with gzip.open(gz_file, "wt", encoding="utf-8") as f:
+        f.write(
+            json.dumps({"timestamp": 100, "type": "trade", "payload": {"mint": "M1"}})
+            + "\n"
+        )
+
+    # Write chunk 2 as active uncompressed audit.jsonl
+    active_file = tmp_path / "audit.jsonl"
+    active_file.write_text(
+        json.dumps({"timestamp": 200, "type": "trade", "payload": {"mint": "M2"}})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Test reading single gz file
+    rec_gz = load_audit_records(gz_file)
+    assert len(rec_gz) == 1
+    assert rec_gz[0]["payload"]["mint"] == "M1"
+
+    # Test reading entire directory containing mixed active and gz files
+    rec_dir = load_audit_records(tmp_path)
+    assert len(rec_dir) == 2
+    assert rec_dir[0]["payload"]["mint"] == "M1"
+    assert rec_dir[1]["payload"]["mint"] == "M2"
+
+
 def test_filter_audit_records_supports_common_filters(tmp_path):
     path = tmp_path / "audit.jsonl"
     records = [

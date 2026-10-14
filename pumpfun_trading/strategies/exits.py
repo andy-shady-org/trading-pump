@@ -25,6 +25,7 @@ class PositionExitState:
     tier_1_executed: bool = False
     tier_2_executed: bool = False
     moonbag_active: bool = False
+    executed_pre_grad_tranches: set[int] = field(default_factory=set)
     entry_time: float = field(default_factory=time.time)
     last_price_change_at: float = field(default_factory=time.time)
     last_price: float = 0.0
@@ -98,6 +99,7 @@ class PositionExitState:
             "tier_1_executed": self.tier_1_executed,
             "tier_2_executed": self.tier_2_executed,
             "moonbag_active": self.moonbag_active,
+            "executed_pre_grad_tranches": list(self.executed_pre_grad_tranches),
             "performance": self.performance,
             "peak_performance": self.peak_performance,
             "drawdown_from_peak": self.drawdown_from_peak,
@@ -130,6 +132,10 @@ class PositionExitState:
         entry_t = float(data.get("entry_time") or data.get("first_seen") or now_ts)
         last_change_t = float(data.get("last_price_change_at") or entry_t)
         last_p = float(data.get("last_price") or curr_mc or entry_mc)
+        raw_tranches = data.get("executed_pre_grad_tranches") or set()
+        tranches_set = (
+            set(raw_tranches) if isinstance(raw_tranches, (set, list, tuple)) else set()
+        )
         return cls(
             entry_market_cap=entry_mc,
             current_market_cap=curr_mc,
@@ -140,6 +146,7 @@ class PositionExitState:
             tier_1_executed=bool(data.get("tier_1_executed", False)),
             tier_2_executed=bool(data.get("tier_2_executed", False)),
             moonbag_active=bool(data.get("moonbag_active", False)),
+            executed_pre_grad_tranches=tranches_set,
             entry_time=entry_t,
             last_price_change_at=last_change_t,
             last_price=last_p,
@@ -178,6 +185,7 @@ def evaluate_exit_strategy(
     token_balance: int | None = None,
     *,
     now: float | None = None,
+    curve_progress_pct: float | None = None,
 ) -> ExitDecision:
     if current_market_cap is not None:
         state.update_price(
@@ -224,6 +232,50 @@ def evaluate_exit_strategy(
             reason=f"stop_loss_hit ({perf:.2%} <= {config.stop_loss:.2%})",
             exit_type="stop_loss",
         )
+
+    # 1.5 Pre-Graduation Staged Take-Profit Tranches Check
+    if (
+        getattr(config, "enable_pre_graduation_harvesting", False)
+        and curve_progress_pct is not None
+    ):
+        tranches = getattr(config, "pre_graduation_tranches", ())
+        progress_ratio = (
+            float(curve_progress_pct) / 100.0
+            if curve_progress_pct > 1.0
+            else float(curve_progress_pct)
+        )
+        for idx, tranche in enumerate(tranches):
+            if idx in state.executed_pre_grad_tranches:
+                continue
+            target_prog = float(tranche.get("progress_pct", 1.0))
+            sell_frac = float(tranche.get("sell_fraction", 0.30))
+            if progress_ratio >= target_prog:
+                state.executed_pre_grad_tranches.add(idx)
+                base_tokens = (
+                    state.initial_token_amount
+                    if state.initial_token_amount > 0
+                    else effective_balance
+                )
+                target_sell = int(base_tokens * sell_frac)
+                target_sell = max(1, min(target_sell, effective_balance))
+                rem = effective_balance - target_sell
+                if rem <= config.min_sell_balance:
+                    return ExitDecision(
+                        action=ExitAction.FULL_EXIT,
+                        sell_fraction=1.0,
+                        sell_tokens=effective_balance,
+                        reason=f"pre_graduation_tranche_{idx + 1}_full ({progress_ratio:.1%} >= {target_prog:.1%})",
+                        exit_type="pre_graduation_tranche",
+                        target_tier=idx + 1,
+                    )
+                return ExitDecision(
+                    action=ExitAction.PARTIAL_EXIT,
+                    sell_fraction=sell_frac,
+                    sell_tokens=target_sell,
+                    reason=f"pre_graduation_tranche_{idx + 1} ({progress_ratio:.1%} >= {target_prog:.1%})",
+                    exit_type="pre_graduation_tranche",
+                    target_tier=idx + 1,
+                )
 
     # 2. Stagnant Curve Inactivity Timeout Check
     if config.enable_stagnant_exit:
@@ -367,6 +419,7 @@ def should_exit_position(
     position: dict[str, Any] | PositionExitState | None = None,
     current_market_cap: float | None = None,
     now: float | None = None,
+    curve_progress_pct: float | None = None,
 ) -> bool:
     if position is None:
         return token_balance > config.min_sell_balance and (
@@ -389,6 +442,7 @@ def should_exit_position(
         current_market_cap=mc,
         token_balance=token_balance,
         now=now,
+        curve_progress_pct=curve_progress_pct,
     )
     return decision.action in (ExitAction.FULL_EXIT, ExitAction.PARTIAL_EXIT)
 

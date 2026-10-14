@@ -212,6 +212,12 @@ $$G = \frac{\sum_{i=1}^n \sum_{j=1}^n |w_i - w_j|}{2n \sum_{i=1}^n w_i}$$
    * Validates URI JSON metadata structure and presence of verified Twitter/X, Telegram, or website endpoints.
 5. **In-Memory TTL Screening Cache**:
    * Screening evaluations are cached in volatile memory ($60\text{s TTL}$) to maintain sub-millisecond throughput without redundant RPC calls.
+6. **On-Chain Funding Cluster Graph & Sybil Wash-Trading Detector (FEAT-26)**:
+   * **Funding Cluster Graph (`FundingClusterGraph`)**: Reconstructs directed funding trees ($\text{Funder} \to \text{Recipient}$) up to configured depth (`cluster_trace_depth = 2` to `3`), resolving common root funding origins across the top 10 holders and token creator.
+   * **Insider Cluster Concentration Index ($I_{\text{cluster}}$)**:
+     $$I_{\text{cluster}} = \sum_{c \in \text{Syndicates}} \text{SupplyFraction}(c)$$
+     Rejects candidate tokens if $I_{\text{cluster}} \ge 0.25$ (Risk Penalty: $+50.0$) or if any single cluster controls $\ge 0.20$ of circulating supply (Risk Penalty: $+40.0$).
+   * **Sybil Wash-Trading Pattern Detector (`SybilWashTradingDetector`)**: Scans real-time trade sequences for circular buy/sell patterns, alternating ping-pong swaps, and rapid zero-profit wallet churn. Rejects tokens with $\ge 20\%$ coordinated wash volume (Risk Penalty: $+60.0$).
 
 ---
 
@@ -244,6 +250,11 @@ The system provides three optimized preset configurations tailored to prevailing
 | **Raydium Slippage Bps** | `300 bps` (3%) | `500 bps` (5%) | `800 bps` (8%) |
 | **Raydium Priority Fee** | `50,000 lamports` | `100,000 lamports` | `200,000 lamports` |
 | **Raydium Max Entry Latency** | `15.0s` | `30.0s` | `60.0s` |
+| **Enable Cluster Analysis** | `True` | `True` | `True` |
+| **Max Cluster Concentration** | `15.0%` | `25.0%` | `35.0%` |
+| **Max Single Cluster Fraction** | `10.0%` | `20.0%` | `30.0%` |
+| **Max Sybil Wash Ratio** | `10.0%` | `20.0%` | `30.0%` |
+| **Cluster Trace Depth** | `3` | `2` | `2` |
 
 ### Market Regime Application
 
@@ -582,3 +593,84 @@ To maintain high execution velocity, testability, and reliability as trading cap
 
 5. **`StatusPersistenceManager` & `AlertDispatcher` (`pumpfun_trading/bot/`)**:
    Isolates disk I/O (`bot_status.json`), append-only audit event logging, and multi-channel webhook notifications (Discord, Slack, Telegram) with resilient non-blocking error handling.
+
+---
+
+## 13. Dynamic Volatility-Aware Slippage & Adaptive Priority Fee Engine (FEAT-23)
+
+Static price slippage bounds and fixed priority fees create two severe vulnerabilities in microcap trading:
+1. **Under-protection during high-volatility bursts**: Fixed tight slippage causes transaction drops during fast market dumps or explosive parabolic breakouts.
+2. **MEV sandwich exploitation during calm regimes**: Wide static slippage exposes normal entries to toxic sandwich front-running and execution leakage.
+
+### Mathematical Formulation
+
+1. **Instantaneous Price Velocity ($\Delta P / \Delta t$)**:
+   $$\text{Price Velocity: } v = \frac{P_{t_1} - P_{t_0}}{\max(10^{-4}, t_1 - t_0)}$$
+
+2. **Rolling Volatility ($\sigma_{\text{vol}}$)**:
+   $$\sigma_{\text{vol}} = \sqrt{\frac{1}{N} \sum_{i=1}^N (r_i - \overline{r})^2}, \quad \text{where } r_i = \frac{P_i - P_{i-1}}{P_{i-1}}$$
+
+3. **Reserve Depth Consumption & Price Impact**:
+   $$\text{Depth Consumption: } \frac{\Delta x}{x_{\text{virtual}}}, \quad \text{Price Impact: } \Delta P_{\text{impact}} = \frac{P_{\text{exec}} - P_{\text{spot}}}{P_{\text{spot}}}$$
+
+4. **Dynamic Slippage Equation ($S_{\text{dynamic}}$)**:
+   $$S_{\text{dynamic}} = \operatorname{clamp}\left(\left(S_{\text{base}} + \alpha \cdot \sigma_{\text{vol}} \times 10^4 + \beta \cdot \Delta P_{\text{impact}} \times 10^4\right) \times M_{\text{urgency}},\; S_{\text{min}},\; S_{\text{max}}\right)$$
+
+### Urgency Tiers & Compute Budget Scaling
+
+| Urgency Tier | Trigger Context | Compute Unit Limit | Compute Price Multiplier | Jito Tip (Lamports) | Max Slippage Cap |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| `NORMAL_ENTRY` | Standard screening entry | $200,000$ | $1.0\text{x}$ ($50\text{k}$ µLamports) | $100,000$ | $500\text{ BPS}$ |
+| `HIGH_CONVICTION` | High Z-score breakout | $250,000$ | $1.5\text{x}$ ($75\text{k}$ µLamports) | $150,000$ | $500\text{ BPS}$ |
+| `GRADUATION_SNIPE` | Terminal curve / Raydium pool | $300,000$ | $2.5\text{x}$ ($125\text{k}$ µLamports) | $250,000$ | $800\text{ BPS}$ |
+| `EMERGENCY_EXIT` | Stop-loss / panic liquidation | $400,000$ | $4.0\text{x}$ ($200\text{k}$ µLamports) | $400,000$ | $5000\text{ BPS}$ |
+
+---
+
+## 14. Opportunistic Capital Rotation & High-Conviction Displacement (FEAT-24)
+
+When `max_active_positions` or `max_total_exposure_sol` is saturated, standard bots reject new entry signals, trapping capital in stagnant or flat-moving bonding curves while 95th+ percentile breakout candidates are missed.
+
+### Expected Value (EV) Scoring Model
+
+Active positions and incoming breakout candidates are continuously evaluated by `PositionEvEvaluator`:
+
+$$\text{EV} = w_z \cdot Z_{\text{norm}} + w_{\text{inflow}} \cdot \text{Inflow}_{\text{norm}} + w_p \cdot \text{PnL}_{\text{norm}} - w_{\text{stag}} \cdot \text{Stagnation}$$
+
+Where:
+* $Z_{\text{norm}} = \operatorname{clamp}(Z_{\text{score}} / 5.0, -0.4, 1.0)$
+* $\text{Inflow}_{\text{norm}} = \operatorname{clamp}(\text{NetInflow} / 5.0, -0.2, 1.0)$
+* $\text{PnL}_{\text{norm}} = \operatorname{clamp}(P / P_0 - 1.0, -1.0, 3.0)$
+* $\text{Stagnation} = \min\left(1.0, \frac{\Delta t_{\text{flat}}}{\text{timeout}_{\text{stagnant}}}\right)$ (when $|P/P_0 - 1.0| < 0.05$)
+
+### Frictional Hurdle Displacement Condition
+
+A candidate breakout displaces the weakest active holding if and only if:
+1. The weakest holding has exceeded `min_hold_before_displacement_seconds` ($45\text{s}$).
+2. Candidate conviction meets `displacement_min_conviction_percentile` ($\ge 0.95$).
+3. The net Expected Value delta exceeds total round-trip transaction friction:
+
+$$\text{EV}_{\text{candidate}} - \text{EV}_{\text{weakest}} > 2 \times \text{Slippage}_{\text{base}} + \text{HurdleMargin}_{\text{displacement}}$$
+
+Upon validation, the engine atomically executes a priority market sell on the weakest asset and immediately dispatches the buy order for the candidate breakout.
+
+---
+
+## 15. Predictive Graduation Acceleration & Liquidity Harvesting (FEAT-25)
+
+Bonding curves approaching Raydium graduation ($\sim 85\text{ SOL}$ reserves / $\$69\text{k}$ market cap) experience an exponential price acceleration phase followed by high post-migration volatility.
+
+### Acceleration Dynamics & Trajectory Modeling
+
+1. **Curve Reserve Inflow Acceleration ($a_{\text{curve}}$)**:
+   $$a_{\text{curve}} = \frac{d^2(\text{SOL})}{dt^2} = \frac{v_2 - v_1}{\Delta t_{\text{mid}}}$$
+
+2. **Deterministic Trajectory Classification**:
+   * **`organic`**: Sustained positive acceleration ($a_{\text{curve}} \ge 0$) and $\ge 2$ unique buyers $\implies$ High-conviction pre-graduation entry trigger.
+   * **`syndicate_sweep`**: Instantaneous velocity spike ($v > 3.0\text{ SOL/s}$) with single buyer $\implies$ Scaled early take-profit exit.
+   * **`exhaustion`**: Decelerating velocity ($v < 0$ or $a_{\text{curve}} < -0.05$) $\implies$ Entry suppressed; positions exit immediately.
+
+3. **Staged Multi-Tranche Take-Profit Schedule**:
+   * **Tranche 1 (30% scale-out)**: Executed when curve completion reaches **92%**.
+   * **Tranche 2 (30% scale-out)**: Executed when curve completion reaches **97%**.
+   * **Moonbag Retained (40% residual)**: Rides into Raydium pool seeding, protected by post-migration trailing stops.

@@ -39,6 +39,7 @@ The documentation is organized in a clear, audience-separated star topology:
 Accessible to end-users, quant traders, and bot operators; embedded into the FastAPI Web UI:
 
 * [**`docs/USER-GUIDE.md`**](docs/USER-GUIDE.md): Central knowledge hub and primary onboarding portal for both hosted Web UI instances and operator Terminal UI mode.
+* [**`docs/ENVIRONMENTAL-VARIABLES.md`**](docs/ENVIRONMENTAL-VARIABLES.md): Exhaustive environment variables manual, fallback aliases, default values, and production configuration recipes.
 * [**`docs/CLI-COMMANDS.md`**](docs/CLI-COMMANDS.md): Exhaustive command-line interface manual for all standalone binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`) and unified `pumpfun` subcommands.
 * [**`docs/STRATEGY.md`**](docs/STRATEGY.md): Wealth generation blueprint, bonding curve pricing math ($P = \Delta y / \Delta x$), fractional Kelly bankroll management, multi-tier profit scaling, dynamic trailing stops, and anti-rug heuristic scoring.
 * [**`docs/RISK.md`**](docs/RISK.md): Multi-tier capital preservation, position concentration caps, daily hard-stop circuit breakers (FEAT-09), startup on-chain reconciliation, and emergency exit queues.
