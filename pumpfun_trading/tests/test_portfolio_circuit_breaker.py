@@ -221,7 +221,12 @@ def test_evaluate_portfolio_circuit_breaker_with_bot_mock():
         def __init__(self):
             self.wallet_balance_sol = 10.0
             self.active_positions = {
-                "mintA": {"entry_market_cap": 2.0, "current_market_cap": 2.0},
+                "mintA": {
+                    "cost_sol": 2.0,
+                    "entry_sol": 2.0,
+                    "entry_market_cap": 2.0,
+                    "current_market_cap": 2.0,
+                },
             }
             self.config = TradingBotConfig(
                 max_daily_drawdown_pct=0.15,
@@ -247,6 +252,66 @@ def test_evaluate_portfolio_circuit_breaker_with_bot_mock():
     assert "portfolio drawdown" in reason
     assert "circuit breaker:" in bot._last_event
     assert check_daily_drawdown(bot) is False
+
+
+def test_circuit_breaker_realistic_pumpfun_lifecycle():
+    """
+    Regression test for BUG-15:
+    Realistic trade lifecycle on Pump.fun (~27.96 SOL initial market cap).
+    Opening a position (0.01 SOL cost) and subsequently closing it with a small profit
+    must not trigger a false-positive 99%+ portfolio drawdown circuit breaker lock.
+    """
+    class MockBot:
+        def __init__(self):
+            self.wallet_balance_sol = 0.10
+            self.active_positions = {}
+            self.config = TradingBotConfig(
+                buy_amount_sol=0.01,
+                max_daily_drawdown_pct=0.15,
+                emergency_hard_lock_hours=24.0,
+            )
+            self.daily_equity_tracker = DailyEquityTracker()
+            self._last_event = ""
+
+    bot = MockBot()
+    # 1. Starting state: wallet = 0.10 SOL, no positions -> baseline equity = 0.10 SOL
+    is_breached, reason = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    assert bot.daily_equity_tracker.starting_equity_sol == 0.10
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == 0.10
+
+    # 2. Buy token: wallet drops to 0.09 SOL, position opened with 0.01 SOL cost at 27.95899 SOL MC
+    mint = "PumpFunToken111111111111111111111111111111"
+    bot.wallet_balance_sol = 0.09
+    bot.active_positions[mint] = {
+        "cost_sol": 0.01,
+        "entry_sol": 0.01,
+        "entry_market_cap": 27.95899,
+        "current_market_cap": 27.95899,
+        "token_amount": 100_000_000,
+    }
+
+    # Evaluate circuit breaker: open value is 0.01 SOL, total equity is 0.10 SOL
+    is_breached, reason = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(0.10, rel=1e-5)
+
+    # 3. Market cap increases slightly to 28.50 SOL (+1.93%)
+    bot.active_positions[mint]["current_market_cap"] = 28.50
+    is_breached, reason = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    expected_peak = 0.09 + (0.01 * (28.50 / 27.95899))
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(expected_peak, rel=1e-5)
+
+    # 4. Position closes with 0.0102 SOL proceeds (+2% profit returned to wallet)
+    bot.active_positions.pop(mint)
+    bot.wallet_balance_sol = 0.1002
+
+    # Evaluate circuit breaker after trade close: total equity = 0.1002 SOL (drawdown = 0.0%)
+    is_breached, reason = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    assert reason == ""
+    assert bot.daily_equity_tracker.circuit_breaker_engaged is False
 
 
 def test_strategy_presets_circuit_breaker_config():
@@ -301,6 +366,8 @@ async def test_trading_bot_circuit_breaker_liquidates_and_locks(tmp_path):
         "peak_market_cap": 2.0,
         "token_amount": 1_000_000,
         "initial_token_amount": 1_000_000,
+        "cost_sol": 2.0,
+        "entry_sol": 2.0,
     }
     bot.daily_equity_tracker.initialize_or_rollover(10.0, 2.0)
 
@@ -444,6 +511,8 @@ async def test_trading_bot_trade_event_triggers_circuit_breaker():
         "current_market_cap": 2.0,
         "peak_market_cap": 2.0,
         "token_amount": 1_000_000,
+        "cost_sol": 2.0,
+        "entry_sol": 2.0,
     }
     bot.daily_equity_tracker.initialize_or_rollover(8.0, 2.0)  # baseline = 10.0 SOL
 

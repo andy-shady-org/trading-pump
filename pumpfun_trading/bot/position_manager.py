@@ -37,6 +37,9 @@ class Position:
     tier_2_executed: bool = False
     moonbag_active: bool = False
     trailing_stop_active: bool = False
+    entry_time: float = field(default_factory=time.time)
+    last_price_change_at: float = field(default_factory=time.time)
+    last_price: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -88,6 +91,9 @@ class Position:
             "tier_2_executed": self.tier_2_executed,
             "moonbag_active": self.moonbag_active,
             "trailing_stop_active": self.trailing_stop_active,
+            "entry_time": self.entry_time,
+            "last_price_change_at": self.last_price_change_at,
+            "last_price": self.last_price,
             "metadata": dict(self.metadata),
         }
 
@@ -124,6 +130,10 @@ class Position:
             )
             or 0.0
         )
+        now_ts = time.time()
+        entry_t = float(data.get("entry_time") or data.get("first_seen") or now_ts)
+        last_change_t = float(data.get("last_price_change_at") or entry_t)
+        last_p = float(data.get("last_price") or curr_mc or entry_mc)
 
         return cls(
             mint=str(mint),
@@ -137,13 +147,16 @@ class Position:
             entry_sol=entry_sol,
             buy_price=buy_p,
             buy_signature=data.get("buy_signature"),
-            first_seen=float(data.get("first_seen") or time.time()),
+            first_seen=float(data.get("first_seen") or entry_t),
             entry_reason=str(data.get("entry_reason") or "entry"),
             dry_run=bool(data.get("dry_run", False)),
             tier_1_executed=bool(data.get("tier_1_executed", False)),
             tier_2_executed=bool(data.get("tier_2_executed", False)),
             moonbag_active=bool(data.get("moonbag_active", False)),
             trailing_stop_active=bool(data.get("trailing_stop_active", False)),
+            entry_time=entry_t,
+            last_price_change_at=last_change_t,
+            last_price=last_p,
             metadata=dict(data.get("metadata", {}) or {}),
         )
 
@@ -223,6 +236,7 @@ class PositionManager:
         else:
             effective_buy_price = float(cost_sol or 0.0)
 
+        now_ts = time.time()
         pos_dict: dict[str, Any] = {
             "name": name.strip() or mint,
             "entry_market_cap": float(entry_market_cap or 30.0),
@@ -236,7 +250,10 @@ class PositionManager:
             "buy_price": float(effective_buy_price),
             "entry_price": float(effective_buy_price),
             "buy_signature": buy_signature,
-            "first_seen": time.time(),
+            "first_seen": now_ts,
+            "entry_time": now_ts,
+            "last_price_change_at": now_ts,
+            "last_price": float(entry_market_cap or 30.0),
             "entry_reason": reason or "entry",
             "dry_run": bool(dry_run),
             "tier_1_executed": False,
@@ -289,7 +306,11 @@ class PositionManager:
         return False, new_remaining
 
     def update_price(
-        self, mint: str, current_market_cap: float
+        self,
+        mint: str,
+        current_market_cap: float,
+        *,
+        now: float | None = None,
     ) -> tuple[float, float, float]:
         """Updates current and peak market cap for an active position.
 
@@ -306,6 +327,17 @@ class PositionManager:
         if entry_mc <= 0:
             entry_mc = mc
             pos["entry_market_cap"] = entry_mc
+
+        curr_time = now if now is not None else time.time()
+        last_p = float(pos.get("last_price", 0.0) or entry_mc or mc)
+        threshold = getattr(self.config, "stagnant_price_delta_threshold_pct", 0.005)
+        if last_p > 0 and mc > 0:
+            rel_delta = abs(mc - last_p) / last_p
+            if rel_delta >= threshold:
+                pos["last_price"] = mc
+                pos["last_price_change_at"] = curr_time
+        elif last_p <= 0 and mc > 0:
+            pos["last_price"] = mc
 
         peak_mc = float(
             pos.get("peak_market_cap", max(entry_mc, mc)) or max(entry_mc, mc)
@@ -326,13 +358,15 @@ class PositionManager:
         mint: str,
         current_market_cap: float | None = None,
         token_balance: int | None = None,
+        *,
+        now: float | None = None,
     ) -> ExitDecision | None:
         """Evaluates exit conditions against current position state and configuration."""
         if mint not in self._positions:
             return None
 
         if current_market_cap is not None:
-            self.update_price(mint, current_market_cap)
+            self.update_price(mint, current_market_cap, now=now)
 
         pos = self._positions[mint]
         exit_state = PositionExitState.from_dict(pos)
@@ -341,12 +375,15 @@ class PositionManager:
             exit_state,
             current_market_cap=current_market_cap,
             token_balance=token_balance,
+            now=now,
         )
 
         pos["trailing_stop_active"] = exit_state.trailing_stop_active
         pos["tier_1_executed"] = exit_state.tier_1_executed
         pos["tier_2_executed"] = exit_state.tier_2_executed
         pos["moonbag_active"] = exit_state.moonbag_active
+        pos["last_price_change_at"] = exit_state.last_price_change_at
+        pos["last_price"] = exit_state.last_price
 
         return decision
 
@@ -374,15 +411,21 @@ class PositionManager:
 
     def calculate_total_open_value(self) -> float:
         total = 0.0
+        default_cost = float(getattr(self.config, "buy_amount_sol", 0.0) or 0.0)
         for pos in self._positions.values():
             entry_mc = float(pos.get("entry_market_cap", 0.0) or 0.0)
-            curr_mc = float(pos.get("current_market_cap", 0.0) or 0.0)
-            cost_sol = float(
-                pos.get("cost_sol")
-                or pos.get("entry_sol", self.config.buy_amount_sol)
-                or self.config.buy_amount_sol
-            )
-            if entry_mc > 0 and curr_mc > 0:
+            if pos.get("current_market_cap") is not None:
+                curr_mc = float(pos.get("current_market_cap", 0.0) or 0.0)
+            else:
+                curr_mc = entry_mc
+            cost = pos.get("cost_sol")
+            if cost is None:
+                cost = pos.get("entry_sol")
+            if cost is None:
+                cost = default_cost
+            cost_sol = float(cost or 0.0)
+
+            if entry_mc > 0:
                 total += cost_sol * (curr_mc / entry_mc)
             else:
                 total += cost_sol

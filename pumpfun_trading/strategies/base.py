@@ -37,6 +37,11 @@ class TradingBotConfig:
     enable_trailing_stop: bool = True
     trailing_stop_activation_pct: float = 0.50
     trailing_stop_drop_pct: float = 0.15
+    enable_stagnant_exit: bool = True
+    stagnant_timeout_seconds: float = 120.0
+    enable_max_hold_timeout: bool = True
+    max_hold_time_seconds: float = 600.0
+    stagnant_price_delta_threshold_pct: float = 0.005
     enable_tiered_take_profit: bool = True
     tier_1_take_profit: float = 2.0
     tier_1_sell_fraction: float = 0.50
@@ -112,6 +117,11 @@ class TradingBotConfig:
             "enable_trailing_stop": self.enable_trailing_stop,
             "trailing_stop_activation_pct": self.trailing_stop_activation_pct,
             "trailing_stop_drop_pct": self.trailing_stop_drop_pct,
+            "enable_stagnant_exit": self.enable_stagnant_exit,
+            "stagnant_timeout_seconds": self.stagnant_timeout_seconds,
+            "enable_max_hold_timeout": self.enable_max_hold_timeout,
+            "max_hold_time_seconds": self.max_hold_time_seconds,
+            "stagnant_price_delta_threshold_pct": self.stagnant_price_delta_threshold_pct,
             "enable_tiered_take_profit": self.enable_tiered_take_profit,
             "tier_1_take_profit": self.tier_1_take_profit,
             "tier_1_sell_fraction": self.tier_1_sell_fraction,

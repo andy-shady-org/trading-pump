@@ -303,12 +303,20 @@ def render_audit_table(
         sell_p = _extract_sell_price(record)
 
         buy_p_str = (
-            (f"{buy_p:.6f} SOL" if buy_p < 0.0001 else f"{buy_p:.4f} SOL")
+            (
+                f"{buy_p * 1_000_000:.4f} µSOL"
+                if buy_p < 0.001
+                else f"{buy_p:.4f} SOL"
+            )
             if buy_p is not None
             else "-"
         )
         sell_p_str = (
-            (f"{sell_p:.6f} SOL" if sell_p < 0.0001 else f"{sell_p:.4f} SOL")
+            (
+                f"{sell_p * 1_000_000:.4f} µSOL"
+                if sell_p < 0.001
+                else f"{sell_p:.4f} SOL"
+            )
             if sell_p is not None
             else "-"
         )

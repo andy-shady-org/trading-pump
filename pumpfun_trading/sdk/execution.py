@@ -18,6 +18,16 @@ from spl.token.instructions import (
 from pumpfun_trading.infra.rpc_pool import (
     RpcConnectionPool,
 )
+from .curve import (
+    calculate_buy_execution_slippage,
+    calculate_buy_price_impact,
+    calculate_buy_tokens_out,
+    calculate_market_cap_sol,
+    calculate_sell_execution_slippage,
+    calculate_sell_price_impact,
+    calculate_sell_sol_out,
+    calculate_spot_price,
+)
 from .jito import (
     JITO_BLOCK_ENGINE_ENDPOINTS,
     JITO_TIP_ACCOUNTS,
@@ -209,6 +219,15 @@ class PumpFunExecutionClient:
             "market_cap_sol": market_cap_sol,
         }
 
+    calculate_buy_tokens_out = staticmethod(calculate_buy_tokens_out)
+    calculate_sell_sol_out = staticmethod(calculate_sell_sol_out)
+    calculate_buy_price_impact = staticmethod(calculate_buy_price_impact)
+    calculate_sell_price_impact = staticmethod(calculate_sell_price_impact)
+    calculate_buy_execution_slippage = staticmethod(calculate_buy_execution_slippage)
+    calculate_sell_execution_slippage = staticmethod(calculate_sell_execution_slippage)
+    calculate_spot_price = staticmethod(calculate_spot_price)
+    calculate_market_cap_sol = staticmethod(calculate_market_cap_sol)
+
     @staticmethod
     def calculate_sell_sol_output(
         token_amount: int,
@@ -218,20 +237,12 @@ class PumpFunExecutionClient:
         slippage_bps: int = 0,
     ) -> int:
         """Calculate minimum output Lamports for selling a token amount on the bonding curve."""
-        if (
-            token_amount <= 0
-            or virtual_token_reserves <= 0
-            or virtual_sol_reserves <= 0
-        ):
-            return 0
-        sol_out_lamports = (token_amount * virtual_sol_reserves) // (
-            virtual_token_reserves + token_amount
+        return calculate_sell_sol_out(
+            token_amount=token_amount,
+            virtual_token_reserves=virtual_token_reserves,
+            virtual_sol_reserves=virtual_sol_reserves,
+            slippage_bps=slippage_bps,
         )
-        if slippage_bps > 0:
-            sol_out_lamports = max(
-                0, int((sol_out_lamports * (10_000 - slippage_bps)) / 10_000)
-            )
-        return sol_out_lamports
 
     @staticmethod
     def _decode_keypair(private_key_b58: str) -> Keypair:

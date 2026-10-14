@@ -507,3 +507,160 @@ async def test_bot_live_partial_sell_and_reconciliation(tmp_path):
     assert MINT not in bot.active_positions
 
     await bot.close()
+
+
+def test_stagnant_curve_timeout_exit():
+    """BUG-16: Stagnant bonding curves at 27.96 SOL with no price change must exit after timeout."""
+    cfg = TradingBotConfig(
+        enable_stagnant_exit=True,
+        stagnant_timeout_seconds=120.0,
+        enable_max_hold_timeout=True,
+        max_hold_time_seconds=600.0,
+        stagnant_price_delta_threshold_pct=0.005,
+    )
+    t0 = 1000.0
+    state = PositionExitState(
+        entry_market_cap=27.96,
+        current_market_cap=27.96,
+        peak_market_cap=27.96,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        entry_time=t0,
+        last_price_change_at=t0,
+        last_price=27.96,
+    )
+
+    # 1. Under timeout (elapsed 60s < 120s) -> HOLD
+    d_early = evaluate_exit_strategy(cfg, state, current_market_cap=27.96, now=t0 + 60.0)
+    assert d_early.action == ExitAction.HOLD
+
+    # 2. Reached timeout (elapsed 120.1s >= 120.0s) -> FULL_EXIT
+    d_timeout = evaluate_exit_strategy(cfg, state, current_market_cap=27.96, now=t0 + 120.1)
+    assert d_timeout.action == ExitAction.FULL_EXIT
+    assert d_timeout.exit_type == "stagnant_timeout"
+    assert "stagnant_curve_timeout" in d_timeout.reason
+    assert d_timeout.sell_tokens == 1_000_000
+
+    # 3. should_exit_position helper returns True
+    assert should_exit_position(
+        cfg,
+        performance=1.0,
+        token_balance=1_000_000,
+        position=state,
+        current_market_cap=27.96,
+        now=t0 + 120.1,
+    ) is True
+
+
+def test_stagnant_curve_price_movement_resets_timer():
+    """BUG-16: Meaningful price changes reset last_price_change_at and prevent premature stagnation exits."""
+    cfg = TradingBotConfig(
+        enable_stagnant_exit=True,
+        stagnant_timeout_seconds=120.0,
+        stagnant_price_delta_threshold_pct=0.005,  # 0.5%
+    )
+    t0 = 1000.0
+    state = PositionExitState(
+        entry_market_cap=27.96,
+        current_market_cap=27.96,
+        peak_market_cap=27.96,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        entry_time=t0,
+        last_price_change_at=t0,
+        last_price=27.96,
+    )
+
+    # At t = 1090s (90s elapsed), price moves from 27.96 to 30.0 SOL (+7.3% > 0.5%)
+    t_move = t0 + 90.0
+    d_move = evaluate_exit_strategy(cfg, state, current_market_cap=30.0, now=t_move)
+    assert d_move.action == ExitAction.HOLD
+    assert state.last_price_change_at == t_move
+    assert state.last_price == 30.0
+
+    # At t = 1150s (150s from start, but only 60s from price move) -> HOLD
+    d_mid = evaluate_exit_strategy(cfg, state, current_market_cap=30.0, now=t0 + 150.0)
+    assert d_mid.action == ExitAction.HOLD
+
+    # At t = 1211s (121s after price move) -> Stagnant Exit triggers
+    d_stagnant = evaluate_exit_strategy(cfg, state, current_market_cap=30.0, now=t_move + 121.0)
+    assert d_stagnant.action == ExitAction.FULL_EXIT
+    assert d_stagnant.exit_type == "stagnant_timeout"
+
+
+def test_max_hold_duration_timeout_exit():
+    """BUG-16: Positions exceeding max_hold_time_seconds must exit regardless of minor price movement."""
+    cfg = TradingBotConfig(
+        enable_stagnant_exit=True,
+        stagnant_timeout_seconds=120.0,
+        enable_max_hold_timeout=True,
+        max_hold_time_seconds=300.0,
+        stagnant_price_delta_threshold_pct=0.005,
+    )
+    t0 = 1000.0
+    state = PositionExitState(
+        entry_market_cap=30.0,
+        current_market_cap=30.0,
+        peak_market_cap=30.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        entry_time=t0,
+        last_price_change_at=t0,
+        last_price=30.0,
+    )
+
+    # Price moves frequently every 80 seconds, resetting stagnant timer:
+    state.update_price(31.0, now=t0 + 80.0)
+    state.update_price(32.0, now=t0 + 160.0)
+    state.update_price(33.0, now=t0 + 240.0)
+
+    # At t = 1280s (280s < 300s) -> HOLD (stagnant elapsed is 40s < 120s, max hold is 280s < 300s)
+    d_hold = evaluate_exit_strategy(cfg, state, current_market_cap=33.0, now=t0 + 280.0)
+    assert d_hold.action == ExitAction.HOLD
+
+    # At t = 1301s (301s >= 300s max hold limit) -> FULL_EXIT (max_hold_timeout)
+    d_max = evaluate_exit_strategy(cfg, state, current_market_cap=33.0, now=t0 + 301.0)
+    assert d_max.action == ExitAction.FULL_EXIT
+    assert d_max.exit_type == "max_hold_timeout"
+    assert "max_hold_time_exceeded" in d_max.reason
+
+
+def test_timeout_flags_disabled():
+    """Disabled stagnant and max hold flags must not trigger timeout exits."""
+    cfg = TradingBotConfig(
+        enable_stagnant_exit=False,
+        stagnant_timeout_seconds=60.0,
+        enable_max_hold_timeout=False,
+        max_hold_time_seconds=120.0,
+    )
+    t0 = 1000.0
+    state = PositionExitState(
+        entry_market_cap=27.96,
+        current_market_cap=27.96,
+        peak_market_cap=27.96,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        entry_time=t0,
+        last_price_change_at=t0,
+        last_price=27.96,
+    )
+    d = evaluate_exit_strategy(cfg, state, current_market_cap=27.96, now=t0 + 10_000.0)
+    assert d.action == ExitAction.HOLD
+
+
+def test_preset_stagnant_and_max_hold_configs():
+    """Verify preset definitions configure stagnant and max hold limits properly."""
+    cfg_cons = resolve_strategy_config("conservative")
+    assert cfg_cons.enable_stagnant_exit is True
+    assert cfg_cons.stagnant_timeout_seconds == 180.0
+    assert cfg_cons.max_hold_time_seconds == 900.0
+
+    cfg_bal = resolve_strategy_config("balanced")
+    assert cfg_bal.enable_stagnant_exit is True
+    assert cfg_bal.stagnant_timeout_seconds == 120.0
+    assert cfg_bal.max_hold_time_seconds == 600.0
+
+    cfg_agg = resolve_strategy_config("aggressive")
+    assert cfg_agg.enable_stagnant_exit is True
+    assert cfg_agg.stagnant_timeout_seconds == 60.0
+    assert cfg_agg.max_hold_time_seconds == 300.0

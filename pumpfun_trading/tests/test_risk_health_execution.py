@@ -35,7 +35,12 @@ def test_risk_limits_checks():
     bot._last_event = ""
 
     current_positions = {
-        "Mint1": {"entry_market_cap": 0.2, "current_market_cap": 0.2},
+        "Mint1": {
+            "cost_sol": 0.2,
+            "entry_sol": 0.2,
+            "entry_market_cap": 28.0,
+            "current_market_cap": 28.0,
+        },
     }
 
     # 1. Successful check
@@ -46,7 +51,7 @@ def test_risk_limits_checks():
         current_positions=current_positions,
     )
 
-    # 2. Exceeds max total exposure
+    # 2. Exceeds max total exposure (0.2 + 0.9 = 1.1 > 1.0)
     assert not check_risk_limits(
         bot,
         mint="Mint2",
@@ -73,7 +78,7 @@ def test_risk_limits_checks():
     )
     assert "already active" in bot._last_event
 
-    # 5. Token concentration cap breached
+    # 5. Token concentration cap breached (0.2 / 1.0 = 20% > 15%)
     bot.config = TradingBotConfig(
         max_total_exposure_sol=1.0,
         max_position_size_sol=0.3,
@@ -85,6 +90,98 @@ def test_risk_limits_checks():
         mint="Mint3",
         proposed_entry_sol=0.1,
         current_positions=current_positions,
+    )
+    assert "concentration cap reached" in bot._last_event
+
+
+def test_risk_limits_realistic_market_cap_and_fallbacks():
+    """
+    Regression test for BUG-14:
+    Pump.fun tokens have ~27.96 SOL market cap at bonding curve creation.
+    Ensure that market cap is not conflated with position capital outlay (cost_sol ~0.01 SOL).
+    """
+    bot = MagicMock()
+    bot.config = TradingBotConfig(
+        max_total_exposure_sol=0.25,
+        max_position_size_sol=0.10,
+        buy_amount_sol=0.01,
+        max_token_concentration_pct=0.35,
+    )
+    bot._last_event = ""
+
+    # Position with 27.96 SOL entry MC and 0.01 SOL cost
+    current_positions = {
+        "PumpToken1": {
+            "cost_sol": 0.01,
+            "entry_sol": 0.01,
+            "entry_market_cap": 27.95899,
+            "current_market_cap": 27.95899,
+        }
+    }
+
+    # Should allow opening a second position of 0.01 SOL (total exposure 0.02 <= 0.25)
+    assert check_risk_limits(
+        bot,
+        mint="PumpToken2",
+        proposed_entry_sol=0.01,
+        current_positions=current_positions,
+    )
+
+    # Test fallback to entry_sol when cost_sol is missing
+    current_positions_entry_sol = {
+        "PumpToken1": {
+            "entry_sol": 0.05,
+            "entry_market_cap": 28.0,
+        }
+    }
+    assert check_risk_limits(
+        bot,
+        mint="PumpToken2",
+        proposed_entry_sol=0.05,
+        current_positions=current_positions_entry_sol,
+    )
+
+    # Test fallback to buy_amount_sol when neither cost_sol nor entry_sol is present
+    current_positions_no_cost = {
+        "PumpToken1": {
+            "entry_market_cap": 28.0,
+        }
+    }
+    # default cost = 0.01 (buy_amount_sol), proposed = 0.01 -> exposure 0.02 <= 0.25
+    assert check_risk_limits(
+        bot,
+        mint="PumpToken2",
+        proposed_entry_sol=0.01,
+        current_positions=current_positions_no_cost,
+    )
+
+    # Exposure cap rejection: current 0.22 SOL cost + proposed 0.05 SOL = 0.27 SOL > 0.25 SOL
+    current_positions_near_cap = {
+        "PumpToken1": {
+            "cost_sol": 0.22,
+            "entry_market_cap": 28.0,
+        }
+    }
+    assert not check_risk_limits(
+        bot,
+        mint="PumpToken2",
+        proposed_entry_sol=0.05,
+        current_positions=current_positions_near_cap,
+    )
+    assert "max exposure" in bot._last_event
+
+    # Concentration cap rejection: single position of 0.10 SOL against max 0.25 SOL = 40% > 35%
+    current_positions_concentrated = {
+        "PumpToken1": {
+            "cost_sol": 0.10,
+            "entry_market_cap": 28.0,
+        }
+    }
+    assert not check_risk_limits(
+        bot,
+        mint="PumpToken2",
+        proposed_entry_sol=0.01,
+        current_positions=current_positions_concentrated,
     )
     assert "concentration cap reached" in bot._last_event
 
@@ -102,18 +199,26 @@ def test_daily_drawdown_and_trade_loss():
     assert check_daily_drawdown(bot)
 
     # Zero equity positions
-    bot.active_positions = {"MintZero": {"entry_market_cap": 0.0}}
+    bot.active_positions = {"MintZero": {"cost_sol": 0.0, "entry_market_cap": 0.0}}
     assert check_daily_drawdown(bot)
 
     # Drawdown within acceptable limit (10% drop < 25%)
     bot.active_positions = {
-        "Mint1": {"entry_market_cap": 1.0, "current_market_cap": 0.9}
+        "Mint1": {
+            "cost_sol": 0.1,
+            "entry_market_cap": 1.0,
+            "current_market_cap": 0.9,
+        }
     }
     assert check_daily_drawdown(bot)
 
     # Drawdown breached (40% drop > 25%)
     bot.active_positions = {
-        "Mint1": {"entry_market_cap": 1.0, "current_market_cap": 0.6}
+        "Mint1": {
+            "cost_sol": 0.1,
+            "entry_market_cap": 1.0,
+            "current_market_cap": 0.6,
+        }
     }
     assert not check_daily_drawdown(bot)
     assert "daily drawdown" in bot._last_event

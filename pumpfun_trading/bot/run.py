@@ -2528,6 +2528,7 @@ class TradingBot:
         for mint in list(self.active_positions.keys()):
             try:
                 curve = await self.execution.get_bonding_curve_state(mint)
+                mc = 0.0
                 if isinstance(curve, dict):
                     mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
                     if mc <= 0.0:
@@ -2537,10 +2538,29 @@ class TradingBot:
                             mc = (vs / 1_000_000_000.0) * (
                                 1_000_000_000.0 / (vt / 1_000_000.0)
                             )
-                    if mc > 0.0:
-                        await self._evaluate_and_execute_exit(mint, mc)
+                if mc > 0.0:
+                    await self._evaluate_and_execute_exit(mint, mc)
+                else:
+                    pos = self.active_positions.get(mint, {})
+                    curr_mc = float(
+                        pos.get("current_market_cap", 0.0)
+                        or pos.get("entry_market_cap", 0.0)
+                        or 0.0
+                    )
+                    if curr_mc > 0.0:
+                        await self._evaluate_and_execute_exit(mint, curr_mc)
             except Exception:
-                pass
+                try:
+                    pos = self.active_positions.get(mint, {})
+                    curr_mc = float(
+                        pos.get("current_market_cap", 0.0)
+                        or pos.get("entry_market_cap", 0.0)
+                        or 0.0
+                    )
+                    if curr_mc > 0.0:
+                        await self._evaluate_and_execute_exit(mint, curr_mc)
+                except Exception:
+                    pass
 
     async def _run_health_loop(self) -> None:
         """Periodic background task evaluating health, equity, and reconciliations."""

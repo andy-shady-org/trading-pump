@@ -20,6 +20,11 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-10** | Low | Logging / Formatting | **RESOLVED** | Console ANSI stripping formatter (`AnsiStrippingFormatter`) & `NO_COLOR` / non-TTY compliance |
 | **BUG-11** | Medium | UI / Terminal Rendering | **RESOLVED** | Alternate screen buffer (`screen=self.console.is_terminal`) & overview panel padding prevent duplicate header scroll artifacts |
 | **BUG-12** | High | Bot / Risk Management | **RESOLVED** | Trailing peak equity denominator in portfolio drawdown calculation (`DailyEquityTracker.calculate_drawdown`) |
+| **BUG-13** | High | SDK / Bonding Curve Math | **RESOLVED** | Exact constant-product price impact formulas & curve math in `sdk.curve` (`calculate_buy_price_impact`, `calculate_sell_price_impact`) |
+| **BUG-14** | Critical | Bot / Risk Management | **RESOLVED** | Aggregate position capital outlay (`cost_sol` / `entry_sol`) in `check_risk_limits` and `check_daily_drawdown` |
+| **BUG-15** | Critical | Bot / Circuit Breaker | **RESOLVED** | Calculate position holding valuation (`cost_sol * (current_mc / entry_mc)`) in `evaluate_portfolio_circuit_breaker` and `PositionManager` |
+| **BUG-16** | High | Strategy / Exit Engine | **RESOLVED** | Stagnant curve timeout (`stagnant_timeout_seconds`) and max hold duration (`max_hold_time_seconds`) exit rules in `exits.py` and `position_manager.py` |
+| **BUG-17** | Low | UI / Presentation | **RESOLVED** | Standardized micro-SOL (`µSOL`) unit price formatting in dashboard positions, trade ledger, and audit tables (`f"{price * 1_000_000:.4f} µSOL"`) |
 
 ---
 
@@ -60,6 +65,27 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Impact:** The inflated drawdown calculation falsely breached the configured `max_daily_drawdown_pct` threshold (e.g., 15–20%), prematurely triggering emergency circuit breakers, locking out trading, and force-liquidating active open positions during profitable runs.
 * **Remedy:** Use `peak_daily_equity_sol` as the reference denominator for trailing peak drawdown calculations, ensuring drawdown percentage accurately reflects intraday equity retracement relative to peak equity.
 
+### BUG-13: Inverted Bonding Curve Constant Product Price Impact Calculation [RESOLVED]
+* **Location:** `pumpfun_trading/sdk/curve.py` (`calculate_buy_price_impact`, `calculate_sell_price_impact`), `pumpfun_trading/sdk/execution.py`
+* **Status:** **Fixed** — Implemented deterministic constant-product ($k = x \cdot y$) pricing and price impact calculations in `pumpfun_trading/sdk/curve.py` and exported them across the SDK.
+* **Description:** In previous formulas, post-trade price impact added purchased tokens to reserves upon buying ($y + \Delta y$) and subtracted tokens upon selling ($y - \Delta y$), inverting the constant-product AMM mechanics and depicting price decreasing after buys and increasing after sells.
+* **Impact:** Inverted price impact estimates distorted execution slippage models, Kelly bankroll allocation sizing, and bonding curve trajectory forecasting.
+* **Remedy:** Implemented `calculate_buy_price_impact` ($x' = x + \Delta x, y' = y - \Delta y$, yielding positive price impact $P_1 / P_0 - 1 > 0$), `calculate_sell_price_impact` ($x' = x - \Delta x, y' = y + \Delta y$, yielding negative price impact $P_1 / P_0 - 1 < 0$), `calculate_buy_tokens_out`, `calculate_sell_sol_out`, `calculate_spot_price`, and `calculate_market_cap_sol` in `sdk.curve`. Bound static delegates in `PumpFunExecutionClient` and added comprehensive unit test suite in `pumpfun_trading/tests/test_curve_math.py`.
+
+### BUG-14: Risk Manager Conflates Token Market Cap with Position Cost in Exposure and Concentration Limits [RESOLVED]
+* **Location:** `pumpfun_trading/bot/risk.py` (`check_risk_limits`, `check_daily_drawdown`)
+* **Status:** **Fixed** — Updated `check_risk_limits` and `check_daily_drawdown` to aggregate position capital outlay (`cost_sol` / `entry_sol`) instead of token market capitalization (`entry_market_cap`).
+* **Description:** In `check_risk_limits`, `total_exposure` was computed as `sum(float(pos.get("entry_market_cap", 0.0)) for pos in current_positions.values())`, treating the token's total on-chain bonding curve valuation (~27.96–30.0 SOL) as the bot's invested portfolio exposure. It then checked `if total_exposure + proposed_entry_sol > bot.config.max_total_exposure_sol` (default `0.25 SOL`). As soon as 1 position was opened (even for `0.01 SOL`), `total_exposure` evaluated to ~28 SOL, exceeding the `0.25 SOL` cap and causing all subsequent buy orders across the entire 12-hour runtime to be immediately rejected. Furthermore, `max_per_token_ratio` divided `entry_market_cap` (~28 SOL) by `max_total_exposure_sol` (`0.25 SOL`), computing an impossible concentration of 11,184% and triggering the concentration cap check (`> 35%`).
+* **Impact:** Directly caused the soak test failure where the bot opened only 1 position in 12 hours and refused to enter any further trades, completely stalling runtime capital deployment.
+* **Remedy:** Modified `check_risk_limits` to sum position capital investment (`pos.get("cost_sol") or pos.get("entry_sol", bot.config.buy_amount_sol)`) and compute concentration as `cost_sol / max_total_exposure_sol`. Updated `check_daily_drawdown` baseline equity calculation and added regression tests.
+
+### BUG-15: Erroneous Open Position Valuation in Portfolio Circuit Breaker Sums Market Cap [RESOLVED]
+* **Location:** `pumpfun_trading/bot/risk.py` (`evaluate_portfolio_circuit_breaker`), `pumpfun_trading/bot/position_manager.py` (`calculate_total_open_value`)
+* **Status:** **Fixed** — Updated `evaluate_portfolio_circuit_breaker` and `PositionManager.calculate_total_open_value` to compute position holding valuation (`cost_sol * (current_mc / entry_mc)`) rather than raw token bonding curve market capitalization.
+* **Description:** In `evaluate_portfolio_circuit_breaker`, `open_val_sol` was calculated as `sum(float(pos["current_market_cap"]) for pos in open_positions.values())`. When a trade opened, portfolio equity spiked from wallet balance (e.g. 0.10 SOL) to ~28.05 SOL. When the position closed (yielding ~0.01 SOL in proceeds), portfolio equity plunged from 28.05 SOL back to 0.10 SOL. The daily equity tracker calculated this as a 99.64% portfolio drawdown, immediately engaging `circuit_breaker_engaged = True`, triggering emergency circuit breakers, locking out trading for `emergency_hard_lock_hours` (24 hours), and halting the bot runtime.
+* **Impact:** Any closed trade triggered a false-positive emergency circuit breaker hard lock, shutting down the bot for 24 hours.
+* **Remedy:** Modified `evaluate_portfolio_circuit_breaker` to delegate to `bot.position_manager.calculate_total_open_value()` and evaluate position dictionaries using proportional cost holding valuation (`cost_sol * (current_mc / entry_mc)`). Fixed `calculate_total_open_value` to accurately value zero and missing market caps, and added regression tests modeling Pump.fun token lifecycles.
+
 ---
 
 ## 2. Medium Severity Issues (Runtime Safety & State Integrity)
@@ -99,6 +125,13 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Impact:** Distorts console output, clutters operator scrollback with hundreds of repeating partial panels, and obscures live position monitoring.
 * **Remedy:** Configure `Live` with `screen=self.console.is_terminal` for interactive terminal sessions, streamline atomic updates, and add border height padding in `build_dashboard`.
 
+### BUG-16: Missing Stagnant / Inactivity Exit Condition Causes Indefinite Position Lockup on Dead Tokens [RESOLVED]
+* **Location:** `pumpfun_trading/strategies/exits.py` (`evaluate_exit_strategy`), `pumpfun_trading/bot/position_manager.py` (`PositionExitState`, `PositionManager`), `pumpfun_trading/bot/run.py` (`_refresh_active_positions_market_caps`)
+* **Status:** **Fixed** — Implemented stagnant curve inactivity exit rules (`stagnant_timeout_seconds`, `enable_stagnant_exit`, `stagnant_price_delta_threshold_pct`) and maximum hold duration timeouts (`max_hold_time_seconds`, `enable_max_hold_timeout`) across `TradingBotConfig`, `PositionExitState`, `PositionManager`, and `evaluate_exit_strategy`.
+* **Description:** On Pump.fun, newly created bonding curves initialize with 30 virtual SOL and 1.073B virtual tokens, resulting in an exact initial creation market cap of $10^9 \times (30 / 1.073\times 10^9) \approx 27.95899\dots\text{ SOL} \approx 27.96\text{ SOL}$. Approximately 80% of newly launched tokens on Pump.fun receive no secondary order flow and remain permanently at 27.96 SOL. The exit evaluator in `exits.py` only checked stop-loss, take-profit, and trailing stops. When market cap remained unchanged at 27.96 SOL (`perf = 1.0` / 100%), no exit triggered. Without a time-based stagnation or inactivity exit rule (`stagnant_timeout_seconds` / `max_hold_time_seconds`), the bot held dead tokens indefinitely, permanently consuming active position slots (`max_active_positions = 1`) and preventing any new tokens from being bought during long soak tests.
+* **Impact:** Capital and position slots remain trapped in inactive tokens indefinitely, stalling bot trading activity during multi-hour soak tests.
+* **Remedy:** Implemented stagnant curve exit rules and max holding duration timeouts (`stagnant_timeout_seconds`, `max_hold_time_seconds`) in `evaluate_exit_strategy` and `TradingBotConfig`, triggering `FULL_EXIT` when market cap remains unchanged or exceeds maximum hold duration without progress. Configured preset defaults in `DEFAULT_PRESETS` and added unit test coverage.
+
 ---
 
 ## 3. Low Severity & Quality of Life Bugs
@@ -115,3 +148,10 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Status:** **Fixed** — Added `AnsiStrippingFormatter`, `strip_ansi`, `is_color_enabled`, and `get_configured_console` to ensure strict compliance with `NO_COLOR` environment variables and automatically strip ANSI escape sequences when piping logs or executing in non-interactive/non-TTY environments.
 * **Description:** Some CLI commands print raw Rich formatted strings to stdout while core runtime writes structured JSON-like lines. When stdout is redirected to a log aggregation agent, ANSI escape sequences pollute log pipelines.
 * **Remedy:** Honor `NO_COLOR` environment variable and ensure console handlers strip ANSI codes when stdout is not a TTY.
+
+### BUG-17: UI Dashboard Buy Price Underflow & Column Header Typo [RESOLVED]
+* **Location:** `pumpfun_trading/ui/dashboard.py` (lines 140–210), `pumpfun_trading/bot/audit.py` (lines 305–325), `NOTES.md`
+* **Status:** **Fixed** — Standardized adaptive micro-SOL (`µSOL`) formatting across open positions tables, trade ledger records, and forensic audit reports (`f"{price * 1_000_000:.4f} µSOL"` for prices $< 0.001\text{ SOL}$), with clear delta percentage formatting (`0.00%`, `+50.00%`, `-20.00%`).
+* **Description:** In terminal and status table renderings, token unit prices were formatted using fixed 6-decimal SOL formatting (`{buy_price:.6f} SOL` / `{buy_val:.4f} SOL`). Because standard Pump.fun unit prices are $\approx 0.000000028\text{ SOL}$ ($2.8\times 10^{-8}\text{ SOL}$), fixed 6-decimal rounding rendered unit prices as `0.000000 SOL` or `0.0000 SOL`. Additionally, performance columns rendered raw multiplier ratios instead of relative PnL percentage (`+0.00%` / `0.00%`), and summary table headers contained typos.
+* **Impact:** Operators saw misleading `0.000000 SOL` buy prices and confusing performance metrics on flat positions in status tables.
+* **Remedy:** Standardized adaptive micro-SOL (`µSOL`) formatting with 4 decimal places for unit prices $< 0.001\text{ SOL}$ (`f"{price * 1_000_000:.4f} µSOL"`) and standard SOL for $\ge 0.001\text{ SOL}$ (`f"{price:.4f} SOL"`) across `dashboard.py` and `audit.py`. Formatted performance as relative delta percentages and added comprehensive test coverage.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -24,6 +25,9 @@ class PositionExitState:
     tier_1_executed: bool = False
     tier_2_executed: bool = False
     moonbag_active: bool = False
+    entry_time: float = field(default_factory=time.time)
+    last_price_change_at: float = field(default_factory=time.time)
+    last_price: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -44,8 +48,33 @@ class PositionExitState:
             return 0.0
         return max(0.0, 1.0 - (self.current_market_cap / self.peak_market_cap))
 
-    def update_price(self, market_cap: float) -> None:
+    def update_price(
+        self,
+        market_cap: float,
+        *,
+        now: float | None = None,
+        threshold_pct: float = 0.005,
+    ) -> None:
         mc = max(0.0, float(market_cap))
+        current_time = now if now is not None else time.time()
+
+        ref_price = (
+            self.last_price
+            if self.last_price > 0
+            else (
+                self.current_market_cap
+                if self.current_market_cap > 0
+                else self.entry_market_cap
+            )
+        )
+        if ref_price > 0 and mc > 0:
+            rel_delta = abs(mc - ref_price) / ref_price
+            if rel_delta >= threshold_pct:
+                self.last_price = mc
+                self.last_price_change_at = current_time
+        elif self.last_price <= 0 and mc > 0:
+            self.last_price = mc
+
         self.current_market_cap = mc
         if mc > self.peak_market_cap:
             self.peak_market_cap = mc
@@ -72,6 +101,9 @@ class PositionExitState:
             "performance": self.performance,
             "peak_performance": self.peak_performance,
             "drawdown_from_peak": self.drawdown_from_peak,
+            "entry_time": self.entry_time,
+            "last_price_change_at": self.last_price_change_at,
+            "last_price": self.last_price,
         }
 
     @classmethod
@@ -94,6 +126,10 @@ class PositionExitState:
             or data.get("remaining_units", initial_tokens)
             or initial_tokens
         )
+        now_ts = time.time()
+        entry_t = float(data.get("entry_time") or data.get("first_seen") or now_ts)
+        last_change_t = float(data.get("last_price_change_at") or entry_t)
+        last_p = float(data.get("last_price") or curr_mc or entry_mc)
         return cls(
             entry_market_cap=entry_mc,
             current_market_cap=curr_mc,
@@ -104,6 +140,9 @@ class PositionExitState:
             tier_1_executed=bool(data.get("tier_1_executed", False)),
             tier_2_executed=bool(data.get("tier_2_executed", False)),
             moonbag_active=bool(data.get("moonbag_active", False)),
+            entry_time=entry_t,
+            last_price_change_at=last_change_t,
+            last_price=last_p,
         )
 
 
@@ -137,9 +176,17 @@ def evaluate_exit_strategy(
     state: PositionExitState,
     current_market_cap: float | None = None,
     token_balance: int | None = None,
+    *,
+    now: float | None = None,
 ) -> ExitDecision:
     if current_market_cap is not None:
-        state.update_price(current_market_cap)
+        state.update_price(
+            current_market_cap,
+            now=now,
+            threshold_pct=config.stagnant_price_delta_threshold_pct,
+        )
+
+    current_time = now if now is not None else time.time()
 
     effective_balance = (
         token_balance
@@ -178,7 +225,31 @@ def evaluate_exit_strategy(
             exit_type="stop_loss",
         )
 
-    # 2. Multi-Tier Take-Profit Scale-Out Check
+    # 2. Stagnant Curve Inactivity Timeout Check
+    if config.enable_stagnant_exit:
+        time_since_change = max(0.0, current_time - state.last_price_change_at)
+        if time_since_change >= config.stagnant_timeout_seconds:
+            return ExitDecision(
+                action=ExitAction.FULL_EXIT,
+                sell_fraction=1.0,
+                sell_tokens=effective_balance,
+                reason=f"stagnant_curve_timeout ({time_since_change:.1f}s >= {config.stagnant_timeout_seconds:.1f}s without price movement)",
+                exit_type="stagnant_timeout",
+            )
+
+    # 3. Maximum Holding Duration Timeout Check
+    if config.enable_max_hold_timeout:
+        total_hold_time = max(0.0, current_time - state.entry_time)
+        if total_hold_time >= config.max_hold_time_seconds:
+            return ExitDecision(
+                action=ExitAction.FULL_EXIT,
+                sell_fraction=1.0,
+                sell_tokens=effective_balance,
+                reason=f"max_hold_time_exceeded ({total_hold_time:.1f}s >= {config.max_hold_time_seconds:.1f}s max hold limit)",
+                exit_type="max_hold_timeout",
+            )
+
+    # 4. Multi-Tier Take-Profit Scale-Out Check
     if config.enable_tiered_take_profit:
         # Tier 1 (e.g., 2.0x -> +100% gain, sell 50% of position)
         if not state.tier_1_executed and perf >= config.tier_1_take_profit:
@@ -295,6 +366,7 @@ def should_exit_position(
     token_balance: int,
     position: dict[str, Any] | PositionExitState | None = None,
     current_market_cap: float | None = None,
+    now: float | None = None,
 ) -> bool:
     if position is None:
         return token_balance > config.min_sell_balance and (
@@ -312,7 +384,11 @@ def should_exit_position(
         else state.current_market_cap
     )
     decision = evaluate_exit_strategy(
-        config, state, current_market_cap=mc, token_balance=token_balance
+        config,
+        state,
+        current_market_cap=mc,
+        token_balance=token_balance,
+        now=now,
     )
     return decision.action in (ExitAction.FULL_EXIT, ExitAction.PARTIAL_EXIT)
 

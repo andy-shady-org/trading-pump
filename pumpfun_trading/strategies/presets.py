@@ -25,6 +25,11 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "enable_trailing_stop": True,
         "trailing_stop_activation_pct": 0.35,
         "trailing_stop_drop_pct": 0.10,
+        "enable_stagnant_exit": True,
+        "stagnant_timeout_seconds": 180.0,
+        "enable_max_hold_timeout": True,
+        "max_hold_time_seconds": 900.0,
+        "stagnant_price_delta_threshold_pct": 0.005,
         "enable_tiered_take_profit": True,
         "tier_1_take_profit": 1.8,
         "tier_1_sell_fraction": 0.60,
@@ -89,6 +94,11 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "enable_trailing_stop": True,
         "trailing_stop_activation_pct": 0.50,
         "trailing_stop_drop_pct": 0.15,
+        "enable_stagnant_exit": True,
+        "stagnant_timeout_seconds": 120.0,
+        "enable_max_hold_timeout": True,
+        "max_hold_time_seconds": 600.0,
+        "stagnant_price_delta_threshold_pct": 0.005,
         "enable_tiered_take_profit": True,
         "tier_1_take_profit": 2.0,
         "tier_1_sell_fraction": 0.50,
@@ -153,6 +163,11 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "enable_trailing_stop": True,
         "trailing_stop_activation_pct": 0.75,
         "trailing_stop_drop_pct": 0.20,
+        "enable_stagnant_exit": True,
+        "stagnant_timeout_seconds": 60.0,
+        "enable_max_hold_timeout": True,
+        "max_hold_time_seconds": 300.0,
+        "stagnant_price_delta_threshold_pct": 0.005,
         "enable_tiered_take_profit": True,
         "tier_1_take_profit": 2.5,
         "tier_1_sell_fraction": 0.40,
@@ -246,6 +261,13 @@ def resolve_strategy_config(
             base.get("trailing_stop_activation_pct", 0.50)
         ),
         trailing_stop_drop_pct=float(base.get("trailing_stop_drop_pct", 0.15)),
+        enable_stagnant_exit=bool(base.get("enable_stagnant_exit", True)),
+        stagnant_timeout_seconds=float(base.get("stagnant_timeout_seconds", 120.0)),
+        enable_max_hold_timeout=bool(base.get("enable_max_hold_timeout", True)),
+        max_hold_time_seconds=float(base.get("max_hold_time_seconds", 600.0)),
+        stagnant_price_delta_threshold_pct=float(
+            base.get("stagnant_price_delta_threshold_pct", 0.005)
+        ),
         enable_tiered_take_profit=bool(base.get("enable_tiered_take_profit", True)),
         tier_1_take_profit=float(base.get("tier_1_take_profit", 2.0)),
         tier_1_sell_fraction=float(base.get("tier_1_sell_fraction", 0.50)),
@@ -330,4 +352,8 @@ def resolve_strategy_config(
         )
     if config.max_active_positions < 1:
         raise ValueError("max_active_positions must be at least 1.")
+    if config.stagnant_timeout_seconds <= 0:
+        raise ValueError("stagnant_timeout_seconds must be greater than zero.")
+    if config.max_hold_time_seconds <= 0:
+        raise ValueError("max_hold_time_seconds must be greater than zero.")
     return config

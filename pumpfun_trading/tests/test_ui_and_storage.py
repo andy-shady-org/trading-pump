@@ -221,9 +221,9 @@ def test_ui_dashboard_table_formatting_and_pnl():
     assert "Token Amount" in output
     assert "Unit Token Price" in output
     assert "Perf / PnL" in output
-    # Micro-SOL units
+    # Micro-SOL units & standard SOL units
     assert "42.0000 µSOL" in output
-    assert "50000.0000 µSOL" in output
+    assert "0.0500 SOL" in output
     assert "0.0280 µSOL" in output
     # Compact suffixes
     assert "2.38M" in output
@@ -234,7 +234,7 @@ def test_ui_dashboard_table_formatting_and_pnl():
     assert "0.00%" in output
     assert "-10.00%" in output
     # Trade ledger
-    assert "BUY TokenMin @ 0.0000 SOL | entry" in output or "BUY TokenMin" in output
+    assert "BUY TokenMin @ 42.0000 µSOL | entry" in output
     assert "SELL TokenMin -> 0.0800 SOL | take_profit" in output
 
 

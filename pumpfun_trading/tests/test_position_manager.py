@@ -215,6 +215,47 @@ def test_position_manager_pnl_and_open_valuation(base_config: TradingBotConfig):
     assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.3
 
 
+def test_position_manager_calculate_total_open_value_edge_cases(
+    base_config: TradingBotConfig,
+):
+    pm = PositionManager(base_config)
+    # Zero positions -> 0.0
+    assert pm.calculate_total_open_value() == 0.0
+
+    # 1. Zero market cap (rugged/crashed token) should evaluate to 0.0 value, not full cost
+    pm._positions["MintRugged"] = {
+        "cost_sol": 0.05,
+        "entry_market_cap": 28.0,
+        "current_market_cap": 0.0,
+    }
+    assert pm.calculate_total_open_value() == 0.0
+
+    # 2. Missing current_market_cap defaults to entry_market_cap (1.0x -> cost_sol)
+    pm.clear()
+    pm._positions["MintNew"] = {
+        "cost_sol": 0.02,
+        "entry_market_cap": 28.0,
+    }
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.02
+
+    # 3. Missing cost_sol falls back to entry_sol or buy_amount_sol
+    pm.clear()
+    pm._positions["MintEntrySol"] = {
+        "entry_sol": 0.03,
+        "entry_market_cap": 20.0,
+        "current_market_cap": 40.0,
+    }
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.06
+
+    pm.clear()
+    pm._positions["MintFallbackDefault"] = {
+        "entry_market_cap": 20.0,
+        "current_market_cap": 30.0,
+    }
+    # base_config.buy_amount_sol is 0.1, 1.5x -> 0.15
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.15
+
+
 def test_position_manager_serialization_restoration(base_config: TradingBotConfig):
     pm = PositionManager(base_config)
     pm.record_buy(
@@ -237,3 +278,30 @@ def test_position_manager_serialization_restoration(base_config: TradingBotConfi
     assert pm2.has_position("Mint1")
     assert pm2["Mint1"]["name"] == "SolCat"
     assert pm2["Mint1"]["peak_market_cap"] == 45.0
+
+
+def test_position_manager_evaluate_exit_stagnant_timeout(base_config: TradingBotConfig):
+    """BUG-16: PositionManager must trigger stagnant timeout exit when market cap is flat."""
+    pm = PositionManager(base_config)
+    t0 = 1000.0
+    pm.record_buy(
+        mint="MintFlat",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=27.96,
+        name="FlatToken",
+    )
+    pm._positions["MintFlat"]["entry_time"] = t0
+    pm._positions["MintFlat"]["last_price_change_at"] = t0
+    pm._positions["MintFlat"]["last_price"] = 27.96
+
+    # Under timeout (60s < 120s) -> None or HOLD
+    dec_hold = pm.evaluate_exit("MintFlat", current_market_cap=27.96, now=t0 + 60.0)
+    assert dec_hold is not None
+    assert dec_hold.action == ExitAction.HOLD
+
+    # Exceeding timeout (121s >= 120s) -> FULL_EXIT with stagnant_timeout
+    dec_exit = pm.evaluate_exit("MintFlat", current_market_cap=27.96, now=t0 + 121.0)
+    assert dec_exit is not None
+    assert dec_exit.action == ExitAction.FULL_EXIT
+    assert dec_exit.exit_type == "stagnant_timeout"

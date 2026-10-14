@@ -157,6 +157,19 @@ def test_audit_buy_and_sell_prices_rendering_and_filters():
                 "status": "success",
             },
         },
+        {
+            "timestamp": 1700000300.0,
+            "type": "trade",
+            "state": "buying",
+            "mint": "MintMicro1",
+            "payload": {
+                "token_name": "MicroPumpCoin",
+                "action": "buy",
+                "buy_price": 0.00000002796,  # 2.796e-8 SOL (~0.0280 µSOL)
+                "reason": "bonding_curve_snipe",
+                "status": "success",
+            },
+        },
     ]
 
     console = Console(width=200, file=None, record=True)
@@ -165,15 +178,16 @@ def test_audit_buy_and_sell_prices_rendering_and_filters():
 
     assert "Buy Price" in rendered
     assert "Sell Price" in rendered
-    assert "0.000035 SOL" in rendered
-    assert "0.000085 SOL" in rendered
+    assert "35.0000 µSOL" in rendered
+    assert "85.0000 µSOL" in rendered
+    assert "0.0280 µSOL" in rendered
     assert "1.2500 SOL" in rendered
     assert "2.5000 SOL" in rendered
 
     # Filter by min_buy_price
     assert len(filter_audit_records(records, min_buy_price=0.5)) == 1
     # Filter by max_buy_price
-    assert len(filter_audit_records(records, max_buy_price=0.0001)) == 2
+    assert len(filter_audit_records(records, max_buy_price=0.0001)) == 3
     # Filter by min_sell_price
     assert len(filter_audit_records(records, min_sell_price=1.0)) == 1
     # Filter by max_sell_price

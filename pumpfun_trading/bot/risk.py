@@ -209,15 +209,33 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
         return False, ""
 
     wallet_sol = float(getattr(bot, "wallet_balance_sol", 0.0) or 0.0)
-    open_positions = getattr(bot, "active_positions", {}) or {}
-    open_val_sol = sum(
-        (
-            float(pos["current_market_cap"])
-            if pos.get("current_market_cap") is not None
-            else float(pos.get("entry_market_cap", 0.0) or 0.0)
+    pos_mgr = getattr(bot, "position_manager", None)
+    if pos_mgr is not None and hasattr(pos_mgr, "calculate_total_open_value"):
+        open_val_sol = float(pos_mgr.calculate_total_open_value() or 0.0)
+    else:
+        open_positions = getattr(bot, "active_positions", {}) or {}
+        default_cost = float(
+            getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0
         )
-        for pos in open_positions.values()
-    )
+        open_val_sol = 0.0
+        for pos in open_positions.values():
+            cost = _extract_position_cost(pos, default_cost)
+            if isinstance(pos, dict):
+                entry_mc = float(pos.get("entry_market_cap", 0.0) or 0.0)
+                if pos.get("current_market_cap") is not None:
+                    curr_mc = float(pos.get("current_market_cap", 0.0) or 0.0)
+                else:
+                    curr_mc = entry_mc
+            else:
+                entry_mc = float(getattr(pos, "entry_market_cap", 0.0) or 0.0)
+                curr_val = getattr(pos, "current_market_cap", None)
+                curr_mc = float(curr_val if curr_val is not None else entry_mc)
+
+            if entry_mc > 0:
+                open_val_sol += cost * (curr_mc / entry_mc)
+            else:
+                open_val_sol += cost
+
     max_drawdown = float(getattr(bot.config, "max_daily_drawdown_pct", 0.15))
     lock_hours = float(getattr(bot.config, "emergency_hard_lock_hours", 24.0))
 
@@ -232,6 +250,23 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
     return is_locked, reason
 
 
+def _extract_position_cost(pos: Any, default_cost: float = 0.0) -> float:
+    """Extracts capital cost outlay (cost_sol or entry_sol) for a position."""
+    if isinstance(pos, dict):
+        cost = pos.get("cost_sol")
+        if cost is None:
+            cost = pos.get("entry_sol")
+        if cost is None:
+            cost = default_cost
+        return float(cost or 0.0)
+    cost = getattr(pos, "cost_sol", None)
+    if cost is None:
+        cost = getattr(pos, "entry_sol", None)
+    if cost is None:
+        cost = default_cost
+    return float(cost or 0.0)
+
+
 def check_risk_limits(
     bot: Any,
     *,
@@ -239,8 +274,9 @@ def check_risk_limits(
     proposed_entry_sol: float,
     current_positions: dict[str, dict[str, Any]],
 ) -> bool:
+    default_cost = float(getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0)
     total_exposure = sum(
-        float(pos.get("entry_market_cap", 0.0) or 0.0)
+        _extract_position_cost(pos, default_cost)
         for pos in current_positions.values()
     )
     if total_exposure + proposed_entry_sol > bot.config.max_total_exposure_sol:
@@ -260,7 +296,7 @@ def check_risk_limits(
     if current_positions:
         max_per_token_ratio = (
             max(
-                float(pos.get("entry_market_cap", 0.0) or 0.0)
+                _extract_position_cost(pos, default_cost)
                 / bot.config.max_total_exposure_sol
                 for pos in current_positions.values()
             )
@@ -288,20 +324,30 @@ def check_daily_drawdown(bot: Any) -> bool:
     if not bot.active_positions:
         return True
 
+    default_cost = float(getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0)
     total_equity = sum(
-        float(pos.get("entry_market_cap", 0.0) or 0.0)
+        _extract_position_cost(pos, default_cost)
         for pos in bot.active_positions.values()
     )
     if total_equity <= 0:
         return True
 
-    drawdown = 1.0 - (
-        sum(
-            float(pos.get("current_market_cap", 0.0) or 0.0)
-            for pos in bot.active_positions.values()
-        )
-        / total_equity
-    )
+    current_val = 0.0
+    for pos in bot.active_positions.values():
+        cost = _extract_position_cost(pos, default_cost)
+        if isinstance(pos, dict):
+            entry_mc = float(pos.get("entry_market_cap", 0.0) or 0.0)
+            curr_mc = float(pos.get("current_market_cap", entry_mc) or entry_mc)
+        else:
+            entry_mc = float(getattr(pos, "entry_market_cap", 0.0) or 0.0)
+            curr_mc = float(getattr(pos, "current_market_cap", entry_mc) or entry_mc)
+
+        if entry_mc > 0:
+            current_val += cost * (curr_mc / entry_mc)
+        else:
+            current_val += cost
+
+    drawdown = 1.0 - (current_val / total_equity)
     if drawdown > bot.config.max_daily_drawdown_pct:
         bot._last_event = (
             f"risk limit: daily drawdown {drawdown:.2%} exceeds "
