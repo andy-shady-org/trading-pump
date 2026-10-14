@@ -31,6 +31,11 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-21** | High | Bot / Position Valuation | **RESOLVED** | Scale open holding valuation and unrealized PnL by remaining token fraction (`rem_tokens / init_tokens`) |
 | **BUG-22** | Medium | Bot / Risk Controls | **RESOLVED** | Include candidate trade outlay (`proposed_entry_sol`) in per-token concentration limit check |
 | **BUG-23** | Low | UI / Presentation | **RESOLVED** | Prioritize `remaining_token_amount` over `initial_token_amount` in dashboard active positions table |
+| **BUG-24** | High | Execution / Dry-Run Accounting | **RESOLVED** | Dynamic bonding curve token estimation and proportional exit proceeds scaling (`(cost * frac) * (curr_mc / entry_mc)`) |
+| **BUG-25** | Medium | Bot / Replay Recording | **RESOLVED** | Hook internal bot buy and sell executions (`_buy_token`, `_sell_token`) to `ReplayRecorder.record_snapshot()` |
+| **BUG-26** | Medium | Bot / Audit Trail | **RESOLVED** | Preserve originating parent `position_id` across partial and full exits in `_record_trade` |
+| **BUG-27** | Low | Bot / Audit Trail | **RESOLVED** | Differentiate total SOL capital (`cost_sol`, `proceeds_sol`, `sol_amount`) from token unit prices (`unit_price_sol`) |
+| **BUG-28** | Low | Bot / Position Valuation | **RESOLVED** | Scale integer base units by UI decimals (`10^6`) in `PositionManager.record_buy` to eliminate `1e-10` unit price underflow |
 
 ---
 
@@ -109,6 +114,13 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Impact:** Open portfolio valuation is artificially inflated after partial exits, distorting daily equity tracking, unrealized PnL metrics, and portfolio circuit breaker drawdown computations.
 * **Remedy:** Added `remaining_fraction` and `effective_cost_sol` properties to `Position` dataclass, implemented `_extract_position_fraction` helper, scaled active cost basis by `remaining_token_amount / initial_token_amount` in `calculate_total_open_value`, `calculate_unrealized_pnl`, `evaluate_portfolio_circuit_breaker`, and `check_daily_drawdown`, and added regression tests modeling multi-tier partial exit lifecycles.
 
+### BUG-24: Dry-Run Paper Trading Token Sizing and Exit Valuation Mismatch [RESOLVED]
+* **Location:** `pumpfun_trading/execution/executor.py` (`execute_buy`, `execute_sell`), `pumpfun_trading/bot/run.py` (`_buy_token`, `_sell_token`)
+* **Status:** **Fixed** — Computed realistic purchased token quantities from bonding curve virtual reserves on dry-run buys and derived dry-run exit proceeds proportionally as `(cost_sol * frac) * (curr_mc / entry_mc)`.
+* **Description:** In dry-run / paper-trading mode (`OrderExecutor.execute_buy`), purchases previously assigned a hardcoded static dummy placeholder of `token_amount = 100_000_000` (100 tokens with 6 decimals) regardless of the actual SOL spent (e.g. `0.01 SOL`) or token market cap (~28–30 SOL). On a real Pump.fun bonding curve, spending `0.01 SOL` purchases approximately ~357,000,000,000 units (~357,000 tokens). When `OrderExecutor.execute_sell` executed in dry-run mode, it queried live on-chain bonding curve reserves and computed the constant-product payout for selling only those 100 tokens (`0.000002916 SOL` / 2.9 µSOL). In `TradingBot._sell_token`, because `exec_res.amount_sol` was `2.916 µSOL` (> 0), the bot took this tiny fraction as the actual total exit proceeds against the `0.005` or `0.01 SOL` cost basis, recording a net loss of `-0.004997 SOL` (-99.94% loss) even when tokens surged +160% to 2.71x.
+* **Impact:** In paper-trading mode, all profitable trades (including tokens surging +160% to 2.71x) recorded catastrophic ~99.9% losses in realized PnL, distorting performance validation, daily equity tracking, and strategy calibration.
+* **Remedy:** Implemented dynamic token quantity estimation from bonding curve reserves (and default Pump.fun curve fallback of 30 SOL / 1.073B tokens) in `execute_buy`, and scaled dry-run sell exit proceeds proportionally (`(cost_sol * frac) * (curr_mc / entry_mc)`) in `_sell_token`. Added comprehensive regression tests in `test_order_executor.py`.
+
 ---
 
 ## 2. Medium Severity Issues (Runtime Safety & State Integrity)
@@ -178,6 +190,20 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Impact:** The bot could open oversized single positions that exceed configured per-token portfolio concentration caps.
 * **Remedy:** Included `proposed_entry_sol` alongside existing active position costs when calculating `max_per_token_ratio = max(candidate_costs) / max_total_exposure_sol`, rejecting any candidate trade whose capital allocation breaches `max_token_concentration_pct`. Added regression unit test in `test_risk_health_execution.py`.
 
+### BUG-25: Replay Recorder Omits Internal Bot Buy/Sell Executions [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_buy_token`, `_sell_token`), `pumpfun_trading/bot/recorder.py` (`ReplayRecorder`)
+* **Status:** **Fixed** — Dispatched structured buy and sell execution snapshots into `ReplayRecorder.record_snapshot()` upon successful trade executions.
+* **Description:** When asynchronous replay recording was enabled (`--record-replay` / `PUMPFUN_REPLAY_LOG_PATH`), `TradingBot` recorded incoming market ticks and coin discovery updates (`_handle_new_token_created`) to `ReplayRecorder.record_snapshot()`. However, `_buy_token` and `_sell_token` did not dispatch executed trade snapshots to `ReplayRecorder`. In addition, discovery stream updates default to `"is_buy": true, "signal": "buy"`. Consequently, for tokens without secondary network stream trade updates, the recorded `.jsonl` replay file contained only initial buy signals and never recorded any sells or exit events.
+* **Impact:** Replay logs generated during live or paper trading omitted trade exit signals and bot trade executions, preventing `pumpfun-replay` from reconstructing and evaluating actual trading session outcomes.
+* **Remedy:** Dispatched structured trade execution snapshots (`mint`, `timestamp`, `price`, `market_cap_sol`, `is_buy`, `signal`, `sol_amount`, `token_amount`, `reason`) from `_buy_token` and `_sell_token` into `self.replay_recorder.record_snapshot()`. Added regression test coverage in `test_order_executor.py`.
+
+### BUG-26: Position ID Discorrelation in Audit Trail Exits [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_buy_token`, `_sell_token`, `_record_trade`)
+* **Status:** **Fixed** — Preserved originating parent `position_id` across partial and full exits in `_sell_token` and `_record_trade`.
+* **Description:** In `TradingBot._sell_token`, when `self._record_trade` was called for `partial_sell` and full `sell` actions, neither `position_id` nor the original entry `trade_id` was passed. Inside `_record_trade`, because `position_id` was omitted, the method incremented `self._trade_sequence` and assigned a newly generated identifier as both `trade_id` and `position_id`. Consequently, partial and full exits received new decoupled position IDs (e.g. `trade-000005`, `trade-000008`) rather than inheriting the entry position ID (`trade-000001`).
+* **Impact:** Audit consumers, forensic inspectors (`pumpfun-audit`), and performance attribution tools could not correlate partial and full exits back to their originating entry trade by `position_id`, breaking lifecycle trade grouping and per-position PnL reconciliation.
+* **Remedy:** Passed originating entry position ID (`position_id` / `trade_id`) into `_sell_token` and `_record_trade` when executing partial or full exits, and generated unique `trade_id` per action while preserving the parent `position_id`.
+
 ---
 
 ## 3. Low Severity & Quality of Life Bugs
@@ -208,3 +234,17 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Description:** In `pumpfun_trading/ui/dashboard.py`, the active positions table extracted token quantity as `raw_tokens = position.get("initial_token_amount") or position.get("token_amount") or position.get("remaining_token_amount") or 0`. Because `initial_token_amount` was evaluated first and never decremented when partial sells occurred, the positions table continued to display the full initial token balance (e.g. 100M tokens) even after Tier 1 or Tier 2 take-profit executions had sold 50% or 75% of the position.
 * **Impact:** Misled operators about actual remaining position quantities held after partial exits.
 * **Remedy:** Prioritized `remaining_token_amount` and `token_amount` before falling back to `initial_token_amount` across dictionary and dataclass position structures in `dashboard.py`. Added regression test in `test_ui_and_storage.py`.
+
+### BUG-27: Conflation of Token Unit Price and Transaction SOL Capital in Audit Records [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_record_trade`), `pumpfun_trading/bot/audit.py` (`_extract_buy_price`, `_extract_sell_price`, `render_audit_table`)
+* **Status:** **Fixed** — Added explicit `cost_sol`, `proceeds_sol`, `sol_amount`, and `unit_price_sol` fields to trade records, and updated audit table extractors to prioritize token unit spot prices.
+* **Description:** In `_record_trade`, buy trades previously recorded total SOL spent (`cost_sol`, e.g. `0.01`) as `buy_price`, and sell trades recorded total exit proceeds (`proceeds_sol`, e.g. `2.916e-06`) as `sell_price`. The data schema conflated token unit price (SOL per token, e.g. $\sim 2.8 \times 10^{-8}\text{ SOL}$) with total transaction SOL outlay/proceeds. In `pumpfun_trading/bot/audit.py`, `_extract_buy_price` and `_extract_sell_price` treated these fields as token spot prices and applied micro-SOL formatting (`f"{sell_p * 1_000_000:.4f} µSOL"`), rendering total trade exit proceeds as token spot prices.
+* **Impact:** Audit table queries and price filters (`--min-buy-price`, `--max-sell-price`) evaluated against total capital outlay rather than actual execution spot prices, producing distorted table reports.
+* **Remedy:** Explicitly differentiated total capital amounts (`sol_amount`, `cost_sol`, `proceeds_sol`) from token unit prices (`unit_price_sol`, `execution_price`) in audit record payloads and table extractors.
+
+### BUG-28: Position Unit Price Underflow via Unscaled Integer Token Division [RESOLVED]
+* **Location:** `pumpfun_trading/bot/position_manager.py` (`PositionManager.record_buy`)
+* **Status:** **Fixed** — Scaled integer base units by UI token decimals (`10^6`) when calculating effective buy price from `cost_sol` and `token_amount`.
+* **Description:** In `PositionManager.record_buy`, when computing effective buy price from `cost_sol` and `token_amount`: `effective_buy_price = float(cost_sol) / int(token_amount)`. Because `token_amount` is passed in raw integer base units ($100 \times 10^6 = 10^8$ base units for 100 tokens with 6 decimals), dividing `0.01 SOL` by $10^8$ without adjusting for SPL token decimals ($10^{-6}$) yielded $10^{-10}\text{ SOL}$, rather than $0.0001\text{ SOL}$ per token ($100\text{ µSOL/token}$).
+* **Impact:** Any component relying on `Position.buy_price` or `Position.entry_price` to assess unit price movements or calculate slippage computed an artificially depressed valuation ($10^{-10}$ SOL), leading to erroneous display values in status snapshots and export payloads.
+* **Remedy:** Scaled integer `token_amount` by $10^6$ (or derived spot price from `entry_market_cap / 1e9`) in `PositionManager.record_buy`. Added unit test coverage in `test_order_executor.py`.

@@ -899,8 +899,9 @@ class TradingBot:
         sell_price: float | None = None,
         entry_price: float | None = None,
         exit_price: float | None = None,
+        unit_price_sol: float | None = None,
     ) -> None:
-        trade_id = trade_id or position_id or self._next_trade_id()
+        trade_id = trade_id or self._next_trade_id()
         position_id = position_id or trade_id
         pos_info = self.active_positions.get(mint, {})
         name = (
@@ -933,6 +934,23 @@ class TradingBot:
         else:
             effective_sell_price = 0.0
 
+        entry_mc = float(pos_info.get("entry_market_cap", 0.0) or 0.0)
+        curr_mc = float(pos_info.get("current_market_cap", 0.0) or entry_mc or 0.0)
+        if unit_price_sol is not None:
+            eff_unit_price = float(unit_price_sol)
+        elif "sell" in action:
+            eff_unit_price = (
+                curr_mc / 1_000_000_000.0
+                if curr_mc > 0
+                else (
+                    entry_mc / 1_000_000_000.0 if entry_mc > 0 else effective_sell_price
+                )
+            )
+        else:
+            eff_unit_price = (
+                entry_mc / 1_000_000_000.0 if entry_mc > 0 else effective_buy_price
+            )
+
         record = {
             "id": trade_id,
             "trade_id": trade_id,
@@ -946,6 +964,13 @@ class TradingBot:
             "side": action,
             "entry": float(entry or 0.0),
             "exit": float(exit_value or 0.0),
+            "cost_sol": float(entry or 0.0),
+            "proceeds_sol": float(exit_value or 0.0),
+            "sol_amount": float(
+                (exit_value or 0.0) if "sell" in action else (entry or 0.0)
+            ),
+            "unit_price_sol": float(eff_unit_price),
+            "execution_price": float(eff_unit_price),
             "buy_price": float(effective_buy_price),
             "sell_price": float(effective_sell_price),
             "entry_price": float(effective_buy_price),
@@ -1398,6 +1423,8 @@ class TradingBot:
             )
             return False
 
+        trade_id = self._next_trade_id()
+        position_id = trade_id
         self.position_manager.record_buy(
             mint=mint,
             token_amount=exec_res.token_amount or (100_000_000 if self.dry_run else 0),
@@ -1407,6 +1434,7 @@ class TradingBot:
             buy_signature=exec_res.signature,
             reason=reason or "entry",
             dry_run=self.dry_run,
+            metadata={"position_id": position_id, "trade_id": trade_id},
         )
         self.active_positions = self.position_manager.get_all_positions()
 
@@ -1415,6 +1443,8 @@ class TradingBot:
         self._last_new_token = mint
         self._last_new_token_name = position_name
         self._record_trade(
+            trade_id=trade_id,
+            position_id=position_id,
             mint=mint,
             action="buy",
             token_name=position_name,
@@ -1422,6 +1452,24 @@ class TradingBot:
             entry=effective_buy_amount,
             reason=reason or "entry",
         )
+        if self.replay_recorder is not None:
+            price = (
+                float(market_cap_sol) / 1_000_000_000.0 if market_cap_sol > 0 else 0.0
+            )
+            self.replay_recorder.record_snapshot(
+                {
+                    "timestamp": time.time(),
+                    "mint": mint,
+                    "name": position_name,
+                    "price": price,
+                    "market_cap_sol": float(market_cap_sol or 30.0),
+                    "is_buy": True,
+                    "sol_amount": float(effective_buy_amount),
+                    "token_amount": int(exec_res.token_amount or 0),
+                    "signal": "buy",
+                    "reason": reason or "entry",
+                }
+            )
         self._transition_to(TradingBotState.HOLDING, reason=f"buy_confirmed {mint}")
         return True
 
@@ -1470,6 +1518,8 @@ class TradingBot:
             )
             return False
 
+        trade_id = self._next_trade_id()
+        position_id = trade_id
         self.position_manager.record_buy(
             mint=mint,
             token_amount=exec_res.token_amount or (100_000_000 if self.dry_run else 0),
@@ -1480,6 +1530,8 @@ class TradingBot:
             reason=reason or "raydium_graduation_snipe",
             dry_run=self.dry_run,
             metadata={
+                "position_id": position_id,
+                "trade_id": trade_id,
                 "pool_keys": pool_keys.to_dict(),
                 "raydium_pool_id": pool_keys.amm_id,
                 "amm_id": pool_keys.amm_id,
@@ -1492,6 +1544,8 @@ class TradingBot:
         self._last_new_token = mint
         self._last_new_token_name = position_name
         self._record_trade(
+            trade_id=trade_id,
+            position_id=position_id,
             mint=mint,
             action="raydium_buy",
             token_name=position_name,
@@ -1499,6 +1553,21 @@ class TradingBot:
             entry=buy_amount,
             reason=reason or "raydium_graduation_snipe",
         )
+        if self.replay_recorder is not None:
+            self.replay_recorder.record_snapshot(
+                {
+                    "timestamp": time.time(),
+                    "mint": mint,
+                    "name": position_name,
+                    "price": 69.0 / 1_000_000_000.0,
+                    "market_cap_sol": 69.0,
+                    "is_buy": True,
+                    "sol_amount": float(buy_amount),
+                    "token_amount": int(exec_res.token_amount or 0),
+                    "signal": "buy",
+                    "reason": reason or "raydium_graduation_snipe",
+                }
+            )
         self._transition_to(
             TradingBotState.HOLDING, reason=f"raydium_buy_confirmed {mint}"
         )
@@ -1716,34 +1785,43 @@ class TradingBot:
             or position.get("entry_price")
             or 0.0
         )
-        sell_p = float(
-            getattr(exec_res, "amount_sol", 0.0)
-            or getattr(exec_res, "sol_amount", 0.0)
-            or (
-                float(getattr(exec_res, "min_sol_lamports", 0)) / 1e9
-                if getattr(exec_res, "min_sol_lamports", 0) > 0
-                else 0.0
-            )
+        entry_mc = float(position.get("entry_market_cap", 0.0) or 0.0)
+        curr_mc = float(position.get("current_market_cap", 0.0) or entry_mc or 0.0)
+        cost_sol = float(
+            position.get("cost_sol")
+            or position.get("entry_sol")
+            or getattr(self.config, "buy_amount_sol", 0.0)
+            or pos_entry
             or 0.0
         )
-        if sell_p <= 0.0:
-            entry_mc = float(position.get("entry_market_cap", 0.0) or 0.0)
-            curr_mc = float(position.get("current_market_cap", 0.0) or entry_mc or 0.0)
-            cost_sol = float(
-                position.get("cost_sol")
-                or position.get("entry_sol")
-                or getattr(self.config, "buy_amount_sol", 0.0)
-                or pos_entry
-                or 0.0
-            )
-            frac = float(tokens_to_sell) / float(
-                initial_tokens or rem_tokens or tokens_to_sell
-            )
-            frac = max(0.0, min(1.0, frac))
-            if entry_mc > 0 and curr_mc > 0:
+        frac = float(tokens_to_sell) / float(
+            initial_tokens or rem_tokens or tokens_to_sell
+        )
+        frac = max(0.0, min(1.0, frac))
+
+        if self.dry_run:
+            if entry_mc > 0 and curr_mc > 0 and cost_sol > 0:
                 sell_p = (cost_sol * frac) * (curr_mc / entry_mc)
             elif cost_sol > 0:
                 sell_p = cost_sol * frac
+            else:
+                sell_p = float(getattr(exec_res, "amount_sol", 0.0) or 0.0)
+        else:
+            sell_p = float(
+                getattr(exec_res, "amount_sol", 0.0)
+                or getattr(exec_res, "sol_amount", 0.0)
+                or (
+                    float(getattr(exec_res, "min_sol_lamports", 0)) / 1e9
+                    if getattr(exec_res, "min_sol_lamports", 0) > 0
+                    else 0.0
+                )
+                or 0.0
+            )
+            if sell_p <= 0.0:
+                if entry_mc > 0 and curr_mc > 0 and cost_sol > 0:
+                    sell_p = (cost_sol * frac) * (curr_mc / entry_mc)
+                elif cost_sol > 0:
+                    sell_p = cost_sol * frac
 
         is_fully_closed, remaining = self.position_manager.record_sell(
             mint=mint,
@@ -1753,6 +1831,12 @@ class TradingBot:
             is_partial=is_partial,
         )
         self.active_positions = self.position_manager.get_all_positions()
+
+        pos_id = (
+            position.get("position_id")
+            or position.get("id")
+            or position.get("trade_id")
+        )
 
         if is_partial:
             frac = float(tokens_to_sell) / float(
@@ -1764,6 +1848,7 @@ class TradingBot:
             if getattr(self, "daily_equity_tracker", None) is not None:
                 self.daily_equity_tracker.record_realized_trade(trade_pnl)
             self._record_trade(
+                position_id=pos_id,
                 mint=mint,
                 action="partial_sell",
                 token_name=pos_name,
@@ -1774,6 +1859,27 @@ class TradingBot:
                 sell_price=sell_p,
                 reason=reason,
             )
+            if self.replay_recorder is not None:
+                curr_mc = float(
+                    position.get("current_market_cap", 0.0)
+                    or position.get("entry_market_cap", 0.0)
+                    or 0.0
+                )
+                price = curr_mc / 1_000_000_000.0 if curr_mc > 0 else 0.0
+                self.replay_recorder.record_snapshot(
+                    {
+                        "timestamp": time.time(),
+                        "mint": mint,
+                        "name": pos_name,
+                        "price": price,
+                        "market_cap_sol": curr_mc,
+                        "is_buy": False,
+                        "sol_amount": float(sell_p),
+                        "token_amount": int(tokens_to_sell),
+                        "signal": "sell",
+                        "reason": reason or "partial_exit",
+                    }
+                )
             self._transition_to(
                 TradingBotState.HOLDING, reason=f"partial_sell_complete {mint}"
             )
@@ -1789,6 +1895,7 @@ class TradingBot:
         if getattr(self, "daily_equity_tracker", None) is not None:
             self.daily_equity_tracker.record_realized_trade(trade_pnl)
         self._record_trade(
+            position_id=pos_id,
             mint=mint,
             action="sell",
             token_name=pos_name,
@@ -1799,6 +1906,27 @@ class TradingBot:
             sell_price=sell_p,
             reason=reason,
         )
+        if self.replay_recorder is not None:
+            curr_mc = float(
+                position.get("current_market_cap", 0.0)
+                or position.get("entry_market_cap", 0.0)
+                or 0.0
+            )
+            price = curr_mc / 1_000_000_000.0 if curr_mc > 0 else 0.0
+            self.replay_recorder.record_snapshot(
+                {
+                    "timestamp": time.time(),
+                    "mint": mint,
+                    "name": pos_name,
+                    "price": price,
+                    "market_cap_sol": curr_mc,
+                    "is_buy": False,
+                    "sol_amount": float(sell_p),
+                    "token_amount": int(tokens_to_sell),
+                    "signal": "sell",
+                    "reason": reason or "exit",
+                }
+            )
         self._transition_to(TradingBotState.MONITORING, reason=f"sell_complete {mint}")
         return True
 
@@ -2287,37 +2415,40 @@ class TradingBot:
                 }
             )
 
-        if mint in self.active_positions:
-            return
+        async with self._trade_lock:
+            if mint in self.active_positions or self._is_recently_seen(mint):
+                return
 
-        if not self._should_buy(mint, current_market_cap):
-            return
+            if not self._should_buy(mint, current_market_cap):
+                return
 
-        screening_verdict = await self._enrich_and_screen_token(mint, token_data=data)
-        if not screening_verdict.passed:
-            self._log(
-                f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
+            screening_verdict = await self._enrich_and_screen_token(
+                mint, token_data=data
             )
-            reasons_str = (
-                screening_verdict.reasons[0]
-                if screening_verdict.reasons
-                else "anti-rug"
-            )
-            self._last_event = f"screen_rejected {mint[:8]}"
-            self._record_event(
-                f"screen_rejected {mint[:8]}: {reasons_str}",
-                alert=False,
-            )
-            return
+            if not screening_verdict.passed:
+                self._log(
+                    f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
+                )
+                reasons_str = (
+                    screening_verdict.reasons[0]
+                    if screening_verdict.reasons
+                    else "anti-rug"
+                )
+                self._last_event = f"screen_rejected {mint[:8]}"
+                self._record_event(
+                    f"screen_rejected {mint[:8]}: {reasons_str}",
+                    alert=False,
+                )
+                return
 
-        bought = await self._buy_token(
-            mint,
-            current_market_cap,
-            token_name=token_name,
-            screening_verdict=screening_verdict,
-        )
-        if bought and websocket:
-            await self._subscribe_to_token_trades(websocket, mint)
+            bought = await self._buy_token(
+                mint,
+                current_market_cap,
+                token_name=token_name,
+                screening_verdict=screening_verdict,
+            )
+            if bought and websocket:
+                await self._subscribe_to_token_trades(websocket, mint)
 
     async def _handle_trade_update(
         self, data: dict[str, Any], websocket: Any = None

@@ -49,7 +49,11 @@ def _payload_for(record: dict[str, Any]) -> dict[str, Any]:
 def _extract_buy_price(record: dict[str, Any]) -> float | None:
     payload = _payload_for(record)
     val = (
-        payload.get("buy_price")
+        payload.get("unit_price_sol")
+        or payload.get("execution_price")
+        or record.get("unit_price_sol")
+        or record.get("execution_price")
+        or payload.get("buy_price")
         or payload.get("entry_price")
         or record.get("buy_price")
         or record.get("entry_price")
@@ -80,7 +84,11 @@ def _extract_buy_price(record: dict[str, Any]) -> float | None:
 def _extract_sell_price(record: dict[str, Any]) -> float | None:
     payload = _payload_for(record)
     val = (
-        payload.get("sell_price")
+        payload.get("unit_price_sol")
+        or payload.get("execution_price")
+        or record.get("unit_price_sol")
+        or record.get("execution_price")
+        or payload.get("sell_price")
         or payload.get("exit_price")
         or record.get("sell_price")
         or record.get("exit_price")

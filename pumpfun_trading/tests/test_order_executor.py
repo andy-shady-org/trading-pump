@@ -254,3 +254,124 @@ async def test_order_liquidator(
     liquidated = await liquidator.liquidate_all_positions(reason="circuit_breaker_lock")
     assert liquidated == ["Mint2"]
     assert len(pm) == 0
+
+
+@pytest.mark.asyncio
+async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
+    """
+    Comprehensive regression tests for:
+    - BUG-24: Dry-run token sizing and positive exit proceeds on profitable pump (Torq Rigs scenario)
+    - BUG-25: Internal bot buy and sell executions recorded into replay log (.jsonl)
+    - BUG-26: Position ID correlation preserved across partial and full exits in audit trail
+    - BUG-27: Total SOL capital and token unit prices properly differentiated in audit records
+    - BUG-28: PositionManager effective buy price scaled by UI token units
+    """
+    import json
+    from pumpfun_trading.bot.run import TradingBot
+
+    audit_file = tmp_path / "audit_trail.jsonl"
+    replay_file = tmp_path / "replay_log.jsonl"
+
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        dry_run=True,
+        audit_log_path=str(audit_file),
+        replay_log_path=str(replay_file),
+    )
+    await bot.replay_recorder.start()
+
+    mint = "TorqRigsPump111111111111111111111111111111111"
+
+    # 1. Execute Buy
+    buy_ok = await bot._buy_token(
+        mint=mint,
+        market_cap_sol=27.96,
+        token_name="Torq Rigs",
+        buy_amount_sol=0.01,
+        reason="momentum_breakout",
+    )
+    assert buy_ok
+    assert bot.position_manager.has_position(mint)
+    pos = bot.position_manager.get_position(mint)
+
+    # BUG-24 & BUG-28 checks on entry
+    assert (
+        pos["initial_token_amount"] > 100_000_000
+    )  # Calculated from curve (~357M units)
+    # Unit price is ~2.796e-8 SOL (0.02796 µSOL), not 1e-10 or 1e-14
+    assert 1e-9 < pos["buy_price"] < 1e-6
+
+    # 2. Simulate 2.06x price surge (Take profit tier 1)
+    bot.position_manager.update_price(mint, 57.60)  # ~2.06x
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    partial_ok = await bot._sell_token(
+        mint=mint,
+        sell_fraction=0.5,
+        reason="take_profit_tier_1",
+        target_tier=1,
+    )
+    assert partial_ok
+
+    # 3. Simulate trailing stop exit at 2.71x
+    bot.position_manager.update_price(mint, 75.77)  # ~2.71x
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    full_ok = await bot._sell_token(
+        mint=mint,
+        reason="trailing_stop_hit",
+    )
+    assert full_ok
+    assert not bot.position_manager.has_position(mint)
+
+    # BUG-24 check: Verify bot realized positive cumulative profit (+0.0138 SOL), NOT ~99.9% loss!
+    # Entry cost: 0.01 SOL (0.005 + 0.005). Tier 1 exit (0.005 * 2.06 = 0.0103 SOL), Trailing exit (0.005 * 2.71 = 0.01355 SOL)
+    # Total exit: ~0.02385 SOL -> Net profit: ~+0.01385 SOL
+    realized_pnl = bot.daily_equity_tracker.realized_daily_pnl_sol
+    assert realized_pnl > 0.010
+
+    # Flush replay recorder
+    await bot.replay_recorder.flush()
+    await bot.replay_recorder.close()
+
+    # BUG-25 check: Verify replay log contains BOTH buy and sell snapshots
+    assert replay_file.exists()
+    replay_lines = [
+        json.loads(line)
+        for line in replay_file.read_text(encoding="utf-8").strip().splitlines()
+        if line.strip()
+    ]
+    assert len(replay_lines) == 3
+    assert replay_lines[0]["signal"] == "buy"
+    assert replay_lines[0]["is_buy"] is True
+    assert replay_lines[0]["mint"] == mint
+    assert replay_lines[1]["signal"] == "sell"
+    assert replay_lines[1]["is_buy"] is False
+    assert replay_lines[1]["reason"] == "take_profit_tier_1"
+    assert replay_lines[2]["signal"] == "sell"
+    assert replay_lines[2]["is_buy"] is False
+    assert replay_lines[2]["reason"] == "trailing_stop_hit"
+
+    # BUG-26 & BUG-27 check: Verify audit trail position ID correlation & unit price differentiation
+    assert audit_file.exists()
+    audit_lines = [
+        json.loads(line)
+        for line in audit_file.read_text(encoding="utf-8").strip().splitlines()
+        if json.loads(line).get("type") == "trade"
+    ]
+    assert len(audit_lines) == 3
+    initial_pos_id = audit_lines[0]["payload"]["position_id"]
+    assert initial_pos_id.startswith("trade-")
+    # All exits share the same parent position_id
+    assert audit_lines[1]["payload"]["position_id"] == initial_pos_id
+    assert audit_lines[2]["payload"]["position_id"] == initial_pos_id
+
+    # Verify unit price vs capital differentiation (BUG-27)
+    for rec in audit_lines:
+        payload = rec["payload"]
+        assert "unit_price_sol" in payload
+        assert "cost_sol" in payload
+        assert "proceeds_sol" in payload
+        assert "sol_amount" in payload

@@ -68,13 +68,52 @@ class OrderExecutor:
 
         if is_dry_run:
             logger.info("DRY RUN BUY: %s @ %.4f SOL", mint, amount_sol)
+            simulated_token_amount = 0
+            if self.execution is not None:
+                try:
+                    curve_state = await self.execution.get_bonding_curve_state(mint)
+                    v_token = int(curve_state.get("virtual_token_reserves", 0))
+                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+                    if v_token > 0 and v_sol > 0:
+                        sol_lamports = int(amount_sol * 1_000_000_000)
+                        eff_slip = (
+                            slippage_bps
+                            if slippage_bps is not None
+                            else getattr(self.execution, "default_slippage_bps", 250)
+                        )
+                        calc_fn = getattr(
+                            self.execution, "calculate_buy_tokens_out", None
+                        )
+                        if calc_fn:
+                            simulated_token_amount = int(
+                                calc_fn(
+                                    sol_lamports,
+                                    v_sol,
+                                    v_token,
+                                    slippage_bps=eff_slip,
+                                )
+                            )
+                except Exception:
+                    pass
+
+            if simulated_token_amount <= 0:
+                sol_lamports = int(amount_sol * 1_000_000_000)
+                v_sol = 30_000_000_000
+                v_token = 1_073_000_000_000_000
+                if sol_lamports > 0:
+                    simulated_token_amount = int(
+                        v_token - (v_token * v_sol) // (v_sol + sol_lamports)
+                    )
+                else:
+                    simulated_token_amount = 100_000_000
+
             return ExecutionResult(
                 success=True,
                 signature=f"dry_run_buy_{mint[:8]}_{int(time.time())}",
                 mint=mint,
                 is_buy=True,
                 amount_sol=amount_sol,
-                token_amount=100_000_000,
+                token_amount=simulated_token_amount,
                 reason=reason,
                 dry_run=True,
             )

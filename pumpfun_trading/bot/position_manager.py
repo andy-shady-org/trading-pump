@@ -293,7 +293,16 @@ class PositionManager:
         elif meta_price is not None:
             effective_buy_price = float(meta_price)
         elif int(token_amount) > 0 and float(cost_sol) > 0:
-            effective_buy_price = float(cost_sol) / int(token_amount)
+            ui_tokens = (
+                float(token_amount) / 1_000_000.0
+                if int(token_amount) >= 1_000_000
+                else float(token_amount)
+            )
+            effective_buy_price = (
+                float(cost_sol) / ui_tokens if ui_tokens > 0 else float(cost_sol)
+            )
+        elif float(entry_market_cap or 0.0) > 0:
+            effective_buy_price = float(entry_market_cap) / 1_000_000_000.0
         else:
             effective_buy_price = float(cost_sol or 0.0)
 
