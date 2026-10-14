@@ -163,11 +163,37 @@ class OrderExecutor:
 
         if is_dry_run:
             logger.info("DRY RUN SELL: %s for %d tokens", mint, token_amount)
+            est_sol = (
+                float(min_sol_output_lamports) / 1_000_000_000.0
+                if min_sol_output_lamports > 0
+                else 0.0
+            )
+            if est_sol <= 0.0 and self.execution is not None:
+                try:
+                    curve_state = await self.execution.get_bonding_curve_state(mint)
+                    v_token = int(curve_state.get("virtual_token_reserves", 0))
+                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+                    if v_token > 0 and v_sol > 0:
+                        eff_slip = (
+                            slippage_bps
+                            if slippage_bps is not None
+                            else getattr(self.execution, "default_slippage_bps", 250)
+                        )
+                        lamports = self.execution.calculate_sell_sol_output(
+                            token_amount,
+                            v_token,
+                            v_sol,
+                            slippage_bps=eff_slip,
+                        )
+                        est_sol = float(lamports) / 1_000_000_000.0
+                except Exception:
+                    pass
             return ExecutionResult(
                 success=True,
                 signature=f"dry_run_sell_{mint[:8]}_{int(time.time())}",
                 mint=mint,
                 is_buy=False,
+                amount_sol=est_sol,
                 token_amount=token_amount,
                 reason=reason,
                 dry_run=True,
@@ -264,11 +290,17 @@ class OrderExecutor:
                     error="sell_confirmation_failed",
                 )
 
+            est_sol = (
+                float(min_sol_lamports) / 1_000_000_000.0
+                if min_sol_lamports > 0
+                else 0.0
+            )
             return ExecutionResult(
                 success=True,
                 signature=signature,
                 mint=mint,
                 is_buy=False,
+                amount_sol=est_sol,
                 token_amount=token_amount,
                 reason=reason,
             )

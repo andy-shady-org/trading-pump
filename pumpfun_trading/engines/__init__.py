@@ -1,5 +1,6 @@
 """Engine and simulation modules for historical evaluation and paper trading."""
 
+from .generators import RestHistoryExporter, SyntheticReplayGenerator
 from .replay import (
     PaperTradingEngine,
     ReplayEngine,
@@ -12,6 +13,8 @@ from .replay import (
 __all__ = [
     "PaperTradingEngine",
     "ReplayEngine",
+    "SyntheticReplayGenerator",
+    "RestHistoryExporter",
     "run_replay",
     "render_replay_summary",
     "render_replay_trades",

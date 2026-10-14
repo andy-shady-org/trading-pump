@@ -25,6 +25,12 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-15** | Critical | Bot / Circuit Breaker | **RESOLVED** | Calculate position holding valuation (`cost_sol * (current_mc / entry_mc)`) in `evaluate_portfolio_circuit_breaker` and `PositionManager` |
 | **BUG-16** | High | Strategy / Exit Engine | **RESOLVED** | Stagnant curve timeout (`stagnant_timeout_seconds`) and max hold duration (`max_hold_time_seconds`) exit rules in `exits.py` and `position_manager.py` |
 | **BUG-17** | Low | UI / Presentation | **RESOLVED** | Standardized micro-SOL (`µSOL`) unit price formatting in dashboard positions, trade ledger, and audit tables (`f"{price * 1_000_000:.4f} µSOL"`) |
+| **BUG-18** | Medium | Bot / Audit Trail | **RESOLVED** | Populate amount_sol on ExecutionResult & fallback proceeds calculation in `_sell_token` |
+| **BUG-19** | Medium | UI / Risk Management | **RESOLVED** | Record trade PnL in `DailyEquityTracker` & adaptive micro-SOL Daily PnL display |
+| **BUG-20** | High | Engines / Replay Math | **RESOLVED** | Exact price multiplier exits (`price / entry`) and fee/slippage friction math in `PaperTradingEngine` |
+| **BUG-21** | High | Bot / Position Valuation | **RESOLVED** | Scale open holding valuation and unrealized PnL by remaining token fraction (`rem_tokens / init_tokens`) |
+| **BUG-22** | Medium | Bot / Risk Controls | **RESOLVED** | Include candidate trade outlay (`proposed_entry_sol`) in per-token concentration limit check |
+| **BUG-23** | Low | UI / Presentation | **RESOLVED** | Prioritize `remaining_token_amount` over `initial_token_amount` in dashboard active positions table |
 
 ---
 
@@ -86,6 +92,23 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Impact:** Any closed trade triggered a false-positive emergency circuit breaker hard lock, shutting down the bot for 24 hours.
 * **Remedy:** Modified `evaluate_portfolio_circuit_breaker` to delegate to `bot.position_manager.calculate_total_open_value()` and evaluate position dictionaries using proportional cost holding valuation (`cost_sol * (current_mc / entry_mc)`). Fixed `calculate_total_open_value` to accurately value zero and missing market caps, and added regression tests modeling Pump.fun token lifecycles.
 
+### BUG-20: Replay Engine Mathematical Inversions in Exit Multipliers, Fees, and Token Allocation [RESOLVED]
+* **Location:** `pumpfun_trading/engines/replay.py` (`PaperTradingEngine.run`)
+* **Status:** **Fixed** — Reconciled exit multiplier evaluation (`price_multiplier = price / entry_price`) against `take_profit` and `stop_loss`, corrected fee/slippage cash deduction and token allocation math, and applied fee/slippage deductions on sell proceeds.
+* **Description:** In `PaperTradingEngine.run`, three critical mathematical inconsistencies distorted backtest results:
+  1. *Exit Multiplier vs Delta Percentage Mismatch:* The replay engine computed position performance as a relative delta `performance = (price - entry) / entry` ($0.0 = \text{breakeven}$, $-0.15 = -15\%$), but evaluated exit conditions using raw strategy multiplier thresholds (`take_profit = 2.0`, `stop_loss = 0.85`). Checking `performance <= -abs(self.stop_loss)` checked `performance <= -0.85` (requiring an 85% catastrophic collapse rather than a 15% stop loss at $0.85\times$), while `performance >= self.take_profit` required a $+200\%$ surge ($3.0\times$) instead of the configured $2.0\times$ take-profit level.
+  2. *Inverted Fee and Slippage Quantity Scaling:* When computing buy quantity, `gross_cost = buy_amount * (1.0 + (fee_bps + slippage_bps) / 10_000.0)` was used in `quantity = gross_cost / price`. Multiplying `buy_amount` by the fee ratio increased `gross_cost`, which erroneously *increased* the quantity of tokens received rather than reducing tokens acquired after fees and slippage.
+  3. *Negative Cash Balance & Missing Sell Fees:* Deducting `cash -= gross_cost` when `buy_fraction = 1.0` caused `gross_cost > cash`, driving portfolio cash into negative values. In addition, sell exits calculated `exit_value = quantity * price` without deducting sell fees or execution slippage.
+* **Impact:** Distorts historical strategy backtests and replay simulations, hiding true strategy drawdown and overestimating simulated token returns.
+* **Remedy:** Normalized exit evaluation to multiplier space (`price_multiplier = price / entry`) matching live execution logic in `exits.py`, scaled purchased tokens inversely with fees/slippage (`net_spend = spend_budget / (1 + fee_rate)`, `quantity = net_spend / (price * (1 + slippage))`), clamped spend budget to available cash (`spend_budget = min(cash, cash * buy_fraction)`), deducted fees/slippage from sell proceeds (`exit_value = (quantity * exec_sell_price) * (1 - fee_rate)`), and added regression test coverage.
+
+### BUG-21: Position Valuation & Unrealized PnL Ignore Token Balance Reductions After Partial Exits [RESOLVED]
+* **Location:** `pumpfun_trading/bot/position_manager.py` (`Position`, `PositionManager.calculate_total_open_value`, `calculate_unrealized_pnl`), `pumpfun_trading/bot/risk.py` (`evaluate_portfolio_circuit_breaker`, `check_daily_drawdown`)
+* **Status:** **Fixed** — Scaled active position cost basis by `remaining_token_amount / initial_token_amount` across `PositionManager` and portfolio risk evaluators.
+* **Description:** When positions undergo multi-tier partial exits (e.g. Tier 1 take-profit selling 50% of tokens, Tier 2 selling 25%), `PositionManager.calculate_total_open_value()` and `calculate_unrealized_pnl()` compute holding value as `cost_sol * (curr_mc / entry_mc)`. Because `cost_sol` remains at the full initial capital outlay, open positions that have already realized partial profits continue to be valued at 100% of their initial capital allocation rather than their remaining fractional holding (e.g. 50% or 25%).
+* **Impact:** Open portfolio valuation is artificially inflated after partial exits, distorting daily equity tracking, unrealized PnL metrics, and portfolio circuit breaker drawdown computations.
+* **Remedy:** Added `remaining_fraction` and `effective_cost_sol` properties to `Position` dataclass, implemented `_extract_position_fraction` helper, scaled active cost basis by `remaining_token_amount / initial_token_amount` in `calculate_total_open_value`, `calculate_unrealized_pnl`, `evaluate_portfolio_circuit_breaker`, and `check_daily_drawdown`, and added regression tests modeling multi-tier partial exit lifecycles.
+
 ---
 
 ## 2. Medium Severity Issues (Runtime Safety & State Integrity)
@@ -132,6 +155,29 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Impact:** Capital and position slots remain trapped in inactive tokens indefinitely, stalling bot trading activity during multi-hour soak tests.
 * **Remedy:** Implemented stagnant curve exit rules and max holding duration timeouts (`stagnant_timeout_seconds`, `max_hold_time_seconds`) in `evaluate_exit_strategy` and `TradingBotConfig`, triggering `FULL_EXIT` when market cap remains unchanged or exceeds maximum hold duration without progress. Configured preset defaults in `DEFAULT_PRESETS` and added unit test coverage.
 
+### BUG-18: Missing Sell Price and Exit Proceeds in Audit Log Records [RESOLVED]
+* **Location:** `pumpfun_trading/execution/executor.py` (`execute_sell`), `pumpfun_trading/bot/run.py` (`_sell_token`, `_record_trade`), `pumpfun_trading/bot/audit.py` (`_extract_sell_price`)
+* **Status:** **Fixed** — Populated `amount_sol` on `ExecutionResult` in `execute_sell` for dry-run and live executions, established proportional market-cap / cost basis fallback exit calculations in `_sell_token`, and ensured matching SOL-denominated trade records in audit logs.
+* **Description:** When `_sell_token` executes a sell order via `self.executor.execute_sell(...)`, the returned `ExecutionResult` was constructed without populating `amount_sol` (for both dry-run and live executions). In `TradingBot._sell_token`, `sell_p` was extracted via `getattr(exec_res, "amount_sol", 0.0) or getattr(exec_res, "sol_amount", 0.0) or ...`, which evaluated to `0.0`. Furthermore, there was no fallback calculation (e.g. `pos_entry * (current_market_cap / entry_market_cap)` or bonding curve output estimation `calculate_sell_sol_out`) when `exec_res.amount_sol` was missing or 0. Consequently, `_record_trade` received `exit_value = 0.0` and `sell_price = 0.0`, persisting `0.0` values into the audit log JSONL file (`audit_trail.jsonl`). In `pumpfun_trading/bot/audit.py`, `_extract_sell_price` enforced `f > 0`, causing audit tables rendered by `pumpfun-audit` to display `-` for all sell prices and rendering CLI price filtering flags ineffective.
+* **Impact:** Operators could not inspect realized sell prices, exit valuations, or historical sell execution costs in audit logs or via the `pumpfun-audit` CLI tool.
+* **Remedy:** Populated `amount_sol` on `ExecutionResult` in `execute_sell` (calculated from min output lamports or simulated curve output in dry-run and live modes), added fallback in `_sell_token` using position market cap ratios / fractional cost bases when `amount_sol` is unset or zero, and ensured `sell_price`, `exit`, and `entry` fields are faithfully written to `_record_trade`. Added unit and regression tests in `test_order_executor.py`.
+
+### BUG-19: Unincremented Daily PnL Counter in Risk Panel & Micro-SOL Display Underflow [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_sell_token`), `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.record_realized_trade`), `pumpfun_trading/ui/dashboard.py` (lines 55–62)
+* **Status:** **Fixed** — Hooked `record_realized_trade` into trade exit routines and adaptively formatted micro-SOL (`µSOL`) in the dashboard Risk panel to prevent fixed 4-decimal underflow.
+* **Description:** In the live terminal UI's Risk panel, the `Daily PnL` counter remained permanently at `+0.0000 SOL`. This stemmed from two compounding issues:
+  1. *Missing Realized Trade Recording:* When positions were exited or partially sold in `_sell_token`, the bot never calculated realized trade PnL (`exit_sol - entry_sol`) or invoked `self.daily_equity_tracker.record_realized_trade(pnl_sol)`. As a result, `tracker.realized_daily_pnl_sol` was never incremented during trading and stayed at `0.0`.
+  2. *Fixed SOL Decimal Formatting Underflow:* In `pumpfun_trading/ui/dashboard.py`, the Daily PnL row formatted `tracker.realized_daily_pnl_sol` using fixed 4-decimal formatting (`f"{tracker.realized_daily_pnl_sol:+.4f} SOL"`). Even when microcap positions generated non-zero profit/loss (e.g. `+0.000045 SOL`), fixed 4-decimal rounding caused the UI to display `+0.0000 SOL`.
+* **Impact:** Operators could not monitor cumulative realized PnL in real time, obscuring daily trading performance, strategy profitability, and intraday capital delta.
+* **Remedy:** In `_sell_token` (and position closing routines), calculate realized profit/loss on closed or partial trades and call `self.daily_equity_tracker.record_realized_trade(pnl_sol)`. In `dashboard.py`, update Daily PnL formatting to adaptively render micro-SOL (`f"{pnl * 1_000_000:+.4f} µSOL"`) for non-zero small amounts (`0 < abs(pnl) < 0.001 SOL`) and standard SOL (`f"{pnl:+.4f} SOL"`) otherwise. Added regression tests in `test_ui_and_storage.py` and `test_order_executor.py`.
+
+### BUG-22: Per-Token Concentration Limit Check Ignores Proposed Trade Capital [RESOLVED]
+* **Location:** `pumpfun_trading/bot/risk.py` (`check_risk_limits`)
+* **Status:** **Fixed** — Evaluated candidate trade capital outlay (`proposed_entry_sol`) in addition to existing positions against `max_token_concentration_pct`.
+* **Description:** In `check_risk_limits`, the per-token concentration check evaluates `max_per_token_ratio = max(_extract_position_cost(pos) / max_total_exposure_sol for pos in current_positions.values())` only across existing positions inside `if current_positions:`. It omitted the `proposed_entry_sol` of the candidate trade currently being screened. Consequently, if `current_positions` was empty or held small positions, a proposed trade that exceeded `max_token_concentration_pct` (e.g. proposed entry 0.10 SOL against 0.25 SOL max exposure = 40% > 35% cap) was not blocked and opened anyway, bypassing portfolio risk allocation safeguards.
+* **Impact:** The bot could open oversized single positions that exceed configured per-token portfolio concentration caps.
+* **Remedy:** Included `proposed_entry_sol` alongside existing active position costs when calculating `max_per_token_ratio = max(candidate_costs) / max_total_exposure_sol`, rejecting any candidate trade whose capital allocation breaches `max_token_concentration_pct`. Added regression unit test in `test_risk_health_execution.py`.
+
 ---
 
 ## 3. Low Severity & Quality of Life Bugs
@@ -155,3 +201,10 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Description:** In terminal and status table renderings, token unit prices were formatted using fixed 6-decimal SOL formatting (`{buy_price:.6f} SOL` / `{buy_val:.4f} SOL`). Because standard Pump.fun unit prices are $\approx 0.000000028\text{ SOL}$ ($2.8\times 10^{-8}\text{ SOL}$), fixed 6-decimal rounding rendered unit prices as `0.000000 SOL` or `0.0000 SOL`. Additionally, performance columns rendered raw multiplier ratios instead of relative PnL percentage (`+0.00%` / `0.00%`), and summary table headers contained typos.
 * **Impact:** Operators saw misleading `0.000000 SOL` buy prices and confusing performance metrics on flat positions in status tables.
 * **Remedy:** Standardized adaptive micro-SOL (`µSOL`) formatting with 4 decimal places for unit prices $< 0.001\text{ SOL}$ (`f"{price * 1_000_000:.4f} µSOL"`) and standard SOL for $\ge 0.001\text{ SOL}$ (`f"{price:.4f} SOL"`) across `dashboard.py` and `audit.py`. Formatted performance as relative delta percentages and added comprehensive test coverage.
+
+### BUG-23: Dashboard Positions Table Displays Initial Token Amount Instead of Remaining Balance [RESOLVED]
+* **Location:** `pumpfun_trading/ui/dashboard.py` (lines 162–167)
+* **Status:** **Fixed** — Updated `raw_tokens` extraction in `build_dashboard` to prioritize `remaining_token_amount` and `token_amount` over `initial_token_amount`, with support for both dictionary representations and `Position` dataclass instances.
+* **Description:** In `pumpfun_trading/ui/dashboard.py`, the active positions table extracted token quantity as `raw_tokens = position.get("initial_token_amount") or position.get("token_amount") or position.get("remaining_token_amount") or 0`. Because `initial_token_amount` was evaluated first and never decremented when partial sells occurred, the positions table continued to display the full initial token balance (e.g. 100M tokens) even after Tier 1 or Tier 2 take-profit executions had sold 50% or 75% of the position.
+* **Impact:** Misled operators about actual remaining position quantities held after partial exits.
+* **Remedy:** Prioritized `remaining_token_amount` and `token_amount` before falling back to `initial_token_amount` across dictionary and dataclass position structures in `dashboard.py`. Added regression test in `test_ui_and_storage.py`.

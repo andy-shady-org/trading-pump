@@ -252,3 +252,20 @@ This document provides a comprehensive and accurate overview of all features and
 - **Stream Event Routing (`EventRouter`)**: Decouples stream networking from business logic, routing Yellowstone Geyser gRPC updates (`BondingCurveStateUpdate`, `TradeEventUpdate`, `CompleteEventUpdate`) and WebSocket messages to registered strategy handlers in `pumpfun_trading/bot/event_router.py`.
 - **Telemetry, Persistence & Multi-Channel Alerting**: Extracted `StatusPersistenceManager` (`pumpfun_trading/bot/persistence.py`) and `AlertDispatcher` (`pumpfun_trading/bot/alerts.py`) for atomic snapshot writing, append-only audit logging, and isolated webhook notifications.
 - **Lightweight Orchestrator Facade**: Refactors `TradingBot` in `pumpfun_trading/bot/run.py` into a clean orchestrator facade retaining 100% backward compatibility for all public APIs, CLI commands, and test suites.
+
+---
+
+## 20. Asynchronous Market Stream Recorder & Historical Replay Dataset Generator (FEAT-21)
+
+- **Non-Blocking Asynchronous Recorder (`ReplayRecorder`)**: Thread-safe, non-blocking queue (`asyncio.Queue`) buffer in `pumpfun_trading/bot/recorder.py` enqueuing market quotes and trade updates in $<0.05\text{ms}$, isolating live order execution from disk I/O contention.
+- **Periodic Batch Disk Flushing**: Background worker coroutine aggregating enqueued records into chunks (configurable, default 50 records or 2.0–5.0 seconds) and performing batch appends to `.jsonl` files with graceful shutdown flush guarantees.
+- **Live Bot Replay Recording Hook**: Integrated `--record-replay <path>` CLI option and environment variables (`PUMPFUN_REPLAY_LOG_PATH`, `PUMPFUN_RECORD_REPLAY`) for `pumpbot` and `TradingBot`, continuously capturing empirical market quotes, bonding curve states, and order flow.
+- **Standalone Zero-Capital Harvester CLI (`pumpfun record` / `pumpfun-recorder`)**: Dedicated CLI utility (`pumpfun_trading/cli/record.py`) streaming Yellowstone Geyser gRPC and WebSocket trade feeds directly into standard `.jsonl` replay files without requiring a funded wallet or on-chain transaction execution.
+- **Deterministic Synthetic Scenario Generator (`SyntheticReplayGenerator`)**: Parametric price trajectory generator in `pumpfun_trading/engines/generators.py` modeling extreme bonding curve market dynamics:
+  - `pump_and_dump`: Rapid multi-tier surge (1.0x $\rightarrow$ 4.5x) followed by sharp collapse (0.2x).
+  - `stagnant_curve`: Persistent flat launch valuation at 27.96 SOL market cap to test inactivity exit rules.
+  - `multi_tier_take_profit`: Trajectory triggering Tier 1 TP (2.0x), Tier 2 TP (3.5x), and Moonbag trailing floor.
+  - `gradual_grind`: Organic linear growth curve with realistic stochastic micro-volatility.
+  - `flash_rug`: Sudden post-entry price collapse (1.0x $\rightarrow$ 1.3x $\rightarrow$ 0.05x).
+- **Historical REST Trade Exporter (`RestHistoryExporter`)**: Extracts past trade histories and metadata for specific tokens via `PumpFunApiClient`, sorting chronologically and formatting into replay-compatible `.jsonl` records.
+- **Seamless Replay & Backtest Interoperability**: Full schema compatibility with `PaperTradingEngine` and `pumpfun-replay` for immediate offline strategy calibration and risk stress-testing.

@@ -317,18 +317,29 @@ class PaperTradingEngine:
 
             if mint in positions:
                 position = positions[mint]
-                performance = (price - position["entry_price"]) / position[
-                    "entry_price"
-                ]
+                price_multiplier = (
+                    price / position["entry_price"]
+                    if position["entry_price"] > 0
+                    else 1.0
+                )
                 should_sell = (
                     self._sell_signal(snapshot)
-                    or performance >= self.take_profit
-                    or performance <= -abs(self.stop_loss)
+                    or price_multiplier >= self.take_profit
+                    or price_multiplier <= self.stop_loss
                     or copy_trade_sell_triggered
                 )
                 if should_sell:
-                    exit_value = position["quantity"] * price
+                    fee_rate = self.fee_bps / 10_000.0
+                    slippage_rate = self.slippage_bps / 10_000.0
+                    exec_sell_price = price * (1.0 - slippage_rate)
+                    gross_exit = position["quantity"] * exec_sell_price
+                    exit_value = gross_exit * (1.0 - fee_rate)
                     pnl = exit_value - position["cost_basis"]
+                    return_pct = (
+                        pnl / position["cost_basis"]
+                        if position["cost_basis"] > 0
+                        else 0.0
+                    )
                     reason = "sell_signal"
                     if copy_trade_sell_triggered:
                         reason = f"copy_trade_exit_{copy_wallet_label}"
@@ -336,7 +347,7 @@ class PaperTradingEngine:
                         reason = "bonding_curve_graduated"
                     elif self._sell_signal(snapshot):
                         reason = "sell_signal"
-                    elif performance >= self.take_profit:
+                    elif price_multiplier >= self.take_profit:
                         reason = "take_profit"
                     else:
                         reason = "stop_loss"
@@ -353,7 +364,7 @@ class PaperTradingEngine:
                         "exit_price": price,
                         "quantity": position["quantity"],
                         "pnl": pnl,
-                        "return_pct": performance,
+                        "return_pct": return_pct,
                         "reason": reason,
                     }
                     trades.append(trade)
@@ -370,21 +381,23 @@ class PaperTradingEngine:
                 )
                 and len(positions) < self.max_positions
             ):
-                buy_amount = max(0.0, min(cash * self.buy_fraction, cash))
-                if buy_amount > 0:
-                    fee_ratio = 1.0 + (self.fee_bps + self.slippage_bps) / 10_000.0
-                    gross_cost = buy_amount * fee_ratio
-                    quantity = gross_cost / price if price > 0 else 0.0
-                    if quantity > 0 and cash > 0:
+                spend_budget = max(0.0, min(cash * self.buy_fraction, cash))
+                if spend_budget > 0:
+                    fee_rate = self.fee_bps / 10_000.0
+                    slippage_rate = self.slippage_bps / 10_000.0
+                    net_spend = spend_budget / (1.0 + fee_rate)
+                    exec_price = price * (1.0 + slippage_rate)
+                    quantity = net_spend / exec_price if exec_price > 0 else 0.0
+                    if quantity > 0 and cash >= spend_budget:
                         positions[mint] = {
                             "mint": mint,
                             "name": name,
                             "quantity": quantity,
                             "entry_price": price,
                             "entry_timestamp": self._snapshot_timestamp(snapshot),
-                            "cost_basis": gross_cost,
+                            "cost_basis": spend_budget,
                         }
-                        cash -= gross_cost
+                        cash -= spend_budget
                         if copy_trade_buy_triggered:
                             buy_reason = f"copy_trade_{copy_wallet_label}"
                         elif graduation_triggered:

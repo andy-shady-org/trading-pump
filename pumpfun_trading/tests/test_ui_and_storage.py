@@ -335,3 +335,178 @@ def test_bot_event_recording_and_dashboard_display(tmp_path):
     assert "BUY Mint1111" in output
     assert "monitoring" in output
     assert "•" in output
+
+
+def test_dashboard_partial_exit_remaining_tokens_display():
+    """
+    Regression test for BUG-23:
+    Verifies that when a position has undergone a partial exit, the dashboard
+    positions table displays remaining_token_amount rather than initial_token_amount.
+    """
+    from pumpfun_trading.bot.position_manager import Position
+
+    bot = MagicMock()
+    bot.config = TradingBotConfig(buy_amount_sol=0.1)
+    bot.max_active_positions = 2
+    bot.min_market_cap_sol = 20.0
+    bot.dry_run = False
+    bot.paper_trade = False
+    bot._risk_killed = False
+    bot.state = TradingBotState.HOLDING
+    bot._health_ok = True
+    bot._last_event = "partial exit"
+    bot._last_status = "holding"
+    bot._last_message_at = time.monotonic()
+    bot.stream_url = "wss://pumpportal.fun/api/data"
+    bot.geyser_endpoint = None
+    bot.audit_log_path = None
+    bot._last_new_token_name = "PartialToken"
+    bot._last_health_check = time.monotonic()
+    bot._stop_requested = False
+    bot._observed_tokens_count = 1
+    bot._seen_mints = {}
+    bot._metrics_snapshot.return_value = {
+        "buys": 1,
+        "sells": 1,
+        "failures": 0,
+        "retries": 0,
+        "connection_loss": 0,
+        "stale_data": 0,
+        "latency_ms": {
+            "avg_ms": 1.0,
+            "samples": 1,
+            "last_ms": 1.0,
+            "max_ms": 1.0,
+            "total_ms": 1.0,
+        },
+    }
+    bot._recent_events = []
+    bot._trade_ledger = []
+
+    # Dictionary representation with partial sell (1.0M initial, 500K remaining)
+    bot.active_positions = {
+        "MintDict1111111111111111111111111111111": {
+            "name": "DictPartial",
+            "entry_market_cap": 30.0,
+            "current_market_cap": 60.0,
+            "initial_token_amount": 1_000_000,
+            "remaining_token_amount": 500_000,
+            "token_amount": 500_000,
+            "cost_sol": 0.1,
+            "buy_price": 0.0000001,
+        },
+        "MintObj22222222222222222222222222222222": Position(
+            mint="MintObj22222222222222222222222222222222",
+            name="ObjPartial",
+            entry_market_cap=30.0,
+            current_market_cap=60.0,
+            peak_market_cap=60.0,
+            initial_token_amount=2_000_000,
+            remaining_token_amount=500_000,
+            cost_sol=0.2,
+        ),
+    }
+
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    output = console.export_text()
+
+    # Must display 500.00K for both positions, NOT 1.00M or 2.00M
+    assert "500.00K" in output
+    assert "1.00M" not in output
+    assert "2.00M" not in output
+    assert "DictPartial" in output
+    assert "ObjPartial" in output
+
+
+def test_dashboard_daily_pnl_microsol_and_standard_display():
+    """
+    Regression test for BUG-19:
+    Verifies that the dashboard Risk panel renders micro-SOL (µSOL) for small non-zero PnL
+    and standard SOL for larger PnL / zero PnL, avoiding fixed 4-decimal underflow.
+    """
+    from pumpfun_trading.bot.risk import DailyEquityTracker
+
+    bot = MagicMock()
+    bot.config = TradingBotConfig()
+    bot.max_active_positions = 2
+    bot.min_market_cap_sol = 20.0
+    bot.dry_run = False
+    bot.paper_trade = False
+    bot._risk_killed = False
+    bot.state = TradingBotState.MONITORING
+    bot._health_ok = True
+    bot._last_event = "idle"
+    bot._last_status = "monitoring"
+    bot._last_message_at = time.monotonic()
+    bot.stream_url = "wss://pumpportal.fun/api/data"
+    bot.geyser_endpoint = None
+    bot.audit_log_path = None
+    bot._last_new_token_name = "None"
+    bot._last_health_check = time.monotonic()
+    bot._stop_requested = False
+    bot._observed_tokens_count = 0
+    bot._seen_mints = {}
+    bot._metrics_snapshot.return_value = {
+        "buys": 0,
+        "sells": 0,
+        "failures": 0,
+        "retries": 0,
+        "connection_loss": 0,
+        "stale_data": 0,
+        "latency_ms": {
+            "avg_ms": 1.0,
+            "samples": 1,
+            "last_ms": 1.0,
+            "max_ms": 1.0,
+            "total_ms": 1.0,
+        },
+    }
+    bot._recent_events = []
+    bot._trade_ledger = []
+    bot.active_positions = {}
+
+    tracker = DailyEquityTracker()
+
+    # 1. Zero PnL -> +0.0000 SOL
+    tracker.realized_daily_pnl_sol = 0.0
+    bot.daily_equity_tracker = tracker
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    out0 = console.export_text()
+    assert "Daily PnL" in out0
+    assert "+0.0000 SOL" in out0
+
+    # 2. Small positive micro-SOL PnL (+0.000045 SOL -> +45.0000 µSOL)
+    tracker.realized_daily_pnl_sol = 0.000045
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    out_pos_micro = console.export_text()
+    assert "+45.0000 µSOL" in out_pos_micro
+
+    # 3. Small negative micro-SOL PnL (-0.0001234 SOL -> -123.4000 µSOL)
+    tracker.realized_daily_pnl_sol = -0.0001234
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    out_neg_micro = console.export_text()
+    assert "-123.4000 µSOL" in out_neg_micro
+
+    # 4. Standard SOL positive (+0.05 SOL -> +0.0500 SOL)
+    tracker.realized_daily_pnl_sol = 0.05
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    out_std_pos = console.export_text()
+    assert "+0.0500 SOL" in out_std_pos
+
+    # 5. Standard SOL negative (-0.025 SOL -> -0.0250 SOL)
+    tracker.realized_daily_pnl_sol = -0.025
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    out_std_neg = console.export_text()
+    assert "-0.0250 SOL" in out_std_neg

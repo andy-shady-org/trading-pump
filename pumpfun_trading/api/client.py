@@ -329,6 +329,11 @@ class PumpFunApiClient:
             f"/trades/all/{mint}", params={"limit": limit, "offset": offset}
         )
 
+    async def get_trade_history(
+        self, mint: str, limit: int = 50, offset: int = 0
+    ) -> Any:
+        return await self.get_trades_for_mint(mint, limit=limit, offset=offset)
+
     async def get_trade_count(self, mint: str) -> Any:
         return await self.get(f"/trades/count/{mint}")
 

@@ -319,6 +319,76 @@ def test_circuit_breaker_realistic_pumpfun_lifecycle():
     assert bot.daily_equity_tracker.circuit_breaker_engaged is False
 
 
+def test_circuit_breaker_partial_exit_lifecycle():
+    """
+    Regression test for BUG-21:
+    Verifies that when a position executes a partial exit (e.g. 50% sold at 2.0x),
+    the circuit breaker evaluates remaining holding value accurately (scaled by 50%),
+    preventing over-inflation of peak equity and avoiding false drawdown spikes when the
+    remainder is subsequently closed.
+    """
+    from pumpfun_trading.bot.position_manager import PositionManager
+
+    class MockBot:
+        def __init__(self):
+            self.wallet_balance_sol = 0.90
+            self.config = TradingBotConfig(
+                buy_amount_sol=0.10,
+                max_daily_drawdown_pct=0.15,
+                emergency_hard_lock_hours=24.0,
+            )
+            self.position_manager = PositionManager(self.config)
+            self.active_positions = self.position_manager._positions
+            self.daily_equity_tracker = DailyEquityTracker()
+            self._last_event = ""
+
+    bot = MockBot()
+    # 1. Starting baseline: wallet = 0.90 SOL + buy 0.10 SOL -> baseline = 1.00 SOL
+    mint = "PartialPumpToken11111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint,
+        token_amount=1_000_000,
+        cost_sol=0.10,
+        entry_market_cap=30.0,
+    )
+    is_breached, _ = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    assert bot.daily_equity_tracker.starting_equity_sol == pytest.approx(1.00)
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(1.00)
+
+    # 2. Market cap rises to 60.0 SOL (2.0x) -> open value = 0.20 SOL -> peak equity = 0.90 + 0.20 = 1.10 SOL
+    bot.position_manager.update_price(mint, 60.0)
+    is_breached, _ = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(1.10)
+
+    # 3. Tier 1 partial exit: sell 50% (500k tokens), returning 0.10 SOL to wallet -> wallet = 1.00 SOL
+    closed, rem = bot.position_manager.record_sell(
+        mint, sold_tokens=500_000, proceeds_sol=0.10, target_tier=1, is_partial=True
+    )
+    assert not closed
+    assert rem == 500_000
+    bot.wallet_balance_sol = 1.00
+
+    # With BUG-21 fixed: remaining open value = 0.05 * (60 / 30) = 0.10 SOL
+    # Total equity = 1.00 (wallet) + 0.10 (open) = 1.10 SOL (exact match to peak!)
+    is_breached, _ = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(1.10)
+    assert bot.daily_equity_tracker.calculate_drawdown(
+        bot.wallet_balance_sol, bot.position_manager.calculate_total_open_value()
+    ) == pytest.approx(0.0)
+
+    # 4. Final close of remaining 50% tokens at 60.0 SOL (yielding 0.10 SOL -> wallet = 1.10 SOL)
+    bot.position_manager.record_sell(
+        mint, sold_tokens=500_000, proceeds_sol=0.10, is_partial=False
+    )
+    bot.wallet_balance_sol = 1.10
+    is_breached, _ = evaluate_portfolio_circuit_breaker(bot)
+    assert not is_breached
+    assert bot.daily_equity_tracker.circuit_breaker_engaged is False
+
+
 def test_strategy_presets_circuit_breaker_config():
     cons = resolve_strategy_config("conservative")
     assert cons.max_daily_drawdown_pct == 0.15

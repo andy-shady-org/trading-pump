@@ -8,7 +8,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 
-def format_compact_tokens(amount: int | float) -> str:
+def format_compact_tokens(amount: int | float | None) -> str:
     """Format token amount with compact metric suffixes (K, M, B)."""
     val = float(amount or 0)
     if val <= 0:
@@ -56,7 +56,12 @@ def build_dashboard(bot: Any) -> Panel:
     if isinstance(tracker, DailyEquityTracker) and hasattr(
         tracker, "realized_daily_pnl_sol"
     ):
-        risk.add_row("Daily PnL", f"{tracker.realized_daily_pnl_sol:+.4f} SOL")
+        pnl = float(tracker.realized_daily_pnl_sol or 0.0)
+        if pnl != 0.0 and abs(pnl) < 0.001:
+            pnl_str = f"{pnl * 1_000_000:+.4f} µSOL"
+        else:
+            pnl_str = f"{pnl:+.4f} SOL"
+        risk.add_row("Daily PnL", pnl_str)
         breaker_status = "LOCKED" if tracker.circuit_breaker_engaged else "ok"
         risk.add_row("Circuit breaker", breaker_status)
     else:
@@ -150,32 +155,68 @@ def build_dashboard(bot: Any) -> Panel:
 
     if bot.active_positions:
         for mint, position in bot.active_positions.items():
-            name = str(position.get("name") or mint)
-            entry = float(position.get("entry_market_cap", 0.0) or 0.0)
-            current = float(position.get("current_market_cap", 0.0) or 0.0)
-            cost = float(
-                position.get("cost_sol")
-                or position.get("entry_sol", 0.0)
-                or getattr(bot.config, "buy_amount_sol", 0.0)
-                or 0.0
-            )
-            raw_tokens = (
-                position.get("initial_token_amount")
-                or position.get("token_amount")
-                or position.get("remaining_token_amount")
-                or 0
-            )
-            unit_price = float(
-                position.get("buy_price")
-                or position.get("entry_price")
-                or position.get("price")
-                or (
-                    cost / float(raw_tokens)
-                    if raw_tokens and float(raw_tokens) > 0 and cost > 0
-                    else (entry / 1_000_000_000 if entry > 0 else 0.0)
+            if isinstance(position, dict):
+                name = str(position.get("name") or mint)
+                entry = float(position.get("entry_market_cap", 0.0) or 0.0)
+                current = float(position.get("current_market_cap", 0.0) or 0.0)
+                cost = float(
+                    position.get("cost_sol")
+                    or position.get("entry_sol", 0.0)
+                    or getattr(bot.config, "buy_amount_sol", 0.0)
+                    or 0.0
                 )
-                or 0.0
-            )
+                raw_tokens = (
+                    position.get("remaining_token_amount")
+                    if position.get("remaining_token_amount") is not None
+                    else (
+                        position.get("token_amount")
+                        or position.get("initial_token_amount")
+                        or 0
+                    )
+                )
+                unit_price = float(
+                    position.get("buy_price")
+                    or position.get("entry_price")
+                    or position.get("price")
+                    or (
+                        cost / float(raw_tokens)
+                        if raw_tokens and float(raw_tokens) > 0 and cost > 0
+                        else (entry / 1_000_000_000 if entry > 0 else 0.0)
+                    )
+                    or 0.0
+                )
+                reason = str(position.get("reason") or "watch")
+            else:
+                name = str(getattr(position, "name", mint) or mint)
+                entry = float(getattr(position, "entry_market_cap", 0.0) or 0.0)
+                current = float(getattr(position, "current_market_cap", 0.0) or 0.0)
+                cost = float(
+                    getattr(position, "cost_sol", None)
+                    or getattr(position, "entry_sol", 0.0)
+                    or getattr(bot.config, "buy_amount_sol", 0.0)
+                    or 0.0
+                )
+                raw_tokens = (
+                    getattr(position, "remaining_token_amount", None)
+                    if getattr(position, "remaining_token_amount", None) is not None
+                    else (
+                        getattr(position, "token_amount", None)
+                        or getattr(position, "initial_token_amount", 0)
+                    )
+                )
+                unit_price = float(
+                    getattr(position, "buy_price", None)
+                    or getattr(position, "entry_price", None)
+                    or getattr(position, "price", None)
+                    or (
+                        cost / float(raw_tokens)
+                        if raw_tokens and float(raw_tokens) > 0 and cost > 0
+                        else (entry / 1_000_000_000 if entry > 0 else 0.0)
+                    )
+                    or 0.0
+                )
+                reason = str(getattr(position, "reason", "watch") or "watch")
+
             if unit_price > 0:
                 if unit_price < 0.001:
                     unit_price_str = f"{unit_price * 1_000_000:.4f} µSOL"
@@ -198,7 +239,6 @@ def build_dashboard(bot: Any) -> Panel:
             else:
                 pnl_str = f"{pnl_pct:.2%}"
 
-            reason = str(position.get("reason") or "watch")
             positions_table.add_row(
                 name[:18],
                 mint[:8] + "...",

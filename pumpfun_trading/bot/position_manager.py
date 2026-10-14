@@ -70,6 +70,23 @@ class Position:
             return 1.0
         return self.peak_market_cap / self.entry_market_cap
 
+    @property
+    def remaining_fraction(self) -> float:
+        if self.initial_token_amount <= 0:
+            return 1.0
+        return max(
+            0.0,
+            min(
+                1.0,
+                float(self.remaining_token_amount) / float(self.initial_token_amount),
+            ),
+        )
+
+    @property
+    def effective_cost_sol(self) -> float:
+        cost = self.cost_sol or self.entry_sol
+        return float(cost) * self.remaining_fraction
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -159,6 +176,50 @@ class Position:
             last_price=last_p,
             metadata=dict(data.get("metadata", {}) or {}),
         )
+
+
+def _extract_position_fraction(pos: Any) -> float:
+    """Extracts the fraction of tokens remaining (remaining_tokens / initial_tokens)."""
+    if isinstance(pos, dict):
+        init_tokens = (
+            pos.get("initial_token_amount")
+            or pos.get("token_amount")
+            or pos.get("remaining_token_amount")
+            or 0
+        )
+        if (
+            "remaining_token_amount" in pos
+            and pos["remaining_token_amount"] is not None
+        ):
+            rem_tokens = pos["remaining_token_amount"]
+        elif "token_amount" in pos and pos["token_amount"] is not None:
+            rem_tokens = pos["token_amount"]
+        else:
+            rem_tokens = init_tokens
+    else:
+        init_tokens = (
+            getattr(pos, "initial_token_amount", 0)
+            or getattr(pos, "token_amount", 0)
+            or 0
+        )
+        rem_tokens = getattr(pos, "remaining_token_amount", None)
+        if rem_tokens is None:
+            rem_tokens = getattr(pos, "token_amount", init_tokens)
+
+    try:
+        init_val = float(init_tokens or 0)
+    except (TypeError, ValueError):
+        init_val = 0.0
+
+    if init_val <= 0:
+        return 1.0
+
+    try:
+        rem_val = float(rem_tokens if rem_tokens is not None else init_val)
+    except (TypeError, ValueError):
+        rem_val = init_val
+
+    return max(0.0, min(1.0, rem_val / init_val))
 
 
 class PositionManager:
@@ -388,26 +449,34 @@ class PositionManager:
         return decision
 
     def calculate_unrealized_pnl(
-        self, mint: str, current_market_cap: float | None = None
+        self, mint: str | None = None, current_market_cap: float | None = None
     ) -> float:
-        if mint not in self._positions:
-            return 0.0
-        pos = self._positions[mint]
-        entry_mc = float(pos.get("entry_market_cap", 0.0) or 0.0)
-        curr_mc = (
-            float(current_market_cap)
-            if current_market_cap is not None
-            else float(pos.get("current_market_cap", 0.0) or 0.0)
-        )
-        cost_sol = float(
-            pos.get("cost_sol")
-            or pos.get("entry_sol", self.config.buy_amount_sol)
-            or self.config.buy_amount_sol
-        )
-        if entry_mc <= 0:
-            return 0.0
-        current_value = cost_sol * (curr_mc / entry_mc)
-        return current_value - cost_sol
+        if mint is not None:
+            if mint not in self._positions:
+                return 0.0
+            pos = self._positions[mint]
+            entry_mc = float(pos.get("entry_market_cap", 0.0) or 0.0)
+            curr_mc = (
+                float(current_market_cap)
+                if current_market_cap is not None
+                else float(pos.get("current_market_cap", 0.0) or 0.0)
+            )
+            cost_sol = float(
+                pos.get("cost_sol")
+                or pos.get("entry_sol", self.config.buy_amount_sol)
+                or self.config.buy_amount_sol
+            )
+            if entry_mc <= 0:
+                return 0.0
+            fraction = _extract_position_fraction(pos)
+            effective_cost = cost_sol * fraction
+            current_value = effective_cost * (curr_mc / entry_mc)
+            return current_value - effective_cost
+
+        total_pnl = 0.0
+        for m in list(self._positions.keys()):
+            total_pnl += self.calculate_unrealized_pnl(m)
+        return total_pnl
 
     def calculate_total_open_value(self) -> float:
         total = 0.0
@@ -424,11 +493,13 @@ class PositionManager:
             if cost is None:
                 cost = default_cost
             cost_sol = float(cost or 0.0)
+            fraction = _extract_position_fraction(pos)
+            effective_cost = cost_sol * fraction
 
             if entry_mc > 0:
-                total += cost_sol * (curr_mc / entry_mc)
+                total += effective_cost * (curr_mc / entry_mc)
             else:
-                total += cost_sol
+                total += effective_cost
         return total
 
     def remove_position(self, mint: str) -> dict[str, Any] | None:

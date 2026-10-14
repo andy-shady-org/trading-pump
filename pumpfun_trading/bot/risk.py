@@ -220,6 +220,8 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
         open_val_sol = 0.0
         for pos in open_positions.values():
             cost = _extract_position_cost(pos, default_cost)
+            fraction = _extract_position_fraction(pos)
+            effective_cost = cost * fraction
             if isinstance(pos, dict):
                 entry_mc = float(pos.get("entry_market_cap", 0.0) or 0.0)
                 if pos.get("current_market_cap") is not None:
@@ -232,9 +234,9 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
                 curr_mc = float(curr_val if curr_val is not None else entry_mc)
 
             if entry_mc > 0:
-                open_val_sol += cost * (curr_mc / entry_mc)
+                open_val_sol += effective_cost * (curr_mc / entry_mc)
             else:
-                open_val_sol += cost
+                open_val_sol += effective_cost
 
     max_drawdown = float(getattr(bot.config, "max_daily_drawdown_pct", 0.15))
     lock_hours = float(getattr(bot.config, "emergency_hard_lock_hours", 24.0))
@@ -267,6 +269,50 @@ def _extract_position_cost(pos: Any, default_cost: float = 0.0) -> float:
     return float(cost or 0.0)
 
 
+def _extract_position_fraction(pos: Any) -> float:
+    """Extracts the fraction of tokens remaining (remaining_tokens / initial_tokens)."""
+    if isinstance(pos, dict):
+        init_tokens = (
+            pos.get("initial_token_amount")
+            or pos.get("token_amount")
+            or pos.get("remaining_token_amount")
+            or 0
+        )
+        if (
+            "remaining_token_amount" in pos
+            and pos["remaining_token_amount"] is not None
+        ):
+            rem_tokens = pos["remaining_token_amount"]
+        elif "token_amount" in pos and pos["token_amount"] is not None:
+            rem_tokens = pos["token_amount"]
+        else:
+            rem_tokens = init_tokens
+    else:
+        init_tokens = (
+            getattr(pos, "initial_token_amount", 0)
+            or getattr(pos, "token_amount", 0)
+            or 0
+        )
+        rem_tokens = getattr(pos, "remaining_token_amount", None)
+        if rem_tokens is None:
+            rem_tokens = getattr(pos, "token_amount", init_tokens)
+
+    try:
+        init_val = float(init_tokens or 0)
+    except (TypeError, ValueError):
+        init_val = 0.0
+
+    if init_val <= 0:
+        return 1.0
+
+    try:
+        rem_val = float(rem_tokens if rem_tokens is not None else init_val)
+    except (TypeError, ValueError):
+        rem_val = init_val
+
+    return max(0.0, min(1.0, rem_val / init_val))
+
+
 def check_risk_limits(
     bot: Any,
     *,
@@ -294,22 +340,19 @@ def check_risk_limits(
         bot._last_event = f"risk limit: mint already active {mint[:8]}..."
         return False
 
-    if current_positions:
-        max_per_token_ratio = (
-            max(
-                _extract_position_cost(pos, default_cost)
-                / bot.config.max_total_exposure_sol
-                for pos in current_positions.values()
-            )
-            if bot.config.max_total_exposure_sol > 0
-            else 0.0
-        )
-        if max_per_token_ratio > float(
-            getattr(bot.config, "max_token_concentration_pct", 0.35)
-        ):
+    max_concentration_pct = float(
+        getattr(bot.config, "max_token_concentration_pct", 0.35)
+    )
+    if bot.config.max_total_exposure_sol > 0:
+        candidate_costs = [
+            _extract_position_cost(pos, default_cost)
+            for pos in current_positions.values()
+        ] + [proposed_entry_sol]
+        max_per_token_ratio = max(candidate_costs) / bot.config.max_total_exposure_sol
+        if max_per_token_ratio > max_concentration_pct:
             bot._last_event = (
                 "risk limit: per-token concentration cap reached "
-                f"({max_per_token_ratio:.2%} > {float(getattr(bot.config, 'max_token_concentration_pct', 0.35)):.2%})"
+                f"({max_per_token_ratio:.2%} > {max_concentration_pct:.2%})"
             )
             return False
 
@@ -329,7 +372,7 @@ def check_daily_drawdown(bot: Any) -> bool:
         getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0
     )
     total_equity = sum(
-        _extract_position_cost(pos, default_cost)
+        _extract_position_cost(pos, default_cost) * _extract_position_fraction(pos)
         for pos in bot.active_positions.values()
     )
     if total_equity <= 0:
@@ -338,6 +381,8 @@ def check_daily_drawdown(bot: Any) -> bool:
     current_val = 0.0
     for pos in bot.active_positions.values():
         cost = _extract_position_cost(pos, default_cost)
+        fraction = _extract_position_fraction(pos)
+        effective_cost = cost * fraction
         if isinstance(pos, dict):
             entry_mc = float(pos.get("entry_market_cap", 0.0) or 0.0)
             curr_mc = float(pos.get("current_market_cap", entry_mc) or entry_mc)
@@ -346,9 +391,9 @@ def check_daily_drawdown(bot: Any) -> bool:
             curr_mc = float(getattr(pos, "current_market_cap", entry_mc) or entry_mc)
 
         if entry_mc > 0:
-            current_val += cost * (curr_mc / entry_mc)
+            current_val += effective_cost * (curr_mc / entry_mc)
         else:
-            current_val += cost
+            current_val += effective_cost
 
     drawdown = 1.0 - (current_val / total_equity)
     if drawdown > bot.config.max_daily_drawdown_pct:

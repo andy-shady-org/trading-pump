@@ -186,6 +186,66 @@ def test_risk_limits_realistic_market_cap_and_fallbacks():
     assert "concentration cap reached" in bot._last_event
 
 
+def test_risk_limits_proposed_trade_concentration_cap_rejection():
+    """
+    Regression test for BUG-22:
+    Ensure per-token concentration check evaluates proposed candidate trade outlay
+    (proposed_entry_sol / max_total_exposure_sol) against max_token_concentration_pct
+    even when existing active positions are empty or hold small allocations.
+    """
+    bot = MagicMock()
+    bot.config = TradingBotConfig(
+        max_total_exposure_sol=0.25,
+        max_position_size_sol=0.20,
+        buy_amount_sol=0.05,
+        max_token_concentration_pct=0.35,  # 35% max per token = 0.0875 SOL max
+    )
+    bot._last_event = ""
+
+    # 1. Empty positions: proposed trade of 0.10 SOL is 40% of max exposure (0.10 / 0.25) -> rejected
+    assert not check_risk_limits(
+        bot,
+        mint="CandidateMint1",
+        proposed_entry_sol=0.10,
+        current_positions={},
+    )
+    assert "concentration cap reached" in bot._last_event
+    assert "40.00% > 35.00%" in bot._last_event
+
+    # 2. Empty positions: proposed trade of 0.08 SOL is 32% of max exposure (0.08 / 0.25) -> allowed
+    assert check_risk_limits(
+        bot,
+        mint="CandidateMint1",
+        proposed_entry_sol=0.08,
+        current_positions={},
+    )
+
+    # 3. Small existing position (0.02 SOL): proposed oversized trade of 0.10 SOL -> rejected
+    small_positions = {
+        "ExistingMint": {
+            "cost_sol": 0.02,
+            "entry_sol": 0.02,
+            "entry_market_cap": 28.0,
+        }
+    }
+    assert not check_risk_limits(
+        bot,
+        mint="CandidateMint2",
+        proposed_entry_sol=0.10,
+        current_positions=small_positions,
+    )
+    assert "concentration cap reached" in bot._last_event
+    assert "40.00% > 35.00%" in bot._last_event
+
+    # 4. Small existing position (0.02 SOL): compliant proposed trade of 0.05 SOL (20% <= 35%) -> allowed
+    assert check_risk_limits(
+        bot,
+        mint="CandidateMint2",
+        proposed_entry_sol=0.05,
+        current_positions=small_positions,
+    )
+
+
 def test_daily_drawdown_and_trade_loss():
     bot = MagicMock()
     bot.config = TradingBotConfig(

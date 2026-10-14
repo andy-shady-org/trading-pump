@@ -67,6 +67,23 @@ This document outlines high-impact architectural enhancements, alpha generation 
   - Compute rolling 30-second and 60-second order flow metrics: `Buy Volume / Sell Volume` ratio, `Unique Buyer Count`, and `Trade Velocity (tx/sec)`.
   - Trigger momentum entry signals when trade velocity spikes above statistical standard deviations (Z-score > 2.5).
 
+### FEAT-21: Asynchronous Market Stream Recorder & Historical Replay Dataset Generator
+* **Goal:** Produce rich, continuous historical market replay datasets (`.jsonl`) for backtesting, strategy calibration, and deterministic exit-rule stress testing without introducing I/O latency contention or risking live execution capital.
+* **Architecture & Capabilities:**
+  - **Non-Blocking Asynchronous Live Recorder:**
+    - Opt-in background recording hook in `TradingBot` enabled via `--record-replay <path>` or `PUMPFUN_RECORD_REPLAY=true` / `PUMPFUN_REPLAY_LOG_PATH`.
+    - Dispatches incoming market quotes and trade events into an in-memory `asyncio.Queue`, batch-flushing records to disk (50–100 records or every 5 seconds) in a background task to decouple disk I/O from critical sub-millisecond execution paths.
+    - Selectively captures price trajectories, bonding curve reserve updates, and order flow metrics for active and tracked tokens.
+  - **Standalone Market Harvester CLI (`pumpfun record`):**
+    - Dedicated zero-capital market ingestion process connecting directly to Yellowstone Geyser gRPC and WebSocket streams.
+    - Persists continuous time-series token quotes and trade events directly into standardized JSONL datasets without trading account overhead.
+  - **Deterministic Synthetic Scenario & REST Exporter Tooling:**
+    - Synthetic trajectory generator creating parameterized market curves (e.g. parabolic 5x pumps, flash dev dumps, flat stagnant curves at 27.96 SOL) for deterministic exit rule verification.
+    - Historical REST trade exporter extracting chronological trades from `PumpFunApiClient` and converting them into `.jsonl` replay files.
+* **Financial & Empirical Impact:**
+  - Maximizes net strategy yield and expected utility by providing empirical market datasets for offline parameter optimization and backtesting.
+  - Eliminates execution slippage and transaction drop risks caused by disk I/O blocking during live high-frequency trading.
+
 ---
 
 ## 3. Reliability, Infrastructure & Risk Controls
@@ -132,3 +149,5 @@ To maximize capital preservation, operational efficiency, and risk-adjusted alph
    - *Rationale:* Decomposes the monolithic `run.py` runtime into decoupled modules (position manager, order executor, token enricher, event router) adhering to SOLID principles before adding Web UI complexity.
 6. **Priority 6: Sprint 16 — Full-Featured Web Control Dashboard, FastAPI Portal & Telegram Bot (FEAT-10)**
    - *Rationale:* Delivers the comprehensive browser-based command center, hot config management, and embedded documentation reader.
+7. **Priority 7: Sprint 17 — Asynchronous Market Stream Recorder & Historical Replay Dataset Generator (FEAT-21)**
+   - *Rationale:* Maximizes system utility by providing the empirical data pipeline required for offline backtesting, strategy parameter tuning, and risk calibration, while strictly isolating disk I/O into non-blocking background queues to protect live execution latencies.

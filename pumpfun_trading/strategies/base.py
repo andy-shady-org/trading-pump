@@ -85,6 +85,7 @@ class TradingBotConfig:
     rpc_pool_circuit_breaker_threshold: int = 3
     rpc_pool_circuit_breaker_cooldown_seconds: float = 60.0
     rpc_pool_broadcast_concurrency: int = 3
+    replay_log_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -165,6 +166,7 @@ class TradingBotConfig:
             "rpc_pool_circuit_breaker_threshold": self.rpc_pool_circuit_breaker_threshold,
             "rpc_pool_circuit_breaker_cooldown_seconds": self.rpc_pool_circuit_breaker_cooldown_seconds,
             "rpc_pool_broadcast_concurrency": self.rpc_pool_broadcast_concurrency,
+            "replay_log_path": self.replay_log_path,
         }
 
     @classmethod

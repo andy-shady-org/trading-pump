@@ -17,7 +17,7 @@ graph TD
     RISK["docs/RISK.md<br/>(Capital Protection & Circuit Breakers)"]
     WUI["docs/WEB-UI.md<br/>(Web Dashboard & Hosted Instances)"]
     TUI["docs/TERMINAL-UI.md<br/>(Terminal UI & Operator Self-Funding)"]
-    FEAT["docs/FEATURES.md<br/>(Complete Feature Catalog FEAT-01..20)"]
+    FEAT["docs/FEATURES.md<br/>(Complete Feature Catalog FEAT-01..21)"]
     REPLAY["docs/REPLAY-ENGINE.md<br/>(Backtesting & Strategy Playback)"]
     AUDIT["docs/AUDIT-TOOL.md<br/>(Forensic Audit & Trade Accounting)"]
 
@@ -35,7 +35,7 @@ graph TD
 * [**Capital Protection & Risk Management (`docs/RISK.md`)**](RISK.md): Multi-tier risk hierarchy, maximum portfolio exposure caps, daily hard-stop circuit breakers (FEAT-09), private mempool Jito MEV protection, and startup on-chain position reconciliation.
 * [**Web Dashboard & Hosted User Blueprint (`docs/WEB-UI.md`)**](WEB-UI.md): Modern FastAPI browser control center (FEAT-10), isolated user sandboxes, volatile in-memory key upload architecture (zero plaintext disk storage), hot configuration mutation, and live equity analytics.
 * [**Terminal Operations & Self-Funding Guide (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md): Zero-dependency console monitor (`pumpbot`), sub-millisecond slot latency telemetry, alternate-screen buffer rendering, and multi-channel alerting (Discord, Slack, Telegram).
-* [**Standardized Feature Catalog (`docs/FEATURES.md`)**](FEATURES.md): Comprehensive reference catalog for all architectural capabilities (FEAT-01 through FEAT-20).
+* [**Standardized Feature Catalog (`docs/FEATURES.md`)**](FEATURES.md): Comprehensive reference catalog for all architectural capabilities (FEAT-01 through FEAT-21).
 * [**Replay Engine & Backtesting (`docs/REPLAY-ENGINE.md`)**](REPLAY-ENGINE.md): Historical market simulation tool (`pumpfun-replay`) for backtesting strategies and tuning parameter profiles against recorded bonding curve datasets.
 * [**Forensic Audit Tool (`docs/AUDIT-TOOL.md`)**](AUDIT-TOOL.md): Trade accounting and telemetry inspector (`pumpfun-audit`) for analyzing execution performance, slippage, and state transitions.
 * [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](dev/README.md): Internal sprint backlog, bug resolution tracking, architectural suggestions, release gate checklists, and operations runbook for contributors.
@@ -242,6 +242,23 @@ pumpfun-audit --path runtime/audit_trail.jsonl --summary
 pumpfun-audit --path runtime/audit_trail.jsonl --mint-name SolCat --limit 20
 ```
 
+### Workflow 5: Market Stream Harvesting & Replay Dataset Generation (FEAT-21)
+Capture live market quotes or generate deterministic synthetic price curves for strategy calibration without financial risk:
+
+```bash
+# Record live stream during bot operations (non-blocking async queue)
+pumpbot --preset balanced --record-replay runtime/live_harvest.jsonl
+
+# Standalone market stream harvester (zero capital required)
+pumpfun record --output runtime/market_stream.jsonl --duration 300
+
+# Generate deterministic synthetic scenario (e.g. multi-tier take-profit or stagnant curve)
+pumpfun record --synthetic multi_tier_take_profit --output runtime/synth_tp.jsonl --synthetic-steps 100
+
+# Export historical trades for a specific token via REST API
+pumpfun record --from-mint <MINT_ADDRESS> --output runtime/token_history.jsonl --limit 200
+```
+
 ---
 
 ## 7. Complete CLI Command & Flag Matrix
@@ -251,21 +268,28 @@ The system provides dedicated binary entry points as well as the unified `pumpfu
 | Command | Subcommand / Option | Allowed Values | Description |
 | :--- | :--- | :--- | :--- |
 | `pumpbot` | `--preset` | `conservative`, `balanced`, `aggressive` | Selects predefined risk and strategy parameters. |
-| | `--buy-sol` | Float (e.g. `0.1`) | Overrides base buy allocation in SOL per trade. |
-| | `--slippage-bps` | Integer (e.g. `250`) | Maximum slippage tolerance in basis points. |
-| | `--headless` | Flag | Disables Rich alternate-screen UI for headless daemon logging. |
+| | `--buy-amount-sol` | Float (e.g. `0.1`) | Overrides base buy allocation in SOL per trade. |
+| | `--take-profit` | Float (e.g. `2.0`) | Overrides take-profit multiplier threshold. |
+| | `--stop-loss` | Float (e.g. `0.85`) | Overrides stop-loss multiplier threshold. |
+| | `--record-replay` | File path (`.jsonl`) | Asynchronously persists live market quotes and trade events into replay dataset (FEAT-21). |
 | | `--dry-run` | Flag | Simulates order execution without submitting transactions. |
+| | `--paper-trade` | Flag | Runs bot in paper trading mode. |
 | | `--config` | File path (`.json`) | Loads a custom strategy and risk configuration file. |
-| | `--log-level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | Sets terminal and file logging verbosity. |
 | `pumpfun-replay` | `--path` | File path (`.json`, `.jsonl`) | Path to historical market data snapshot dataset. |
 | | `--mode` | `dashboard`, `summary`, `trades` | Visual output mode for replay results. |
 | | `--mint` | Base58 string | Filters replay evaluation to a specific mint address. |
 | | `--mint-name` | String | Filters replay evaluation by token name. |
+| `pumpfun-recorder` / `pumpfun record` | `--output`, `-o` | File path (`.jsonl`) | Destination file for recorded replay dataset (default: `market_replay.jsonl`). |
+| | `--duration`, `-d` | Float (seconds) | Maximum recording duration before stopping. |
+| | `--limit`, `-l` | Integer | Maximum snapshot record count before stopping. |
+| | `--synthetic` | `pump_and_dump`, `stagnant_curve`, `multi_tier_take_profit`, `gradual_grind`, `flash_rug` | Generates parametric synthetic price curves for strategy validation. |
+| | `--from-mint` | Base58 string | Exports historical trades for a specific token via REST API. |
+| | `--geyser-endpoint` | URL | Yellowstone Geyser gRPC stream endpoint. |
 | `pumpfun-audit` | `--path` | File path (`.jsonl`) | Path to audit trail log file. |
 | | `--summary` | Flag | Displays aggregated financial and execution metrics. |
 | | `--limit` | Integer (e.g. `50`) | Limits the number of audit records displayed. |
 | | `--mint-name` | String | Filters audit trail by token name. |
-| `pumpfun-cli` | `run` / `replay` / `audit` / `api` | Subcommands | Unified CLI interface routing to all system modules. |
+| `pumpfun-cli` / `pumpfun` | `bot` / `replay` / `record` / `audit` / `latest-coins` / `market-info` | Subcommands | Unified CLI interface routing to all system modules. |
 
 ---
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 
 from rich.console import Console
 
@@ -115,9 +116,9 @@ def test_paper_trading_engine_simulation_and_metrics():
             "timestamp": 103,
             "buy_signal": True,
         },
-        # Mint1 take profit (performance (26-10)/10 = 1.6 >= 1.5)
+        # Mint1 take profit (multiplier 26/10 = 2.6 >= 1.5)
         {"mint": "Mint1", "name": "M1", "price": 26.0, "timestamp": 104},
-        # Mint2 stop loss (performance (0.5-5)/5 = -0.9 <= -0.8)
+        # Mint2 stop loss (multiplier 0.5/5 = 0.1 <= 0.8)
         {"mint": "Mint2", "name": "M2", "price": 0.5, "timestamp": 105},
     ]
 
@@ -345,3 +346,98 @@ def test_paper_trading_engine_with_copy_trading():
     assert summary["trades"][0]["reason"] == "copy_trade_Whale999"
     assert summary["trades"][1]["action"] == "sell"
     assert summary["trades"][1]["reason"] == "copy_trade_exit_Whale999"
+
+
+def test_paper_trading_engine_exact_multiplier_exits():
+    """Verify take-profit at 1.5x and stop-loss at 0.85x trigger accurately."""
+    engine = PaperTradingEngine(
+        initial_cash=100.0,
+        fee_bps=0,
+        slippage_bps=0,
+        buy_fraction=1.0,
+        take_profit=1.5,
+        stop_loss=0.85,
+    )
+
+    # 1. Take Profit Test (Entry @ 10.0 -> 14.9 [Hold] -> 15.0 [TP exit])
+    tp_snapshots = [
+        {"mint": "MintTP", "price": 10.0, "timestamp": 1, "buy_signal": True},
+        {"mint": "MintTP", "price": 14.9, "timestamp": 2},  # 1.49x, below 1.5x
+        {"mint": "MintTP", "price": 15.0, "timestamp": 3},  # 1.50x, triggers TP
+    ]
+    tp_summary = engine.run(tp_snapshots)
+    assert tp_summary["total_trades"] == 2
+    assert tp_summary["trades"][1]["action"] == "sell"
+    assert tp_summary["trades"][1]["reason"] == "take_profit"
+    assert tp_summary["trades"][1]["exit_price"] == 15.0
+    assert tp_summary["trades"][1]["pnl"] == pytest.approx(50.0)
+    assert tp_summary["trades"][1]["return_pct"] == pytest.approx(0.50)
+
+    # 2. Stop Loss Test (Entry @ 10.0 -> 8.6 [Hold] -> 8.5 [SL exit])
+    sl_engine = PaperTradingEngine(
+        initial_cash=100.0,
+        fee_bps=0,
+        slippage_bps=0,
+        buy_fraction=1.0,
+        take_profit=2.0,
+        stop_loss=0.85,
+    )
+    sl_snapshots = [
+        {"mint": "MintSL", "price": 10.0, "timestamp": 1, "buy_signal": True},
+        {"mint": "MintSL", "price": 8.6, "timestamp": 2},  # 0.86x, above 0.85x
+        {"mint": "MintSL", "price": 8.5, "timestamp": 3},  # 0.85x, triggers SL
+    ]
+    sl_summary = sl_engine.run(sl_snapshots)
+    assert sl_summary["total_trades"] == 2
+    assert sl_summary["trades"][1]["action"] == "sell"
+    assert sl_summary["trades"][1]["reason"] == "stop_loss"
+    assert sl_summary["trades"][1]["exit_price"] == 8.5
+    assert sl_summary["trades"][1]["pnl"] == pytest.approx(-15.0)
+    assert sl_summary["trades"][1]["return_pct"] == pytest.approx(-0.15)
+
+
+def test_paper_trading_engine_fee_slippage_and_cash_budget():
+    """Verify fee/slippage friction reduces quantities, sell proceeds, and preserves cash >= 0."""
+    engine = PaperTradingEngine(
+        initial_cash=100.0,
+        fee_bps=100,  # 1% fee
+        slippage_bps=100,  # 1% slippage
+        buy_fraction=1.0,
+        take_profit=2.0,
+        stop_loss=0.5,
+    )
+
+    snapshots = [
+        # Buy with 100% of cash (100.0 SOL) at price 10.0
+        {"mint": "MintFriction", "price": 10.0, "timestamp": 1, "buy_signal": True},
+        # Flat price exit via sell signal
+        {"mint": "MintFriction", "price": 10.0, "timestamp": 2, "sell_signal": True},
+    ]
+
+    summary = engine.run(snapshots)
+    assert summary["total_trades"] == 2
+    buy_trade = summary["trades"][0]
+    sell_trade = summary["trades"][1]
+
+    # Buy friction assertions:
+    # net_spend = 100 / 1.01 = 99.0099...
+    # exec_price = 10 * 1.01 = 10.1
+    # quantity = 99.0099 / 10.1 = 9.80296...
+    expected_qty = (100.0 / 1.01) / (10.0 * 1.01)
+    assert buy_trade["quantity"] == pytest.approx(expected_qty, rel=1e-5)
+    assert (
+        buy_trade["quantity"] < 10.0
+    )  # Strictly fewer tokens than frictionless 100/10
+
+    # Sell friction assertions:
+    # exec_sell_price = 10 * 0.99 = 9.9
+    # gross_exit = quantity * 9.9 = 97.0493...
+    # exit_value = gross_exit * 0.99 = 96.0788...
+    expected_exit_value = (expected_qty * (10.0 * 0.99)) * 0.99
+    expected_pnl = expected_exit_value - 100.0
+    expected_return_pct = expected_pnl / 100.0
+
+    assert sell_trade["pnl"] == pytest.approx(expected_pnl, rel=1e-5)
+    assert sell_trade["return_pct"] == pytest.approx(expected_return_pct, rel=1e-5)
+    assert summary["final_equity"] == pytest.approx(expected_exit_value, rel=1e-5)
+    assert summary["final_equity"] >= 0.0

@@ -305,3 +305,110 @@ def test_position_manager_evaluate_exit_stagnant_timeout(base_config: TradingBot
     assert dec_exit is not None
     assert dec_exit.action == ExitAction.FULL_EXIT
     assert dec_exit.exit_type == "stagnant_timeout"
+
+
+def test_position_dataclass_fraction_and_effective_cost():
+    pos = Position(
+        mint="Mint1",
+        name="TestCoin",
+        entry_market_cap=30.0,
+        current_market_cap=60.0,
+        peak_market_cap=60.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        cost_sol=0.10,
+        entry_sol=0.10,
+    )
+    assert pos.remaining_fraction == 1.0
+    assert pos.effective_cost_sol == 0.10
+
+    # After 50% partial exit
+    pos.remaining_token_amount = 500_000
+    assert pos.remaining_fraction == 0.50
+    assert pytest.approx(pos.effective_cost_sol, rel=1e-5) == 0.05
+
+    # After 75% partial exit (25% remaining)
+    pos.remaining_token_amount = 250_000
+    assert pos.remaining_fraction == 0.25
+    assert pytest.approx(pos.effective_cost_sol, rel=1e-5) == 0.025
+
+    # Zero initial tokens edge case
+    pos_zero = Position(
+        mint="MintZero",
+        name="ZeroInit",
+        entry_market_cap=30.0,
+        current_market_cap=30.0,
+        peak_market_cap=30.0,
+        initial_token_amount=0,
+        remaining_token_amount=0,
+        cost_sol=0.05,
+    )
+    assert pos_zero.remaining_fraction == 1.0
+    assert pos_zero.effective_cost_sol == 0.05
+
+
+def test_position_manager_partial_exit_valuation_and_pnl(
+    base_config: TradingBotConfig,
+):
+    """
+    Regression test for BUG-21:
+    Verifies that after Tier 1 (50% sell) and Tier 2 (25% sell) partial exits,
+    calculate_total_open_value and calculate_unrealized_pnl accurately scale
+    by remaining token fraction rather than remaining at 100% of initial cost.
+    """
+    pm = PositionManager(base_config)
+    pm.record_buy(
+        mint="MintPartial",
+        token_amount=1_000_000,
+        cost_sol=0.10,
+        entry_market_cap=30.0,
+        name="PartialToken",
+    )
+
+    # 1. At 2.0x market cap (60.0 SOL) before any sell:
+    # Open value = 0.10 * (60 / 30) = 0.20 SOL
+    # Unrealized PnL = 0.20 - 0.10 = +0.10 SOL
+    pm.update_price("MintPartial", 60.0)
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.20
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.10
+
+    # 2. Execute Tier 1 partial sell (50% = 500,000 tokens)
+    closed, rem_tokens = pm.record_sell(
+        "MintPartial",
+        sold_tokens=500_000,
+        proceeds_sol=0.10,
+        target_tier=1,
+        is_partial=True,
+    )
+    assert not closed
+    assert rem_tokens == 500_000
+
+    # Remaining position is 50% of initial tokens (effective cost basis = 0.05 SOL)
+    # Open value at 60.0 SOL = 0.05 * (60 / 30) = 0.10 SOL
+    # Unrealized PnL = 0.10 - 0.05 = +0.05 SOL
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.10
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.05
+
+    # 3. Market cap surges to 3.5x (105.0 SOL)
+    pm.update_price("MintPartial", 105.0)
+    # Open value at 105.0 SOL = 0.05 * (105 / 30) = 0.175 SOL
+    # Unrealized PnL = 0.175 - 0.05 = +0.125 SOL
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.175
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.125
+
+    # 4. Execute Tier 2 partial sell (250,000 tokens, leaving 250,000 tokens = 25% moonbag)
+    closed, rem_tokens = pm.record_sell(
+        "MintPartial",
+        sold_tokens=250_000,
+        proceeds_sol=0.0875,
+        target_tier=2,
+        is_partial=True,
+    )
+    assert not closed
+    assert rem_tokens == 250_000
+
+    # Remaining moonbag position is 25% of initial tokens (effective cost basis = 0.025 SOL)
+    # Open value at 105.0 SOL = 0.025 * (105 / 30) = 0.0875 SOL
+    # Unrealized PnL = 0.0875 - 0.025 = +0.0625 SOL
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.0875
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.0625

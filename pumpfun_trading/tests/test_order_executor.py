@@ -57,6 +57,16 @@ async def test_order_executor_dry_run():
     assert sell_res.dry_run
     assert not sell_res.is_buy
     assert sell_res.token_amount == 500_000
+    assert sell_res.amount_sol == 0.0
+
+    # With min_sol_output_lamports
+    sell_res_lamports = await executor.execute_sell(
+        "Mint111",
+        500_000,
+        min_sol_output_lamports=50_000_000,
+        reason="dry_sell_lamports",
+    )
+    assert sell_res_lamports.amount_sol == pytest.approx(0.05)
 
 
 @pytest.mark.asyncio
@@ -95,9 +105,87 @@ async def test_order_executor_live_sell(
     res = await executor.execute_sell("Mint111", 500_000, slippage_bps=500)
     assert res.success
     assert res.signature == "SellSignature111"
+    assert res.amount_sol == pytest.approx(0.50)  # 500_000_000 lamports
     mock_exec_client.sell.assert_awaited_once_with(
         "Mint111", "BondingCurvePubkey111", 500_000, min_sol_output=500_000_000
     )
+
+
+@pytest.mark.asyncio
+async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
+    """
+    Regression test for BUG-18:
+    Verifies that when _sell_token executes (full or partial), the resulting
+    sell_price and exit proceeds are accurately populated and written to the audit log.
+    """
+    from pumpfun_trading.bot.run import TradingBot
+
+    audit_file = tmp_path / "audit.jsonl"
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        dry_run=True,
+        audit_log_path=str(audit_file),
+    )
+
+    mint = "MintSellTest111111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint,
+        token_amount=1_000_000,
+        cost_sol=0.10,
+        entry_market_cap=30.0,
+        name="SellTestToken",
+    )
+    bot.position_manager.update_price(mint, 60.0)  # 2x price surge
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    # 1. Execute partial sell (50%)
+    success = await bot._sell_token(
+        mint=mint,
+        sell_amount_tokens=500_000,
+        sell_fraction=0.5,
+        reason="tier1_take_profit",
+        target_tier=1,
+    )
+    assert success
+    assert len(bot._trade_ledger) == 1
+    last_trade = bot._trade_ledger[-1]
+    assert last_trade["action"] == "partial_sell"
+    # Cost basis for 50% is 0.05 SOL, exit proceeds at 2x is 0.10 SOL
+    assert last_trade["exit"] == pytest.approx(0.10)
+    assert last_trade["sell_price"] == pytest.approx(0.10)
+    assert last_trade["entry"] == pytest.approx(0.05)
+
+    # 2. Execute full exit on remaining 50%
+    success_full = await bot._sell_token(
+        mint=mint,
+        reason="stop_loss",
+    )
+    assert success_full
+    assert len(bot._trade_ledger) == 2
+    full_trade = bot._trade_ledger[-1]
+    assert full_trade["action"] == "sell"
+    assert full_trade["exit"] == pytest.approx(0.10)
+    assert full_trade["sell_price"] == pytest.approx(0.10)
+
+    # Verify audit file lines contain valid sell_price
+    assert audit_file.exists()
+    lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
+    import json
+
+    trade_records = [
+        json.loads(line) for line in lines if json.loads(line).get("type") == "trade"
+    ]
+    assert len(trade_records) == 2
+    assert trade_records[0]["payload"]["sell_price"] == pytest.approx(0.10)
+    assert trade_records[1]["payload"]["sell_price"] == pytest.approx(0.10)
+
+    # Verify DailyEquityTracker realized PnL was incremented on both partial and full sells
+    # Partial sell PnL = 0.10 - 0.05 = +0.05 SOL
+    # Full sell PnL = 0.10 - 0.05 = +0.05 SOL
+    # Total realized daily PnL = +0.10 SOL
+    assert bot.daily_equity_tracker.realized_daily_pnl_sol == pytest.approx(0.10)
 
 
 @pytest.mark.asyncio

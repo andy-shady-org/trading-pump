@@ -8,6 +8,7 @@ import signal
 import sys
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any, Optional
 
 import aiohttp
@@ -29,6 +30,7 @@ from pumpfun_trading.bot.lifecycle import (
 )
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
 from pumpfun_trading.bot.position_manager import PositionManager
+from pumpfun_trading.bot.recorder import ReplayRecorder
 from pumpfun_trading.bot.risk import (
     DailyEquityTracker,
     check_daily_drawdown,
@@ -96,6 +98,7 @@ class TradingBot:
         strategy_preset: str = "balanced",
         audit_log_path: str | None = None,
         bot_status_path: str | None = None,
+        replay_log_path: str | Path | None = None,
     ):
         resolved = resolve_strategy_config(
             strategy_preset,
@@ -251,6 +254,15 @@ class TradingBot:
             ),
             rpc_pool_broadcast_concurrency=int(
                 getattr(base, "rpc_pool_broadcast_concurrency", 3)
+            ),
+            replay_log_path=(
+                str(replay_log_path)
+                if replay_log_path is not None
+                else (
+                    str(base.replay_log_path)
+                    if getattr(base, "replay_log_path", None)
+                    else None
+                )
             ),
         )
 
@@ -434,6 +446,28 @@ class TradingBot:
         )
         self._audit_handle = self.persistence._audit_handle
 
+        resolved_replay_path = (
+            replay_log_path
+            or getattr(self.config, "replay_log_path", None)
+            or os.getenv("PUMPFUN_REPLAY_LOG_PATH")
+        )
+        if not resolved_replay_path:
+            rec_env = os.getenv("PUMPFUN_RECORD_REPLAY")
+            if rec_env and rec_env.lower() not in {"false", "0", "no"}:
+                resolved_replay_path = (
+                    rec_env
+                    if rec_env.lower() not in {"true", "1", "yes"}
+                    else "market_replay.jsonl"
+                )
+        self.replay_log_path = (
+            Path(resolved_replay_path) if resolved_replay_path else None
+        )
+        self.replay_recorder = (
+            ReplayRecorder(output_path=self.replay_log_path)
+            if self.replay_log_path
+            else None
+        )
+
         self.api = PumpFunApiClient(base_url=self.api_base_url)
 
         jito_block_engine = os.getenv(
@@ -526,12 +560,18 @@ class TradingBot:
     async def close(self) -> None:
         """Closes persistence handles and background resources."""
         self.persistence.close()
+        if self.replay_recorder is not None:
+            await self.replay_recorder.close()
         if hasattr(self, "rpc_pool") and self.rpc_pool is not None:
             await self.rpc_pool.close()
         if hasattr(self, "execution") and hasattr(self.execution, "close"):
-            await self.execution.close()
+            res = self.execution.close()
+            if asyncio.iscoroutine(res):
+                await res
         if hasattr(self, "api") and hasattr(self.api, "close"):
-            await self.api.close()
+            res = self.api.close()
+            if asyncio.iscoroutine(res):
+                await res
 
     def _configure_alerting(self) -> None:
         self.alerts.provider = (self.alert_provider or "").lower().strip()
@@ -789,7 +829,18 @@ class TradingBot:
             raise ValueError(
                 "Missing PUMPFUN_RPC_URL (or HELIUS_RPC_URL / PUMPFUN_RPC_URLS) in environment."
             )
-        return cls(private_key, rpc_url, **kwargs)
+        replay_log_path = kwargs.pop("replay_log_path", None) or os.getenv(
+            "PUMPFUN_REPLAY_LOG_PATH"
+        )
+        if not replay_log_path:
+            rec_env = os.getenv("PUMPFUN_RECORD_REPLAY")
+            if rec_env and rec_env.lower() not in {"false", "0", "no"}:
+                replay_log_path = (
+                    rec_env
+                    if rec_env.lower() not in {"true", "1", "yes"}
+                    else "market_replay.jsonl"
+                )
+        return cls(private_key, rpc_url, replay_log_path=replay_log_path, **kwargs)
 
     def _log(self, message: str, level: int = logging.INFO) -> None:
         if self.verbose:
@@ -1208,7 +1259,12 @@ class TradingBot:
             "daily_equity_tracker": self.daily_equity_tracker.to_dict(),
             "daily_drawdown_pct": drawdown,
             "daily_realized_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
-            "daily_unrealized_pnl_sol": 0.0,
+            "daily_unrealized_pnl_sol": (
+                self.position_manager.calculate_unrealized_pnl()
+                if hasattr(self, "position_manager")
+                and hasattr(self.position_manager, "calculate_unrealized_pnl")
+                else 0.0
+            ),
             "daily_starting_equity_sol": self.daily_equity_tracker.starting_equity_sol,
             "circuit_breaker_engaged": self.daily_equity_tracker.circuit_breaker_engaged,
             "circuit_breaker_lockout_until": self.daily_equity_tracker.locked_at_timestamp,
@@ -1653,19 +1709,11 @@ class TradingBot:
             self._transition_to(TradingBotState.HOLDING, reason=f"sell_failed {mint}")
             return False
 
-        is_fully_closed, remaining = self.position_manager.record_sell(
-            mint=mint,
-            sold_tokens=tokens_to_sell,
-            target_tier=target_tier,
-            is_partial=is_partial,
-        )
-        self.active_positions = self.position_manager.get_all_positions()
-
         pos_entry = float(
-            position.get("buy_price")
-            or position.get("entry_price")
-            or position.get("cost_sol")
+            position.get("cost_sol")
             or position.get("entry_sol")
+            or position.get("buy_price")
+            or position.get("entry_price")
             or 0.0
         )
         sell_p = float(
@@ -1678,14 +1726,49 @@ class TradingBot:
             )
             or 0.0
         )
+        if sell_p <= 0.0:
+            entry_mc = float(position.get("entry_market_cap", 0.0) or 0.0)
+            curr_mc = float(position.get("current_market_cap", 0.0) or entry_mc or 0.0)
+            cost_sol = float(
+                position.get("cost_sol")
+                or position.get("entry_sol")
+                or getattr(self.config, "buy_amount_sol", 0.0)
+                or pos_entry
+                or 0.0
+            )
+            frac = float(tokens_to_sell) / float(
+                initial_tokens or rem_tokens or tokens_to_sell
+            )
+            frac = max(0.0, min(1.0, frac))
+            if entry_mc > 0 and curr_mc > 0:
+                sell_p = (cost_sol * frac) * (curr_mc / entry_mc)
+            elif cost_sol > 0:
+                sell_p = cost_sol * frac
+
+        is_fully_closed, remaining = self.position_manager.record_sell(
+            mint=mint,
+            sold_tokens=tokens_to_sell,
+            proceeds_sol=sell_p,
+            target_tier=target_tier,
+            is_partial=is_partial,
+        )
+        self.active_positions = self.position_manager.get_all_positions()
 
         if is_partial:
+            frac = float(tokens_to_sell) / float(
+                initial_tokens or rem_tokens or tokens_to_sell
+            )
+            frac = max(0.0, min(1.0, frac))
+            partial_entry = pos_entry * frac if pos_entry > 0 else pos_entry
+            trade_pnl = sell_p - partial_entry
+            if getattr(self, "daily_equity_tracker", None) is not None:
+                self.daily_equity_tracker.record_realized_trade(trade_pnl)
             self._record_trade(
                 mint=mint,
                 action="partial_sell",
                 token_name=pos_name,
                 mint_name=pos_name,
-                entry=pos_entry,
+                entry=partial_entry,
                 exit_value=sell_p,
                 buy_price=pos_entry,
                 sell_price=sell_p,
@@ -1697,12 +1780,20 @@ class TradingBot:
             return True
 
         self._exit_retry_queue.pop(mint, None)
+        frac = float(tokens_to_sell) / float(
+            initial_tokens or rem_tokens or tokens_to_sell
+        )
+        frac = max(0.0, min(1.0, frac))
+        effective_entry = pos_entry * frac if pos_entry > 0 else pos_entry
+        trade_pnl = sell_p - effective_entry
+        if getattr(self, "daily_equity_tracker", None) is not None:
+            self.daily_equity_tracker.record_realized_trade(trade_pnl)
         self._record_trade(
             mint=mint,
             action="sell",
             token_name=pos_name,
             mint_name=pos_name,
-            entry=pos_entry,
+            entry=effective_entry,
             exit_value=sell_p,
             buy_price=pos_entry,
             sell_price=sell_p,
@@ -1793,6 +1884,22 @@ class TradingBot:
             timestamp=update.timestamp,
         )
 
+        if self.replay_recorder is not None:
+            price = (
+                current_market_cap / 1_000_000_000.0 if current_market_cap > 0 else 0.0
+            )
+            self.replay_recorder.record_snapshot(
+                {
+                    "timestamp": update.timestamp,
+                    "mint": mint,
+                    "name": self.active_positions.get(mint, {}).get("name")
+                    or f"{mint[:8]}...",
+                    "price": price,
+                    "market_cap_sol": current_market_cap,
+                    "volume": real_sol,
+                }
+            )
+
         if mint in self.active_positions:
             await self._evaluate_and_execute_exit(mint, current_market_cap)
             await self._check_and_enforce_circuit_breaker()
@@ -1876,6 +1983,27 @@ class TradingBot:
             )
         else:
             current_market_cap = 0.0
+
+        if self.replay_recorder is not None:
+            self.replay_recorder.record_snapshot(
+                {
+                    "timestamp": ts,
+                    "mint": mint,
+                    "name": self.active_positions.get(mint, {}).get("name")
+                    or f"{mint[:8]}...",
+                    "price": (
+                        current_market_cap / 1_000_000_000.0
+                        if current_market_cap > 0
+                        else 0.0
+                    ),
+                    "market_cap_sol": current_market_cap,
+                    "is_buy": update.is_buy,
+                    "sol_amount": update.sol_amount,
+                    "token_amount": float(update.token_amount),
+                    "user": update.user,
+                    "signal": "buy" if update.is_buy else "sell",
+                }
+            )
 
         if mint in self.active_positions:
             if current_market_cap <= 0:
@@ -2143,6 +2271,22 @@ class TradingBot:
             f"{token_name} ({mint[:6]}...)" if len(mint) > 6 else token_name
         )
 
+        if self.replay_recorder is not None:
+            price = (
+                current_market_cap / 1_000_000_000.0 if current_market_cap > 0 else 0.0
+            )
+            self.replay_recorder.record_snapshot(
+                {
+                    "timestamp": time.time(),
+                    "mint": mint,
+                    "name": token_name,
+                    "price": price,
+                    "market_cap_sol": current_market_cap,
+                    "is_buy": True,
+                    "signal": "buy",
+                }
+            )
+
         if mint in self.active_positions:
             return
 
@@ -2245,6 +2389,34 @@ class TradingBot:
                 )
                 if token_val > 0:
                     current_market_cap = sol_val * (1_000_000_000.0 / token_val)
+
+        if self.replay_recorder is not None:
+            self.replay_recorder.record_snapshot(
+                {
+                    "timestamp": ts,
+                    "mint": mint,
+                    "name": (
+                        token_name
+                        or self.active_positions.get(mint, {}).get("name")
+                        or f"{mint[:8]}..."
+                    ),
+                    "price": (
+                        current_market_cap / 1_000_000_000.0
+                        if current_market_cap > 0
+                        else 0.0
+                    ),
+                    "market_cap_sol": current_market_cap,
+                    "is_buy": is_buy,
+                    "sol_amount": sol_amount,
+                    "token_amount": float(
+                        data.get("token_amount", 0.0)
+                        or data.get("tokenAmount", 0.0)
+                        or 0.0
+                    ),
+                    "user": user,
+                    "signal": "buy" if is_buy else "sell",
+                }
+            )
 
         if mint in self.active_positions:
             if not self.dry_run or current_market_cap <= 0.0:
@@ -2603,6 +2775,8 @@ class TradingBot:
         self._register_signal_handlers()
         if self.rpc_pool:
             await self.rpc_pool.start_health_loop()
+        if self.replay_recorder is not None:
+            await self.replay_recorder.start()
 
         self._health_ok = True
         self._risk_killed = False
@@ -2704,6 +2878,8 @@ class TradingBot:
                     self.rpc_pool.stop()
                 elif hasattr(self.rpc_pool, "close"):
                     await self.rpc_pool.close()
+            if self.replay_recorder is not None:
+                await self.replay_recorder.close()
             self.persistence.close()
             if self.state != TradingBotState.SHUTDOWN:
                 self._transition_to(TradingBotState.SHUTDOWN, reason="bot_terminated")

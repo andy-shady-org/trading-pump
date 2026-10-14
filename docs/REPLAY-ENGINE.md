@@ -177,6 +177,79 @@ engine = PaperTradingEngine(
 summary = engine.run(records)
 ```
 
+## Dataset Generation Pipelines (FEAT-21)
+
+To generate valid `.jsonl` replay files for backtesting and parameter tuning, the repository provides three integrated dataset generation methods:
+
+### 1. Live Bot Non-Blocking Stream Recording
+Enable background stream recording during live or paper trading without execution latency penalties:
+
+```bash
+pumpbot --preset balanced --record-replay ./datasets/live_session.jsonl
+```
+
+### 2. Standalone Harvester CLI (`pumpfun record` / `pumpfun-recorder`)
+Collect market quote streams and trade events directly from Yellowstone Geyser or WebSockets without a funded trading wallet:
+
+```bash
+# Ingest live market data for 10 minutes
+pumpfun-recorder --output ./datasets/market_10m.jsonl --duration 600
+
+# Ingest up to 5,000 snapshots from Yellowstone Geyser gRPC stream
+pumpfun record --geyser-endpoint http://127.0.0.1:10000 --output ./datasets/geyser_stream.jsonl --limit 5000
+```
+
+### 3. Synthetic Price Scenario Generator
+Generate deterministic price curves to stress-test exit rules, stop-losses, and stagnation timeouts:
+
+```bash
+# Generate 100-step multi-tier take profit scenario
+pumpfun-recorder --synthetic multi_tier_take_profit --output ./datasets/synth_tp.jsonl --synthetic-steps 100
+
+# Available scenarios:
+# - pump_and_dump: Multi-tier run-up (1.0x -> 4.5x) followed by sharp collapse (0.2x)
+# - stagnant_curve: Flat launch MC at 27.96 SOL to test inactivity timeouts
+# - multi_tier_take_profit: Escalates through Tier 1 (2.0x), Tier 2 (3.5x), and Moonbag
+# - gradual_grind: Organic linear growth curve (1.0x -> 2.5x)
+# - flash_rug: Rapid drop to 0.05x to test stop-loss execution
+```
+
+Programmatic generation via Python:
+```python
+from pumpfun_trading.engines.generators import SyntheticReplayGenerator
+
+# Generate synthetic curve in memory
+records = SyntheticReplayGenerator.generate(scenario="multi_tier_take_profit", steps=60)
+
+# Write directly to JSONL file
+SyntheticReplayGenerator.generate_to_file("synth_tp.jsonl", scenario="flash_rug", steps=50)
+```
+
+### 4. Historical REST Trade Exporter
+Extract past trade histories for specific tokens via Pump.fun REST API:
+
+```bash
+pumpfun-recorder --from-mint <MINT_ADDRESS> --output ./datasets/token_trades.jsonl --limit 200
+```
+
+Programmatic export via Python:
+```python
+import asyncio
+from pumpfun_trading.api.client import PumpFunApiClient
+from pumpfun_trading.engines.generators import RestHistoryExporter
+
+async def export():
+    async with PumpFunApiClient() as client:
+        await RestHistoryExporter.export_token_trades_to_file(
+            client=client,
+            mint="YOUR_MINT_ADDRESS",
+            output_path="token_trades.jsonl",
+            limit=200,
+        )
+
+asyncio.run(export())
+```
+
 ## Recommended workflow
 
 1. Export historical token snapshots as JSON or JSONL

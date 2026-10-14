@@ -56,6 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config", type=str, default=None, help="Path to a JSON bot config file"
     )
+    parser.add_argument(
+        "--record-replay",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Record market quote stream and trades to a JSONL replay dataset",
+    )
     return parser
 
 
@@ -82,6 +89,7 @@ def main() -> None:
             config=config,
             dry_run=args.dry_run,
             paper_trade=args.paper_trade,
+            replay_log_path=args.record_replay,
         )
         try:
             await bot.start()

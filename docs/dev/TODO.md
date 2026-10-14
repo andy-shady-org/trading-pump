@@ -325,6 +325,18 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
   - [ ] Embedded in-app Markdown documentation viewer serving all project guides with search and table of contents
 - [ ] Add comprehensive integration tests verifying Web UI endpoints, WebSocket streams, and Telegram command authentication
 
+#### 27. Asynchronous Market Stream Recorder & Historical Replay Dataset Generator (FEAT-21)
+- [x] Implement non-blocking, asynchronous replay stream recorder in `pumpfun_trading/bot/run.py` & `TradingBotConfig`:
+  - [x] Add runtime config flags `--record-replay <path>` and `PUMPFUN_RECORD_REPLAY` / `PUMPFUN_REPLAY_LOG_PATH`
+  - [x] Implement background `asyncio.Queue` buffer and batch flusher (e.g. 50–100 records / 5s) to eliminate disk I/O latency contention from live trade execution
+  - [x] Filter and record token trajectories, market caps, buy/sell flags, and volume for active bonding curve candidates
+- [x] Implement dedicated standalone market data harvester CLI (`pumpfun record` / `pumpfun-recorder`):
+  - [x] Stream and serialize Yellowstone Geyser gRPC and WebSocket trade feeds directly into standard JSONL replay datasets without live trading account overhead
+- [x] Build synthetic scenario & REST API dataset generators in `pumpfun_trading/engines/generators.py`:
+  - [x] Synthetic trajectory generator modeling extreme price dynamics (e.g. 5x surges, flash rugs, flat stagnant curves at 27.96 SOL) for deterministic exit rule stress-testing
+  - [x] Historical token trade exporter fetching chronological trades via `PumpFunApiClient` and converting to standard `.jsonl` replay format
+- [x] Integrate generated datasets with `pumpfun-replay` / `PaperTradingEngine` and add comprehensive unit test suite (`test_market_recorder.py`)
+
 ## Repo-specific work items
 
 ### `pumpfun_trading/bot/`
@@ -332,6 +344,7 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Keep orchestration logic separate from execution and presentation concerns
 - [x] Add a clear distinction between state transitions, guard checks, and audit/event handling
 - [x] Remove stale root-level compatibility modules after refactor cleanup
+- [x] Add asynchronous replay recording queue (`replay_log_path`) with non-blocking batched disk flush worker (FEAT-21)
 - [ ] Continue narrowing runtime responsibilities as the bot grows, with explicit module boundaries retained
 
 ### `pumpfun_trading/strategies/`
@@ -346,12 +359,14 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Split command responsibilities so each script is purpose-specific instead of overloading a single `pumpbot` entrypoint
 - [x] Move replay-related command logic into `cli/replay.py` and `engines/replay.py`
 - [x] Keep command packaging aligned with the refactor target layout in `docs/REFACTOR.md`
+- [x] Add `record` subcommand (`pumpfun record`) and `--record-replay` runtime option for headless market harvesting (FEAT-21)
 - [ ] Expand CLI docs and examples for operators as release tooling matures
 
 ### `pumpfun_trading/engines/`
 - [x] Move replay and historical evaluation logic into the `engines/` package namespace
 - [x] Keep engine logic separate from live runtime execution and terminal rendering
 - [x] Add reusable replay entrypoints and execution summary output
+- [x] Add synthetic scenario generation and historical REST dataset exporter modules under `engines/` (FEAT-21)
 - [ ] Add additional simulation/backtest modes when strategy evaluation matures
 
 ### `pumpfun_trading/ui/`
@@ -407,6 +422,7 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add tests for multi-RPC latency scoring, health checks, failover routing, and broadcast deduplication
 - [x] Add tests for daily equity baseline tracking, drawdown limits, and portfolio emergency lock triggers
 - [ ] Add tests for Telegram command authentication and FastAPI/WebSocket status streaming
+- [ ] Add unit and mock integration tests for asynchronous stream recording, batch flushing, and replay dataset schema compliance (FEAT-21)
 
 ### `pumpfun_trading/streams/` (Geyser & On-Chain Event Ingestion)
 - [x] Create Yellowstone gRPC streaming client module with auto-reconnection and exponential backoff
@@ -576,6 +592,13 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [ ] Build interactive browser dashboard for full bot control, live portfolio equity curves, and hot config adjustment (FEAT-10)
 - [ ] Implement embedded in-app Markdown documentation viewer and search portal directly within the web dashboard (FEAT-10, FEAT-11)
 - [ ] Add comprehensive test suites for Web UI endpoints, WebSocket streams, and Telegram command authentication (FEAT-10)
+
+### Sprint 17: Asynchronous Market Stream Recorder & Historical Replay Dataset Generator (FEAT-21)
+- [x] Implement non-blocking asynchronous replay recording hook with batch queue flushing in `TradingBot` (FEAT-21)
+- [x] Expose `--record-replay` flag on `pumpbot` CLI and environment configuration (FEAT-21)
+- [x] Build dedicated standalone market data harvester CLI subcommand (`pumpfun record` / `pumpfun-recorder`) (FEAT-21)
+- [x] Implement deterministic synthetic scenario generator and REST historical trade exporter (FEAT-21)
+- [x] Add unit tests and replay engine compatibility validation (`test_market_recorder.py`) (FEAT-21)
 
 ## Definition of done for a “serious” bot
 
