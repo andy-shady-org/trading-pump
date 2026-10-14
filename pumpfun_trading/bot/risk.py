@@ -274,10 +274,11 @@ def check_risk_limits(
     proposed_entry_sol: float,
     current_positions: dict[str, dict[str, Any]],
 ) -> bool:
-    default_cost = float(getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0)
+    default_cost = float(
+        getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0
+    )
     total_exposure = sum(
-        _extract_position_cost(pos, default_cost)
-        for pos in current_positions.values()
+        _extract_position_cost(pos, default_cost) for pos in current_positions.values()
     )
     if total_exposure + proposed_entry_sol > bot.config.max_total_exposure_sol:
         bot._last_event = (
@@ -324,7 +325,9 @@ def check_daily_drawdown(bot: Any) -> bool:
     if not bot.active_positions:
         return True
 
-    default_cost = float(getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0)
+    default_cost = float(
+        getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0
+    )
     total_equity = sum(
         _extract_position_cost(pos, default_cost)
         for pos in bot.active_positions.values()

@@ -531,25 +531,32 @@ def test_stagnant_curve_timeout_exit():
     )
 
     # 1. Under timeout (elapsed 60s < 120s) -> HOLD
-    d_early = evaluate_exit_strategy(cfg, state, current_market_cap=27.96, now=t0 + 60.0)
+    d_early = evaluate_exit_strategy(
+        cfg, state, current_market_cap=27.96, now=t0 + 60.0
+    )
     assert d_early.action == ExitAction.HOLD
 
     # 2. Reached timeout (elapsed 120.1s >= 120.0s) -> FULL_EXIT
-    d_timeout = evaluate_exit_strategy(cfg, state, current_market_cap=27.96, now=t0 + 120.1)
+    d_timeout = evaluate_exit_strategy(
+        cfg, state, current_market_cap=27.96, now=t0 + 120.1
+    )
     assert d_timeout.action == ExitAction.FULL_EXIT
     assert d_timeout.exit_type == "stagnant_timeout"
     assert "stagnant_curve_timeout" in d_timeout.reason
     assert d_timeout.sell_tokens == 1_000_000
 
     # 3. should_exit_position helper returns True
-    assert should_exit_position(
-        cfg,
-        performance=1.0,
-        token_balance=1_000_000,
-        position=state,
-        current_market_cap=27.96,
-        now=t0 + 120.1,
-    ) is True
+    assert (
+        should_exit_position(
+            cfg,
+            performance=1.0,
+            token_balance=1_000_000,
+            position=state,
+            current_market_cap=27.96,
+            now=t0 + 120.1,
+        )
+        is True
+    )
 
 
 def test_stagnant_curve_price_movement_resets_timer():
@@ -583,7 +590,9 @@ def test_stagnant_curve_price_movement_resets_timer():
     assert d_mid.action == ExitAction.HOLD
 
     # At t = 1211s (121s after price move) -> Stagnant Exit triggers
-    d_stagnant = evaluate_exit_strategy(cfg, state, current_market_cap=30.0, now=t_move + 121.0)
+    d_stagnant = evaluate_exit_strategy(
+        cfg, state, current_market_cap=30.0, now=t_move + 121.0
+    )
     assert d_stagnant.action == ExitAction.FULL_EXIT
     assert d_stagnant.exit_type == "stagnant_timeout"
 

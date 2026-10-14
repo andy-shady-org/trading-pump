@@ -273,9 +273,7 @@ def build_dashboard(bot: Any) -> Panel:
                 buy_val_str = f"{buy_val * 1_000_000:.4f} µSOL"
             else:
                 buy_val_str = f"{buy_val:.4f} SOL"
-            ledger_lines.append(
-                f"{action.upper()} {mint} @ {buy_val_str} | {reason}"
-            )
+            ledger_lines.append(f"{action.upper()} {mint} @ {buy_val_str} | {reason}")
         else:
             sell_val = float(
                 record.get("sell_price")
@@ -287,9 +285,7 @@ def build_dashboard(bot: Any) -> Panel:
                 sell_val_str = f"{sell_val * 1_000_000:.4f} µSOL"
             else:
                 sell_val_str = f"{sell_val:.4f} SOL"
-            ledger_lines.append(
-                f"{action.upper()} {mint} -> {sell_val_str} | {reason}"
-            )
+            ledger_lines.append(f"{action.upper()} {mint} -> {sell_val_str} | {reason}")
     if not ledger_lines:
         ledger_lines = ["No trades recorded yet."]
 

@@ -261,6 +261,7 @@ def test_circuit_breaker_realistic_pumpfun_lifecycle():
     Opening a position (0.01 SOL cost) and subsequently closing it with a small profit
     must not trigger a false-positive 99%+ portfolio drawdown circuit breaker lock.
     """
+
     class MockBot:
         def __init__(self):
             self.wallet_balance_sol = 0.10
@@ -294,14 +295,18 @@ def test_circuit_breaker_realistic_pumpfun_lifecycle():
     # Evaluate circuit breaker: open value is 0.01 SOL, total equity is 0.10 SOL
     is_breached, reason = evaluate_portfolio_circuit_breaker(bot)
     assert not is_breached
-    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(0.10, rel=1e-5)
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(
+        0.10, rel=1e-5
+    )
 
     # 3. Market cap increases slightly to 28.50 SOL (+1.93%)
     bot.active_positions[mint]["current_market_cap"] = 28.50
     is_breached, reason = evaluate_portfolio_circuit_breaker(bot)
     assert not is_breached
     expected_peak = 0.09 + (0.01 * (28.50 / 27.95899))
-    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(expected_peak, rel=1e-5)
+    assert bot.daily_equity_tracker.peak_daily_equity_sol == pytest.approx(
+        expected_peak, rel=1e-5
+    )
 
     # 4. Position closes with 0.0102 SOL proceeds (+2% profit returned to wallet)
     bot.active_positions.pop(mint)

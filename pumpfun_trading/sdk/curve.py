@@ -101,9 +101,7 @@ def calculate_buy_tokens_out(
         (virtual_token_reserves * sol_amount) // (virtual_sol_reserves + sol_amount)
     )
     if slippage_bps > 0:
-        tokens_out = max(
-            0, int((tokens_out * (10_000 - slippage_bps)) // 10_000)
-        )
+        tokens_out = max(0, int((tokens_out * (10_000 - slippage_bps)) // 10_000))
     return tokens_out
 
 
@@ -135,9 +133,7 @@ def calculate_sell_sol_out(
         (virtual_sol_reserves * token_amount) // (virtual_token_reserves + token_amount)
     )
     if slippage_bps > 0:
-        sol_out = max(
-            0, int((sol_out * (10_000 - slippage_bps)) // 10_000)
-        )
+        sol_out = max(0, int((sol_out * (10_000 - slippage_bps)) // 10_000))
     return sol_out
 
 

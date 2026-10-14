@@ -29,7 +29,9 @@ def test_spot_price_and_market_cap():
     assert mc_sol == pytest.approx(27.958993476, rel=1e-5)
 
     # In raw on-chain units (Lamports & raw token units with 6 decimals)
-    p0_raw = calculate_spot_price(INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW)
+    p0_raw = calculate_spot_price(
+        INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW
+    )
     assert p0_raw > 0
     mc_raw = calculate_market_cap_sol(
         INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW, TOTAL_TOKEN_SUPPLY_RAW
@@ -59,10 +61,14 @@ def test_buy_tokens_out_and_constant_product_invariant():
     # Verify constant product invariant: (x + dx) * (y - dy) == x * y (within integer rounding)
     k_initial = x * y
     k_post = (x + dx) * (y - tokens_out)
-    assert abs(k_post - k_initial) < (x + dx)  # Difference is within 1 discrete unit of precision
+    assert abs(k_post - k_initial) < (
+        x + dx
+    )  # Difference is within 1 discrete unit of precision
 
     # Test slippage adjustment
-    tokens_out_slippage = calculate_buy_tokens_out(dx, x, y, slippage_bps=500)  # 5% slippage
+    tokens_out_slippage = calculate_buy_tokens_out(
+        dx, x, y, slippage_bps=500
+    )  # 5% slippage
     assert tokens_out_slippage == int(tokens_out * 0.95)
 
     # Edge cases
@@ -116,7 +122,9 @@ def test_buy_price_impact_positive():
     assert impact_30 > 0.0
 
     # Works identically with Lamport / raw integer units
-    impact_raw = calculate_buy_price_impact(300_000_000, INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW)
+    impact_raw = calculate_buy_price_impact(
+        300_000_000, INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW
+    )
     assert impact_raw == pytest.approx(0.0201, rel=1e-5)
 
     # Edge cases: zero or negative
@@ -141,7 +149,9 @@ def test_sell_price_impact_negative():
     assert impact_sell == pytest.approx(-0.018382, rel=1e-3)
 
     # Works identically with raw units
-    impact_raw = calculate_sell_price_impact(10_000_000_000_000, INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW)
+    impact_raw = calculate_sell_price_impact(
+        10_000_000_000_000, INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW
+    )
     assert impact_raw == pytest.approx(expected_impact, rel=1e-5)
 
     # Edge cases: zero or negative
@@ -159,7 +169,9 @@ def test_execution_slippage():
     assert buy_slip == pytest.approx(0.01, rel=1e-5)  # +1.0%
 
     sell_slip = calculate_sell_execution_slippage(10_000_000.0, y)
-    assert sell_slip == pytest.approx(-10_000_000.0 / 1_083_000_000.0, rel=1e-5)  # -0.92%
+    assert sell_slip == pytest.approx(
+        -10_000_000.0 / 1_083_000_000.0, rel=1e-5
+    )  # -0.92%
 
     assert calculate_buy_execution_slippage(0, x) == 0.0
     assert calculate_buy_execution_slippage(-1, x) == 0.0
@@ -187,11 +199,17 @@ def test_execution_client_static_method_bindings():
     impact = client.calculate_buy_price_impact(0.3, 30.0, 1_073_000_000.0)
     assert impact == pytest.approx(0.0201, rel=1e-5)
 
-    sell_impact = client.calculate_sell_price_impact(10_000_000.0, 30.0, 1_073_000_000.0)
+    sell_impact = client.calculate_sell_price_impact(
+        10_000_000.0, 30.0, 1_073_000_000.0
+    )
     assert sell_impact < 0.0
 
-    tokens_out = client.calculate_buy_tokens_out(300_000_000, 30_000_000_000, 1_073_000_000_000_000)
+    tokens_out = client.calculate_buy_tokens_out(
+        300_000_000, 30_000_000_000, 1_073_000_000_000_000
+    )
     assert tokens_out > 0
 
-    sol_out = client.calculate_sell_sol_output(10_000_000_000_000, 1_073_000_000_000_000, 30_000_000_000)
+    sol_out = client.calculate_sell_sol_output(
+        10_000_000_000_000, 1_073_000_000_000_000, 30_000_000_000
+    )
     assert sol_out > 0
