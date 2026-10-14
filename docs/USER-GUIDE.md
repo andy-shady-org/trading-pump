@@ -164,6 +164,8 @@ The engine supports granular configuration via environment variables across netw
 | :--- | :--- | :---: | :---: | :--- |
 | `PUMPFUN_AUDIT_LOG_PATH` | `PUMPFUN_AUDIT_LOG` | Optional | `runtime/audit_trail.jsonl` | Append-only JSONL audit trail destination path for forensic event tracking, trade accounting, and telemetry. |
 | `PUMPFUN_STATUS_PATH` | `PUMPFUN_BOT_STATUS_PATH` | Optional | `runtime/bot_status.json` | Atomic JSON snapshot file path for live bot status, active positions, performance metrics, and crash recovery. |
+| `PUMPFUN_REPLAY_LOG_PATH` | — | Optional | `None` | File path for non-blocking asynchronous market quote and trade replay recording (`.jsonl`) for strategy backtesting (FEAT-21). |
+| `PUMPFUN_RECORD_REPLAY` | — | Optional | `false` | Enables asynchronous market stream recording (defaults to `market_replay.jsonl` if set to `true` / `1` without an explicit path). |
 | `PUMPFUN_CONFIG_PATH` | `PUMPFUN_CONFIG` | Optional | `None` | Path to external JSON strategy and risk configuration file (alternative to CLI `--config`). |
 
 #### 5. Multi-Channel Alerting & Webhooks

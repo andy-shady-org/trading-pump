@@ -102,6 +102,8 @@ def get_runtime_env(**overrides: Any) -> dict[str, Any]:
         "PUMPFUN_ALERT_PROVIDER": os.getenv("PUMPFUN_ALERT_PROVIDER"),
         "PUMPFUN_AUDIT_LOG": os.getenv("PUMPFUN_AUDIT_LOG"),
         "PUMPFUN_BOT_STATUS_PATH": os.getenv("PUMPFUN_BOT_STATUS_PATH"),
+        "PUMPFUN_REPLAY_LOG_PATH": os.getenv("PUMPFUN_REPLAY_LOG_PATH"),
+        "PUMPFUN_RECORD_REPLAY": os.getenv("PUMPFUN_RECORD_REPLAY"),
     } | overrides
 
 
