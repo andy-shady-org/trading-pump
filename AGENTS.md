@@ -44,7 +44,7 @@ Accessible to end-users, quant traders, and bot operators; embedded into the Fas
 * [**`docs/RISK.md`**](docs/RISK.md): Multi-tier capital preservation, position concentration caps, daily hard-stop circuit breakers (FEAT-09), startup on-chain reconciliation, and emergency exit queues.
 * [**`docs/TERMINAL-UI.md`**](docs/TERMINAL-UI.md): Rich console dashboard manual, sub-millisecond slot latency telemetry, and multi-channel alerting (Discord, Slack, Telegram) for operator self-funding.
 * [**`docs/WEB-UI.md`**](docs/WEB-UI.md): Architecture specification for the full-featured FastAPI web dashboard (FEAT-10), volatile in-memory keypair security (zero disk persistence), hot config mutations, and terminal UI deprecation roadmap.
-* [**`docs/FEATURES.md`**](docs/FEATURES.md): Standardized catalog of all 21 architectural capabilities (FEAT-01 through FEAT-21).
+* [**`docs/FEATURES.md`**](docs/FEATURES.md): Standardized catalog of completed architectural capabilities (FEAT-01 through FEAT-30).
 * [**`docs/REPLAY-ENGINE.md`**](docs/REPLAY-ENGINE.md): Historical market replay and strategy backtesting simulator (`pumpfun-replay`).
 * [**`docs/AUDIT-TOOL.md`**](docs/AUDIT-TOOL.md): Forensic trade accounting and telemetry inspection CLI (`pumpfun-audit`).
 

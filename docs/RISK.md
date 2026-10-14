@@ -56,19 +56,29 @@ To prevent over-exposure to idiosyncratic microcap volatility, portfolio limits 
 
 ---
 
-## 3. Daily Hard-Stop Circuit Breakers (FEAT-09)
+## 3. Daily Hard-Stop Circuit Breakers & Adaptive Realized-Ratchet Engine (FEAT-09 & FEAT-29)
 
-To guard against high-volatility market crashes and cascading token exploit waves, the bot monitors cumulative daily portfolio drawdown from intraday peak equity:
+To guard against high-volatility market crashes while avoiding false-positive lockouts on winning trading sessions (such as volatile multi-tier take-profit runners), the bot implements dual-zone equity tracking and realized profit ratcheting.
 
-$$\text{Daily Drawdown \%} = \frac{\text{Peak Daily Equity} - \text{Current Equity}}{\text{Peak Daily Equity}} \times 100$$
+### A. Realized Profit Ratchet & Dynamic Effective Baseline
+When positions close with net realized profit, a configurable fraction (`profit_ratchet_ratio`, default `0.50`) permanently ratchets the **Effective Equity Baseline Floor**:
+$$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Cumulative Realized PnL})$$
 
-### Circuit Breaker Trigger Actions
+### B. Dual-Zone Risk Evaluation
+1. **Principal Protection Zone (`Current Equity < Starting Capital`)**:
+   - Strict capital preservation applies.
+   - If total portfolio equity drops below $\text{Starting Capital} \times (1 - \text{max\_daily\_drawdown\_pct})$ (e.g. 15%–20% loss from principal), the bot engages **`EMERGENCY_LIQUIDATE`**, liquidating all open positions and locking out trading to protect capital.
+2. **Profit Run Zone (`Current Equity >= Starting Capital`)**:
+   - The bot operates with "house money".
+   - A relaxed trailing buffer (`profit_drawdown_tolerance_pct`, default 35%) is evaluated against intraday peak equity relative to the effective baseline floor.
+   - If the profit retracement tolerance is breached, the bot engages **`HALT_NEW_BUYS`**, pausing new token entries while allowing open positions to continue exiting gracefully via trailing stop-losses (`FEAT-03`) and take-profit targets.
 
-If daily drawdown breaches the configured threshold (default: $15.0\%$ of peak daily equity):
-1. **Immediate Ingestion Halting**: Ingestion of new token mint events and buy triggers is locked.
-2. **Emergency Position Liquidation**: An automated panic liquidation command is dispatched, enqueuing market sell orders across all open positions.
-3. **24-Hour Trading Lockout**: The bot transitions to a locked state for 24 hours, requiring explicit operator reset or next UTC day rollover.
-4. **Emergency Telemetry Broadcast**: Critical alert payloads are dispatched via configured Webhooks (Discord, Slack, Telegram).
+### C. Circuit Breaker Trigger Actions
+
+| Action | Regime Trigger | Behavior |
+| :--- | :--- | :--- |
+| **`HALT_NEW_BUYS`** | Profit Run Zone retracement exceeds `profit_drawdown_tolerance_pct` | Soft-halts new token entries; existing positions remain active and are managed by trailing stops. |
+| **`EMERGENCY_LIQUIDATE`** | Principal loss exceeds `max_daily_drawdown_pct` | Dispatches immediate market sell orders across all open positions, engages 24-hour lockout, and emits critical webhook alerts. |
 
 ---
 
@@ -121,7 +131,10 @@ When network congestion or sudden volatility causes a sell transaction to fail:
 | `max_active_positions` | `3` | Count | Maximum simultaneous open positions. |
 | `max_token_concentration_pct` | `25.0` | Percent | Maximum single-token allocation of total equity. |
 | `min_wallet_reserve_sol` | `0.10` | SOL | Mandatory wallet buffer for gas fees. |
-| `max_daily_drawdown_pct` | `15.0` | Percent | Daily circuit breaker liquidation trigger. |
+| `max_daily_drawdown_pct` | `15.0` | Percent | Daily circuit breaker principal loss trigger (Principal Zone). |
+| `drawdown_reference_mode` | `"adaptive_ratchet"` | String | Reference mode (`"adaptive_ratchet"`, `"baseline"`, `"trailing_hwm"`). |
+| `profit_ratchet_ratio` | `0.50` | Float | Fraction of realized profits ratcheted into guaranteed baseline floor. |
+| `profit_drawdown_tolerance_pct` | `35.0` | Percent | Retracement tolerance from peak equity in Profit Run Zone. |
 | `seen_mint_cooldown_seconds` | `300` | Seconds | Cooldown before re-evaluating a previously closed token. |
 | `max_slippage_bps` | `250` | Basis Points | Maximum allowable slippage (`250` = 2.5%). |
 | `exit_retry_max_attempts` | `5` | Count | Maximum automated retry count for failed sells. |

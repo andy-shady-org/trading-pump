@@ -13,7 +13,7 @@ All operational manuals, mathematical strategy guides, and architectural bluepri
 * 🛡️ [**Capital Protection & Risk Management (`docs/RISK.md`)**](./docs/RISK.md) — Exposure caps, daily hard circuit breakers (FEAT-09), and startup on-chain reconciliation.
 * 🖥️ [**Terminal UI & Operator Observability (`docs/TERMINAL-UI.md`)**](./docs/TERMINAL-UI.md) — Live console monitor, sub-millisecond slot telemetry, and alerting webhooks.
 * 🌐 [**Web Dashboard & Hosted Architecture (`docs/WEB-UI.md`)**](./docs/WEB-UI.md) — FastAPI control portal (FEAT-10), volatile in-memory key upload vault, and hot config endpoints.
-* ⚙️ [**Standardized Feature Catalog (`docs/FEATURES.md`)**](./docs/FEATURES.md) — Comprehensive catalog of all features (FEAT-01 through FEAT-20).
+* ⚙️ [**Standardized Feature Catalog (`docs/FEATURES.md`)**](./docs/FEATURES.md) — Comprehensive catalog of completed features (FEAT-01 through FEAT-30).
 * 🔄 [**Historical Replay Backtesting Engine (`docs/REPLAY-ENGINE.md`)**](./docs/REPLAY-ENGINE.md) — Market replay simulator and strategy performance analyzer.
 * 🔍 [**Forensic Audit & Accounting Tool (`docs/AUDIT-TOOL.md`)**](./docs/AUDIT-TOOL.md) — Structured audit trail query and inspection CLI.
 * 🛠️ [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](./docs/dev/README.md) — Sprint backlog, bug tracker, suggestions, release gates, and operations runbook.

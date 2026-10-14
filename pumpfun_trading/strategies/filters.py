@@ -429,7 +429,9 @@ def evaluate_token_heuristics(
     parsed_metadata = (
         metadata
         if isinstance(metadata, TokenMetadata)
-        else TokenMetadata.from_dict(metadata) if isinstance(metadata, dict) else None
+        else TokenMetadata.from_dict(metadata)
+        if isinstance(metadata, dict)
+        else None
     )
 
     if not config.enable_anti_rug_filters:
