@@ -36,6 +36,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-26** | Medium | Bot / Audit Trail | **RESOLVED** | Preserve originating parent `position_id` across partial and full exits in `_record_trade` |
 | **BUG-27** | Low | Bot / Audit Trail | **RESOLVED** | Differentiate total SOL capital (`cost_sol`, `proceeds_sol`, `sol_amount`) from token unit prices (`unit_price_sol`) |
 | **BUG-28** | Low | Bot / Position Valuation | **RESOLVED** | Scale integer base units by UI decimals (`10^6`) in `PositionManager.record_buy` to eliminate `1e-10` unit price underflow |
+| **BUG-29** | Medium | UI / Logging Output | **RESOLVED** | Suppress uncaptured `StreamHandler` console logging while interactive `rich.live.Live` dashboard is active & add `--headless` mode |
 
 ---
 
@@ -203,6 +204,13 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Description:** In `TradingBot._sell_token`, when `self._record_trade` was called for `partial_sell` and full `sell` actions, neither `position_id` nor the original entry `trade_id` was passed. Inside `_record_trade`, because `position_id` was omitted, the method incremented `self._trade_sequence` and assigned a newly generated identifier as both `trade_id` and `position_id`. Consequently, partial and full exits received new decoupled position IDs (e.g. `trade-000005`, `trade-000008`) rather than inheriting the entry position ID (`trade-000001`).
 * **Impact:** Audit consumers, forensic inspectors (`pumpfun-audit`), and performance attribution tools could not correlate partial and full exits back to their originating entry trade by `position_id`, breaking lifecycle trade grouping and per-position PnL reconciliation.
 * **Remedy:** Passed originating entry position ID (`position_id` / `trade_id`) into `_sell_token` and `_record_trade` when executing partial or full exits, and generated unique `trade_id` per action while preserving the parent `position_id`.
+
+### BUG-29: Uncaptured Console StreamHandler Logging Underneath Live Terminal UI Causes Viewport Jitter & Jumping [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (lines 400–415, 854–868, 2904–2949), `pumpfun_trading/ops/logging.py` (lines 56–94), `pumpfun_trading/cli/bot.py`, `pumpfun_trading/cli/main.py`
+* **Status:** **Fixed** — Suppressed direct console `StreamHandler` logging during interactive `rich.live.Live` rendering sessions and added explicit `--headless` / `PUMPFUN_HEADLESS` support for non-interactive environments.
+* **Description:** When running `TradingBot` in interactive terminal mode with `verbose=True` (default), `TradingBot.__init__` configures structured logging via `setup_structured_logging(..., console=self.verbose)`. In `pumpfun_trading/ops/logging.py`, `console=True` attaches a raw `logging.StreamHandler()` writing to `sys.stderr`. While `_render_loop()` executes `rich.live.Live` in alternate screen buffer mode (`screen=True`), runtime operations—such as `self._log()` calls on state transitions, startup reconciliation, health check logs, buy/sell notices, circuit breaker checks, and exception handlers—write unstructured text directly to standard error/output. Because these stream writes bypass the active `Live` context manager rather than being routed through Rich's console print queue (`Live.console.print` / `RichHandler`) or suppressed when interactive fullscreen UI is active, the raw log lines force terminal cursor line feeds, causing the entire dashboard layout to continuously scroll and jump up and down on each refresh tick.
+* **Impact:** Visually corrupts terminal UI monitoring, introduces severe display jumping/flicker during trade executions and state events, and obscures real-time active position oversight for operators.
+* **Remedy:** Suppressed console `StreamHandler` attachment when interactive `Live` UI rendering is active (`enable_console_logging = bool(self.headless or not self.verbose)`), directing logs exclusively to configured file sinks while allowing console log output in headless mode. Added `--headless` CLI flag and `PUMPFUN_HEADLESS` environment variable support. Added comprehensive unit tests in `test_bugfixes_lifecycle_resilience.py`.
 
 ---
 

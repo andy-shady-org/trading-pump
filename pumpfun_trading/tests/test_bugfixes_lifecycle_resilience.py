@@ -26,12 +26,15 @@ MINT_1 = "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump"
 MINT_2 = "So11111111111111111111111111111111111111112"
 
 
-def _make_bot(dry_run: bool = True, paper_trade: bool = True, **kwargs) -> TradingBot:
+def _make_bot(
+    dry_run: bool = True, paper_trade: bool = True, verbose: bool = False, **kwargs
+) -> TradingBot:
     config = TradingBotConfig(
         dry_run=dry_run,
         paper_trade=paper_trade,
         buy_amount_sol=0.01,
         reconnect_delay_seconds=1.0,
+        verbose=verbose,
     )
     return TradingBot(
         private_key_b58=TEST_KEY,
@@ -39,7 +42,7 @@ def _make_bot(dry_run: bool = True, paper_trade: bool = True, **kwargs) -> Tradi
         config=config,
         dry_run=dry_run,
         paper_trade=paper_trade,
-        verbose=False,
+        verbose=verbose,
         **kwargs,
     )
 
@@ -231,3 +234,51 @@ def test_request_shutdown_idempotent_and_stops_geyser():
     # Repeated calls should be idempotent
     bot.request_shutdown()
     assert bot.state == TradingBotState.SHUTDOWN
+
+
+def test_bug29_console_stream_suppression_and_headless_mode():
+    """Test BUG-29: Suppress console StreamHandler during interactive Live UI rendering."""
+    # 1. Interactive terminal mode (verbose=True, headless=False): no StreamHandler
+    bot_interactive = _make_bot(verbose=True, headless=False)
+    assert bot_interactive.headless is False
+    assert bot_interactive.verbose is True
+    # Ensure no raw StreamHandler is attached to avoid terminal jitter
+    stream_handlers = [
+        h
+        for h in bot_interactive.logger.handlers
+        if isinstance(h, logging.StreamHandler)
+        and not isinstance(h, logging.FileHandler)
+    ]
+    assert len(stream_handlers) == 0
+
+    # 2. Headless mode (verbose=True, headless=True): StreamHandler is attached
+    bot_headless = _make_bot(verbose=True, headless=True)
+    assert bot_headless.headless is True
+    stream_handlers_headless = [
+        h
+        for h in bot_headless.logger.handlers
+        if isinstance(h, logging.StreamHandler)
+        and not isinstance(h, logging.FileHandler)
+    ]
+    assert len(stream_handlers_headless) == 1
+
+    # 3. Environment variable PUMPFUN_HEADLESS overrides
+    with patch.dict(os.environ, {"PUMPFUN_HEADLESS": "1"}):
+        bot_env = _make_bot(verbose=True)
+        assert bot_env.headless is True
+        env_stream_handlers = [
+            h
+            for h in bot_env.logger.handlers
+            if isinstance(h, logging.StreamHandler)
+            and not isinstance(h, logging.FileHandler)
+        ]
+        assert len(env_stream_handlers) == 1
+
+    # 4. _render_loop skips execution when headless=True
+    import asyncio
+
+    async def _check_render_loop():
+        # Should return immediately without starting Live context
+        await bot_headless._render_loop()
+
+    asyncio.run(_check_render_loop())

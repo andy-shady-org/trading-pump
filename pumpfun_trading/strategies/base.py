@@ -22,6 +22,7 @@ class TradingBotConfig:
     dry_run: bool = False
     paper_trade: bool = False
     verbose: bool = True
+    headless: bool = False
     stream_url: str = "http://127.0.0.1:10000"
     api_base_url: str = "https://frontend-api-v3.pump.fun"
     strategy_preset: str = "balanced"
@@ -103,6 +104,7 @@ class TradingBotConfig:
             "dry_run": self.dry_run,
             "paper_trade": self.paper_trade,
             "verbose": self.verbose,
+            "headless": self.headless,
             "stream_url": self.stream_url,
             "api_base_url": self.api_base_url,
             "strategy_preset": self.strategy_preset,

@@ -510,3 +510,81 @@ def test_dashboard_daily_pnl_microsol_and_standard_display():
     console.print(panel)
     out_std_neg = console.export_text()
     assert "-0.0250 SOL" in out_std_neg
+
+
+def test_format_uptime_and_dashboard_uptime_field():
+    """Verify format_uptime helper and Uptime field rendering in the Bot Status dashboard panel."""
+    from pumpfun_trading.ui.dashboard import format_uptime
+
+    # 1. Test format_uptime edge cases
+    assert format_uptime(None) == "0s"
+    assert format_uptime(-10) == "0s"
+    assert format_uptime(0) == "0s"
+    assert format_uptime(45) == "45s"
+    assert format_uptime(125) == "02m 05s"
+    assert format_uptime(3600) == "01h 00m 00s"
+    assert format_uptime(15150) == "04h 12m 30s"
+    assert format_uptime(90061) == "1d 01h 01m 01s"
+
+    # 2. Test dashboard rendering with uptime
+    bot = MagicMock()
+    bot.config = TradingBotConfig()
+    bot.max_active_positions = 2
+    bot.min_market_cap_sol = 20.0
+    bot.dry_run = False
+    bot.paper_trade = False
+    bot._risk_killed = False
+    bot.state = TradingBotState.MONITORING
+    bot._health_ok = True
+    bot._last_event = "idle"
+    bot._last_status = "monitoring"
+    bot._last_message_at = time.monotonic()
+    bot.stream_url = "wss://pumpportal.fun/api/data"
+    bot.geyser_endpoint = None
+    bot.audit_log_path = None
+    bot._last_new_token_name = "None"
+    bot._last_health_check = time.monotonic()
+    bot._stop_requested = False
+    bot._observed_tokens_count = 0
+    bot._seen_mints = {}
+    bot._metrics_snapshot.return_value = {
+        "buys": 0,
+        "sells": 0,
+        "failures": 0,
+        "retries": 0,
+        "connection_loss": 0,
+        "stale_data": 0,
+        "latency_ms": {
+            "avg_ms": 1.0,
+            "samples": 1,
+            "last_ms": 1.0,
+            "max_ms": 1.0,
+            "total_ms": 1.0,
+        },
+    }
+    bot._recent_events = []
+    bot._trade_ledger = []
+    bot.active_positions = {}
+    bot.uptime_seconds = 15150.0  # 4h 12m 30s
+
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    output = console.export_text()
+    assert "Uptime" in output
+    assert "04h 12m 30s" in output
+
+    # Test TradingBot property integration
+    from pumpfun_trading.bot.run import TradingBot
+
+    real_bot = TradingBot(
+        private_key_b58="3N5vjU9Y6H2g1A4B7C9D8E6F5G4H3J2K1L9M8N7P6Q5R4S3T2U1V9W8X7Y6Z5A4B",
+        rpc_url="https://api.mainnet-beta.solana.com",
+        dry_run=True,
+        paper_trade=True,
+        verbose=False,
+    )
+    assert hasattr(real_bot, "uptime_seconds")
+    assert real_bot.uptime_seconds >= 0.0
+    assert hasattr(real_bot, "uptime")
+    assert isinstance(real_bot.uptime, str)

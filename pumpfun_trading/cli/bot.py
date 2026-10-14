@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--paper-trade", action="store_true", help="Run in paper-trading mode"
     )
     parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run headlessly without interactive terminal UI",
+    )
+    parser.add_argument(
         "--config", type=str, default=None, help="Path to a JSON bot config file"
     )
     parser.add_argument(
@@ -89,6 +94,7 @@ def main() -> None:
             config=config,
             dry_run=args.dry_run,
             paper_trade=args.paper_trade,
+            headless=args.headless,
             replay_log_path=args.record_replay,
         )
         try:

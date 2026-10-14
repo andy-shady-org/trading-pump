@@ -84,6 +84,9 @@ def setup_structured_logging(
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
+
     logger.info(
         "logger_initialized",
         extra={

@@ -53,7 +53,7 @@ Internal engineering documentation for maintainers, contributors, and SRE:
 * [**`docs/dev/README.md`**](docs/dev/README.md): Developer and contributor portal index.
 * [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Sprint backlog, milestone tracking (Phases 1–4), and architectural tasks.
 * [**`docs/dev/BUGS.md`**](docs/dev/BUGS.md): Bug tracker, root cause analyses, and resolution verification matrix.
-* [**`docs/dev/SUGGESTIONS.md`**](docs/dev/SUGGESTIONS.md): High-alpha feature proposals and architectural ideas.
+* [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Candidate architectural proposals, alpha enhancement ideas, and unscheduled feature backlog.
 * [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook, preflight checks, and deployment hardening.
 * [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Quality release gates, security checklists, and sign-off criteria.
 * [**`docs/dev/NEXT-30-DAYS.md`**](docs/dev/NEXT-30-DAYS.md): Tactical 30-day milestone execution plan.

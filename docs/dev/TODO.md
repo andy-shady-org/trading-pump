@@ -600,6 +600,18 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Implement deterministic synthetic scenario generator and REST historical trade exporter (FEAT-21)
 - [x] Add unit tests and replay engine compatibility validation (`test_market_recorder.py`) (FEAT-21)
 
+### Sprint 18: Automated Log File Retention, Rollover & Multi-Sink Compression (FEAT-22)
+- [ ] Implement size-based and time-based application log rotation with custom gzip rotator and namer in `pumpfun_trading/ops/logging.py` (FEAT-22)
+- [ ] Add log rotation environment variables (`PUMPFUN_LOG_MAX_BYTES`, `PUMPFUN_LOG_BACKUP_COUNT`, `PUMPFUN_LOG_ROTATION_TYPE`, `PUMPFUN_LOG_COMPRESS`) to `pumpfun_trading/config/env.py` and `TradingBotConfig` (FEAT-22)
+- [ ] Create centralized retention management engine and async-safe rotating file sink in `pumpfun_trading/ops/retention.py` (`RetentionPolicy`, `RotatedFileSink`, `LogRetentionManager`) (FEAT-22)
+- [ ] Integrate `RotatedFileSink` with configurable rollover and retention into `StatusPersistenceManager` for `audit.jsonl` in `pumpfun_trading/bot/persistence.py` (FEAT-22)
+- [ ] Integrate `RotatedFileSink` into `ReplayRecorder` in `pumpfun_trading/bot/recorder.py` for chunked market replay recordings and background compression (FEAT-22)
+- [ ] Wire retention management and periodic background pruning into `TradingBot` runtime lifecycle in `pumpfun_trading/bot/run.py` (FEAT-22)
+- [ ] Upgrade `load_audit_records` in `pumpfun_trading/bot/audit.py` and `pumpfun_trading/cli/audit.py` to transparently read `.gz` files and directory datasets (FEAT-22)
+- [ ] Upgrade `PaperTradingEngine.load_history` and `run_replay` in `pumpfun_trading/engines/replay.py` and `pumpfun_trading/cli/replay.py` to support compressed `.jsonl.gz` datasets and multi-part replay directories (FEAT-22)
+- [ ] Add storage maintenance CLI commands (`pumpfun ops prune`, `pumpfun ops status`) in `pumpfun_trading/cli/main.py` (FEAT-22)
+- [ ] Add comprehensive test suites for log rotation, retention manager, compressed audit querying, and chunked replay datasets (`test_logging_rotation.py`, `test_ops_retention.py`, `test_audit_tool.py`, `test_market_recorder.py`) (FEAT-22)
+
 ## Definition of done for a “serious” bot
 
 The bot is production-worthy and alpha-ready when it can:

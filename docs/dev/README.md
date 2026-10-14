@@ -12,7 +12,7 @@ For user-facing manuals, trading strategy mathematics, and hosted web instance g
 | :--- | :--- | :--- |
 | [**Sprint Backlog & Roadmap (`TODO.md`)**](TODO.md) | Developers / Leads | Active engineering backlog, phased milestones (Phases 1–4), completed deliverables, and sprint task breakdowns. |
 | [**Bug Tracker & Resolution Matrix (`BUGS.md`)**](BUGS.md) | QA / Developers | Identified edge cases, security considerations, unit conversion fixes, and root cause resolution histories. |
-| [**Strategic Suggestions & Proposals (`SUGGESTIONS.md`)**](SUGGESTIONS.md) | Quant Traders / Architects | High-alpha feature proposals, MEV mitigation ideas, and next-generation architectural enhancements. |
+| [**Proposed Features & Roadmap (`PROPOSED-FEATURES.md`)**](PROPOSED-FEATURES.md) | Quant Traders / Architects | Candidate feature proposals, alpha generation strategies, and next-generation architectural enhancements under evaluation. |
 | [**Operations Runbook (`RUNBOOK.md`)**](RUNBOOK.md) | SRE / Bot Operators | Preflight checklists, startup/shutdown procedures, incident response workflows, and deployment hardening. |
 | [**Production Release Gates (`RELEASE-GATE.md`)**](RELEASE-GATE.md) | Release Managers / Leads | Formal quality gates, security review criteria, and sign-off checklists required prior to funded production deployments. |
 | [**30-Day Execution Plan (`NEXT-30-DAYS.md`)**](NEXT-30-DAYS.md) | Core Contributors | Tactical 30-day sprint milestones and near-term delivery objectives. |

@@ -94,6 +94,7 @@ class TradingBot:
         dry_run: bool = False,
         paper_trade: bool = False,
         verbose: bool = True,
+        headless: bool = False,
         log_file: str | None = None,
         strategy_preset: str = "balanced",
         audit_log_path: str | None = None,
@@ -140,6 +141,7 @@ class TradingBot:
             dry_run=bool(base.dry_run or dry_run or paper_trade),
             paper_trade=bool(base.paper_trade or paper_trade),
             verbose=bool(base.verbose and verbose),
+            headless=bool(getattr(base, "headless", False) or headless),
             stream_url=str(effective_stream_url),
             api_base_url=str(api_base_url if api_base_url else base.api_base_url),
             strategy_preset=str(base.strategy_preset),
@@ -293,7 +295,11 @@ class TradingBot:
         self.dry_run = self.config.dry_run
         self.paper_trade = self.config.paper_trade
         self.verbose = self.config.verbose
+        self.headless = self.config.headless or bool(
+            os.getenv("PUMPFUN_HEADLESS", "").lower() in {"1", "true", "yes"}
+        )
         self._stop_requested = False
+        self._start_time = time.monotonic()
         self._last_message_at = time.monotonic()
         self._last_event = "waiting for new token stream"
         self._last_new_token = "-"
@@ -397,10 +403,16 @@ class TradingBot:
                 endpoints=tuple(endpoints_list), config=pool_cfg
             )
 
+        # In interactive terminal mode (verbose=True and not headless), Rich's Live dashboard
+        # manages the alternate screen buffer. Direct StreamHandler writes to stderr/stdout
+        # bypass Rich and trigger cursor repositioning / viewport jumping (BUG-29).
+        # We suppress raw console StreamHandler writes during interactive Live UI rendering,
+        # enabling console logging only in headless mode or when verbose logging is disabled.
+        enable_console_logging = bool(self.headless or not self.verbose)
         self.logger = setup_structured_logging(
             logger_name="pumpfun_trading.bot",
             log_file=log_file,
-            console=self.verbose,
+            console=enable_console_logging,
         )
 
         self._metrics = {
@@ -556,6 +568,21 @@ class TradingBot:
             self.enricher.config = value
         if hasattr(self, "executor") and self.executor is not None:
             self.executor.config = value
+
+    @property
+    def uptime_seconds(self) -> float:
+        """Return the bot's runtime uptime in seconds using monotonic clock."""
+        start = getattr(self, "_start_time", None) or getattr(self, "_started_at", None)
+        if start is None:
+            return 0.0
+        return max(0.0, time.monotonic() - float(start))
+
+    @property
+    def uptime(self) -> str:
+        """Return formatted uptime string."""
+        from pumpfun_trading.ui.dashboard import format_uptime
+
+        return format_uptime(self.uptime_seconds)
 
     async def close(self) -> None:
         """Closes persistence handles and background resources."""
@@ -840,10 +867,20 @@ class TradingBot:
                     if rec_env.lower() not in {"true", "1", "yes"}
                     else "market_replay.jsonl"
                 )
-        return cls(private_key, rpc_url, replay_log_path=replay_log_path, **kwargs)
+        headless = kwargs.pop("headless", None)
+        if headless is None:
+            head_env = os.getenv("PUMPFUN_HEADLESS", "")
+            headless = head_env.lower() in {"1", "true", "yes"}
+        return cls(
+            private_key,
+            rpc_url,
+            headless=headless,
+            replay_log_path=replay_log_path,
+            **kwargs,
+        )
 
     def _log(self, message: str, level: int = logging.INFO) -> None:
-        if self.verbose:
+        if self.verbose or self.headless:
             self.logger.log(level, message)
 
     def request_shutdown(self) -> None:
@@ -2882,7 +2919,7 @@ class TradingBot:
 
     async def _render_loop(self) -> None:
         """Background loop rendering the Rich terminal dashboard."""
-        if not self.verbose:
+        if not self.verbose or self.headless:
             return
 
         with Live(
@@ -2923,7 +2960,7 @@ class TradingBot:
 
         health_task = asyncio.create_task(self._run_health_loop())
         render_task = None
-        if self.verbose:
+        if self.verbose and not self.headless:
             render_task = asyncio.create_task(self._render_loop())
 
         is_custom_listen = (

@@ -242,6 +242,7 @@ def resolve_strategy_config(
         dry_run=bool(base.get("dry_run", False)),
         paper_trade=bool(base.get("paper_trade", False)),
         verbose=bool(base.get("verbose", True)),
+        headless=bool(base.get("headless", False)),
         stream_url=str(base.get("stream_url", "wss://pumpportal.fun/api/data")),
         api_base_url=str(base.get("api_base_url", "https://frontend-api-v3.pump.fun")),
         strategy_preset=preset_key,

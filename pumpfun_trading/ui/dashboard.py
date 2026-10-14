@@ -22,6 +22,24 @@ def format_compact_tokens(amount: int | float | None) -> str:
     return f"{val:.0f}"
 
 
+def format_uptime(seconds: float | int | None) -> str:
+    """Format duration in seconds into a concise human-readable string (e.g. '04h 12m 30s', '12m 30s', '45s')."""
+    if seconds is None:
+        return "0s"
+    val = max(0.0, float(seconds))
+    total_seconds = int(val)
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d {hours:02d}h {minutes:02d}m {secs:02d}s"
+    if hours > 0:
+        return f"{hours:02d}h {minutes:02d}m {secs:02d}s"
+    if minutes > 0:
+        return f"{minutes:02d}m {secs:02d}s"
+    return f"{secs}s"
+
+
 def build_dashboard(bot: Any) -> Panel:
     """Build the bot dashboard panel from the live bot state."""
     strategy = Table.grid(expand=True)
@@ -68,10 +86,38 @@ def build_dashboard(bot: Any) -> Panel:
         risk.add_row("", "")
         risk.add_row("", "")
 
+    uptime_val = None
+    if hasattr(bot, "uptime_seconds"):
+        try:
+            uptime_val = bot.uptime_seconds
+        except Exception:
+            uptime_val = None
+    if uptime_val is None:
+        start = (
+            getattr(bot, "_start_time", None)
+            or getattr(bot, "_started_at", None)
+            or getattr(bot, "start_time", None)
+        )
+        if start is not None:
+            try:
+                uptime_val = max(0.0, time.monotonic() - float(start))
+            except Exception:
+                uptime_val = 0.0
+        elif hasattr(bot, "uptime") and isinstance(bot.uptime, (int, float)):
+            uptime_val = float(bot.uptime)
+        elif hasattr(bot, "uptime") and isinstance(bot.uptime, str):
+            uptime_str = bot.uptime
+        else:
+            uptime_val = 0.0
+
+    if "uptime_str" not in locals():
+        uptime_str = format_uptime(uptime_val)
+
     bot_status = Table.grid(expand=True)
     bot_status.add_column(justify="left")
     bot_status.add_column(justify="right")
     bot_status.add_row("State", str(bot.state.value))
+    bot_status.add_row("Uptime", uptime_str)
     bot_status.add_row("Health", "ok" if bot._health_ok else "degraded")
     bot_status.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     bot_status.add_row("Active positions", str(len(bot.active_positions)))
