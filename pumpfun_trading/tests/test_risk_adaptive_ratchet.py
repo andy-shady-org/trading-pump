@@ -301,3 +301,74 @@ async def test_bot_circuit_breaker_two_tier_actions() -> None:
     )
     assert len(liquidated_mints) == 1
     assert bot._risk_killed is True
+
+
+@pytest.mark.asyncio
+async def test_dry_run_simulated_cash_flow_and_circuit_breaker_resilience() -> None:
+    """
+    Validates BUG-30 fix:
+    - In dry_run mode, buying decrements wallet_balance_sol and selling increments wallet_balance_sol.
+    - Prevents false-positive circuit breaker trips after profitable runner trades.
+    """
+    from pumpfun_trading.bot.run import TradingBot
+
+    bot = TradingBot(
+        private_key_b58="3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLyKfmogN5328W5REGLxmGfV5nCeqvE8j5Fh8n2xJvTfH24x9C8eZ56Tz",
+        rpc_url="http://127.0.0.1:8899",
+        dry_run=True,
+        config=TradingBotConfig(
+            buy_amount_sol=0.01,
+            max_daily_drawdown_pct=0.20,
+            drawdown_reference_mode="adaptive_ratchet",
+            profit_ratchet_ratio=0.50,
+            profit_drawdown_tolerance_pct=0.35,
+        ),
+    )
+    # Set starting balance and initialize equity tracker
+    bot.wallet_balance_sol = 0.20
+    bot.daily_equity_tracker.initialize_or_rollover(0.20, 0.0)
+
+    # 1. Buy Token 1 (cost 0.01 SOL)
+    mint1 = "Stockguy1111111111111111111111111111111111"
+    buy_ok = await bot._buy_token(mint1, market_cap_sol=30.0, token_name="Stockguy")
+    assert buy_ok is True
+    assert bot.wallet_balance_sol == pytest.approx(0.19)
+    assert mint1 in bot.active_positions
+
+    # 2. Simulate explosive 22.3x price surge (market cap 30.0 -> 669.0 SOL)
+    bot.position_manager.update_price(mint1, 669.0)
+    # Peak equity during pump
+    open_val = bot.position_manager.calculate_total_open_value()
+    bot.daily_equity_tracker.update_valuation(bot.wallet_balance_sol, open_val)
+    assert bot.daily_equity_tracker.peak_daily_equity_sol >= 0.40
+
+    # 3. Sell 50% partial exit (TP1)
+    sold_tp1 = await bot._sell_token(
+        mint1, sell_fraction=0.50, reason="take_profit_tier1", target_tier=1
+    )
+    assert sold_tp1 is True
+    # Proceeds: (0.01 * 0.5) * (669.0 / 30.0) = 0.1115 SOL
+    # New wallet balance: 0.19 + 0.1115 = 0.3015 SOL
+    assert bot.wallet_balance_sol == pytest.approx(0.3015)
+
+    # 4. Sell full remaining exit (Moonbag)
+    sold_full = await bot._sell_token(mint1, sell_fraction=1.0, reason="timeout_exit")
+    assert sold_full is True
+    assert mint1 not in bot.active_positions
+    # Remaining 50% proceeds = 0.1115 SOL
+    # Total wallet balance: 0.3015 + 0.1115 = 0.4130 SOL
+    assert bot.wallet_balance_sol == pytest.approx(0.4130)
+    assert bot.daily_equity_tracker.realized_daily_pnl_sol == pytest.approx(0.2130)
+
+    # 5. Open new position (cost 0.01 SOL)
+    mint2 = "NextToken2222222222222222222222222222222222"
+    buy_ok2 = await bot._buy_token(mint2, market_cap_sol=30.0, token_name="NextToken")
+    assert buy_ok2 is True
+    assert bot.wallet_balance_sol == pytest.approx(0.4030)
+
+    # 6. Evaluate circuit breaker
+    tripped = await bot._check_and_enforce_circuit_breaker()
+    assert tripped is False
+    assert not bot.daily_equity_tracker.circuit_breaker_engaged
+    assert bot.daily_equity_tracker.circuit_breaker_action == CircuitBreakerAction.NONE
+    assert bot._risk_killed is False

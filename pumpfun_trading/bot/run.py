@@ -1749,6 +1749,10 @@ class TradingBot:
             metadata={"position_id": position_id, "trade_id": trade_id},
         )
         self.active_positions = self.position_manager.get_all_positions()
+        if self.dry_run or self.paper_trade:
+            self.wallet_balance_sol = max(
+                0.0, float(self.wallet_balance_sol) - float(effective_buy_amount)
+            )
 
         self._buy_attempts[mint] = 0
         self._mark_seen(mint)
@@ -1850,6 +1854,10 @@ class TradingBot:
             },
         )
         self.active_positions = self.position_manager.get_all_positions()
+        if self.dry_run or self.paper_trade:
+            self.wallet_balance_sol = max(
+                0.0, float(self.wallet_balance_sol) - float(buy_amount)
+            )
 
         self._buy_attempts[mint] = 0
         self._mark_seen(mint)
@@ -2235,6 +2243,10 @@ class TradingBot:
             is_partial=is_partial,
         )
         self.active_positions = self.position_manager.get_all_positions()
+        if self.dry_run or self.paper_trade:
+            self.wallet_balance_sol = max(
+                0.0, float(self.wallet_balance_sol) + float(sell_p)
+            )
 
         pos_id = (
             position.get("position_id")
