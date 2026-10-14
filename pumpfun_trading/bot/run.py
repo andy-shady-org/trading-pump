@@ -1556,17 +1556,17 @@ class TradingBot:
         if hasattr(self, "event_logger") and self.event_logger is not None:
             gini = (
                 verdict.holder_distribution.compute_gini_coefficient()
-                if getattr(verdict, "holder_distribution", None) is not None
+                if verdict.holder_distribution is not None
                 else None
             )
             top5 = (
                 verdict.holder_distribution.compute_top5_non_curve_pct()
-                if getattr(verdict, "holder_distribution", None) is not None
+                if verdict.holder_distribution is not None
                 else None
             )
             creator_hold = (
-                getattr(verdict.dev_profile, "creator_token_holding_pct", None)
-                if getattr(verdict, "dev_profile", None) is not None
+                verdict.holder_distribution.creator_initial_pct
+                if verdict.holder_distribution is not None
                 else None
             )
             self.event_logger.emit(

@@ -380,7 +380,7 @@ class SybilWashTradingDetector:
             w1, buy1, amt1, _ = wallet_sequence[i]
             w2, buy2, amt2, _ = wallet_sequence[i + 1]
             if w1 and w2 and w1 != w2:
-                pair = tuple(sorted([w1, w2]))
+                pair = (w1, w2) if w1 < w2 else (w2, w1)
                 pair_trade_counts[pair] += 1
                 if pair_trade_counts[pair] >= 3:
                     # Alternating ping-pong detected

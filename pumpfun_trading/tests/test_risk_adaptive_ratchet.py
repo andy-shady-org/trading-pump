@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from pumpfun_trading.bot.risk import (
@@ -229,7 +231,7 @@ def test_evaluate_portfolio_circuit_breaker_integration() -> None:
                 peak_daily_equity_sol=1.0,
             )
             self.wallet_balance_sol = 1.0
-            self.active_positions = {}
+            self.active_positions: dict[str, Any] = {}
             self._last_event = ""
 
     bot = MockBot()

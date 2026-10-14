@@ -407,10 +407,10 @@ class PositionEvEvaluator:
         net_inflow = 0.0
         if momentum_signal is not None:
             z_score = float(getattr(momentum_signal, "z_score", 0.0))
-            net_inflow = float(
-                getattr(momentum_signal, "net_sol_inflow", None)
-                or getattr(momentum_signal, "net_inflow_sol", 0.0)
-            )
+            inflow_val = getattr(momentum_signal, "net_sol_inflow", None)
+            if inflow_val is None:
+                inflow_val = getattr(momentum_signal, "net_inflow_sol", 0.0)
+            net_inflow = float(inflow_val if inflow_val is not None else 0.0)
         elif "z_score" in position:
             z_score = float(position.get("z_score", 0.0))
             net_inflow = float(
@@ -458,22 +458,19 @@ class PositionEvEvaluator:
         z_score = (
             float(getattr(momentum_signal, "z_score", 3.0)) if momentum_signal else 3.0
         )
-        net_inflow = (
-            float(
-                getattr(momentum_signal, "net_sol_inflow", None)
-                or getattr(momentum_signal, "net_inflow_sol", 1.0)
-            )
-            if momentum_signal
-            else 1.0
-        )
-        buy_ratio = (
-            float(
-                getattr(momentum_signal, "buy_sell_ratio", None)
-                or getattr(momentum_signal, "buy_ratio", 3.0)
-            )
-            if momentum_signal
-            else 3.0
-        )
+        if momentum_signal:
+            inflow_val = getattr(momentum_signal, "net_sol_inflow", None)
+            if inflow_val is None:
+                inflow_val = getattr(momentum_signal, "net_inflow_sol", 1.0)
+            net_inflow = float(inflow_val if inflow_val is not None else 1.0)
+
+            ratio_val = getattr(momentum_signal, "buy_sell_ratio", None)
+            if ratio_val is None:
+                ratio_val = getattr(momentum_signal, "buy_ratio", 3.0)
+            buy_ratio = float(ratio_val if ratio_val is not None else 3.0)
+        else:
+            net_inflow = 1.0
+            buy_ratio = 3.0
 
         norm_z = max(0.0, min(5.0, z_score)) / 5.0
         norm_inflow = max(0.0, min(5.0, net_inflow)) / 5.0
