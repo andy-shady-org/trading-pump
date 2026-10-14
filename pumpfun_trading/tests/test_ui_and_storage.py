@@ -588,3 +588,63 @@ def test_format_uptime_and_dashboard_uptime_field():
     assert real_bot.uptime_seconds >= 0.0
     assert hasattr(real_bot, "uptime")
     assert isinstance(real_bot.uptime, str)
+
+
+def test_dashboard_wallet_value_field():
+    """Verify Wallet value rendering in the Strategy dashboard panel."""
+    bot = MagicMock()
+    bot.config = TradingBotConfig()
+    bot.max_active_positions = 2
+    bot.min_market_cap_sol = 20.0
+    bot.dry_run = False
+    bot.paper_trade = False
+    bot._risk_killed = False
+    bot.state = TradingBotState.MONITORING
+    bot._health_ok = True
+    bot._last_event = "idle"
+    bot._last_status = "monitoring"
+    bot._last_message_at = time.monotonic()
+    bot.stream_url = "wss://pumpportal.fun/api/data"
+    bot.geyser_endpoint = None
+    bot.audit_log_path = None
+    bot._last_new_token_name = "None"
+    bot._last_health_check = time.monotonic()
+    bot._stop_requested = False
+    bot._observed_tokens_count = 0
+    bot._seen_mints = {}
+    bot._metrics_snapshot.return_value = {
+        "buys": 0,
+        "sells": 0,
+        "failures": 0,
+        "retries": 0,
+        "connection_loss": 0,
+        "stale_data": 0,
+        "latency_ms": {
+            "avg_ms": 1.0,
+            "samples": 1,
+            "last_ms": 1.0,
+            "max_ms": 1.0,
+            "total_ms": 1.0,
+        },
+    }
+    bot._recent_events = []
+    bot._trade_ledger = []
+    bot.active_positions = {}
+    bot.wallet_balance_sol = 1.4520
+
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    output = console.export_text()
+    assert "Wallet value" in output
+    assert "1.4520 SOL" in output
+
+    # Fallback with None wallet_balance_sol
+    bot.wallet_balance_sol = None
+    bot.wallet_value = None
+    bot.wallet_balance = None
+    panel_none = build_dashboard(bot)
+    console.print(panel_none)
+    output_none = console.export_text()
+    assert "Wallet value" in output_none
+    assert "0.0000 SOL" in output_none

@@ -53,7 +53,20 @@ def build_dashboard(bot: Any) -> Panel:
     strategy.add_row("Min market cap", f"{bot.min_market_cap_sol:.2f} SOL")
     strategy.add_row("Dry run", "yes" if bot.dry_run else "no")
     strategy.add_row("Paper trade", "yes" if bot.paper_trade else "no")
-    strategy.add_row("", "")
+
+    wallet_val = getattr(bot, "wallet_balance_sol", None)
+    if wallet_val is None:
+        wallet_val = getattr(bot, "wallet_value", None)
+    if wallet_val is None:
+        wallet_val = getattr(bot, "wallet_balance", None)
+    if wallet_val is not None:
+        try:
+            wallet_str = f"{float(wallet_val):.4f} SOL"
+        except (ValueError, TypeError):
+            wallet_str = str(wallet_val)
+    else:
+        wallet_str = "0.0000 SOL"
+    strategy.add_row("Wallet value", wallet_str)
     strategy.add_row("", "")
 
     risk = Table.grid(expand=True)
