@@ -104,6 +104,16 @@ def get_runtime_env(**overrides: Any) -> dict[str, Any]:
         "PUMPFUN_BOT_STATUS_PATH": os.getenv("PUMPFUN_BOT_STATUS_PATH"),
         "PUMPFUN_REPLAY_LOG_PATH": os.getenv("PUMPFUN_REPLAY_LOG_PATH"),
         "PUMPFUN_RECORD_REPLAY": os.getenv("PUMPFUN_RECORD_REPLAY"),
+        "PUMPFUN_DRAWDOWN_MODE": os.getenv("PUMPFUN_DRAWDOWN_MODE"),
+        "PUMPFUN_PROFIT_RATCHET_RATIO": os.getenv("PUMPFUN_PROFIT_RATCHET_RATIO"),
+        "PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT": os.getenv(
+            "PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT"
+        ),
+        "PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS": os.getenv(
+            "PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS"
+        ),
+        "PUMPFUN_EVENT_LOG_PATH": os.getenv("PUMPFUN_EVENT_LOG_PATH"),
+        "PUMPFUN_EVENT_SUBSYSTEMS": os.getenv("PUMPFUN_EVENT_SUBSYSTEMS"),
     } | overrides
 
 

@@ -624,6 +624,16 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
   - [x] Document visual styling, color codes, unit formatting (SOL / µSOL), lifecycle states, and headless execution
 - [x] Link `docs/CLI-COMMANDS.md` and `docs/TERMINAL-UI.md` in `docs/USER-GUIDE.md`, `AGENTS.md`, and `docs/dev/README.md`
 
+### Sprint 20: Adaptive Realized-Ratchet Drawdown Engine & Diagnostic Event Telemetry (FEAT-29 & FEAT-30)
+- [x] Add configuration fields to `TradingBotConfig` and environment parser (`drawdown_reference_mode`, `profit_ratchet_ratio`, `profit_drawdown_tolerance_pct`, `enable_diagnostic_events`, `event_log_path`, `event_log_subsystems`) (FEAT-29, FEAT-30)
+- [x] Implement realized profit ratcheting and dual-zone risk evaluation (`Principal Protection Zone` vs `Profit Run Zone`) in `DailyEquityTracker` in `pumpfun_trading/bot/risk.py` (FEAT-29)
+- [x] Implement tiered two-stage circuit breaker actions (`NONE`, `HALT_NEW_BUYS`, `EMERGENCY_LIQUIDATE`) in `pumpfun_trading/bot/risk.py` (FEAT-29)
+- [x] Wire two-tier circuit breaker status into token screening, entry loops, and position exits in `pumpfun_trading/bot/run.py` and `position_manager.py` (FEAT-29)
+- [x] Implement high-throughput async non-blocking `DiagnosticEventLogger` with background queue flushing in `pumpfun_trading/ops/events.py` (FEAT-30)
+- [x] Instrument core subsystems with structured diagnostic telemetry events (`streams/`, `enrichment.py`, `strategy.py`, `executor.py`, `sdk/jito.py`, `position_manager.py`, `risk.py`) (FEAT-30)
+- [x] Build standalone `pumpfun-events` CLI tool and unified `pumpfun events` subcommand with Rich formatting, tailing, filters, and latency analytics (FEAT-30)
+- [x] Add comprehensive test suites for realized-ratchet drawdown math, dual-tier circuit breakers, event logger stress tests, and CLI querying (`test_risk_adaptive_ratchet.py`, `test_diagnostic_events.py`, `test_events_cli.py`) (FEAT-29, FEAT-30)
+
 ## Definition of done for a “serious” bot
 
 The bot is production-worthy and alpha-ready when it can:

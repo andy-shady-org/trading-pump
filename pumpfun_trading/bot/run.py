@@ -32,6 +32,7 @@ from pumpfun_trading.bot.persistence import StatusPersistenceManager
 from pumpfun_trading.bot.position_manager import PositionManager
 from pumpfun_trading.bot.recorder import ReplayRecorder
 from pumpfun_trading.bot.risk import (
+    CircuitBreakerAction,
     DailyEquityTracker,
     check_daily_drawdown,
     check_loss_per_trade,
@@ -54,6 +55,11 @@ from pumpfun_trading.execution.builder import build_execution_client
 from pumpfun_trading.execution.executor import OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool, RpcPoolConfig
+from pumpfun_trading.ops.events import (
+    DiagnosticEventLogger,
+    EventCategory,
+    EventSeverity,
+)
 from pumpfun_trading.ops.logging import (
     get_configured_console,
     setup_structured_logging,
@@ -456,6 +462,32 @@ class TradingBot:
             bot_status_path=self.bot_status_path,
             audit_log_path=self.audit_log_path,
         )
+
+        # Diagnostic Telemetry Event Logger (FEAT-30)
+        event_log_path_env = os.getenv("PUMPFUN_EVENT_LOG_PATH")
+        effective_event_log_path = (
+            event_log_path_env
+            if event_log_path_env
+            else getattr(self.config, "event_log_path", "events.jsonl")
+            or "events.jsonl"
+        )
+        subsystems_env = os.getenv("PUMPFUN_EVENT_SUBSYSTEMS")
+        effective_subsystems = (
+            tuple(p.strip() for p in subsystems_env.split(",") if p.strip())
+            if subsystems_env
+            else getattr(self.config, "event_log_subsystems", None)
+        )
+        enable_events_env = os.getenv("PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS")
+        effective_enable_events = (
+            enable_events_env.lower() in {"1", "true", "yes"}
+            if enable_events_env is not None
+            else getattr(self.config, "enable_diagnostic_events", True)
+        )
+        self.event_logger = DiagnosticEventLogger(
+            output_path=effective_event_log_path,
+            enabled_categories=effective_subsystems,
+            enabled=effective_enable_events,
+        )
         self._audit_handle = self.persistence._audit_handle
 
         resolved_replay_path = (
@@ -587,6 +619,8 @@ class TradingBot:
     async def close(self) -> None:
         """Closes persistence handles and background resources."""
         self.persistence.close()
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            await self.event_logger.flush_and_close()
         if self.replay_recorder is not None:
             await self.replay_recorder.close()
         if hasattr(self, "rpc_pool") and self.rpc_pool is not None:
@@ -795,6 +829,17 @@ class TradingBot:
         }
         self._recent_actions.append(event)
         self._write_audit_record("state_transition", event)
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.LIFECYCLE,
+                severity=EventSeverity.INFO,
+                event_name="state_transition",
+                data={
+                    "from_state": current.value,
+                    "to_state": next_state.value,
+                    "reason": reason,
+                },
+            )
         self._record_event(
             f"state: {current.value} -> {next_state.value}"
             + (f" ({reason})" if reason else ""),
@@ -1126,6 +1171,10 @@ class TradingBot:
         self.daily_equity_tracker.reset_circuit_breaker(
             new_baseline_sol=baseline, force=force
         )
+        if new_baseline_sol is not None and (self.paper_trade or self.dry_run):
+            self.wallet_balance_sol = max(
+                self.wallet_balance_sol, float(new_baseline_sol)
+            )
         self._risk_killed = False
         self._record_event(
             f"circuit breaker reset (baseline: {baseline:.2f} SOL)",
@@ -1206,28 +1255,44 @@ class TradingBot:
 
         if is_locked:
             self._last_event = f"circuit breaker: {reason}"
-            if (
-                self.config.auto_liquidate_on_circuit_breaker
-                and len(self.active_positions) > 0
-            ):
-                self._log(
-                    f"Engaging emergency liquidation due to circuit breaker breach: {reason}",
-                    level=logging.ERROR,
-                )
-                await self._liquidate_all_positions(reason=f"circuit_breaker: {reason}")
+            action = getattr(
+                self.daily_equity_tracker,
+                "circuit_breaker_action",
+                CircuitBreakerAction.EMERGENCY_LIQUIDATE,
+            )
 
-            self._risk_killed = True
-            self._record_metric("circuit_breaker_trips")
-            if self.state in {
-                TradingBotState.BUYING,
-                TradingBotState.HOLDING,
-                TradingBotState.SELLING,
-            }:
-                self._transition_to(
-                    TradingBotState.MONITORING,
-                    reason=f"circuit_breaker: {reason}",
+            if action == CircuitBreakerAction.EMERGENCY_LIQUIDATE:
+                if (
+                    self.config.auto_liquidate_on_circuit_breaker
+                    and len(self.active_positions) > 0
+                ):
+                    self._log(
+                        f"Engaging emergency liquidation due to circuit breaker breach: {reason}",
+                        level=logging.ERROR,
+                    )
+                    await self._liquidate_all_positions(
+                        reason=f"circuit_breaker: {reason}"
+                    )
+
+                self._risk_killed = True
+                self._record_metric("circuit_breaker_trips")
+                if self.state in {
+                    TradingBotState.BUYING,
+                    TradingBotState.HOLDING,
+                    TradingBotState.SELLING,
+                }:
+                    self._transition_to(
+                        TradingBotState.MONITORING,
+                        reason=f"circuit_breaker: {reason}",
+                    )
+                return True
+            elif action == CircuitBreakerAction.HALT_NEW_BUYS:
+                self._log(
+                    f"Engaging soft buy halt due to profit-zone retracement: {reason}",
+                    level=logging.WARNING,
                 )
-            return True
+                self._record_metric("circuit_breaker_soft_halts")
+                return True
 
         return False
 
@@ -1328,6 +1393,15 @@ class TradingBot:
                 else 0.0
             ),
             "daily_starting_equity_sol": self.daily_equity_tracker.starting_equity_sol,
+            "effective_baseline_sol": self.daily_equity_tracker.effective_baseline_sol,
+            "circuit_breaker_action": (
+                self.daily_equity_tracker.circuit_breaker_action.value
+                if isinstance(
+                    self.daily_equity_tracker.circuit_breaker_action,
+                    CircuitBreakerAction,
+                )
+                else str(self.daily_equity_tracker.circuit_breaker_action)
+            ),
             "circuit_breaker_engaged": self.daily_equity_tracker.circuit_breaker_engaged,
             "circuit_breaker_lockout_until": self.daily_equity_tracker.locked_at_timestamp,
             "screening_cache_size": len(getattr(self.screening_cache, "_cache", {})),
@@ -1349,9 +1423,49 @@ class TradingBot:
     async def _enrich_and_screen_token(
         self, mint: str, token_data: dict[str, Any] | None = None
     ) -> TokenScreeningVerdict:
-        return await self.enricher.enrich_and_screen(
+        t0 = time.perf_counter()
+        verdict = await self.enricher.enrich_and_screen(
             mint, token_data=token_data, config=self.config
         )
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            gini = (
+                verdict.holder_distribution.compute_gini_coefficient()
+                if getattr(verdict, "holder_distribution", None) is not None
+                else None
+            )
+            top5 = (
+                verdict.holder_distribution.compute_top5_non_curve_pct()
+                if getattr(verdict, "holder_distribution", None) is not None
+                else None
+            )
+            creator_hold = (
+                getattr(verdict.dev_profile, "creator_token_holding_pct", None)
+                if getattr(verdict, "dev_profile", None) is not None
+                else None
+            )
+            self.event_logger.emit(
+                category=EventCategory.SCREENING,
+                severity=(
+                    EventSeverity.INFO if verdict.passed else EventSeverity.WARNING
+                ),
+                event_name="token_screened",
+                mint=mint,
+                latency_ms=latency_ms,
+                data={
+                    "passed": verdict.passed,
+                    "risk_score": verdict.risk_score,
+                    "reasons": (
+                        list(verdict.reasons)
+                        if getattr(verdict, "reasons", None)
+                        else []
+                    ),
+                    "gini_coefficient": gini,
+                    "top5_concentration": top5,
+                    "creator_holding_pct": creator_hold,
+                },
+            )
+        return verdict
 
     def _should_buy(
         self,
@@ -1444,6 +1558,21 @@ class TradingBot:
         resolved_name = await self._resolve_token_name(mint, token_name)
         position_name = (resolved_name or mint).strip() or mint
 
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.STRATEGY,
+                severity=EventSeverity.INFO,
+                event_name="entry_signal",
+                mint=mint,
+                mint_name=position_name,
+                data={
+                    "amount_sol": effective_buy_amount,
+                    "market_cap_sol": float(market_cap_sol or 0.0),
+                    "reason": reason or "entry",
+                },
+            )
+
+        t_exec_start = time.perf_counter()
         exec_res = await self.executor.execute_buy(
             mint=mint,
             amount_sol=effective_buy_amount,
@@ -1451,6 +1580,27 @@ class TradingBot:
             token_name=position_name,
             dry_run=self.dry_run,
         )
+        exec_latency_ms = (time.perf_counter() - t_exec_start) * 1000.0
+
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.EXECUTION,
+                severity=(
+                    EventSeverity.INFO if exec_res.success else EventSeverity.ERROR
+                ),
+                event_name="buy_executed",
+                mint=mint,
+                mint_name=position_name,
+                latency_ms=exec_latency_ms,
+                data={
+                    "success": exec_res.success,
+                    "signature": exec_res.signature,
+                    "error": exec_res.error,
+                    "amount_sol": effective_buy_amount,
+                    "token_amount": exec_res.token_amount,
+                },
+                error_message=exec_res.error,
+            )
 
         if not exec_res.success:
             self._buy_attempts[mint] = self._buy_attempts.get(mint, 0) + 1
@@ -1802,6 +1952,7 @@ class TradingBot:
             tokens_to_sell = rem_tokens
 
         effective_slippage = slippage_bps or self.base_exit_slippage_bps
+        t_sell_start = time.perf_counter()
         exec_res = await self.executor.execute_sell(
             mint=mint,
             token_amount=tokens_to_sell,
@@ -1809,6 +1960,28 @@ class TradingBot:
             reason=reason,
             dry_run=self.dry_run,
         )
+        sell_latency_ms = (time.perf_counter() - t_sell_start) * 1000.0
+
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.EXECUTION,
+                severity=(
+                    EventSeverity.INFO if exec_res.success else EventSeverity.ERROR
+                ),
+                event_name="sell_executed",
+                mint=mint,
+                mint_name=pos_name,
+                latency_ms=sell_latency_ms,
+                data={
+                    "success": exec_res.success,
+                    "signature": exec_res.signature,
+                    "error": exec_res.error,
+                    "tokens_sold": tokens_to_sell,
+                    "is_partial": is_partial,
+                    "reason": reason,
+                },
+                error_message=exec_res.error,
+            )
 
         if not exec_res.success:
             self._enqueue_exit_retry(mint, reason=f"sell_exec_failed: {exec_res.error}")
@@ -1884,6 +2057,20 @@ class TradingBot:
             trade_pnl = sell_p - partial_entry
             if getattr(self, "daily_equity_tracker", None) is not None:
                 self.daily_equity_tracker.record_realized_trade(trade_pnl)
+                if hasattr(self, "event_logger") and self.event_logger is not None:
+                    self.event_logger.emit(
+                        category=EventCategory.RISK,
+                        severity=EventSeverity.INFO,
+                        event_name="realized_pnl_banked",
+                        mint=mint,
+                        mint_name=pos_name,
+                        data={
+                            "trade_pnl": trade_pnl,
+                            "is_partial": True,
+                            "realized_daily_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
+                            "effective_baseline_sol": self.daily_equity_tracker.effective_baseline_sol,
+                        },
+                    )
             self._record_trade(
                 position_id=pos_id,
                 mint=mint,
@@ -1931,6 +2118,20 @@ class TradingBot:
         trade_pnl = sell_p - effective_entry
         if getattr(self, "daily_equity_tracker", None) is not None:
             self.daily_equity_tracker.record_realized_trade(trade_pnl)
+            if hasattr(self, "event_logger") and self.event_logger is not None:
+                self.event_logger.emit(
+                    category=EventCategory.RISK,
+                    severity=EventSeverity.INFO,
+                    event_name="realized_pnl_banked",
+                    mint=mint,
+                    mint_name=pos_name,
+                    data={
+                        "trade_pnl": trade_pnl,
+                        "is_partial": False,
+                        "realized_daily_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
+                        "effective_baseline_sol": self.daily_equity_tracker.effective_baseline_sol,
+                    },
+                )
         self._record_trade(
             position_id=pos_id,
             mint=mint,
@@ -2435,6 +2636,16 @@ class TradingBot:
         self._last_new_token_name = (
             f"{token_name} ({mint[:6]}...)" if len(mint) > 6 else token_name
         )
+
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.STREAM,
+                severity=EventSeverity.DEBUG,
+                event_name="new_token_event",
+                mint=mint,
+                mint_name=token_name,
+                data={"market_cap_sol": current_market_cap},
+            )
 
         if self.replay_recorder is not None:
             price = (
@@ -2941,6 +3152,8 @@ class TradingBot:
     async def start(self) -> None:
         """Starts background workers and event stream listeners."""
         self._register_signal_handlers()
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            await self.event_logger.start()
         if self.rpc_pool:
             await self.rpc_pool.start_health_loop()
         if self.replay_recorder is not None:
@@ -2955,6 +3168,18 @@ class TradingBot:
             f"bot started ({self.config.strategy_preset} preset, {'paper' if self.paper_trade else 'live'})",
             alert=False,
         )
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.LIFECYCLE,
+                severity=EventSeverity.INFO,
+                event_name="bot_started",
+                data={
+                    "preset": self.config.strategy_preset,
+                    "paper_trade": self.paper_trade,
+                    "dry_run": self.dry_run,
+                    "buy_amount_sol": self.buy_amount_sol,
+                },
+            )
         self._transition_to(TradingBotState.MONITORING, reason="bot_started")
         await self._reconcile_positions_on_startup()
 

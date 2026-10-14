@@ -13,6 +13,7 @@ from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig, resolve_strategy_config
 from pumpfun_trading.cli.audit import build_audit_parser, run_audit_cli
+from pumpfun_trading.cli.events import build_events_parser, run_events_cli
 from pumpfun_trading.cli.record import build_record_parser, run_record_cli
 from pumpfun_trading.cli.replay import build_replay_parser
 from pumpfun_trading.ops.logging import get_configured_console
@@ -151,6 +152,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
     build_audit_parser(subparsers)
+    build_events_parser(subparsers)
     build_replay_parser(subparsers)
     build_record_parser(subparsers)
 
@@ -246,6 +248,10 @@ def main() -> None:
 
     if args.command == "audit":
         run_audit_cli(args)
+        return
+
+    if args.command == "events":
+        run_events_cli(args)
         return
 
     if args.command == "record":

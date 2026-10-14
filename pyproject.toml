@@ -35,6 +35,7 @@ dependencies = [
 [project.scripts]
 pumpbot = "pumpfun_trading.cli.bot:main"
 pumpfun-audit = "pumpfun_trading.cli.audit:run_audit_cli"
+pumpfun-events = "pumpfun_trading.cli.events:main"
 pumpfun-replay = "pumpfun_trading.cli.replay:main"
 pumpfun-recorder = "pumpfun_trading.cli.record:main"
 

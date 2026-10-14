@@ -4,24 +4,54 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
+
+
+class CircuitBreakerAction(str, Enum):
+    """Tiered action triggered by portfolio risk evaluation."""
+
+    NONE = "none"
+    HALT_NEW_BUYS = "halt_new_buys"
+    EMERGENCY_LIQUIDATE = "emergency_liquidate"
 
 
 @dataclass
 class DailyEquityTracker:
     """
     Tracks portfolio starting baseline equity, real-time peak equity,
-    daily realized/unrealized PnL, UTC midnight rollovers, and circuit breaker lock states.
+    daily realized/unrealized PnL, UTC midnight rollovers, adaptive realized ratchets,
+    and circuit breaker lock states.
     """
 
     starting_equity_sol: float = 0.0
     peak_daily_equity_sol: float = 0.0
     realized_daily_pnl_sol: float = 0.0
+    drawdown_reference_mode: str = "adaptive_ratchet"
+    profit_ratchet_ratio: float = 0.50
+    profit_drawdown_tolerance_pct: float = 0.35
+    circuit_breaker_action: CircuitBreakerAction = CircuitBreakerAction.NONE
     last_reset_date_utc: str = ""
     circuit_breaker_engaged: bool = False
     locked_at_timestamp: float | None = None
     lock_reason: str = ""
     total_lock_count: int = 0
+
+    @property
+    def effective_baseline_sol(self) -> float:
+        """
+        Calculates the ratcheted baseline equity floor:
+        Starting Capital + profit_ratchet_ratio * max(0, cumulative_realized_pnl_sol).
+        Guaranteed >= starting_equity_sol and >= 0.0.
+        """
+        if self.drawdown_reference_mode == "adaptive_ratchet":
+            realized_gain = max(0.0, float(self.realized_daily_pnl_sol))
+            ratchet = (
+                self.starting_equity_sol
+                + float(self.profit_ratchet_ratio) * realized_gain
+            )
+            return max(0.0, ratchet)
+        return max(0.0, self.starting_equity_sol)
 
     @classmethod
     def get_current_utc_date(cls, dt: datetime.datetime | None = None) -> str:
@@ -42,11 +72,21 @@ class DailyEquityTracker:
             0.0, float(current_wallet_balance_sol) + float(open_positions_valuation_sol)
         )
 
-        if not self.last_reset_date_utc or self.last_reset_date_utc != today_utc:
+        if not self.last_reset_date_utc:
+            self.last_reset_date_utc = today_utc
+            if self.starting_equity_sol <= 0.0:
+                self.starting_equity_sol = current_equity
+            if self.peak_daily_equity_sol <= 0.0:
+                self.peak_daily_equity_sol = max(
+                    self.starting_equity_sol, current_equity
+                )
+            return True
+        elif self.last_reset_date_utc != today_utc:
             self.last_reset_date_utc = today_utc
             self.starting_equity_sol = current_equity
             self.peak_daily_equity_sol = current_equity
             self.realized_daily_pnl_sol = 0.0
+            self.circuit_breaker_action = CircuitBreakerAction.NONE
             return True
         return False
 
@@ -106,14 +146,24 @@ class DailyEquityTracker:
         open_positions_valuation_sol: float = 0.0,
         now_timestamp: float | None = None,
         now_utc: datetime.datetime | None = None,
+        drawdown_reference_mode: str | None = None,
+        profit_ratchet_ratio: float | None = None,
+        profit_drawdown_tolerance_pct: float | None = None,
     ) -> tuple[bool, str]:
         """
-        Evaluates portfolio drawdown against threshold.
+        Evaluates portfolio drawdown against threshold using dual-zone risk mechanics.
         Returns (is_locked, reason).
         Handles auto-unlock if hard lock duration has elapsed.
         """
         if now_timestamp is None:
             now_timestamp = datetime.datetime.now(datetime.timezone.utc).timestamp()
+
+        if drawdown_reference_mode is not None:
+            self.drawdown_reference_mode = drawdown_reference_mode
+        if profit_ratchet_ratio is not None:
+            self.profit_ratchet_ratio = profit_ratchet_ratio
+        if profit_drawdown_tolerance_pct is not None:
+            self.profit_drawdown_tolerance_pct = profit_drawdown_tolerance_pct
 
         # Check if currently locked
         if self.circuit_breaker_engaged:
@@ -125,6 +175,7 @@ class DailyEquityTracker:
             ):
                 # Lockout period elapsed -> automatic unlock
                 self.circuit_breaker_engaged = False
+                self.circuit_breaker_action = CircuitBreakerAction.NONE
                 self.locked_at_timestamp = None
                 self.lock_reason = ""
                 # Re-initialize baseline on automatic unlock
@@ -137,22 +188,88 @@ class DailyEquityTracker:
             else:
                 return True, self.lock_reason or "portfolio circuit breaker active"
 
-        # Update valuation & calculate drawdown
-        current_equity, drawdown_pct = self.update_valuation(
+        # Update valuation & calculate peak drawdown
+        current_equity, peak_drawdown_pct = self.update_valuation(
             current_wallet_balance_sol, open_positions_valuation_sol, now_utc
         )
 
-        if drawdown_pct > max_daily_drawdown_pct:
+        mode = self.drawdown_reference_mode or "adaptive_ratchet"
+
+        # Mode 1: Baseline Only (Principal loss against starting capital)
+        if mode == "baseline":
+            principal_loss = self.starting_equity_sol - current_equity
+            principal_loss_pct = (
+                (principal_loss / self.starting_equity_sol)
+                if self.starting_equity_sol > 0
+                else 0.0
+            )
+            if principal_loss_pct > max_daily_drawdown_pct:
+                self.circuit_breaker_engaged = True
+                self.circuit_breaker_action = CircuitBreakerAction.EMERGENCY_LIQUIDATE
+                self.locked_at_timestamp = now_timestamp
+                self.total_lock_count += 1
+                self.lock_reason = (
+                    f"portfolio principal loss {principal_loss_pct:.2%} exceeded maximum allowed limit {max_daily_drawdown_pct:.2%} "
+                    f"(starting: {self.starting_equity_sol:.4f} SOL, current: {current_equity:.4f} SOL)"
+                )
+                return True, self.lock_reason
+            self.circuit_breaker_action = CircuitBreakerAction.NONE
+            return False, ""
+
+        # Mode 2: Trailing High-Water Mark (Legacy peak-to-trough)
+        if mode == "trailing_hwm":
+            if peak_drawdown_pct > max_daily_drawdown_pct:
+                self.circuit_breaker_engaged = True
+                self.circuit_breaker_action = CircuitBreakerAction.EMERGENCY_LIQUIDATE
+                self.locked_at_timestamp = now_timestamp
+                self.total_lock_count += 1
+                self.lock_reason = (
+                    f"portfolio drawdown {peak_drawdown_pct:.2%} exceeded maximum allowed limit {max_daily_drawdown_pct:.2%} "
+                    f"(peak: {self.peak_daily_equity_sol:.4f} SOL, current: {current_equity:.4f} SOL, "
+                    f"baseline: {self.starting_equity_sol:.4f} SOL)"
+                )
+                return True, self.lock_reason
+            self.circuit_breaker_action = CircuitBreakerAction.NONE
+            return False, ""
+
+        # Mode 3: Adaptive Realized-Ratchet Dual-Zone (Default)
+        # Regime A: Principal Protection Zone (current_equity < starting_equity_sol)
+        if current_equity < self.starting_equity_sol:
+            principal_loss = self.starting_equity_sol - current_equity
+            principal_loss_pct = (
+                (principal_loss / self.starting_equity_sol)
+                if self.starting_equity_sol > 0
+                else 0.0
+            )
+            if principal_loss_pct > max_daily_drawdown_pct:
+                self.circuit_breaker_engaged = True
+                self.circuit_breaker_action = CircuitBreakerAction.EMERGENCY_LIQUIDATE
+                self.locked_at_timestamp = now_timestamp
+                self.total_lock_count += 1
+                self.lock_reason = (
+                    f"portfolio drawdown {principal_loss_pct:.2%} exceeded maximum allowed limit {max_daily_drawdown_pct:.2%} "
+                    f"(starting: {self.starting_equity_sol:.4f} SOL, current: {current_equity:.4f} SOL)"
+                )
+                return True, self.lock_reason
+            self.circuit_breaker_action = CircuitBreakerAction.NONE
+            return False, ""
+
+        # Regime B: Profit Run Zone (current_equity >= starting_equity_sol)
+        # Operating with house money -> evaluate relaxed trailing tolerance from daily peak
+        profit_tolerance = self.profit_drawdown_tolerance_pct
+        if peak_drawdown_pct > profit_tolerance:
             self.circuit_breaker_engaged = True
+            self.circuit_breaker_action = CircuitBreakerAction.HALT_NEW_BUYS
             self.locked_at_timestamp = now_timestamp
             self.total_lock_count += 1
             self.lock_reason = (
-                f"portfolio drawdown {drawdown_pct:.2%} exceeded maximum allowed limit {max_daily_drawdown_pct:.2%} "
+                f"profit run retracement {peak_drawdown_pct:.2%} exceeded tolerance {profit_tolerance:.2%} "
                 f"(peak: {self.peak_daily_equity_sol:.4f} SOL, current: {current_equity:.4f} SOL, "
-                f"baseline: {self.starting_equity_sol:.4f} SOL)"
+                f"effective baseline: {self.effective_baseline_sol:.4f} SOL)"
             )
             return True, self.lock_reason
 
+        self.circuit_breaker_action = CircuitBreakerAction.NONE
         return False, ""
 
     def reset_circuit_breaker(
@@ -163,6 +280,7 @@ class DailyEquityTracker:
     ) -> None:
         """Manually unlocks the circuit breaker and resets lock state."""
         self.circuit_breaker_engaged = False
+        self.circuit_breaker_action = CircuitBreakerAction.NONE
         self.locked_at_timestamp = None
         self.lock_reason = ""
         if new_baseline_sol is not None and new_baseline_sol > 0:
@@ -175,6 +293,15 @@ class DailyEquityTracker:
             "starting_equity_sol": self.starting_equity_sol,
             "peak_daily_equity_sol": self.peak_daily_equity_sol,
             "realized_daily_pnl_sol": self.realized_daily_pnl_sol,
+            "effective_baseline_sol": self.effective_baseline_sol,
+            "drawdown_reference_mode": self.drawdown_reference_mode,
+            "profit_ratchet_ratio": self.profit_ratchet_ratio,
+            "profit_drawdown_tolerance_pct": self.profit_drawdown_tolerance_pct,
+            "circuit_breaker_action": (
+                self.circuit_breaker_action.value
+                if isinstance(self.circuit_breaker_action, CircuitBreakerAction)
+                else str(self.circuit_breaker_action)
+            ),
             "last_reset_date_utc": self.last_reset_date_utc,
             "circuit_breaker_engaged": self.circuit_breaker_engaged,
             "locked_at_timestamp": self.locked_at_timestamp,
@@ -185,12 +312,26 @@ class DailyEquityTracker:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DailyEquityTracker":
         """Deserializes equity tracker state from dictionary."""
+        raw_action = data.get("circuit_breaker_action", "none")
+        try:
+            action = CircuitBreakerAction(raw_action)
+        except ValueError:
+            action = CircuitBreakerAction.NONE
+
         return cls(
             starting_equity_sol=float(data.get("starting_equity_sol", 0.0) or 0.0),
             peak_daily_equity_sol=float(data.get("peak_daily_equity_sol", 0.0) or 0.0),
             realized_daily_pnl_sol=float(
                 data.get("realized_daily_pnl_sol", 0.0) or 0.0
             ),
+            drawdown_reference_mode=str(
+                data.get("drawdown_reference_mode", "adaptive_ratchet")
+            ),
+            profit_ratchet_ratio=float(data.get("profit_ratchet_ratio", 0.50)),
+            profit_drawdown_tolerance_pct=float(
+                data.get("profit_drawdown_tolerance_pct", 0.35)
+            ),
+            circuit_breaker_action=action,
             last_reset_date_utc=str(data.get("last_reset_date_utc", "") or ""),
             circuit_breaker_engaged=bool(data.get("circuit_breaker_engaged", False)),
             locked_at_timestamp=data.get("locked_at_timestamp"),
@@ -238,14 +379,21 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
             else:
                 open_val_sol += effective_cost
 
-    max_drawdown = float(getattr(bot.config, "max_daily_drawdown_pct", 0.15))
-    lock_hours = float(getattr(bot.config, "emergency_hard_lock_hours", 24.0))
+    cfg = getattr(bot, "config", None)
+    max_drawdown = float(getattr(cfg, "max_daily_drawdown_pct", 0.15))
+    lock_hours = float(getattr(cfg, "emergency_hard_lock_hours", 24.0))
+    mode = getattr(cfg, "drawdown_reference_mode", None)
+    ratchet_ratio = getattr(cfg, "profit_ratchet_ratio", None)
+    profit_tolerance = getattr(cfg, "profit_drawdown_tolerance_pct", None)
 
     is_locked, reason = tracker.evaluate_circuit_breaker(
         max_daily_drawdown_pct=max_drawdown,
         emergency_hard_lock_hours=lock_hours,
         current_wallet_balance_sol=wallet_sol,
         open_positions_valuation_sol=open_val_sol,
+        drawdown_reference_mode=mode,
+        profit_ratchet_ratio=ratchet_ratio,
+        profit_drawdown_tolerance_pct=profit_tolerance,
     )
     if is_locked and reason:
         bot._last_event = f"circuit breaker: {reason}"
@@ -446,6 +594,7 @@ def track_position_peak(
 
 
 __all__ = [
+    "CircuitBreakerAction",
     "DailyEquityTracker",
     "check_daily_drawdown",
     "check_loss_per_trade",

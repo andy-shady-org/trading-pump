@@ -73,6 +73,19 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "rpc_pool_circuit_breaker_threshold": 2,
         "rpc_pool_circuit_breaker_cooldown_seconds": 90.0,
         "rpc_pool_broadcast_concurrency": 2,
+        "drawdown_reference_mode": "adaptive_ratchet",
+        "profit_ratchet_ratio": 0.60,
+        "profit_drawdown_tolerance_pct": 0.25,
+        "enable_diagnostic_events": True,
+        "event_log_path": "events.jsonl",
+        "event_log_subsystems": (
+            "stream",
+            "screening",
+            "strategy",
+            "execution",
+            "risk",
+            "lifecycle",
+        ),
     },
     "balanced": {
         "buy_amount_sol": 0.01,
@@ -142,6 +155,19 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "rpc_pool_circuit_breaker_threshold": 3,
         "rpc_pool_circuit_breaker_cooldown_seconds": 60.0,
         "rpc_pool_broadcast_concurrency": 3,
+        "drawdown_reference_mode": "adaptive_ratchet",
+        "profit_ratchet_ratio": 0.50,
+        "profit_drawdown_tolerance_pct": 0.35,
+        "enable_diagnostic_events": True,
+        "event_log_path": "events.jsonl",
+        "event_log_subsystems": (
+            "stream",
+            "screening",
+            "strategy",
+            "execution",
+            "risk",
+            "lifecycle",
+        ),
     },
     "aggressive": {
         "buy_amount_sol": 0.02,
@@ -211,6 +237,19 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "rpc_pool_circuit_breaker_threshold": 4,
         "rpc_pool_circuit_breaker_cooldown_seconds": 45.0,
         "rpc_pool_broadcast_concurrency": 4,
+        "drawdown_reference_mode": "adaptive_ratchet",
+        "profit_ratchet_ratio": 0.40,
+        "profit_drawdown_tolerance_pct": 0.45,
+        "enable_diagnostic_events": True,
+        "event_log_path": "events.jsonl",
+        "event_log_subsystems": (
+            "stream",
+            "screening",
+            "strategy",
+            "execution",
+            "risk",
+            "lifecycle",
+        ),
     },
 }
 
@@ -344,6 +383,26 @@ def resolve_strategy_config(
         rpc_pool_broadcast_concurrency=int(
             base.get("rpc_pool_broadcast_concurrency", 3)
         ),
+        drawdown_reference_mode=str(
+            base.get("drawdown_reference_mode", "adaptive_ratchet")
+        ),
+        profit_ratchet_ratio=float(base.get("profit_ratchet_ratio", 0.50)),
+        profit_drawdown_tolerance_pct=float(
+            base.get("profit_drawdown_tolerance_pct", 0.35)
+        ),
+        enable_diagnostic_events=bool(base.get("enable_diagnostic_events", True)),
+        event_log_path=str(base.get("event_log_path", "events.jsonl")),
+        event_log_subsystems=tuple(
+            base.get("event_log_subsystems")
+            or (
+                "stream",
+                "screening",
+                "strategy",
+                "execution",
+                "risk",
+                "lifecycle",
+            )
+        ),
     )
     if config.buy_amount_sol <= 0:
         raise ValueError("buy_amount_sol must be greater than zero.")
@@ -357,4 +416,17 @@ def resolve_strategy_config(
         raise ValueError("stagnant_timeout_seconds must be greater than zero.")
     if config.max_hold_time_seconds <= 0:
         raise ValueError("max_hold_time_seconds must be greater than zero.")
+    if config.drawdown_reference_mode not in {
+        "adaptive_ratchet",
+        "baseline",
+        "trailing_hwm",
+    }:
+        raise ValueError(
+            f"Invalid drawdown_reference_mode '{config.drawdown_reference_mode}'. "
+            "Must be one of: 'adaptive_ratchet', 'baseline', 'trailing_hwm'."
+        )
+    if not 0.0 <= config.profit_ratchet_ratio <= 1.0:
+        raise ValueError("profit_ratchet_ratio must be between 0.0 and 1.0.")
+    if not 0.0 < config.profit_drawdown_tolerance_pct <= 1.0:
+        raise ValueError("profit_drawdown_tolerance_pct must be between 0.0 and 1.0.")
     return config

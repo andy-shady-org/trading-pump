@@ -87,6 +87,19 @@ class TradingBotConfig:
     rpc_pool_circuit_breaker_cooldown_seconds: float = 60.0
     rpc_pool_broadcast_concurrency: int = 3
     replay_log_path: str | None = None
+    drawdown_reference_mode: str = "adaptive_ratchet"
+    profit_ratchet_ratio: float = 0.50
+    profit_drawdown_tolerance_pct: float = 0.35
+    enable_diagnostic_events: bool = True
+    event_log_path: str = "events.jsonl"
+    event_log_subsystems: tuple[str, ...] = (
+        "stream",
+        "screening",
+        "strategy",
+        "execution",
+        "risk",
+        "lifecycle",
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -169,6 +182,12 @@ class TradingBotConfig:
             "rpc_pool_circuit_breaker_cooldown_seconds": self.rpc_pool_circuit_breaker_cooldown_seconds,
             "rpc_pool_broadcast_concurrency": self.rpc_pool_broadcast_concurrency,
             "replay_log_path": self.replay_log_path,
+            "drawdown_reference_mode": self.drawdown_reference_mode,
+            "profit_ratchet_ratio": self.profit_ratchet_ratio,
+            "profit_drawdown_tolerance_pct": self.profit_drawdown_tolerance_pct,
+            "enable_diagnostic_events": self.enable_diagnostic_events,
+            "event_log_path": self.event_log_path,
+            "event_log_subsystems": list(self.event_log_subsystems),
         }
 
     @classmethod

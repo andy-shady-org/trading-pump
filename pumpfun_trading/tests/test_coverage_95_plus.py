@@ -311,7 +311,8 @@ async def test_bot_run_all_missing_branches(tmp_path):
 
     # trade message with stop loss exit
     await bot._handle_message(
-        {"mint": SAMPLE_MINT, "marketCapSol": 2.0}, AsyncMock()  # 2/25 = 0.08 <= 0.85
+        {"mint": SAMPLE_MINT, "marketCapSol": 2.0},
+        AsyncMock(),  # 2/25 = 0.08 <= 0.85
     )
     assert SAMPLE_MINT not in bot.active_positions
 
@@ -626,7 +627,7 @@ async def test_bot_run_additional_coverage_boost(tmp_path):
     # 14. _check_account_equity_guard branches
     bot.dry_run = False
     bot.paper_trade = False
-    bot.execution.get_balance_sol = AsyncMock(return_value=1.0)
+    bot.execution.get_balance_sol = AsyncMock(return_value=1.5)
     assert await bot._check_account_equity_guard(0.01) is True
 
     bot.execution.get_balance_sol = AsyncMock(return_value=0.01)  # below reserve
