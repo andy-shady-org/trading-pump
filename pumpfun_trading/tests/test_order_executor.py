@@ -73,15 +73,36 @@ async def test_order_executor_dry_run():
 async def test_order_executor_live_buy(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
+    mock_exec_client.get_token_balance = AsyncMock(return_value=12_345_678)
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
 
     res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
     assert res.success
     assert res.signature == "BuySignature111"
+    assert res.token_amount == 12_345_678
     mock_exec_client.buy.assert_awaited_once_with(
         "Mint111", "BondingCurvePubkey111", 0.1, slippage_bps=300
     )
     mock_exec_client.confirm_transaction.assert_awaited_once_with("BuySignature111")
+
+
+@pytest.mark.asyncio
+async def test_order_executor_live_buy_curve_fallback(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
+    mock_exec_client.get_token_balance = AsyncMock(return_value=0)
+    mock_exec_client.get_bonding_curve_state = AsyncMock(
+        return_value={
+            "virtual_token_reserves": 1_073_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+        }
+    )
+    executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
+
+    res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
+    assert res.success
+    assert res.signature == "BuySignature111"
+    assert res.token_amount > 0
 
 
 @pytest.mark.asyncio

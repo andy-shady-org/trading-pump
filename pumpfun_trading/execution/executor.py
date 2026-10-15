@@ -209,13 +209,47 @@ class OrderExecutor:
                     error="buy_confirmation_failed",
                 )
 
+            acquired_tokens = 0
+            if self.execution is not None:
+                try:
+                    acquired_tokens = await self.execution.get_token_balance(mint)
+                except Exception:
+                    pass
+                if acquired_tokens <= 0:
+                    try:
+                        curve_state = await self.execution.get_bonding_curve_state(mint)
+                        v_token = int(curve_state.get("virtual_token_reserves", 0))
+                        v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+                        if v_token > 0 and v_sol > 0:
+                            lamports = int(amount_sol * 1_000_000_000)
+                            calc_fn = getattr(
+                                self.execution, "calculate_buy_tokens_out", None
+                            )
+                            if calc_fn:
+                                acquired_tokens = int(
+                                    calc_fn(
+                                        lamports,
+                                        v_sol,
+                                        v_token,
+                                        slippage_bps=resolved_slippage or 0,
+                                    )
+                                )
+                    except Exception:
+                        pass
+
+            if acquired_tokens <= 0:
+                lamports = int(amount_sol * 1_000_000_000)
+                v_sol = 30_000_000_000
+                v_token = 1_073_000_000_000_000
+                acquired_tokens = int((v_token * lamports) // (v_sol + lamports))
+
             return ExecutionResult(
                 success=True,
                 signature=signature,
                 mint=mint,
                 is_buy=True,
                 amount_sol=amount_sol,
-                token_amount=0,
+                token_amount=acquired_tokens,
                 reason=reason,
             )
 
