@@ -754,7 +754,10 @@ class OptimizationResult:
         """Instantiate a ready-to-run TradingBotConfig using the best parameters."""
         base = base_config or TradingBotConfig()
         cfg_dict = asdict(base) if hasattr(base, "__dataclass_fields__") else {}
-        cfg_dict.update(self.best_trial.parameters)
+        from pumpfun_trading.strategies.presets import normalize_config_dict
+
+        normalized_params = normalize_config_dict(self.best_trial.parameters)
+        cfg_dict.update(normalized_params)
 
         valid_fields = set(TradingBotConfig.__dataclass_fields__.keys())
         filtered_params = {k: v for k, v in cfg_dict.items() if k in valid_fields}
@@ -808,7 +811,10 @@ def evaluate_trial_on_snapshots(
     start_t = time.monotonic()
     base = base_config or TradingBotConfig()
     cfg_dict = asdict(base) if hasattr(base, "__dataclass_fields__") else {}
-    cfg_dict.update(parameters)
+    from pumpfun_trading.strategies.presets import normalize_config_dict
+
+    normalized_params = normalize_config_dict(parameters)
+    cfg_dict.update(normalized_params)
     valid_fields = set(TradingBotConfig.__dataclass_fields__.keys())
     active_config = TradingBotConfig(
         **{k: v for k, v in cfg_dict.items() if k in valid_fields}

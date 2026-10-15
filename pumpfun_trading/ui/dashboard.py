@@ -67,7 +67,16 @@ def build_dashboard(bot: Any) -> Panel:
     else:
         wallet_str = "0.0000 SOL"
     strategy.add_row("Wallet value", wallet_str)
-    strategy.add_row("", "")
+
+    stagnant_val = getattr(bot.config, "stagnant_timeout_seconds", None)
+    if stagnant_val is not None:
+        try:
+            stagnant_str = f"{float(stagnant_val):.1f}s"
+        except (ValueError, TypeError):
+            stagnant_str = str(stagnant_val)
+    else:
+        stagnant_str = "n/a"
+    strategy.add_row("Stagnant timeout", stagnant_str)
 
     risk = Table.grid(expand=True)
     risk.add_column(justify="left")

@@ -280,20 +280,24 @@ class TradingBotConfig:
         }
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "TradingBotConfig":
-        config_path = Path(path)
-        raw = json.loads(config_path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError(f"Config file {config_path} must contain a JSON object.")
-        preset = str(raw.get("strategy_preset") or raw.get("preset") or "balanced")
+    def from_dict(cls, data: dict[str, Any]) -> "TradingBotConfig":
+        preset = str(data.get("strategy_preset") or data.get("preset") or "balanced")
         from pumpfun_trading.strategies.presets import resolve_strategy_config
 
         return resolve_strategy_config(
             preset,
             overrides={
-                k: v for k, v in raw.items() if k not in {"preset", "strategy_preset"}
+                k: v for k, v in data.items() if k not in {"preset", "strategy_preset"}
             },
         )
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "TradingBotConfig":
+        config_path = Path(path)
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"Config file {config_path} must contain a JSON object.")
+        return cls.from_dict(raw)
 
 
 __all__ = ["TradingBotConfig"]

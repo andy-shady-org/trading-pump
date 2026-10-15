@@ -25,7 +25,7 @@ Below is an exact visual ASCII representation of the live dashboard during activ
 │ │ │ Dry run: no                                    ││ Risk killed: no                                ││ Status: monitoring                             ││ Last status: monitoring                          │ │ │
 │ │ │ Paper trade: no                                ││ Equity guard: enabled                          ││ Last message: 0.4s ago                         ││ Last event: quote received: SolCat               │ │ │
 │ │ │ Wallet value: 1.4520 SOL                       ││ Daily PnL: +0.2299 SOL                         ││ Stream URL: wss://pumpportal.fun/api/data      ││                                                  │ │ │
-│ │ │                                                ││ Circuit breaker: ok                            ││ Geyser endpoint: grpc.solana.xyz:10000         ││                                                  │ │ │
+│ │ │ Stagnant timeout: 45.0s                        ││ Circuit breaker: ok                            ││ Geyser endpoint: grpc.solana.xyz:10000         ││                                                  │ │ │
 │ │ │                                                ││                                                ││ Audit log: runtime/audit_trail.jsonl           ││                                                  │ │ │
 │ │ │                                                ││                                                ││ Last new token: SolCat                         ││                                                  │ │ │
 │ │ ╰────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯╰───────────────────────────────────────────────────╯ │ │
@@ -91,6 +91,7 @@ The Overview section provides an immediate operational snapshot split across fou
 * **`Dry run`**: Indicates whether dry-run execution is active (`yes` / `no`). In dry-run mode, on-chain transactions are simulated.
 * **`Paper trade`**: Indicates whether simulated paper trading balances are being tracked (`yes` / `no`).
 * **`Wallet value`**: Current on-chain or simulated wallet balance in SOL available for trading (e.g. `1.4520 SOL`).
+* **`Stagnant timeout`**: Configured stagnation exit timeout in seconds before closing flat positions without price momentum (e.g. `45.0s` or `120.0s`).
 
 #### B. Risk Sub-Panel (`border_style="red"`)
 * **`Max total exposure`**: Hard cap on total portfolio capital deployed across all open positions in SOL (e.g. `5.00 SOL`).

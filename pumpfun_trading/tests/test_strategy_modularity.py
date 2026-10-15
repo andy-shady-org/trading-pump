@@ -318,3 +318,84 @@ def test_strategy_momentum_decision_pipeline():
     summary = strategy.summary()
     assert summary["enable_momentum_signals"] is True
     assert summary["momentum_min_z_score"] == 2.5
+
+
+def test_config_aliases_and_normalization(tmp_path):
+    from pumpfun_trading.strategies.presets import (
+        normalize_config_dict,
+        resolve_strategy_config,
+    )
+
+    alias_input = {
+        "stagnant_curve_timeout_seconds": 45.0,
+        "take_profit_tier1_multiplier": 1.45,
+        "take_profit_tier1_pct": 0.35,
+        "take_profit_tier2_multiplier": 2.50,
+        "take_profit_tier2_pct": 0.35,
+        "stop_loss_pct": 0.85,
+        "max_creator_initial_pct": 0.08,
+        "min_order_flow_buyers": 3,
+        "dynamic_slippage_enabled": True,
+        "anti_rug_filters_enabled": True,
+        "capital_rotation_enabled": True,
+        "pre_graduation_harvesting_enabled": True,
+        "cross_venue_arbitrage_enabled": True,
+        "mempool_backrunning_enabled": True,
+        "cluster_analysis_enabled": True,
+        "copy_trading_enabled": True,
+        "momentum_signals_enabled": True,
+        "raydium_migration_sniping_enabled": True,
+        "tiered_take_profit_enabled": True,
+        "trailing_stop_enabled": True,
+        "stagnant_exit_enabled": True,
+        "max_hold_timeout_enabled": True,
+    }
+
+    normalized = normalize_config_dict(alias_input)
+    assert normalized["stagnant_timeout_seconds"] == 45.0
+    assert normalized["tier_1_take_profit"] == 1.45
+    assert normalized["tier_1_sell_fraction"] == 0.35
+    assert normalized["tier_2_take_profit"] == 2.50
+    assert normalized["tier_2_sell_fraction"] == 0.35
+    assert normalized["stop_loss"] == 0.85
+    assert normalized["max_creator_initial_holding_pct"] == 0.08
+    assert normalized["momentum_min_unique_buyers"] == 3
+    assert normalized["enable_dynamic_slippage"] is True
+    assert normalized["enable_anti_rug_filters"] is True
+    assert normalized["enable_capital_rotation"] is True
+    assert normalized["enable_pre_graduation_harvesting"] is True
+    assert normalized["enable_cross_venue_arbitrage"] is True
+    assert normalized["enable_mempool_backrunning"] is True
+    assert normalized["enable_cluster_analysis"] is True
+    assert normalized["enable_copy_trading"] is True
+    assert normalized["enable_momentum_signals"] is True
+    assert normalized["enable_raydium_migration_sniping"] is True
+    assert normalized["enable_tiered_take_profit"] is True
+    assert normalized["enable_trailing_stop"] is True
+    assert normalized["enable_stagnant_exit"] is True
+    assert normalized["enable_max_hold_timeout"] is True
+
+    # Test resolve_strategy_config with alias overrides
+    cfg = resolve_strategy_config("balanced", overrides=alias_input)
+    assert cfg.stagnant_timeout_seconds == 45.0
+    assert cfg.tier_1_take_profit == 1.45
+    assert cfg.tier_1_sell_fraction == 0.35
+    assert cfg.tier_2_take_profit == 2.50
+    assert cfg.tier_2_sell_fraction == 0.35
+    assert cfg.stop_loss == 0.85
+    assert cfg.max_creator_initial_holding_pct == 0.08
+    assert cfg.momentum_min_unique_buyers == 3
+
+    # Test TradingBotConfig.from_dict
+    cfg_from_dict = TradingBotConfig.from_dict(alias_input)
+    assert cfg_from_dict.stagnant_timeout_seconds == 45.0
+    assert cfg_from_dict.tier_1_take_profit == 1.45
+
+    # Test TradingBotConfig.from_file
+    json_path = tmp_path / "test_config_aliases.json"
+    json_path.write_text(json.dumps(alias_input), encoding="utf-8")
+    cfg_from_file = TradingBotConfig.from_file(json_path)
+    assert cfg_from_file.stagnant_timeout_seconds == 45.0
+    assert cfg_from_file.tier_1_take_profit == 1.45
+    assert cfg_from_file.tier_2_take_profit == 2.50
+    assert cfg_from_file.stop_loss == 0.85

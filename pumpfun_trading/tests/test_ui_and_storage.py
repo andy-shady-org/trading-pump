@@ -648,3 +648,62 @@ def test_dashboard_wallet_value_field():
     output_none = console.export_text()
     assert "Wallet value" in output_none
     assert "0.0000 SOL" in output_none
+
+
+def test_dashboard_stagnant_timeout_field():
+    """Verify Stagnant timeout rendering in the Strategy dashboard panel."""
+    bot = MagicMock()
+    bot.config = TradingBotConfig(stagnant_timeout_seconds=45.0)
+    bot.max_active_positions = 5
+    bot.min_market_cap_sol = 25.0
+    bot.dry_run = True
+    bot.paper_trade = False
+    bot._risk_killed = False
+    bot.state = TradingBotState.MONITORING
+    bot._health_ok = True
+    bot._last_event = "idle"
+    bot._last_status = "monitoring"
+    bot._last_message_at = time.monotonic()
+    bot.stream_url = "wss://pumpportal.fun/api/data"
+    bot.geyser_endpoint = None
+    bot.audit_log_path = None
+    bot._last_new_token_name = "None"
+    bot._last_health_check = time.monotonic()
+    bot._stop_requested = False
+    bot.active_positions = {}
+    bot.wallet_balance_sol = 1.0
+
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    output = console.export_text()
+    assert "Stagnant timeout" in output
+    assert "45.0s" in output
+
+    # Fallback when config stagnant_timeout_seconds is None or non-numeric
+    bot_no_cfg = MagicMock()
+    bot_no_cfg.config = TradingBotConfig()
+    object.__setattr__(bot_no_cfg.config, "stagnant_timeout_seconds", None)
+    bot_no_cfg.max_active_positions = 1
+    bot_no_cfg.min_market_cap_sol = 10.0
+    bot_no_cfg.dry_run = False
+    bot_no_cfg.paper_trade = False
+    bot_no_cfg._risk_killed = False
+    bot_no_cfg.state = TradingBotState.MONITORING
+    bot_no_cfg._health_ok = True
+    bot_no_cfg._last_event = "idle"
+    bot_no_cfg._last_status = "monitoring"
+    bot_no_cfg._last_message_at = time.monotonic()
+    bot_no_cfg.stream_url = "wss://pumpportal.fun/api/data"
+    bot_no_cfg.geyser_endpoint = None
+    bot_no_cfg.audit_log_path = None
+    bot_no_cfg._last_new_token_name = "None"
+    bot_no_cfg._last_health_check = time.monotonic()
+    bot_no_cfg._stop_requested = False
+    bot_no_cfg.active_positions = {}
+
+    panel_fallback = build_dashboard(bot_no_cfg)
+    console.print(panel_fallback)
+    output_fallback = console.export_text()
+    assert "Stagnant timeout" in output_fallback
+    assert "n/a" in output_fallback

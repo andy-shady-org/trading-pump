@@ -350,6 +350,64 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
+CONFIG_ALIASES: dict[str, str] = {
+    # Stagnation exit timeouts
+    "stagnant_curve_timeout_seconds": "stagnant_timeout_seconds",
+    "stagnant_curve_timeout": "stagnant_timeout_seconds",
+    "stagnation_timeout_seconds": "stagnant_timeout_seconds",
+    "stagnation_timeout": "stagnant_timeout_seconds",
+    # Take-profit tier multipliers and sell fractions
+    "take_profit_tier1_multiplier": "tier_1_take_profit",
+    "take_profit_tier_1_multiplier": "tier_1_take_profit",
+    "take_profit_tier1": "tier_1_take_profit",
+    "tier1_take_profit": "tier_1_take_profit",
+    "take_profit_tier1_pct": "tier_1_sell_fraction",
+    "take_profit_tier_1_pct": "tier_1_sell_fraction",
+    "tier1_sell_fraction": "tier_1_sell_fraction",
+    "take_profit_tier2_multiplier": "tier_2_take_profit",
+    "take_profit_tier_2_multiplier": "tier_2_take_profit",
+    "take_profit_tier2": "tier_2_take_profit",
+    "tier2_take_profit": "tier_2_take_profit",
+    "take_profit_tier2_pct": "tier_2_sell_fraction",
+    "take_profit_tier_2_pct": "tier_2_sell_fraction",
+    "tier2_sell_fraction": "tier_2_sell_fraction",
+    # Stop loss
+    "stop_loss_pct": "stop_loss",
+    # Anti-rug and creator holding limits
+    "max_creator_initial_pct": "max_creator_initial_holding_pct",
+    "max_creator_initial_holding": "max_creator_initial_holding_pct",
+    "max_top5_holder_pct": "max_top5_holder_concentration_pct",
+    # Momentum and order flow filters
+    "min_order_flow_buyers": "momentum_min_unique_buyers",
+    "min_buyers": "momentum_min_unique_buyers",
+    "order_flow_min_buyers": "momentum_min_unique_buyers",
+    # Strategy booleans
+    "dynamic_slippage_enabled": "enable_dynamic_slippage",
+    "anti_rug_filters_enabled": "enable_anti_rug_filters",
+    "capital_rotation_enabled": "enable_capital_rotation",
+    "pre_graduation_harvesting_enabled": "enable_pre_graduation_harvesting",
+    "cross_venue_arbitrage_enabled": "enable_cross_venue_arbitrage",
+    "mempool_backrunning_enabled": "enable_mempool_backrunning",
+    "cluster_analysis_enabled": "enable_cluster_analysis",
+    "copy_trading_enabled": "enable_copy_trading",
+    "momentum_signals_enabled": "enable_momentum_signals",
+    "raydium_migration_sniping_enabled": "enable_raydium_migration_sniping",
+    "tiered_take_profit_enabled": "enable_tiered_take_profit",
+    "trailing_stop_enabled": "enable_trailing_stop",
+    "stagnant_exit_enabled": "enable_stagnant_exit",
+    "max_hold_timeout_enabled": "enable_max_hold_timeout",
+}
+
+
+def normalize_config_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize configuration dictionaries by mapping legacy and optimizer aliases to canonical fields."""
+    normalized: dict[str, Any] = {}
+    for k, v in data.items():
+        canonical_key = CONFIG_ALIASES.get(k, k)
+        normalized[canonical_key] = v
+    return normalized
+
+
 def resolve_strategy_config(
     preset: str = "balanced",
     *,
@@ -360,7 +418,8 @@ def resolve_strategy_config(
         preset_key = "balanced"
     base = DEFAULT_PRESETS[preset_key].copy()
     if overrides:
-        base.update({k: v for k, v in overrides.items() if v is not None})
+        normalized_overrides = normalize_config_dict(overrides)
+        base.update({k: v for k, v in normalized_overrides.items() if v is not None})
 
     config = TradingBotConfig(
         buy_amount_sol=float(base["buy_amount_sol"]),
@@ -620,3 +679,11 @@ def resolve_strategy_config(
     if config.cluster_trace_depth < 1:
         raise ValueError("cluster_trace_depth must be at least 1.")
     return config
+
+
+__all__ = [
+    "DEFAULT_PRESETS",
+    "CONFIG_ALIASES",
+    "normalize_config_dict",
+    "resolve_strategy_config",
+]

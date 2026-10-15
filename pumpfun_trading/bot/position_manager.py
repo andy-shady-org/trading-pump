@@ -262,6 +262,10 @@ class PositionManager:
     def get_position(self, mint: str) -> dict[str, Any] | None:
         return self._positions.get(mint)
 
+    @property
+    def positions(self) -> dict[str, dict[str, Any]]:
+        return self._positions
+
     def get_all_positions(self) -> dict[str, dict[str, Any]]:
         return self._positions
 
@@ -593,9 +597,9 @@ class CapitalDisplacementEngine:
             from pumpfun_trading.strategies.decision import PositionEvEvaluator
 
             self.ev_evaluator = PositionEvEvaluator(config)
-        self._pending_displacements: dict[str, str] = (
-            {}
-        )  # displaced_mint -> candidate_mint
+        self._pending_displacements: dict[
+            str, str
+        ] = {}  # displaced_mint -> candidate_mint
 
     def is_displacement_pending(self, mint: str) -> bool:
         """Check if a position is currently pending exit for displacement."""

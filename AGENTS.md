@@ -99,7 +99,8 @@ The package exposes dedicated, high-performance CLI entry points:
 * `pumpfun-audit`: Query, filter, and inspect structured JSONL audit trails with Rich table rendering.
 * `pumpfun-events`: Query, inspect, filter, and tail structured diagnostic runtime event streams.
 * `pumpfun-optimize`: Run genetic, random, and grid hyperparameter backtest optimization over historical replay datasets.
-* `pumpfun-cli` / `pumpfun`: Unified CLI wrapper dispatching to `bot`, `replay`, `record`, `audit`, `events`, `optimize`, or `status` subcommands.
+* `pumpfun-arb`: Monitor cross-venue spot price disparities and simulate/execute atomic Jito arbitrage bundles.
+* `pumpfun-cli` / `pumpfun`: Unified CLI wrapper dispatching to `bot`, `replay`, `record`, `audit`, `events`, `optimize`, `arb`, or `ops` subcommands.
 
 ---
 

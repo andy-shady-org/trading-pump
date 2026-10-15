@@ -28,19 +28,29 @@ The package exposes two operational paradigms for command-line execution:
    * `pumpfun latest-coins [options]`: Queries and displays newly created Pump.fun coins via REST API.
    * `pumpfun market-info [options]`: Fetches detailed bonding curve metrics for a specific token mint.
 
-```
-                                  +-------------------+
-                                  |    pumpfun-cli    |
-                                  |    (`pumpfun`)    |
-                                  +---------+---------+
-                                            |
-         +-----------------+----------------+----------------+-----------------+
-         |                 |                |                |                 |
-         v                 v                v                v                 v
-    +---------+     +-------------+    +----------+    +-----------+    +-------------+
-    |   bot   |     |   record    |    |  replay  |    |   audit   |    | coin / mkt  |
-    | pumpbot |     | -recorder   |    |  -replay |    |  -audit   |    | discovery   |
-    +---------+     +-------------+    +----------+    +-----------+    +-------------+
+```mermaid
+graph TD
+    CLI["pumpfun / pumpfun-cli<br/>(Unified CLI Dispatcher)"]
+
+    BOT["pumpfun bot<br/>(pumpbot)<br/><i>Live/Paper Trading Bot</i>"]
+    RECORD["pumpfun record<br/>(pumpfun-recorder)<br/><i>Stream Harvester</i>"]
+    REPLAY["pumpfun replay<br/>(pumpfun-replay)<br/><i>Backtest Simulator</i>"]
+    AUDIT["pumpfun audit<br/>(pumpfun-audit)<br/><i>Trade Accounting</i>"]
+    EVENTS["pumpfun events<br/>(pumpfun-events)<br/><i>Diagnostic Telemetry</i>"]
+    OPTIMIZE["pumpfun optimize<br/>(pumpfun-optimize)<br/><i>Hyperparameter Optimizer</i>"]
+    ARB["pumpfun arb<br/>(pumpfun-arb)<br/><i>Cross-Venue Arbitrage</i>"]
+    OPS["pumpfun ops<br/><i>Log Retention & Pruning</i>"]
+    DISCOVERY["pumpfun latest-coins / market-info<br/><i>REST Coin Discovery</i>"]
+
+    CLI --> BOT
+    CLI --> RECORD
+    CLI --> REPLAY
+    CLI --> AUDIT
+    CLI --> EVENTS
+    CLI --> OPTIMIZE
+    CLI --> ARB
+    CLI --> OPS
+    CLI --> DISCOVERY
 ```
 
 ---
