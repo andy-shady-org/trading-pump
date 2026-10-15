@@ -261,3 +261,83 @@ async def test_execution_client_send_confirm_and_jito():
     with patch("aiohttp.ClientSession.post", return_value=mock_jito_resp):
         bundle_res = await client.send_jito_bundle([])
         assert bundle_res == "bundle_id_123"
+
+
+@pytest.mark.asyncio
+async def test_execution_client_v2_instructions_and_creator():
+    client = PumpFunExecutionClient(
+        SAMPLE_PRIVATE_KEY,
+        "https://api.mainnet-beta.solana.com",
+    )
+    pda, _ = client.get_bonding_curve_pda(SAMPLE_MINT)
+    creator_addr = "11111111111111111111111111111111"
+
+    # build_buy_instruction_v2
+    buy_ix = client.build_buy_instruction_v2(
+        mint=SAMPLE_MINT,
+        bonding_curve=pda,
+        token_amount=1_000_000,
+        max_sol_cost=100_000,
+        creator=creator_addr,
+        base_token_program="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    )
+    assert buy_ix is not None
+    assert len(buy_ix.accounts) == 27
+    assert buy_ix.data[:8] == bytes([184, 23, 238, 97, 103, 197, 211, 61])
+
+    # build_sell_instruction_v2
+    sell_ix = client.build_sell_instruction_v2(
+        mint=SAMPLE_MINT,
+        bonding_curve=pda,
+        token_amount=1_000_000,
+        min_sol_output=100_000,
+        creator=creator_addr,
+        base_token_program="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    )
+    assert sell_ix is not None
+    assert len(sell_ix.accounts) == 26
+    assert sell_ix.data[:8] == bytes([93, 246, 130, 60, 231, 233, 64, 178])
+
+    # decode_bonding_curve_data with creator
+    raw_data = (
+        b"\x00" * 8
+        + (100_000_000).to_bytes(8, "little")
+        + (30_000_000_000).to_bytes(8, "little")
+        + (100_000_000).to_bytes(8, "little")
+        + (30_000_000_000).to_bytes(8, "little")
+        + (1_000_000_000).to_bytes(8, "little")
+        + b"\x00"
+        + b"\x01" * 32
+    )
+    decoded = client.decode_bonding_curve_data(raw_data)
+    assert decoded["creator"] is not None
+
+    # get_token_program_for_mint
+    client.rpc_pool.request = AsyncMock(
+        return_value={
+            "result": {
+                "value": {"owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"}
+            }
+        }
+    )
+    token_prog = await client.get_token_program_for_mint(SAMPLE_MINT)
+    assert str(token_prog) == "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+    # get_token_balance
+    client._request_rpc_json = AsyncMock(
+        return_value={
+            "result": {
+                "value": [
+                    {
+                        "account": {
+                            "data": {
+                                "parsed": {"info": {"tokenAmount": {"amount": "777"}}}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    )
+    bal = await client.get_token_balance(SAMPLE_MINT)
+    assert bal == 777

@@ -92,7 +92,6 @@ from pumpfun_trading.streams.geyser import (
 )
 from pumpfun_trading.ui.dashboard import build_dashboard, format_uptime
 
-
 # ==============================================================================
 # 1. Arbitrage CLI & Execution Coverage Tests
 # ==============================================================================
@@ -2967,9 +2966,7 @@ def test_retention_sink_and_manager_edge_branches(tmp_path: Path):
     stats_dir = tmp_path / "stats_dir"
     stats_dir.mkdir()
     (stats_dir / "test.log").write_text("hello", encoding="utf-8")
-    mgr_stats = LogRetentionManager(
-        stats_dir, policy=policy, file_patterns=("*.log",)
-    )
+    mgr_stats = LogRetentionManager(stats_dir, policy=policy, file_patterns=("*.log",))
     with patch("pathlib.Path.stat") as mock_stat:
         mock_st = MagicMock()
         mock_st.st_size = 5 * 1024 * 1024 * 1024 * 1024

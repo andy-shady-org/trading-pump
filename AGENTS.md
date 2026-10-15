@@ -80,6 +80,7 @@ Internal engineering documentation for maintainers, contributors, and SRE:
 
 3. **Execution & Anti-MEV**:
    - Real-time bonding curve tracking uses Yellowstone Geyser gRPC streams (`streams/geyser.py`) with zero-copy binary parsers.
+   - On-chain trade execution builds modern Pump.fun `BuyV2` and `SellV2` instructions with dynamic Token-2022 / SPL Token resolution, creator vaults, and fee/volume accumulator PDAs (`sdk/execution.py`).
    - Live orders are bundled through private Jito block engines (`sdk/jito.py`) with dynamic tip floor scaling to prevent sandwich attacks, with fast fallback to direct RPC.
 
 4. **Strategy & Risk Controls**:

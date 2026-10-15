@@ -38,7 +38,10 @@ This document provides a comprehensive and accurate overview of all features and
 - **Exact Integer Lamports Precision**: Strict integer Lamports unit packing eliminating floating-point rounding errors across all buy/sell execution flows.
 - **Solana Compute Budget Optimization**: Builds explicit priority fee instructions (`SetComputeUnitLimit`, `SetComputeUnitPrice`) for transaction inclusion.
 - **PDA & Token Address Derivation**: Deterministic derivation of Pump.fun bonding curve PDAs and Associated Token Accounts (ATAs).
-- **Instruction Construction**: Builds native Pump.fun buy and sell instructions with configurable slippage tolerance and minimum output guarantees.
+- **Modern Pump.fun V2 Instruction Architecture**: Native support for modern Pump.fun `BuyV2` (discriminator `0xb817ee6167c5d33d`, 27 accounts) and `SellV2` (discriminator `0x5df6823ce7e940b2`, 26 accounts) instructions with configurable slippage tolerance and minimum output guarantees.
+- **Dynamic Token-2022 & SPL Token Program Detection**: Automatic detection of token mint owner program (`get_token_program_for_mint`), dynamically wiring either Token-2022 or legacy SPL Token program IDs for Associated Token Account (ATA) derivation and instruction account keys.
+- **Creator Vault & Fee / Volume Accumulator PDAs**: Deterministic derivation and inclusion of `creator-vault`, `global_volume_accumulator`, `user_volume_accumulator`, and fee program configuration PDAs (`fee_config` under Pump Fee Program `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ`), alongside primary fee and buyback fee recipient accounts.
+- **Creator Public Key Decoding**: Direct binary unpacking of creator public key from bonding curve account data (`data[49:81]`) to construct exact creator vault accounts.
 - **On-Chain Bonding Curve State Decoding**: Queries and decodes bonding curve accounts directly from Solana RPC (`get_bonding_curve_state`, `decode_bonding_curve_data`).
 - **Account & Balance Helpers**: Real-time wallet SOL balance queries, ATA existence checks, and automatic ATA creation on buy.
 - **Transaction Compilation & Signing**: Compiles Versioned Transactions (`MessageV0`) with recent blockhashes and cryptographic signing.

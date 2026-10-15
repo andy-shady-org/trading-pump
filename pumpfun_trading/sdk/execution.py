@@ -41,16 +41,59 @@ from .raydium import (
 
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 GLOBAL_STATE = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
-FEE_RECIPIENT = "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
+FEE_RECIPIENT = "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
+BUYBACK_FEE_RECIPIENT = "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"
+PUMP_FEE_PROGRAM_ID = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+WSOL_MINT_STR = "So11111111111111111111111111111111111111112"
 ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 RENT_PROGRAM_ID = "SysvarRent111111111111111111111111111111111"
 EVENT_AUTHORITY = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
 TOKEN_PROGRAM_ID_STR = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022_PROGRAM_ID_STR = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
 
 BUY_DISCRIMINATOR = bytes([102, 6, 61, 18, 1, 218, 235, 234])
 SELL_DISCRIMINATOR = bytes([51, 230, 133, 164, 1, 127, 131, 173])
+BUY_V2_DISCRIMINATOR = bytes([184, 23, 238, 97, 103, 197, 211, 61])
+SELL_V2_DISCRIMINATOR = bytes([93, 246, 130, 60, 231, 233, 64, 178])
+
+FEE_CONFIG_KEY = bytes(
+    [
+        1,
+        86,
+        224,
+        246,
+        147,
+        102,
+        90,
+        207,
+        68,
+        219,
+        21,
+        104,
+        191,
+        23,
+        91,
+        170,
+        81,
+        137,
+        203,
+        151,
+        245,
+        210,
+        255,
+        59,
+        101,
+        93,
+        43,
+        182,
+        253,
+        109,
+        24,
+        176,
+    ]
+)
 
 
 class PumpFunExecutionClient:
@@ -194,6 +237,13 @@ class PumpFunExecutionClient:
             data[40:48], byteorder="little", signed=False
         )
         complete = bool(data[48])
+        creator = None
+        if len(data) >= 81:
+            try:
+                creator_pk = Pubkey.from_bytes(data[49:81])
+                creator = str(creator_pk)
+            except Exception:
+                creator = None
 
         price_sol = (
             (virtual_sol_reserves / 1_000_000_000.0)
@@ -217,6 +267,7 @@ class PumpFunExecutionClient:
             "complete": complete,
             "price_sol": price_sol,
             "market_cap_sol": market_cap_sol,
+            "creator": creator,
         }
 
     calculate_buy_tokens_out = staticmethod(calculate_buy_tokens_out)
@@ -392,44 +443,80 @@ class PumpFunExecutionClient:
         """Alias for get_balance_sol for backward compatibility."""
         return await self.get_balance_sol()
 
-    async def get_ata_address(self, mint: str, owner: Optional[str] = None) -> str:
+    async def get_token_program_for_mint(self, mint: str) -> Pubkey:
+        """Query mint account to determine if it uses Token-2022 or legacy SPL Token program."""
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountInfo",
+                "params": [mint, {"encoding": "jsonParsed"}],
+            }
+            parsed = await self.rpc_pool.request(
+                payload, max_retries=1, timeout_seconds=3.0
+            )
+            value = (parsed.get("result") or {}).get("value")
+            if value and "owner" in value:
+                return Pubkey.from_string(value["owner"])
+        except Exception:
+            pass
+        return Pubkey.from_string(TOKEN_PROGRAM_ID_STR)
+
+    async def get_ata_address(
+        self,
+        mint: str,
+        owner: Optional[str] = None,
+        token_program: Pubkey | str | None = None,
+    ) -> str:
         owner_pubkey = self._to_pubkey(owner or str(self.wallet))
         mint_pubkey = self._to_pubkey(mint)
-        ata = get_associated_token_address(owner_pubkey, mint_pubkey, TOKEN_PROGRAM_ID)
+        prog = (
+            self._to_pubkey(token_program)
+            if token_program is not None
+            else await self.get_token_program_for_mint(mint)
+        )
+        ata = get_associated_token_address(owner_pubkey, mint_pubkey, prog)
         return str(ata)
 
-    async def get_ata_exists(self, mint: str, owner: Optional[str] = None) -> bool:
+    async def get_ata_exists(
+        self,
+        mint: str,
+        owner: Optional[str] = None,
+        token_program: Pubkey | str | None = None,
+    ) -> bool:
         owner_pubkey = owner or str(self.wallet)
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getTokenAccountsByOwner",
-            "params": [
-                owner_pubkey,
-                {"programId": TOKEN_PROGRAM_ID_STR, "encoding": "jsonParsed"},
-            ],
-        }
-        parsed = await self._request_rpc_json(payload)
-        accounts = (parsed.get("result") or {}).get("value", [])
-        if not isinstance(accounts, list):
-            return False
-        for account in accounts:
-            if not isinstance(account, dict):
-                continue
-            account_data = account.get("account")
-            if not isinstance(account_data, dict):
-                continue
-            parsed_data = account_data.get("data")
-            if not isinstance(parsed_data, dict):
-                continue
-            parsed_info = parsed_data.get("parsed")
-            if not isinstance(parsed_info, dict):
-                continue
-            info = parsed_info.get("info")
-            if not isinstance(info, dict):
-                continue
-            if info.get("mint") == mint and str(info.get("owner")) == owner_pubkey:
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenAccountsByOwner",
+                "params": [
+                    owner_pubkey,
+                    {"mint": mint},
+                    {"encoding": "jsonParsed"},
+                ],
+            }
+            parsed = await self._request_rpc_json(payload)
+            accounts = (parsed.get("result") or {}).get("value", [])
+            if isinstance(accounts, list) and len(accounts) > 0:
                 return True
+        except Exception:
+            pass
+
+        try:
+            ata_addr = await self.get_ata_address(mint, owner_pubkey, token_program)
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountInfo",
+                "params": [ata_addr, {"encoding": "base64"}],
+            }
+            parsed = await self._request_rpc_json(payload)
+            if (parsed.get("result") or {}).get("value") is not None:
+                return True
+        except Exception:
+            pass
+
         return False
 
     def get_bonding_curve_pda(self, mint: str) -> tuple[str, str]:
@@ -445,6 +532,224 @@ class PumpFunExecutionClient:
             self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID),
         )
         return str(bonding_curve_pda), str(associated_curve_pda)
+
+    def build_buy_instruction_v2(
+        self,
+        mint: str,
+        bonding_curve: str,
+        token_amount: int,
+        max_sol_cost: int,
+        creator: str | None = None,
+        base_token_program: Pubkey | str | None = None,
+    ) -> Instruction:
+        self.is_valid_mint(mint)
+        self.is_valid_pubkey(bonding_curve)
+        mint_pubkey = self._to_pubkey(mint)
+        bonding_curve_pubkey = self._to_pubkey(bonding_curve)
+        user_pubkey = self.wallet
+        pump_program = self._to_pubkey(PUMP_PROGRAM_ID)
+        pump_fee_program = self._to_pubkey(PUMP_FEE_PROGRAM_ID)
+        token_program = self._to_pubkey(TOKEN_PROGRAM_ID_STR)
+        base_token_prog = (
+            self._to_pubkey(base_token_program)
+            if base_token_program is not None
+            else token_program
+        )
+        quote_mint = self._to_pubkey(WSOL_MINT_STR)
+        fee_recipient = self._to_pubkey(FEE_RECIPIENT)
+        buyback_fee_recipient = self._to_pubkey(BUYBACK_FEE_RECIPIENT)
+        ata_program = self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID)
+        system_program = self._to_pubkey(SYSTEM_PROGRAM_ID)
+        event_authority = self._to_pubkey(EVENT_AUTHORITY)
+
+        creator_pubkey = (
+            self._to_pubkey(creator)
+            if creator and creator != SYSTEM_PROGRAM_ID
+            else user_pubkey
+        )
+
+        creator_vault, _ = Pubkey.find_program_address(
+            [b"creator-vault", bytes(creator_pubkey)], pump_program
+        )
+        global_vol, _ = Pubkey.find_program_address(
+            [b"global_volume_accumulator"], pump_program
+        )
+        user_vol, _ = Pubkey.find_program_address(
+            [b"user_volume_accumulator", bytes(user_pubkey)], pump_program
+        )
+        fee_config, _ = Pubkey.find_program_address(
+            [b"fee_config", FEE_CONFIG_KEY], pump_fee_program
+        )
+
+        assoc_quote_fee = get_associated_token_address(
+            fee_recipient, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_quote_buyback = get_associated_token_address(
+            buyback_fee_recipient, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_base_curve = get_associated_token_address(
+            bonding_curve_pubkey, mint_pubkey, base_token_prog
+        )
+        assoc_quote_curve = get_associated_token_address(
+            bonding_curve_pubkey, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_base_user = get_associated_token_address(
+            user_pubkey, mint_pubkey, base_token_prog
+        )
+        assoc_quote_user = get_associated_token_address(
+            user_pubkey, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_creator_vault = get_associated_token_address(
+            creator_vault, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_user_vol = get_associated_token_address(
+            user_vol, quote_mint, TOKEN_PROGRAM_ID
+        )
+
+        data = BUY_V2_DISCRIMINATOR + self._u64(token_amount) + self._u64(max_sol_cost)
+
+        accounts = [
+            AccountMeta(
+                pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
+            ),
+            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=base_token_prog, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=token_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=ata_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_quote_fee, is_signer=False, is_writable=True),
+            AccountMeta(
+                pubkey=buyback_fee_recipient, is_signer=False, is_writable=True
+            ),
+            AccountMeta(pubkey=assoc_quote_buyback, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_base_curve, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_quote_curve, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=assoc_base_user, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_quote_user, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_creator_vault, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=creator_pubkey, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=global_vol, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=user_vol, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_user_vol, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_fee_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=system_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=event_authority, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_program, is_signer=False, is_writable=False),
+        ]
+        return Instruction(program_id=pump_program, accounts=accounts, data=data)
+
+    def build_sell_instruction_v2(
+        self,
+        mint: str,
+        bonding_curve: str,
+        token_amount: int,
+        min_sol_output: int,
+        creator: str | None = None,
+        base_token_program: Pubkey | str | None = None,
+    ) -> Instruction:
+        self.is_valid_mint(mint)
+        self.is_valid_pubkey(bonding_curve)
+        mint_pubkey = self._to_pubkey(mint)
+        bonding_curve_pubkey = self._to_pubkey(bonding_curve)
+        user_pubkey = self.wallet
+        pump_program = self._to_pubkey(PUMP_PROGRAM_ID)
+        pump_fee_program = self._to_pubkey(PUMP_FEE_PROGRAM_ID)
+        token_program = self._to_pubkey(TOKEN_PROGRAM_ID_STR)
+        base_token_prog = (
+            self._to_pubkey(base_token_program)
+            if base_token_program is not None
+            else token_program
+        )
+        quote_mint = self._to_pubkey(WSOL_MINT_STR)
+        fee_recipient = self._to_pubkey(FEE_RECIPIENT)
+        buyback_fee_recipient = self._to_pubkey(BUYBACK_FEE_RECIPIENT)
+        ata_program = self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID)
+        system_program = self._to_pubkey(SYSTEM_PROGRAM_ID)
+        event_authority = self._to_pubkey(EVENT_AUTHORITY)
+
+        creator_pubkey = (
+            self._to_pubkey(creator)
+            if creator and creator != SYSTEM_PROGRAM_ID
+            else user_pubkey
+        )
+
+        creator_vault, _ = Pubkey.find_program_address(
+            [b"creator-vault", bytes(creator_pubkey)], pump_program
+        )
+        user_vol, _ = Pubkey.find_program_address(
+            [b"user_volume_accumulator", bytes(user_pubkey)], pump_program
+        )
+        fee_config, _ = Pubkey.find_program_address(
+            [b"fee_config", FEE_CONFIG_KEY], pump_fee_program
+        )
+
+        assoc_quote_fee = get_associated_token_address(
+            fee_recipient, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_quote_buyback = get_associated_token_address(
+            buyback_fee_recipient, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_base_curve = get_associated_token_address(
+            bonding_curve_pubkey, mint_pubkey, base_token_prog
+        )
+        assoc_quote_curve = get_associated_token_address(
+            bonding_curve_pubkey, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_base_user = get_associated_token_address(
+            user_pubkey, mint_pubkey, base_token_prog
+        )
+        assoc_quote_user = get_associated_token_address(
+            user_pubkey, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_creator_vault = get_associated_token_address(
+            creator_vault, quote_mint, TOKEN_PROGRAM_ID
+        )
+        assoc_user_vol = get_associated_token_address(
+            user_vol, quote_mint, TOKEN_PROGRAM_ID
+        )
+
+        data = (
+            SELL_V2_DISCRIMINATOR + self._u64(token_amount) + self._u64(min_sol_output)
+        )
+
+        accounts = [
+            AccountMeta(
+                pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
+            ),
+            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=base_token_prog, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=token_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=ata_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_quote_fee, is_signer=False, is_writable=True),
+            AccountMeta(
+                pubkey=buyback_fee_recipient, is_signer=False, is_writable=True
+            ),
+            AccountMeta(pubkey=assoc_quote_buyback, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_base_curve, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_quote_curve, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=assoc_base_user, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_quote_user, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_creator_vault, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=creator_pubkey, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=user_vol, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_user_vol, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_fee_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=system_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=event_authority, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_program, is_signer=False, is_writable=False),
+        ]
+        return Instruction(program_id=pump_program, accounts=accounts, data=data)
 
     def build_buy_instruction(
         self,
@@ -691,7 +996,10 @@ class PumpFunExecutionClient:
         lamports = self.sol_to_lamports(sol_amount)
         max_sol_cost = int((lamports * (10_000 + slippage_bps)) / 10_000)
 
-        if token_amount is None or token_amount <= 0:
+        base_token_prog = await self.get_token_program_for_mint(mint)
+        creator = None
+
+        if token_amount is None or token_amount <= 0 or creator is None:
             try:
                 bonding_curve_pda, _ = self.get_bonding_curve_pda(mint)
                 payload = {
@@ -713,7 +1021,12 @@ class PumpFunExecutionClient:
                     curve_state = self.decode_bonding_curve_data(raw_bytes)
                     v_sol = int(curve_state.get("virtual_sol_reserves", 0))
                     v_token = int(curve_state.get("virtual_token_reserves", 0))
-                    if v_sol > 0 and v_token > 0:
+                    creator = str(curve_state.get("creator") or "") or None
+                    if (
+                        (token_amount is None or token_amount <= 0)
+                        and v_sol > 0
+                        and v_token > 0
+                    ):
                         token_amount = self.calculate_buy_tokens_out(
                             lamports, v_sol, v_token, slippage_bps=slippage_bps
                         )
@@ -727,16 +1040,35 @@ class PumpFunExecutionClient:
                 )
 
         instructions = []
-        if not await self.get_ata_exists(mint):
+        ata_exists = False
+        try:
+            ata_exists = await self.get_ata_exists(mint, token_program=base_token_prog)
+        except TypeError:
+            try:
+                ata_exists = await self.get_ata_exists(mint)
+            except Exception:
+                ata_exists = False
+        except Exception:
+            ata_exists = False
+
+        if not ata_exists:
             instructions.append(
                 create_associated_token_account(
                     payer=self.wallet,
                     owner=self.wallet,
                     mint=self._to_pubkey(mint),
+                    token_program_id=base_token_prog,
                 )
             )
         instructions.append(
-            self.build_buy_instruction(mint, bonding_curve, token_amount, max_sol_cost)
+            self.build_buy_instruction_v2(
+                mint,
+                bonding_curve,
+                token_amount,
+                max_sol_cost,
+                creator=creator,
+                base_token_program=base_token_prog,
+            )
         )
         return await self._build_tx_with_instructions(
             instructions, tip_lamports=tip_lamports
@@ -763,14 +1095,57 @@ class PumpFunExecutionClient:
         if min_sol_lamports < 0:
             raise ValueError("Minimum SOL output cannot be negative")
 
-        if min_sol_lamports > 0:
+        base_token_prog = await self.get_token_program_for_mint(mint)
+        creator = None
+
+        if min_sol_lamports <= 0 or creator is None:
+            try:
+                bonding_curve_pda, _ = self.get_bonding_curve_pda(mint)
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getAccountInfo",
+                    "params": [
+                        bonding_curve_pda,
+                        {"encoding": "base64", "commitment": "confirmed"},
+                    ],
+                }
+                parsed = await self.rpc_pool.request(
+                    payload, max_retries=1, timeout_seconds=3.0
+                )
+                value = (parsed.get("result") or {}).get("value")
+                if value:
+                    raw_data_b64 = value.get("data", [""])[0]
+                    raw_bytes = base64.b64decode(raw_data_b64)
+                    curve_state = self.decode_bonding_curve_data(raw_bytes)
+                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+                    v_token = int(curve_state.get("virtual_token_reserves", 0))
+                    creator = str(curve_state.get("creator") or "") or None
+                    if min_sol_lamports <= 0 and v_sol > 0 and v_token > 0:
+                        min_sol_lamports = self.calculate_sell_sol_out(
+                            token_amount, v_token, v_sol, slippage_bps=slippage_bps
+                        )
+            except Exception:
+                pass
+            if min_sol_lamports <= 0:
+                v_sol = 30_000_000_000
+                v_token = 1_073_000_000_000_000
+                min_sol_lamports = self.calculate_sell_sol_out(
+                    token_amount, v_token, v_sol, slippage_bps=slippage_bps
+                )
+        else:
             min_sol_lamports = max(
                 0, int((min_sol_lamports * (10_000 - slippage_bps)) / 10_000)
             )
 
         instructions = [
-            self.build_sell_instruction(
-                mint, bonding_curve, token_amount, min_sol_lamports
+            self.build_sell_instruction_v2(
+                mint,
+                bonding_curve,
+                token_amount,
+                min_sol_lamports,
+                creator=creator,
+                base_token_program=base_token_prog,
             )
         ]
         return await self._build_tx_with_instructions(
@@ -1215,19 +1590,45 @@ class PumpFunExecutionClient:
     async def get_token_balance(self, mint: str, owner: Optional[str] = None) -> int:
         """Return the token balance for the wallet ATA for a given mint, in raw token units."""
         owner_pubkey = owner or str(self.wallet)
-        ata = await self.get_ata_address(mint, owner_pubkey)
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getTokenAccountBalance",
-            "params": [ata, {"commitment": "confirmed"}],
-        }
-        parsed = await self._request_rpc_json(payload)
-        result = parsed.get("result") or {}
-        value = result.get("value")
-        if not isinstance(value, dict):
-            return 0
-        amount = value.get("amount")
-        if amount is None:
-            return 0
-        return int(amount)
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenAccountsByOwner",
+                "params": [
+                    owner_pubkey,
+                    {"mint": mint},
+                    {"encoding": "jsonParsed", "commitment": "confirmed"},
+                ],
+            }
+            parsed = await self._request_rpc_json(payload)
+            accounts = (parsed.get("result") or {}).get("value", [])
+            if accounts and isinstance(accounts, list):
+                for acc in accounts:
+                    info = (
+                        ((acc.get("account") or {}).get("data") or {})
+                        .get("parsed", {})
+                        .get("info", {})
+                    )
+                    token_amount_obj = info.get("tokenAmount", {})
+                    if "amount" in token_amount_obj:
+                        return int(token_amount_obj["amount"])
+        except Exception:
+            pass
+
+        try:
+            ata = await self.get_ata_address(mint, owner_pubkey)
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenAccountBalance",
+                "params": [ata, {"commitment": "confirmed"}],
+            }
+            parsed = await self._request_rpc_json(payload)
+            result = parsed.get("result") or {}
+            value = result.get("value")
+            if isinstance(value, dict) and "amount" in value:
+                return int(value["amount"])
+        except Exception:
+            pass
+        return 0
