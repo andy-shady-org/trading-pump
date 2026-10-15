@@ -17,12 +17,12 @@
   "max_cluster_concentration_pct": 0.20,
   "max_single_cluster_pct": 0.15,
   "max_sybil_wash_ratio": 0.18,
-  "min_slippage_bps": 200,
-  "max_slippage_bps": 800,
+  "min_slippage_bps": 250,
+  "max_slippage_bps": 1000,
   "max_exit_slippage_bps": 3000,
   "enable_cross_venue_arbitrage": false,
   "use_jito": true,
-  "jito_tip_lamports": 250000,
+  "jito_tip_lamports": 300000,
   "enable_dynamic_slippage": true,
   "priority_fee_mode": "adaptive"
 }
