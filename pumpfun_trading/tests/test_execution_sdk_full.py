@@ -157,6 +157,15 @@ async def test_execution_client_tx_builders():
     )
     assert buy_tx is not None
 
+    # build_buy_tx with explicit token_amount vs auto-derived token_amount
+    buy_tx_explicit = await client.build_buy_tx(
+        mint=SAMPLE_MINT,
+        bonding_curve=pda,
+        sol_amount=0.005,
+        token_amount=500_000,
+    )
+    assert buy_tx_explicit is not None
+
     # build_sell_tx
     sell_tx = await client.build_sell_tx(
         mint=SAMPLE_MINT,

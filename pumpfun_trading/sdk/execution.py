@@ -683,7 +683,6 @@ class PumpFunExecutionClient:
         slippage_bps: Optional[int] = None,
         tip_lamports: Optional[int] = None,
     ) -> VersionedTransaction:
-        token_amount = token_amount if token_amount is not None else 0
         slippage_bps = (
             self.default_slippage_bps
             if slippage_bps is None
@@ -691,6 +690,41 @@ class PumpFunExecutionClient:
         )
         lamports = self.sol_to_lamports(sol_amount)
         max_sol_cost = int((lamports * (10_000 + slippage_bps)) / 10_000)
+
+        if token_amount is None or token_amount <= 0:
+            try:
+                bonding_curve_pda, _ = self.get_bonding_curve_pda(mint)
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getAccountInfo",
+                    "params": [
+                        bonding_curve_pda,
+                        {"encoding": "base64", "commitment": "confirmed"},
+                    ],
+                }
+                parsed = await self.rpc_pool.request(
+                    payload, max_retries=1, timeout_seconds=3.0
+                )
+                value = (parsed.get("result") or {}).get("value")
+                if value:
+                    raw_data_b64 = value.get("data", [""])[0]
+                    raw_bytes = base64.b64decode(raw_data_b64)
+                    curve_state = self.decode_bonding_curve_data(raw_bytes)
+                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+                    v_token = int(curve_state.get("virtual_token_reserves", 0))
+                    if v_sol > 0 and v_token > 0:
+                        token_amount = self.calculate_buy_tokens_out(
+                            lamports, v_sol, v_token, slippage_bps=slippage_bps
+                        )
+            except Exception:
+                pass
+            if token_amount is None or token_amount <= 0:
+                v_sol = 30_000_000_000
+                v_token = 1_073_000_000_000_000
+                token_amount = self.calculate_buy_tokens_out(
+                    lamports, v_sol, v_token, slippage_bps=slippage_bps
+                )
 
         instructions = []
         if not await self.get_ata_exists(mint):
