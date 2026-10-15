@@ -65,6 +65,9 @@ These improvements are about making the bot behave more like a real trading syst
 - [x] Add retry/backoff logic for transient RPC failures
 - [x] Add transaction queue and execution lock to avoid overlapping actions
 - [x] Add execution health scoring and failure classification
+- [x] Implement modern Pump.fun `BuyV2` (27 accounts) and `SellV2` (26 accounts) on-chain instruction architecture
+- [x] Add dynamic Token-2022 vs SPL Token program resolution (`get_token_program_for_mint`)
+- [x] Derive on-chain volume accumulators, fee program `fee_config` PDAs, and creator vaults from bonding curve state (`data[49:81]`)
 
 
 #### 7. Backtesting and replay foundation
