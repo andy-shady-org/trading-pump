@@ -707,3 +707,47 @@ def test_dashboard_stagnant_timeout_field():
     output_fallback = console.export_text()
     assert "Stagnant timeout" in output_fallback
     assert "n/a" in output_fallback
+
+
+def test_trading_bot_preserves_stagnant_timeout_config_and_ui(tmp_path):
+    """Verify that TradingBot preserves stagnant_timeout_seconds from config and renders correctly in UI."""
+    from pumpfun_trading.bot.run import TradingBot
+
+    # 1. Direct TradingBotConfig instantiation
+    cfg = TradingBotConfig(stagnant_timeout_seconds=45.0, dry_run=True, headless=True)
+    bot = TradingBot(
+        private_key_b58="5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1" * 2,
+        rpc_url="http://127.0.0.1:8899",
+        config=cfg,
+    )
+    assert bot.config.stagnant_timeout_seconds == 45.0
+
+    panel = build_dashboard(bot)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel)
+    output = console.export_text()
+    assert "Stagnant timeout" in output
+    assert "45.0s" in output
+
+    # 2. Config loaded from JSON file
+    cfg_file = tmp_path / "custom_config.json"
+    cfg_file.write_text(
+        '{"strategy_preset": "balanced", "stagnant_timeout_seconds": 45.0, "dry_run": true, "headless": true}',
+        encoding="utf-8",
+    )
+    loaded_cfg = TradingBotConfig.from_file(cfg_file)
+    assert loaded_cfg.stagnant_timeout_seconds == 45.0
+
+    bot_from_file = TradingBot(
+        private_key_b58="5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1" * 2,
+        rpc_url="http://127.0.0.1:8899",
+        config=loaded_cfg,
+    )
+    assert bot_from_file.config.stagnant_timeout_seconds == 45.0
+
+    panel_file = build_dashboard(bot_from_file)
+    console = Console(width=200, file=None, record=True)
+    console.print(panel_file)
+    output_file = console.export_text()
+    assert "Stagnant timeout" in output_file
+    assert "45.0s" in output_file

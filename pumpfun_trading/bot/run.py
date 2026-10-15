@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import logging
 import os
@@ -135,6 +136,8 @@ class TradingBot:
             },
         )
         base = config or resolved
+        if not isinstance(base, TradingBotConfig):
+            base = TradingBotConfig.from_dict(base if isinstance(base, dict) else {})
         env_stream_url = os.getenv("PUMPFUN_STREAM_URL") or os.getenv("PUMPFUN_WS_URL")
         effective_stream_url = stream_url
         if effective_stream_url == "http://127.0.0.1:10000" and env_stream_url:
@@ -144,137 +147,14 @@ class TradingBot:
         elif env_stream_url:
             effective_stream_url = env_stream_url
 
-        self.config = TradingBotConfig(
-            buy_amount_sol=float(base.buy_amount_sol),
-            take_profit=float(base.take_profit),
-            stop_loss=float(base.stop_loss),
-            max_active_positions=int(base.max_active_positions),
-            max_positions_per_mint=int(base.max_positions_per_mint),
-            min_market_cap_sol=float(base.min_market_cap_sol),
-            max_buy_attempts_per_mint=int(base.max_buy_attempts_per_mint),
-            min_balance_sol=float(base.min_balance_sol),
-            min_sell_balance=int(base.min_sell_balance),
-            recent_token_ttl_seconds=int(base.recent_token_ttl_seconds),
-            reconnect_delay_seconds=float(base.reconnect_delay_seconds),
+        self.config = replace(
+            base,
             dry_run=bool(base.dry_run or dry_run or paper_trade),
             paper_trade=bool(base.paper_trade or paper_trade),
             verbose=bool(base.verbose and verbose),
             headless=bool(getattr(base, "headless", False) or headless),
             stream_url=str(effective_stream_url),
             api_base_url=str(api_base_url if api_base_url else base.api_base_url),
-            strategy_preset=str(base.strategy_preset),
-            max_total_exposure_sol=float(getattr(base, "max_total_exposure_sol", 0.25)),
-            max_position_size_sol=float(getattr(base, "max_position_size_sol", 0.05)),
-            max_loss_per_trade_sol=float(getattr(base, "max_loss_per_trade_sol", 0.02)),
-            max_daily_drawdown_pct=float(getattr(base, "max_daily_drawdown_pct", 0.15)),
-            reserve_balance_sol=float(getattr(base, "reserve_balance_sol", 0.1)),
-            health_check_timeout_seconds=int(
-                getattr(base, "health_check_timeout_seconds", 60)
-            ),
-            emergency_hard_lock_hours=float(
-                getattr(base, "emergency_hard_lock_hours", 24.0)
-            ),
-            auto_liquidate_on_circuit_breaker=bool(
-                getattr(base, "auto_liquidate_on_circuit_breaker", True)
-            ),
-            enable_trailing_stop=bool(getattr(base, "enable_trailing_stop", True)),
-            trailing_stop_activation_pct=float(
-                getattr(base, "trailing_stop_activation_pct", 0.50)
-            ),
-            trailing_stop_drop_pct=float(getattr(base, "trailing_stop_drop_pct", 0.15)),
-            enable_tiered_take_profit=bool(
-                getattr(base, "enable_tiered_take_profit", True)
-            ),
-            tier_1_take_profit=float(getattr(base, "tier_1_take_profit", 2.0)),
-            tier_1_sell_fraction=float(getattr(base, "tier_1_sell_fraction", 0.50)),
-            tier_2_take_profit=float(getattr(base, "tier_2_take_profit", 3.5)),
-            tier_2_sell_fraction=float(getattr(base, "tier_2_sell_fraction", 0.25)),
-            moonbag_trailing_floor=float(getattr(base, "moonbag_trailing_floor", 2.5)),
-            enable_anti_rug_filters=bool(
-                getattr(base, "enable_anti_rug_filters", True)
-            ),
-            max_dev_24h_launches=int(getattr(base, "max_dev_24h_launches", 5)),
-            max_creator_initial_holding_pct=float(
-                getattr(base, "max_creator_initial_holding_pct", 0.10)
-            ),
-            max_top5_holder_concentration_pct=float(
-                getattr(base, "max_top5_holder_concentration_pct", 0.15)
-            ),
-            max_gini_coefficient=float(getattr(base, "max_gini_coefficient", 0.85)),
-            require_social_links=bool(getattr(base, "require_social_links", False)),
-            min_social_links_count=int(getattr(base, "min_social_links_count", 1)),
-            max_acceptable_risk_score=float(
-                getattr(base, "max_acceptable_risk_score", 45.0)
-            ),
-            screening_cache_ttl_seconds=int(
-                getattr(base, "screening_cache_ttl_seconds", 60)
-            ),
-            enable_momentum_signals=bool(
-                getattr(base, "enable_momentum_signals", True)
-            ),
-            momentum_window_seconds=int(getattr(base, "momentum_window_seconds", 30)),
-            momentum_min_buy_ratio=float(getattr(base, "momentum_min_buy_ratio", 3.0)),
-            momentum_min_z_score=float(getattr(base, "momentum_min_z_score", 2.5)),
-            momentum_min_unique_buyers=int(
-                getattr(base, "momentum_min_unique_buyers", 3)
-            ),
-            momentum_min_net_inflow_sol=float(
-                getattr(base, "momentum_min_net_inflow_sol", 0.5)
-            ),
-            momentum_baseline_window_seconds=int(
-                getattr(base, "momentum_baseline_window_seconds", 300)
-            ),
-            momentum_max_token_age_seconds=int(
-                getattr(base, "momentum_max_token_age_seconds", 1800)
-            ),
-            enable_raydium_migration_sniping=bool(
-                getattr(base, "enable_raydium_migration_sniping", True)
-            ),
-            raydium_pre_migration_sol_threshold=float(
-                getattr(base, "raydium_pre_migration_sol_threshold", 80.0)
-            ),
-            raydium_buy_amount_sol=float(getattr(base, "raydium_buy_amount_sol", 0.02)),
-            raydium_slippage_bps=int(getattr(base, "raydium_slippage_bps", 500)),
-            raydium_priority_fee_lamports=int(
-                getattr(base, "raydium_priority_fee_lamports", 100_000)
-            ),
-            raydium_max_entry_latency_seconds=float(
-                getattr(base, "raydium_max_entry_latency_seconds", 30.0)
-            ),
-            enable_copy_trading=bool(getattr(base, "enable_copy_trading", False)),
-            copy_trading_wallets=tuple(getattr(base, "copy_trading_wallets", ())),
-            copy_trading_min_wallet_win_rate=float(
-                getattr(base, "copy_trading_min_wallet_win_rate", 0.55)
-            ),
-            copy_trading_max_wallet_risk_score=float(
-                getattr(base, "copy_trading_max_wallet_risk_score", 45.0)
-            ),
-            copy_trading_sizing_mode=str(
-                getattr(base, "copy_trading_sizing_mode", "proportional")
-            ),
-            copy_trading_scale_factor=float(
-                getattr(base, "copy_trading_scale_factor", 1.0)
-            ),
-            copy_trading_mirror_sells=bool(
-                getattr(base, "copy_trading_mirror_sells", True)
-            ),
-            copy_trading_require_anti_rug_screen=bool(
-                getattr(base, "copy_trading_require_anti_rug_screen", True)
-            ),
-            enable_rpc_pool=bool(getattr(base, "enable_rpc_pool", True)),
-            rpc_endpoints=tuple(getattr(base, "rpc_endpoints", ())),
-            rpc_pool_health_check_interval_seconds=float(
-                getattr(base, "rpc_pool_health_check_interval_seconds", 30.0)
-            ),
-            rpc_pool_circuit_breaker_threshold=int(
-                getattr(base, "rpc_pool_circuit_breaker_threshold", 3)
-            ),
-            rpc_pool_circuit_breaker_cooldown_seconds=float(
-                getattr(base, "rpc_pool_circuit_breaker_cooldown_seconds", 60.0)
-            ),
-            rpc_pool_broadcast_concurrency=int(
-                getattr(base, "rpc_pool_broadcast_concurrency", 3)
-            ),
             replay_log_path=(
                 str(replay_log_path)
                 if replay_log_path is not None
@@ -283,44 +163,6 @@ class TradingBot:
                     if getattr(base, "replay_log_path", None)
                     else None
                 )
-            ),
-            drawdown_reference_mode=str(
-                getattr(base, "drawdown_reference_mode", "adaptive_ratchet")
-            ),
-            profit_ratchet_ratio=float(getattr(base, "profit_ratchet_ratio", 0.50)),
-            profit_drawdown_tolerance_pct=float(
-                getattr(base, "profit_drawdown_tolerance_pct", 0.35)
-            ),
-            enable_diagnostic_events=bool(
-                getattr(base, "enable_diagnostic_events", True)
-            ),
-            event_log_path=str(getattr(base, "event_log_path", "events.jsonl")),
-            event_log_subsystems=tuple(
-                getattr(base, "event_log_subsystems", ())
-                or (
-                    "stream",
-                    "screening",
-                    "strategy",
-                    "execution",
-                    "risk",
-                    "lifecycle",
-                )
-            ),
-            log_file=getattr(base, "log_file", "bot.log"),
-            log_max_bytes=int(getattr(base, "log_max_bytes", 10 * 1024 * 1024)),
-            log_backup_count=int(getattr(base, "log_backup_count", 5)),
-            log_rotation_type=str(getattr(base, "log_rotation_type", "size")),
-            log_compress=bool(getattr(base, "log_compress", True)),
-            audit_max_bytes=int(getattr(base, "audit_max_bytes", 10 * 1024 * 1024)),
-            audit_backup_count=int(getattr(base, "audit_backup_count", 10)),
-            audit_retention_days=int(getattr(base, "audit_retention_days", 30)),
-            audit_compress=bool(getattr(base, "audit_compress", True)),
-            replay_max_bytes=int(getattr(base, "replay_max_bytes", 50 * 1024 * 1024)),
-            replay_backup_count=int(getattr(base, "replay_backup_count", 10)),
-            replay_retention_days=int(getattr(base, "replay_retention_days", 30)),
-            replay_compress=bool(getattr(base, "replay_compress", True)),
-            retention_check_interval_seconds=float(
-                getattr(base, "retention_check_interval_seconds", 3600.0)
             ),
         )
 
