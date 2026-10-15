@@ -1,5 +1,12 @@
 """Strategy modules for signal generation and decision evaluation."""
 
+from pumpfun_trading.strategies.arbitrage import (
+    ArbitrageOpportunity,
+    CrossVenueDisparityMonitor,
+    MempoolBackrunEngine,
+    OptimalArbitrageCalculator,
+    calculate_cross_venue_spread,
+)
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.decision import TradingStrategy
 from pumpfun_trading.strategies.exits import (
@@ -68,9 +75,11 @@ from pumpfun_trading.strategies.signal import (
 )
 
 __all__ = [
+    "ArbitrageOpportunity",
     "ClusterAnalysisVerdict",
     "CopyTradeEngine",
     "CopyTradeSignal",
+    "CrossVenueDisparityMonitor",
     "DEFAULT_PRESETS",
     "DevWalletProfile",
     "ExitAction",
@@ -83,7 +92,9 @@ __all__ = [
     "GraduationSignal",
     "GraduationTracker",
     "HolderDistribution",
+    "MempoolBackrunEngine",
     "MomentumSignal",
+    "OptimalArbitrageCalculator",
     "OrderFlowEngine",
     "PositionExitState",
     "RaydiumPoolKeys",
@@ -102,6 +113,7 @@ __all__ = [
     "WalletRegistry",
     "WindowMetrics",
     "buy_attempts_within_limit",
+    "calculate_cross_venue_spread",
     "calculate_gini_coefficient",
     "evaluate_cluster_heuristics",
     "evaluate_creator_holdings",

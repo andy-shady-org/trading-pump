@@ -674,3 +674,83 @@ Bonding curves approaching Raydium graduation ($\sim 85\text{ SOL}$ reserves / $
    * **Tranche 1 (30% scale-out)**: Executed when curve completion reaches **92%**.
    * **Tranche 2 (30% scale-out)**: Executed when curve completion reaches **97%**.
    * **Moonbag Retained (40% residual)**: Rides into Raydium pool seeding, protected by post-migration trailing stops.
+
+---
+
+## 16. Hyperparameter Optimization & Strategy Auto-Tuning (FEAT-27)
+
+To counteract parameter decay as market volatility regimes shift between parabolic meme runs, dev dump traps, and low-volume consolidation, `pumpfun-trading` integrates an automated multi-objective hyperparameter optimization engine (`pumpfun_trading/engines/optimizer.py`).
+
+### 1. Multi-Objective Fitness Evaluation
+
+Fitness scoring evaluates trade return series across historical backtest simulations:
+
+$$\text{Sharpe} = \frac{\mu_r - r_f}{\sigma_r} \cdot \sqrt{N}, \qquad \text{Sortino} = \frac{\mu_r - r_f}{\sigma_{\text{downside}}} \cdot \sqrt{N}$$
+
+$$\text{Profit Factor} = \frac{\sum \text{Gains}}{\sum |\text{Losses}|}, \qquad \text{Calmar} = \frac{\text{Total Return}}{\text{Max Drawdown}}$$
+
+$$\text{Composite Fitness} = w_s \cdot \text{Sharpe} + w_{pf} \cdot (\text{ProfitFactor} - 1.0) + w_r \cdot \text{TotalReturn} + w_{\text{sort}} \cdot \text{Sortino} + w_{\text{cal}} \cdot \text{Calmar} - w_{dd} \cdot \text{MaxDrawdown}$$
+
+### 2. Search Algorithms & Convergence Optimization
+
+1. **Evolutionary Genetic Algorithm (`GeneticOptimizer`)**:
+   - Population modeling ($P = 20-50$, $G = 5-20$ generations).
+   - Tournament selection ($k = 3$) for parent candidate sampling.
+   - Uniform blend parameter crossover ($C_r = 0.80$).
+   - Adaptive Gaussian mutation ($M_r = 0.20$).
+   - Strict elitism ($E = 2$) preserving top configurations without corruption across generations.
+2. **Stochastic Random Search (`RandomSearchOptimizer`)**: Uniform and log-uniform sampling over $N$ iterations.
+3. **Deterministic Grid Search (`GridSearchOptimizer`)**: Combinatorial product exploration across discrete parameter sub-grids.
+
+### 3. Walk-Forward Cross-Validation & Overfitting Guard
+
+To ensure strategies generalize to unseen market regimes:
+* The dataset is split into **In-Sample Training ($70\%$)** and **Out-of-Sample Validation ($30\%$)**.
+* An Overfitting Penalty is computed:
+  $$\text{Overfit Delta} = \max\left(0, \text{Score}_{\text{train}} - \text{Score}_{\text{test}}\right)$$
+* The effective ranking score penalizes overfitting:
+  $$\text{Composite Score} = \text{Score}_{\text{test}} - 0.5 \times \text{Overfit Delta}$$
+
+Calibrated configurations can be exported directly to `TradingBotConfig` JSON format via `pumpfun-optimize --export-config <file>`.
+
+---
+
+## 14. Atomic Cross-Venue Arbitrage & Mempool Back-Running Engine (FEAT-28)
+
+To capture risk-free, delta-neutral yield across graduating Pump.fun bonding curves and external DEX liquidity pools (Raydium AMM v4), `pumpfun-trading` introduces the atomic cross-venue arbitrage engine.
+
+### 1. Spot Disparity & Direction Derivation
+
+Comparing Pump.fun curve spot price ($P_{\text{pump}} = \frac{x_{\text{virtual}}}{y_{\text{virtual}}}$) with Raydium AMM v4 spot price ($P_{\text{raydium}} = \frac{R_{\text{sol}}}{R_{\text{token}}}$):
+
+$$\text{Spread}_{\text{gross}} = \frac{|P_{\text{pump}} - P_{\text{raydium}}|}{\min(P_{\text{pump}}, P_{\text{raydium}})}$$
+
+* **$P_{\text{pump}} < P_{\text{raydium}}$ (`pump_to_raydium`)**: Tokens are cheap on Pump.fun and expensive on Raydium.
+  - Leg 1: Buy tokens on Pump.fun (SOL $\to$ Token)
+  - Leg 2: Sell tokens on Raydium (Token $\to$ SOL)
+* **$P_{\text{raydium}} < P_{\text{pump}}$ (`raydium_to_pump`)**: Tokens are cheap on Raydium and expensive on Pump.fun.
+  - Leg 1: Buy tokens on Raydium (SOL $\to$ Token)
+  - Leg 2: Sell tokens on Pump.fun (Token $\to$ SOL)
+
+### 2. Closed-Form Mathematical Optimal Sizing Math
+
+Given fee factors $\gamma_1 = 1 - f_{\text{pump}} = 0.99$ and $\gamma_2 = 1 - f_{\text{raydium}} = 0.9975$, the output SOL $\Delta s(x)$ as a function of input SOL $x$ is a Möbius transformation $\frac{A x}{B x + C}$. Setting marginal return equal to marginal cost yields the exact closed-form optimal swap input $x^*$:
+
+$$x^* = \frac{\sqrt{A \cdot C} - C}{B}$$
+
+Where:
+* For `pump_to_raydium`:
+  - $A = R_{\text{sol}} \cdot \gamma_1 \cdot \gamma_2 \cdot y_{\text{virtual}}$
+  - $B = \gamma_1 \cdot (R_{\text{token}} + \gamma_2 \cdot y_{\text{virtual}})$
+  - $C = R_{\text{token}} \cdot x_{\text{virtual}}$
+* For `raydium_to_pump`:
+  - $A = \gamma_1 \cdot \gamma_2 \cdot x_{\text{virtual}} \cdot R_{\text{token}}$
+  - $B = \gamma_2 \cdot (y_{\text{virtual}} + R_{\text{token}})$
+  - $C = y_{\text{virtual}} \cdot R_{\text{sol}}$
+
+### 3. Dynamic Jito Tip Sharing & Atomic Bundling
+
+To guarantee validator priority and top-of-block bundle inclusion without sandwich attack risk:
+$$\text{Tip}_{\text{Jito}} = \max\left(\text{TipFloor}_{\text{p95}}, \text{GrossProfit} \times \text{arbitrage\_jito\_tip\_profit\_share\_pct}\right)$$
+
+Both swap legs and the tip transfer instruction execute inside a single atomic `VersionedTransaction`. If pool reserves slip or competitor transactions pre-empt the state, the whole transaction reverts with zero capital loss.

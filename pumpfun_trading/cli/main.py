@@ -12,8 +12,10 @@ from rich.table import Table
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig, resolve_strategy_config
+from pumpfun_trading.cli.arbitrage import build_arbitrage_parser, run_arbitrage_cli
 from pumpfun_trading.cli.audit import build_audit_parser, run_audit_cli
 from pumpfun_trading.cli.events import build_events_parser, run_events_cli
+from pumpfun_trading.cli.optimize import build_optimize_parser, run_optimize_cli
 from pumpfun_trading.cli.record import build_record_parser, run_record_cli
 from pumpfun_trading.cli.replay import build_replay_parser
 from pumpfun_trading.ops.logging import get_configured_console
@@ -251,8 +253,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Pump.fun public market data CLI and trading bot"
     )
     subparsers = parser.add_subparsers(dest="command")
+    build_arbitrage_parser(subparsers)
     build_audit_parser(subparsers)
     build_events_parser(subparsers)
+    build_optimize_parser(subparsers)
     build_replay_parser(subparsers)
     build_record_parser(subparsers)
     build_ops_parser(subparsers)
@@ -347,12 +351,20 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _build_parser().parse_args()
 
+    if args.command in {"arb", "arbitrage"}:
+        run_arbitrage_cli(args)
+        return
+
     if args.command == "audit":
         run_audit_cli(args)
         return
 
     if args.command == "events":
         run_events_cli(args)
+        return
+
+    if args.command == "optimize":
+        run_optimize_cli(args)
         return
 
     if args.command == "record":

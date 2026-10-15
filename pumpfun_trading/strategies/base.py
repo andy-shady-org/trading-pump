@@ -139,6 +139,13 @@ class TradingBotConfig:
     max_single_cluster_pct: float = 0.20
     max_sybil_wash_ratio: float = 0.20
     cluster_trace_depth: int = 2
+    enable_cross_venue_arbitrage: bool = True
+    enable_mempool_backrunning: bool = True
+    min_arbitrage_profit_sol: float = 0.003
+    min_arbitrage_spread_pct: float = 0.015
+    max_arbitrage_input_sol: float = 0.50
+    min_arbitrage_input_sol: float = 0.01
+    arbitrage_jito_tip_profit_share_pct: float = 0.50
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -263,6 +270,13 @@ class TradingBotConfig:
             "max_single_cluster_pct": self.max_single_cluster_pct,
             "max_sybil_wash_ratio": self.max_sybil_wash_ratio,
             "cluster_trace_depth": self.cluster_trace_depth,
+            "enable_cross_venue_arbitrage": self.enable_cross_venue_arbitrage,
+            "enable_mempool_backrunning": self.enable_mempool_backrunning,
+            "min_arbitrage_profit_sol": self.min_arbitrage_profit_sol,
+            "min_arbitrage_spread_pct": self.min_arbitrage_spread_pct,
+            "max_arbitrage_input_sol": self.max_arbitrage_input_sol,
+            "min_arbitrage_input_sol": self.min_arbitrage_input_sol,
+            "arbitrage_jito_tip_profit_share_pct": self.arbitrage_jito_tip_profit_share_pct,
         }
 
     @classmethod

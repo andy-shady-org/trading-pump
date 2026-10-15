@@ -43,9 +43,12 @@ from pumpfun_trading.bot.risk import (
     evaluate_portfolio_circuit_breaker,
 )
 from pumpfun_trading.bot.strategy import (
+    ArbitrageOpportunity,
     CopyTradeEngine,
+    CrossVenueDisparityMonitor,
     ExitAction,
     GraduationEngine,
+    MempoolBackrunEngine,
     OrderFlowEngine,
     RaydiumPoolKeys,
     ScreeningCache,
@@ -55,6 +58,10 @@ from pumpfun_trading.bot.strategy import (
     resolve_strategy_config,
 )
 from pumpfun_trading.config.env import get_env_bool, get_env_int
+from pumpfun_trading.execution.arbitrage import (
+    AtomicArbitrageBuilder,
+    AtomicArbitrageExecutor,
+)
 from pumpfun_trading.execution.builder import build_execution_client
 from pumpfun_trading.execution.executor import OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
@@ -382,6 +389,16 @@ class TradingBot:
             candidate_ttl_seconds=1800,
             pre_migration_threshold_sol=self.config.raydium_pre_migration_sol_threshold,
         )
+        self.arb_monitor = CrossVenueDisparityMonitor(
+            min_arbitrage_spread_pct=self.config.min_arbitrage_spread_pct,
+            min_arbitrage_profit_sol=self.config.min_arbitrage_profit_sol,
+            max_arbitrage_input_sol=self.config.max_arbitrage_input_sol,
+            min_arbitrage_input_sol=self.config.min_arbitrage_input_sol,
+            jito_tip_profit_share_pct=self.config.arbitrage_jito_tip_profit_share_pct,
+        )
+        self.backrun_engine = MempoolBackrunEngine(
+            disparity_monitor=self.arb_monitor,
+        )
         self.copy_trade_engine = CopyTradeEngine(
             base_buy_amount_sol=self.config.buy_amount_sol,
             max_position_size_sol=self.config.max_position_size_sol,
@@ -673,6 +690,13 @@ class TradingBot:
             jito_confirmation_timeout=float(
                 os.getenv("PUMPFUN_JITO_CONFIRMATION_TIMEOUT", "12.0")
             ),
+        )
+
+        self.arb_builder = AtomicArbitrageBuilder(self.execution)
+        self.arb_executor = AtomicArbitrageExecutor(
+            execution_client=self.execution,
+            builder=self.arb_builder,
+            dry_run=self.dry_run,
         )
 
         # Extracted Order Executor, Liquidator, and Token Enricher
@@ -2459,6 +2483,13 @@ class TradingBot:
             timestamp=update.timestamp,
         )
 
+        if self.config.enable_cross_venue_arbitrage:
+            await self._evaluate_and_execute_arbitrage(
+                mint=mint,
+                virtual_sol=update.virtual_sol_reserves,
+                virtual_token=update.virtual_token_reserves,
+            )
+
         if self.replay_recorder is not None:
             price = (
                 current_market_cap / 1_000_000_000.0 if current_market_cap > 0 else 0.0
@@ -2613,6 +2644,15 @@ class TradingBot:
             user=update.user,
             timestamp=ts,
         )
+
+        if self.config.enable_cross_venue_arbitrage and update.virtual_sol_reserves > 0:
+            await self._evaluate_and_execute_arbitrage(
+                mint=mint,
+                virtual_sol=update.virtual_sol_reserves,
+                virtual_token=update.virtual_token_reserves,
+                trade_sol=update.sol_amount,
+                is_buy=update.is_buy,
+            )
 
         if update.virtual_token_reserves > 0:
             current_market_cap = (update.virtual_sol_reserves / 1_000_000_000.0) * (
@@ -2872,6 +2912,108 @@ class TradingBot:
                 )
                 if bought:
                     self._record_event(f"bought raydium {mint[:8]}")
+
+        # Check for immediate cross-venue arbitrage on newly listed Raydium pool
+        if self.config.enable_cross_venue_arbitrage:
+            cand = self.graduation_engine.get_candidate(mint)
+            if cand:
+                virt_sol = int(round((cand.real_sol_reserves + 30.0) * 1_000_000_000))
+                virt_tok = int(200_000_000_000_000)
+                await self._evaluate_and_execute_arbitrage(
+                    mint=mint,
+                    virtual_sol=virt_sol,
+                    virtual_token=virt_tok,
+                )
+
+    async def _evaluate_and_execute_arbitrage(
+        self,
+        mint: str,
+        virtual_sol: int,
+        virtual_token: int,
+        trade_sol: float = 0.0,
+        is_buy: bool = True,
+    ) -> None:
+        """Evaluate cross-venue disparity and execute atomic Jito arbitrage bundle."""
+        if not self.config.enable_cross_venue_arbitrage or self._stop_requested:
+            return
+
+        candidate = self.graduation_engine.get_candidate(mint)
+        if not candidate or not candidate.pool_keys:
+            return
+
+        pool_keys = candidate.pool_keys
+        # Derive Raydium pool reserves from candidate real reserves
+        ray_sol = int(round((candidate.real_sol_reserves or 80.0) * 1_000_000_000))
+        ray_tokens = int(200_000_000_000_000)
+
+        opp: Optional[ArbitrageOpportunity] = None
+        if self.config.enable_mempool_backrunning and trade_sol >= 1.0:
+            opp = self.backrun_engine.evaluate_whale_transaction(
+                mint=mint,
+                is_buy=is_buy,
+                trade_sol=trade_sol,
+                pump_virtual_sol=virtual_sol,
+                pump_virtual_token=virtual_token,
+                raydium_sol_reserve=ray_sol,
+                raydium_token_reserve=ray_tokens,
+                raydium_keys=pool_keys,
+            )
+
+        if opp is None:
+            opp = self.arb_monitor.evaluate_spread(
+                mint=mint,
+                pump_virtual_sol=virtual_sol,
+                pump_virtual_token=virtual_token,
+                raydium_sol_reserve=ray_sol,
+                raydium_token_reserve=ray_tokens,
+                raydium_keys=pool_keys,
+            )
+
+        if opp is not None and opp.is_profitable:
+            self._log(
+                f"[ARBITRAGE] Found {opp.direction} spread {opp.spread_pct * 100:.2f}% on {mint[:8]}! "
+                f"Optimal size: {opp.optimal_input_sol:.4f} SOL -> Est Profit: {opp.net_profit_sol:.4f} SOL"
+            )
+            if hasattr(self, "event_logger") and self.event_logger:
+                self.event_logger.emit(
+                    category=EventCategory.ARBITRAGE,
+                    event_name="arbitrage_opportunity_detected",
+                    mint=mint,
+                    data=opp.to_dict(),
+                )
+
+            res = await self.arb_executor.execute_arbitrage(opp)
+            if res.get("success"):
+                net_profit = float(res.get("net_profit_sol", 0.0))
+                self._record_trade(
+                    mint=mint,
+                    action="ARBITRAGE",
+                    entry=opp.optimal_input_sol,
+                    exit_value=opp.expected_output_sol,
+                    entry_price=opp.pump_spot_price,
+                    exit_price=opp.raydium_spot_price,
+                    reason="cross_venue_arbitrage",
+                )
+                self.daily_equity_tracker.record_realized_trade(
+                    pnl_sol=net_profit,
+                )
+                if self.dry_run:
+                    self.wallet_balance_sol += net_profit
+                if hasattr(self, "event_logger") and self.event_logger:
+                    self.event_logger.emit(
+                        category=EventCategory.ARBITRAGE,
+                        event_name="arbitrage_bundle_landed",
+                        mint=mint,
+                        data=res,
+                    )
+            else:
+                if hasattr(self, "event_logger") and self.event_logger:
+                    self.event_logger.emit(
+                        category=EventCategory.ARBITRAGE,
+                        event_name="arbitrage_bundle_reverted",
+                        mint=mint,
+                        data=res,
+                    )
 
     async def _handle_new_token_event(
         self, data: dict[str, Any], websocket: Any = None

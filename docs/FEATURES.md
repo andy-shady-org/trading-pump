@@ -384,3 +384,48 @@ This document provides a comprehensive and accurate overview of all features and
 - **Composite Screening & Enrichment Integration (`FundingClusterAnalyzer`)**:
   - Seamlessly integrated into `TokenEnricher` (`bot/enrichment.py`), `TradingStrategy.screen_token` (`strategies/decision.py`), `passes_anti_rug_screening` (`strategies/filters.py`), and `TradingBotConfig` presets.
   - Configurable via environment variables (`PUMPFUN_CLUSTER_ANALYSIS_ENABLED`, `PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT`, `PUMPFUN_MAX_SINGLE_CLUSTER_PCT`, `PUMPFUN_MAX_SYBIL_WASH_RATIO`, `PUMPFUN_CLUSTER_TRACE_DEPTH`).
+
+---
+
+## 28. Automated Strategy Parameter Auto-Tuning & Hyperparameter Backtest Optimizer (FEAT-27)
+
+- **Declarative Hyperparameter Space & Domain Framework (`ParameterSpace`)**:
+  - Modular hyperparameter primitives (`FloatParam`, `IntParam`, `CategoricalParam`, `BoolParam`) supporting continuous, discrete, logarithmic (`log_scale`), and bounded domains with step intervals and neighbor perturbation.
+  - Built-in default search space (`build_default_strategy_search_space`) covering entry sizing, momentum Z-scores, multi-tier take-profits, dynamic trailing stops, stagnation exits, adaptive ratchets, and anti-rug cluster caps.
+- **Multi-Objective Fitness & Risk Evaluation (`FitnessScore`)**:
+  - Mathematical computation of Sharpe Ratio, Sortino Ratio, Profit Factor, Calmar Ratio, Win Rate, Total Return, Maximum Drawdown, and Net Expectancy ($EV$) from simulated trade series.
+  - Configurable composite fitness scoring with custom weights balancing risk-adjusted return maximization and drawdown penalties.
+- **Advanced Optimization Algorithms (`BaseOptimizer`)**:
+  - **Genetic Algorithm (`GeneticOptimizer`)**: Evolutionary population optimization with tournament selection ($k=3$), uniform blend crossover, adaptive Gaussian mutation, and elitism preservation.
+  - **Random Search (`RandomSearchOptimizer`)**: Uniform and log-uniform stochastic exploration across multi-dimensional parameter spaces.
+  - **Grid Search (`GridSearchOptimizer`)**: Combinatorial product exploration across discrete parameter sub-grids.
+- **Walk-Forward Cross-Validation & Overfitting Guard (`WalkForwardValidator`)**:
+  - In-sample (train) vs. out-of-sample (test/validation) dataset partitioning to evaluate generalization across unseen market conditions and compute overfitting deltas ($\text{Overfit Delta} = \max(0, \text{TrainScore} - \text{TestScore})$).
+- **Direct Configuration Exporter & Preset Generator (`OptimizationResult`)**:
+  - Direct export of top-ranking parameter configurations to `TradingBotConfig` JSON files (`--export-config <file>`) and custom preset dictionaries.
+- **Interactive Optimizer CLI (`pumpfun-optimize` / `pumpfun optimize`)**:
+  - Rich console UI with live convergence progress bars, performance summaries, and top-k candidate ranking tables.
+
+---
+
+## 29. Atomic Jito Back-Running & Cross-Venue Arbitrage Engine (FEAT-28)
+
+- **Sub-Millisecond Cross-Venue Disparity Monitor (`CrossVenueDisparityMonitor`)**:
+  - Real-time price tracking comparing Pump.fun virtual bonding curve spot prices ($P_{\text{pump}} = y_{\text{virtual}} / x_{\text{virtual}}$) against Raydium AMM v4 pool reserves ($P_{\text{raydium}} = R_{\text{quote}} / R_{\text{base}}$).
+  - Continuous calculation of gross percentage spread ($S_{\text{gross}} = |P_a - P_b| / \min(P_a, P_b)$) and direction identification (`pump_to_raydium` vs. `raydium_to_pump`) across all graduating and migrated tokens.
+- **Closed-Form Optimal Arbitrage Sizing Math (`OptimalArbitrageCalculator`)**:
+  - Mathematical derivation of optimal input swap size ($x^*$) maximizing net profit across dual AMM curves subject to protocol fee friction (1% Pump.fun fee, 0.25% Raydium fee) and pool depth:
+    $$x^* = \frac{\sqrt{A \cdot C} - C}{B}$$
+  - Sizing constraints and caps (`min_arbitrage_input_sol`, `max_arbitrage_input_sol`, `min_arbitrage_profit_sol`, `min_arbitrage_spread_pct`).
+- **Atomic Multi-Hop Jito Bundle Execution (`AtomicArbitrageBuilder`, `AtomicArbitrageExecutor`)**:
+  - Assembly of dual-leg atomic swap instructions (Leg 1: Buy on Venue A, Leg 2: Sell on Venue B) bundled with a dynamic Jito tip transfer instruction in a single atomic transaction.
+  - Dynamic Jito validator tip floor scaling and profit-sharing model (allocating 40%–60% of gross profit to validator tips to guarantee top-of-block priority inclusion).
+  - Guarantees zero directional capital risk: if price parity shifts or competitor transactions slip pool reserves, the entire atomic bundle reverts on-chain with zero capital loss.
+- **Mempool & Stream Whale Back-Running Engine (`MempoolBackrunEngine`)**:
+  - Detection of large whale buy/sell orders (> 1.0 SOL or > 2% curve impact) streamed via Yellowstone Geyser gRPC.
+  - Sub-slot counter-trade signal generation to capture post-whale mean-reversion and cross-venue spread balancing.
+- **Transient Flash Capital Accounting & Runtime Integration**:
+  - Seamlessly integrated with `TradingBot`, `PositionManager`, and `DailyEquityTracker` for risk validation, flash capital allocation, and instantaneous cash recycling.
+- **Dedicated Arbitrage CLI (`pumpfun-arb` / `pumpfun arb`) & Replay Backtesting**:
+  - Standalone and unified CLI tooling for live spread monitoring, dry-run simulation, and JSON history exports.
+  - Multi-venue arbitrage simulation support in `PaperTradingEngine` (`pumpfun-replay`).

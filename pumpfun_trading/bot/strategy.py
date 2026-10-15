@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pumpfun_trading.strategies import (
     DEFAULT_PRESETS,
+    ArbitrageOpportunity,
     ClusterAnalysisVerdict,
     CopyTradeEngine,
     CopyTradeSignal,
+    CrossVenueDisparityMonitor,
     DevWalletProfile,
     ExitAction,
     ExitDecision,
@@ -16,7 +18,9 @@ from pumpfun_trading.strategies import (
     GraduationSignal,
     GraduationTracker,
     HolderDistribution,
+    MempoolBackrunEngine,
     MomentumSignal,
+    OptimalArbitrageCalculator,
     OrderFlowEngine,
     PositionExitState,
     RaydiumPoolKeys,
@@ -43,10 +47,12 @@ from pumpfun_trading.strategies import (
 )
 
 __all__ = [
-    "DEFAULT_PRESETS",
+    "ArbitrageOpportunity",
     "ClusterAnalysisVerdict",
     "CopyTradeEngine",
     "CopyTradeSignal",
+    "CrossVenueDisparityMonitor",
+    "DEFAULT_PRESETS",
     "DevWalletProfile",
     "ExitAction",
     "ExitDecision",
@@ -58,7 +64,9 @@ __all__ = [
     "GraduationSignal",
     "GraduationTracker",
     "HolderDistribution",
+    "MempoolBackrunEngine",
     "MomentumSignal",
+    "OptimalArbitrageCalculator",
     "OrderFlowEngine",
     "PositionExitState",
     "RaydiumPoolKeys",

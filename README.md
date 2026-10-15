@@ -234,3 +234,15 @@ The replay mode loads JSON or JSONL snapshot data, runs a lightweight paper-trad
 - final equity and total trade count
 
 See [REPLAY-ENGINE.md](./docs/REPLAY-ENGINE.md) for the full replay workflow, dataset format, and UI separation details.
+
+## Hyperparameter strategy optimizer
+
+The project includes `pumpfun-optimize` for automated hyperparameter tuning and backtest optimization over historical replay datasets (`FEAT-27`):
+
+```bash
+# Run evolutionary genetic optimization and export calibrated bot config
+pumpfun-optimize --dataset ./market_replay.jsonl --method genetic --generations 10 --export-config ./tuned_config.json
+
+# Run random search targeting Sharpe ratio
+pumpfun optimize --dataset ./market_replay.jsonl.gz --method random --iterations 50 --objective sharpe
+```

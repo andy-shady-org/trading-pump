@@ -35,7 +35,7 @@ graph TD
 ```
 
 ### Specialized Documentation Directory
-* [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md): Exhaustive command-line documentation for all dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`, `pumpfun-events`) and unified `pumpfun` subcommands, including parameter tables, options, and operational recipes.
+* [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md): Exhaustive command-line documentation for all dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`, `pumpfun-events`, `pumpfun-optimize`) and unified `pumpfun` subcommands, including parameter tables, options, and operational recipes.
 * [**Environment Variables Reference Manual (`docs/ENVIRONMENTAL-VARIABLES.md`)**](ENVIRONMENTAL-VARIABLES.md): Exhaustive reference for all environment variables, fallback aliases, data types, requirement rules, retention policies, and production deployment templates.
 * [**Terminal Operations & Self-Funding Guide (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md): Zero-dependency console monitor (`pumpbot`), sub-millisecond slot latency telemetry, complete visual dashboard field descriptions, alternate-screen buffer rendering, and multi-channel alerting (Discord, Slack, Telegram).
 * [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](STRATEGY.md): Constant-product bonding curve mathematics, fractional Kelly bankroll management, dynamic trailing stop-loss mechanics, multi-tier take-profit scaling (2.0x / 3.5x / Moonbag), and anti-rug heuristic filters.

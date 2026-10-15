@@ -24,6 +24,7 @@ class EventCategory(str, Enum):
     SCREENING = "screening"
     STRATEGY = "strategy"
     EXECUTION = "execution"
+    ARBITRAGE = "arbitrage"
     RISK = "risk"
     LIFECYCLE = "lifecycle"
 

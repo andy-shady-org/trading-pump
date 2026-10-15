@@ -678,6 +678,66 @@ The table below summarizes every supported environment variable, its recognized 
 
 ---
 
+### 3.14 Cross-Venue Arbitrage & Mempool Back-Running Engine (FEAT-28)
+
+#### `PUMPFUN_ARB_ENABLED`
+* **Fallback Alias:** `PUMPFUN_ENABLE_CROSS_VENUE_ARBITRAGE`
+* **Type:** Boolean (`true`, `false`, `1`, `0`)
+* **Required:** Optional
+* **Default:** `true`
+* **Description:** Enables continuous sub-millisecond price disparity tracking and atomic multi-hop Jito arbitrage execution between Pump.fun bonding curves and Raydium AMM pools (FEAT-28).
+* **Example:** `PUMPFUN_ARB_ENABLED=true`
+
+#### `PUMPFUN_ARB_BACKRUNNING_ENABLED`
+* **Fallback Alias:** `PUMPFUN_ENABLE_MEMPOOL_BACKRUNNING`
+* **Type:** Boolean (`true`, `false`, `1`, `0`)
+* **Required:** Optional
+* **Default:** `true`
+* **Description:** Detects large whale transactions (> 1.0 SOL) on bonding curves to trigger immediate atomic counter-trade back-running bundles.
+* **Example:** `PUMPFUN_ARB_BACKRUNNING_ENABLED=true`
+
+#### `PUMPFUN_ARB_MIN_PROFIT_SOL`
+* **Fallback Alias:** None
+* **Type:** Float
+* **Required:** Optional
+* **Default:** `0.003` (0.003 SOL)
+* **Description:** Minimum net profit hurdle after gas fees and Jito tips required before assembling and submitting an arbitrage bundle.
+* **Example:** `PUMPFUN_ARB_MIN_PROFIT_SOL=0.005`
+
+#### `PUMPFUN_ARB_MIN_SPREAD_PCT`
+* **Fallback Alias:** None
+* **Type:** Float
+* **Required:** Optional
+* **Default:** `0.015` (1.5%)
+* **Description:** Minimum cross-venue percentage spread hurdle between Pump.fun and Raydium spot prices.
+* **Example:** `PUMPFUN_ARB_MIN_SPREAD_PCT=0.020`
+
+#### `PUMPFUN_ARB_MAX_INPUT_SOL`
+* **Fallback Alias:** None
+* **Type:** Float
+* **Required:** Optional
+* **Default:** `0.50` (0.50 SOL)
+* **Description:** Maximum input SOL allocation per atomic arbitrage swap leg.
+* **Example:** `PUMPFUN_ARB_MAX_INPUT_SOL=1.00`
+
+#### `PUMPFUN_ARB_MIN_INPUT_SOL`
+* **Fallback Alias:** None
+* **Type:** Float
+* **Required:** Optional
+* **Default:** `0.01` (0.01 SOL)
+* **Description:** Minimum input SOL allocation per atomic arbitrage swap leg.
+* **Example:** `PUMPFUN_ARB_MIN_INPUT_SOL=0.005`
+
+#### `PUMPFUN_ARB_JITO_TIP_SHARE_PCT`
+* **Fallback Alias:** None
+* **Type:** Float (`0.0` to `1.0`)
+* **Required:** Optional
+* **Default:** `0.50` (50%)
+* **Description:** Fraction of estimated gross arbitrage profit shared with the Jito validator to ensure top-of-block priority inclusion.
+* **Example:** `PUMPFUN_ARB_JITO_TIP_SHARE_PCT=0.55`
+
+---
+
 ## 4. Production Configuration Templates
 
 ### Template A: High-Performance Live Trading with Yellowstone Geyser & Jito MEV

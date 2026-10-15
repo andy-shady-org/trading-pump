@@ -111,6 +111,13 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "max_single_cluster_pct": 0.10,
         "max_sybil_wash_ratio": 0.10,
         "cluster_trace_depth": 3,
+        "enable_cross_venue_arbitrage": True,
+        "enable_mempool_backrunning": True,
+        "min_arbitrage_profit_sol": 0.005,
+        "min_arbitrage_spread_pct": 0.020,
+        "max_arbitrage_input_sol": 0.25,
+        "min_arbitrage_input_sol": 0.01,
+        "arbitrage_jito_tip_profit_share_pct": 0.40,
     },
     "balanced": {
         "buy_amount_sol": 0.01,
@@ -218,6 +225,13 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "max_single_cluster_pct": 0.20,
         "max_sybil_wash_ratio": 0.20,
         "cluster_trace_depth": 2,
+        "enable_cross_venue_arbitrage": True,
+        "enable_mempool_backrunning": True,
+        "min_arbitrage_profit_sol": 0.003,
+        "min_arbitrage_spread_pct": 0.015,
+        "max_arbitrage_input_sol": 0.50,
+        "min_arbitrage_input_sol": 0.01,
+        "arbitrage_jito_tip_profit_share_pct": 0.50,
     },
     "aggressive": {
         "buy_amount_sol": 0.02,
@@ -325,6 +339,13 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "max_single_cluster_pct": 0.30,
         "max_sybil_wash_ratio": 0.30,
         "cluster_trace_depth": 2,
+        "enable_cross_venue_arbitrage": True,
+        "enable_mempool_backrunning": True,
+        "min_arbitrage_profit_sol": 0.002,
+        "min_arbitrage_spread_pct": 0.010,
+        "max_arbitrage_input_sol": 1.00,
+        "min_arbitrage_input_sol": 0.01,
+        "arbitrage_jito_tip_profit_share_pct": 0.60,
     },
 }
 
@@ -544,6 +565,17 @@ def resolve_strategy_config(
         max_single_cluster_pct=float(base.get("max_single_cluster_pct", 0.20)),
         max_sybil_wash_ratio=float(base.get("max_sybil_wash_ratio", 0.20)),
         cluster_trace_depth=int(base.get("cluster_trace_depth", 2)),
+        enable_cross_venue_arbitrage=bool(
+            base.get("enable_cross_venue_arbitrage", True)
+        ),
+        enable_mempool_backrunning=bool(base.get("enable_mempool_backrunning", True)),
+        min_arbitrage_profit_sol=float(base.get("min_arbitrage_profit_sol", 0.003)),
+        min_arbitrage_spread_pct=float(base.get("min_arbitrage_spread_pct", 0.015)),
+        max_arbitrage_input_sol=float(base.get("max_arbitrage_input_sol", 0.50)),
+        min_arbitrage_input_sol=float(base.get("min_arbitrage_input_sol", 0.01)),
+        arbitrage_jito_tip_profit_share_pct=float(
+            base.get("arbitrage_jito_tip_profit_share_pct", 0.50)
+        ),
     )
     if config.buy_amount_sol <= 0:
         raise ValueError("buy_amount_sol must be greater than zero.")

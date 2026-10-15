@@ -11,6 +11,7 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 
+from pumpfun_trading.strategies.arbitrage import CrossVenueDisparityMonitor
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.copy_trading import CopyTradeEngine
 from pumpfun_trading.strategies.graduation import GraduationEngine
@@ -34,6 +35,7 @@ class PaperTradingEngine:
         enable_order_flow_momentum: bool = False,
         enable_raydium_graduation: bool = False,
         enable_copy_trading: bool = False,
+        enable_cross_venue_arbitrage: bool = False,
     ) -> None:
         if strategy_config is not None:
             if take_profit == 1.5 and hasattr(strategy_config, "take_profit"):
@@ -62,9 +64,15 @@ class PaperTradingEngine:
         self.enable_copy_trading = enable_copy_trading or (
             bool(strategy_config.enable_copy_trading) if strategy_config else False
         )
+        self.enable_cross_venue_arbitrage = enable_cross_venue_arbitrage or (
+            bool(strategy_config.enable_cross_venue_arbitrage)
+            if strategy_config
+            else False
+        )
         self.order_flow_engine = OrderFlowEngine()
         self.graduation_engine = GraduationEngine()
         self.copy_trade_engine = CopyTradeEngine()
+        self.arb_monitor = CrossVenueDisparityMonitor()
         if strategy_config and getattr(strategy_config, "copy_trading_wallets", None):
             self.copy_trade_engine.registry.register_wallets(
                 list(strategy_config.copy_trading_wallets)
@@ -383,6 +391,59 @@ class PaperTradingEngine:
                     complete=is_curve_complete,
                     timestamp=ts,
                 )
+
+            # Process cross-venue arbitrage evaluation (FEAT-28)
+            if self.enable_cross_venue_arbitrage:
+                ray_sol_flt = self._snapshot_float(
+                    snapshot, "raydium_sol_reserve", "ray_sol", "raydium_sol"
+                )
+                ray_tok_flt = self._snapshot_float(
+                    snapshot, "raydium_token_reserve", "ray_tok", "raydium_token"
+                )
+                ray_sol = int(ray_sol_flt * 1_000_000_000) if ray_sol_flt > 0 else 0
+                ray_tok = int(ray_tok_flt) if ray_tok_flt > 0 else 200_000_000_000_000
+                pump_sol = (
+                    int(virt_sol * 1_000_000_000) if virt_sol > 0 else 30_000_000_000
+                )
+                pump_tok = int(
+                    self._snapshot_float(snapshot, "virtual_token_reserves")
+                    or 1_073_000_000_000_000
+                )
+
+                if ray_sol > 0:
+                    opp = self.arb_monitor.evaluate_spread(
+                        mint=mint,
+                        pump_virtual_sol=pump_sol,
+                        pump_virtual_token=pump_tok,
+                        raydium_sol_reserve=ray_sol,
+                        raydium_token_reserve=ray_tok,
+                    )
+                    if opp and opp.is_profitable:
+                        cash += opp.net_profit_sol
+                        trades.append(
+                            {
+                                "timestamp": ts,
+                                "mint": mint,
+                                "name": name,
+                                "action": "arbitrage",
+                                "side": "ARBITRAGE",
+                                "direction": opp.direction,
+                                "entry_price": opp.pump_spot_price,
+                                "exit_price": opp.raydium_spot_price,
+                                "spread_pct": opp.spread_pct,
+                                "tokens": opp.leg1_min_amount_out,
+                                "cost": opp.optimal_input_sol,
+                                "proceeds": opp.expected_output_sol,
+                                "fee": opp.estimated_fees_sol
+                                + opp.estimated_jito_tip_sol,
+                                "pnl": opp.net_profit_sol,
+                                "return_pct": (
+                                    (opp.net_profit_sol / opp.optimal_input_sol)
+                                    if opp.optimal_input_sol > 0
+                                    else 0.0
+                                ),
+                            }
+                        )
                 if self.strategy_config and getattr(
                     self.strategy_config, "enable_pre_graduation_harvesting", False
                 ):
@@ -542,7 +603,9 @@ class PaperTradingEngine:
             )
 
         sell_returns = [
-            trade["return_pct"] for trade in trades if trade["action"] == "sell"
+            trade["return_pct"]
+            for trade in trades
+            if trade.get("action") in {"sell", "arbitrage"}
         ]
         gross_profit = sum(value for value in sell_returns if value > 0)
         gross_loss = abs(sum(value for value in sell_returns if value < 0))
@@ -593,7 +656,12 @@ class PaperTradingEngine:
             "equity_history": equity_history,
             "positions": positions,
         }
+        self.trades = trades
         return summary
+
+    def run_simulation(self, snapshots: Sequence[dict[str, Any]]) -> dict[str, Any]:
+        """Alias for run() providing standard simulation execution."""
+        return self.run(snapshots)
 
 
 class ReplayEngine(PaperTradingEngine):

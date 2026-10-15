@@ -97,7 +97,9 @@ The package exposes dedicated, high-performance CLI entry points:
 * `pumpfun-replay`: Run historical market replays, strategy backtests, and trade simulations from recorded JSONL datasets.
 * `pumpfun-recorder`: Harvest live market streams, generate synthetic scenarios, or export token trades to replay files.
 * `pumpfun-audit`: Query, filter, and inspect structured JSONL audit trails with Rich table rendering.
-* `pumpfun-cli` / `pumpfun`: Unified CLI wrapper dispatching to `bot`, `replay`, `record`, `audit`, or `status` subcommands.
+* `pumpfun-events`: Query, inspect, filter, and tail structured diagnostic runtime event streams.
+* `pumpfun-optimize`: Run genetic, random, and grid hyperparameter backtest optimization over historical replay datasets.
+* `pumpfun-cli` / `pumpfun`: Unified CLI wrapper dispatching to `bot`, `replay`, `record`, `audit`, `events`, `optimize`, or `status` subcommands.
 
 ---
 

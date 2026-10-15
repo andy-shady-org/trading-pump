@@ -14,6 +14,8 @@ The package exposes two operational paradigms for command-line execution:
    * `pumpfun-replay`: Historical market replay and strategy backtesting simulation engine.
    * `pumpfun-audit`: Forensic JSONL audit trail query, filter, and accounting inspector.
    * `pumpfun-events`: Diagnostic runtime event inspector, filter, live tailer, and latency analytics tool.
+   * `pumpfun-optimize`: Multi-objective genetic and random backtest hyperparameter optimization engine.
+   * `pumpfun-arb`: Cross-venue spot disparity monitor and atomic Jito arbitrage simulation tool.
 
 2. **Unified CLI Wrapper (`pumpfun` / `pumpfun-cli`)**: A consolidated multi-subcommand dispatcher offering a unified interface for all bot operations, analytics, and coin discovery tools:
    * `pumpfun bot [options]`: Alias for `pumpbot`.
@@ -21,6 +23,8 @@ The package exposes two operational paradigms for command-line execution:
    * `pumpfun replay [options]`: Alias for `pumpfun-replay`.
    * `pumpfun audit [options]`: Alias for `pumpfun-audit`.
    * `pumpfun events [options]`: Alias for `pumpfun-events`.
+   * `pumpfun optimize [options]`: Alias for `pumpfun-optimize`.
+   * `pumpfun arb [options]`: Alias for `pumpfun-arb`.
    * `pumpfun latest-coins [options]`: Queries and displays newly created Pump.fun coins via REST API.
    * `pumpfun market-info [options]`: Fetches detailed bonding curve metrics for a specific token mint.
 
@@ -367,7 +371,67 @@ pumpfun-events --path events.jsonl --latency-stats
 
 ---
 
-## 7. Real-Time Token & Market Discovery (`pumpfun`)
+## 7. Hyperparameter Strategy Optimizer (`pumpfun-optimize` / `pumpfun optimize`)
+
+### Purpose & Operational Utility
+The `pumpfun-optimize` CLI (and `pumpfun optimize` subcommand) executes automated multi-objective strategy calibration and hyperparameter tuning across historical replay datasets (`.jsonl` / `.jsonl.gz`) under `FEAT-27`. It solves parameter decay across changing volatility regimes by evaluating thousands of parameter combinations using evolutionary genetic algorithms, random search, or deterministic grids.
+
+### Command Syntax
+```bash
+# Standalone binary
+pumpfun-optimize --dataset <DATASET_PATH> [OPTIONS]
+
+# Unified CLI subcommand
+pumpfun optimize --dataset <DATASET_PATH> [OPTIONS]
+```
+
+### Options & Parameter Reference
+
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--dataset`, `--path` | File / Dir | Required | Path to historical replay dataset (`.jsonl`, `.jsonl.gz`, or directory). |
+| `--method` | Choice | `genetic` | Optimization algorithm: `genetic`, `random`, `grid`. |
+| `--iterations` | Integer | `30` | Random search iteration budget. |
+| `--population-size` | Integer | `20` | Population size per generation for genetic search. |
+| `--generations` | Integer | `5` | Evolutionary generations for genetic search. |
+| `--max-grid-combinations`| Integer | `50` | Maximum parameter combinations for grid search. |
+| `--objective` | Choice | `composite` | Target fitness metric: `composite`, `sharpe`, `profit_factor`, `sortino`, `calmar`, `total_return`, `win_rate`. |
+| `--train-split` | Float | `0.70` | In-sample training split fraction (0.10 to 0.95). |
+| `--config` | File Path | `None` | Path to base JSON bot configuration to calibrate against. |
+| `--preset` | Choice | `None` | Baseline strategy preset: `conservative`, `balanced`, `aggressive`. |
+| `--export-config` | File Path | `None` | Path to export calibrated `TradingBotConfig` JSON file. |
+| `--top-k` | Integer | `5` | Number of top candidate parameter rankings displayed in the final table. |
+| `--seed` | Integer | `None` | Deterministic random seed for reproducibility. |
+| `--json` | Flag | `false` | Emits optimization summary and top parameters as JSON to stdout. |
+
+### Execution Examples & Recipes
+
+#### Recipe 1: Run Evolutionary Genetic Optimization & Export Calibrated Config
+Run genetic optimization across a recorded 24-hour market replay dataset and export the highest-ranking trial to `tuned_production.json`:
+```bash
+pumpfun-optimize \
+  --dataset runtime/market_replay_24h.jsonl \
+  --method genetic \
+  --population-size 30 \
+  --generations 10 \
+  --objective composite \
+  --export-config configs/tuned_production.json
+```
+
+#### Recipe 2: Run Fast Stochastic Random Search with Sharpe Ratio Maximization
+Perform 50 stochastic trials targeting maximum Sharpe ratio:
+```bash
+pumpfun optimize \
+  --dataset runtime/replay_dataset.jsonl.gz \
+  --method random \
+  --iterations 50 \
+  --objective sharpe \
+  --top-k 10
+```
+
+---
+
+## 8. Real-Time Token & Market Discovery (`pumpfun`)
 
 ### Subcommands: `latest-coins` and `market-info`
 The unified CLI includes lightweight, high-speed inspection commands for querying Pump.fun bonding curves directly via public REST endpoints without initializing the full bot state machine.
@@ -388,19 +452,41 @@ pumpfun market-info --mint <MINT_ADDRESS>
 
 ---
 
-## 8. Complete CLI Parameter Matrix
+## 8.5. Cross-Venue Arbitrage & Disparity Monitor (`pumpfun-arb` / `pumpfun arb`)
+
+Monitors live spot price disparities between Pump.fun bonding curves and external DEX pools (Raydium AMM v4) and evaluates/simulates atomic multi-hop Jito bundles:
+
+```bash
+# Monitor live spreads and display table
+pumpfun-arb --min-spread 0.015 --min-profit 0.003
+
+# Target specific token mint and export JSON
+pumpfun arb --mint <MINT> --max-input 0.50 --export-history arb_opportunities.json
+```
+
+*Key Flags*:
+* `--min-spread`: Minimum percentage spread hurdle (default: `0.015` = 1.5%).
+* `--min-profit`: Minimum net SOL profit hurdle after fees/tips (default: `0.003` SOL).
+* `--max-input`: Maximum SOL allocation per arbitrage trade leg (default: `0.50` SOL).
+* `--tip-share`: Jito validator profit-sharing ratio (default: `0.50` = 50%).
+* `--dry-run` / `--live`: Toggle between bundle simulation and live on-chain submission.
+* `--export-history`: Export detected opportunities to JSON file.
+
+---
+
+## 9. Complete CLI Parameter Matrix
 
 The table below summarizes all supported options across the complete CLI command surface:
 
 | Category | Flag / Option | Supported Commands | Description |
 | :--- | :--- | :--- | :--- |
-| **Strategy & Risk** | `--preset` | `pumpbot`, `replay` | Selects strategy preset: `conservative`, `balanced`, `aggressive`. |
+| **Strategy & Risk** | `--preset` | `pumpbot`, `replay`, `optimize` | Selects strategy preset: `conservative`, `balanced`, `aggressive`. |
 | | `--buy-amount-sol` | `pumpbot` | Overrides base buy size in SOL per trade. |
 | | `--take-profit` | `pumpbot` | Overrides take-profit price multiplier. |
 | | `--stop-loss` | `pumpbot` | Overrides stop-loss floor multiplier. |
 | | `--min-market-cap-sol` | `pumpbot` | Minimum launch market cap threshold in SOL. |
 | | `--min-balance-sol` | `pumpbot` | Minimum wallet SOL reserve buffer. |
-| | `--config` | `pumpbot`, `replay` | Path to JSON strategy/risk configuration file. |
+| | `--config` | `pumpbot`, `replay`, `optimize` | Path to JSON strategy/risk configuration file. |
 | **Execution Mode** | `--dry-run` | `pumpbot` | Simulates trading logic without on-chain execution. |
 | | `--paper-trade` | `pumpbot` | Executes paper trading simulation. |
 | | `--headless` | `pumpbot` | Runs without Rich TUI (structured log output). |
@@ -414,15 +500,23 @@ The table below summarizes all supported options across the complete CLI command
 | | `--synthetic` | `record` | Generates synthetic market scenario dataset. |
 | | `--synthetic-steps` | `record` | Step count for synthetic scenario generation. |
 | | `--from-mint` | `record` | Exports historical trades for a mint via REST API. |
-| **Replay & Backtest** | `--path` | `replay`, `audit`, `events` | Input file path for `.jsonl` dataset. |
+| **Replay & Backtest** | `--path`, `--dataset` | `replay`, `audit`, `events`, `optimize` | Input file path for `.jsonl` dataset. |
 | | `--mode` | `replay` | Replay presentation: `dashboard`, `summary`, `trades`. |
 | | `--initial-cash` | `replay` | Starting capital in SOL for backtesting. |
+| **Optimization** | `--method` | `optimize` | Optimization algorithm (`genetic`, `random`, `grid`). |
+| | `--iterations` / `--generations` | `optimize` | Search budget controls. |
+| | `--population-size` | `optimize` | Genetic algorithm population size. |
+| | `--objective` | `optimize` | Target fitness metric (`composite`, `sharpe`, etc.). |
+| | `--train-split` | `optimize` | In-sample training split fraction (e.g. `0.70`). |
+| | `--export-config` | `optimize` | Exports top configuration to JSON file. |
+| | `--top-k` | `optimize` | Top candidate rankings count. |
+| | `--seed` | `optimize` | Deterministic random seed integer. |
 | **Audit & Forensics** | `--summary` | `audit` | Generates aggregate statistical summary JSON. |
 | | `--record-type` | `audit` | Filters records by type (`trade`, `state_change`). |
 | | `--reason` | `audit` | Filters by exit reason (`take_profit`, `stop_loss`). |
 | | `--status` | `audit` | Filters by execution outcome (`success`, `failed`). |
 | | `--date-from` / `--date-to`| `audit` | Datetime boundary filters. |
-| | `--json` | `audit`, `events` | Emits filtered records as JSON to stdout. |
+| | `--json` | `audit`, `events`, `optimize` | Emits filtered records / summary as JSON to stdout. |
 | | `--export` | `audit` | Exports filtered audit records to target file. |
 | **Diagnostic Events**| `--tail` | `events` | Real-time follow mode for event stream. |
 | | `--category` | `events` | Filters by subsystem category (`stream`, `risk`, etc.). |

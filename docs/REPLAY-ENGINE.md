@@ -222,7 +222,9 @@ from pumpfun_trading.engines.generators import SyntheticReplayGenerator
 records = SyntheticReplayGenerator.generate(scenario="multi_tier_take_profit", steps=60)
 
 # Write directly to JSONL file
-SyntheticReplayGenerator.generate_to_file("synth_tp.jsonl", scenario="flash_rug", steps=50)
+SyntheticReplayGenerator.generate_to_file(
+    "synth_tp.jsonl", scenario="flash_rug", steps=50
+)
 ```
 
 ### 4. Historical REST Trade Exporter
@@ -238,6 +240,7 @@ import asyncio
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.engines.generators import RestHistoryExporter
 
+
 async def export():
     async with PumpFunApiClient() as client:
         await RestHistoryExporter.export_token_trades_to_file(
@@ -246,6 +249,7 @@ async def export():
             output_path="token_trades.jsonl",
             limit=200,
         )
+
 
 asyncio.run(export())
 ```

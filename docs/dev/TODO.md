@@ -655,6 +655,30 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add configuration parameters to `TradingBotConfig` (`strategies/base.py`), strategy presets (`conservative`, `balanced`, `aggressive`), and environment variable parser in `config/env.py` (FEAT-26)
 - [x] Add unit and integration test suite in `pumpfun_trading/tests/test_funding_cluster_and_sybil.py` verifying graph building, cycle protection, sybil detection, anti-rug integration, and presets (FEAT-26)
 
+### Sprint 23: Automated Strategy Parameter Auto-Tuning & Hyperparameter Backtest Optimizer (FEAT-27)
+- [x] Implement `Hyperparameter`, `FloatParam`, `IntParam`, `CategoricalParam`, `BoolParam`, and `ParameterSpace` in `pumpfun_trading/engines/optimizer.py` (FEAT-27)
+- [x] Implement `build_default_strategy_search_space` providing standard search domains covering entry sizing, momentum Z-scores, multi-tier take-profits, trailing stops, stagnation exits, adaptive ratchets, and anti-rug cluster caps (FEAT-27)
+- [x] Implement `FitnessScore` and multi-objective fitness evaluators computing Sharpe Ratio, Sortino Ratio, Profit Factor, Calmar Ratio, Win Rate, and Total Return (FEAT-27)
+- [x] Implement `RandomSearchOptimizer`, `GridSearchOptimizer`, and evolutionary `GeneticOptimizer` with tournament selection, blend crossover, Gaussian mutation, and elitism preservation (FEAT-27)
+- [x] Implement `WalkForwardValidator` providing in-sample (train) and out-of-sample (test) dataset partitioning and overfitting penalty tracking (FEAT-27)
+- [x] Implement `StrategyOptimizer` facade coordinating search algorithms, dataset evaluation, progress callbacks, and configuration exports (FEAT-27)
+- [x] Implement standalone `pumpfun-optimize` binary and unified `pumpfun optimize` CLI subcommand in `pumpfun_trading/cli/optimize.py` and `main.py` (FEAT-27)
+- [x] Add `pumpfun-optimize` script entry point in `pyproject.toml` (FEAT-27)
+- [x] Add comprehensive unit and integration test suite in `pumpfun_trading/tests/test_strategy_optimizer.py` (FEAT-27)
+
+### Sprint 24: Atomic Jito Back-Running & Cross-Venue Arbitrage Engine (FEAT-28)
+- [x] Implement `CrossVenueDisparityMonitor` and `calculate_cross_venue_spread` in `pumpfun_trading/strategies/arbitrage.py` tracking spot price disparities between Pump.fun virtual curves and Raydium AMM v4 pools (FEAT-28)
+- [x] Implement closed-form mathematical optimal swap sizing solver (`OptimalArbitrageCalculator`) deriving $x^*$ subject to dual AMM reserves and protocol fee friction (FEAT-28)
+- [x] Implement `MempoolBackrunEngine` in `pumpfun_trading/strategies/arbitrage.py` detecting large whale transactions and generating counter-trade back-run signals (FEAT-28)
+- [x] Implement `AtomicArbitrageBuilder` in `pumpfun_trading/execution/arbitrage.py` assembling dual-leg atomic transactions (Pump.fun + Raydium) and dynamic Jito validator tip transfers (FEAT-28)
+- [x] Implement `AtomicArbitrageExecutor` in `pumpfun_trading/execution/arbitrage.py` orchestrating Jito bundle submission, simulated dry-run execution, and reversion handling (FEAT-28)
+- [x] Integrate cross-venue arbitrage evaluation and transient flash capital accounting into `TradingBot` runtime event loop (`_handle_bonding_curve_state_update`, `_handle_trade_event_update`, `_handle_raydium_pool_update`) and telemetry logging (`DiagnosticEventLogger`) (FEAT-28)
+- [x] Add configuration parameters to `TradingBotConfig` (`strategies/base.py`), presets (`conservative`, `balanced`, `aggressive`), and environment variable parsers in `config/env.py` (FEAT-28)
+- [x] Implement standalone `pumpfun-arb` binary and unified `pumpfun arb` / `pumpfun arbitrage` CLI subcommand in `pumpfun_trading/cli/arbitrage.py` and `main.py` (FEAT-28)
+- [x] Add `pumpfun-arb` script entry point in `pyproject.toml` (FEAT-28)
+- [x] Integrate multi-venue arbitrage simulation into `PaperTradingEngine` in `pumpfun_trading/engines/replay.py` (FEAT-28)
+- [x] Add comprehensive unit and integration test suite in `pumpfun_trading/tests/test_cross_venue_arbitrage.py` (FEAT-28)
+
 ## Definition of done for a “serious” bot
 
 The bot is production-worthy and alpha-ready when it can:
