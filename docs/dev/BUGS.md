@@ -102,6 +102,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-92** | Low | Bot / Config | **MITIGATED** | `max_positions_per_mint` is stored but never used (values other than 1 are now clamped to 1 with a warning; per-mint pyramiding is a follow-up) |
 | **BUG-93** | Low | SDK / PDA Helpers | **RESOLVED** | Associated bonding-curve helper uses `FEE_RECIPIENT` as the token-program seed |
 | **BUG-94** | Low | Bot / Persistence | **RESOLVED** | Failed atomic status writes leave stray `.tmp.<pid>` files |
+| **BUG-95** | Critical | Bot / Screening | **RESOLVED** | Stream-fed tokens are now enriched from the Pump.fun API, the metadata URI and `getTokenLargestAccounts`; dashboard shows every rejection reason |
 
 ---
 
@@ -735,3 +736,22 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Description:** The `.tmp.<pid>` file is not deleted when the dump or `os.replace` fails.
 * **Impact:** Leftover files pile up next to `bot_status.json`. The status file itself is not corrupted.
 * **Remedy:** Delete the temp file in a `finally` block if it still exists.
+
+---
+
+## 7. Open Issues — Paper Pilot (2026-10-16)
+
+### BUG-95: Screening Rejects Every Stream-Fed Token Because Enrichment Is Skipped [RESOLVED]
+* **Location:** `pumpfun_trading/bot/enrichment.py` (`TokenEnricher.enrich_and_screen`), `pumpfun_trading/bot/run.py` (`screen_rejected` events)
+* **Description:** Observed in the Stage 0 paper pilot: 26 of 26 tokens rejected with "Holder distribution data unavailable" and "Insufficient social links: found 0". `enrich_and_screen` only called `api.get_coin` when it received **no** stream data. The PumpPortal `newToken` payload is always passed in and carries no socials or holders, and nothing queried holders on-chain. The dashboard event only showed `reasons[0]`.
+* **Impact:** With the `conservative` preset (2 social links required, risk score ≤ 30) no token could ever pass, so the bot never traded. With laxer presets the top-5, Gini and creator-holding checks never ran. Unbounded lookups (API retries took ~20 s in tests) also held the trade lock.
+* **Remedy:** Always enrich, bounded by a per-lookup timeout.
+* **Resolution (RESOLVED):**
+  * `TokenEnricher` fetches the Pump.fun record and the mint's largest token accounts in parallel, then merges them with the stream payload (non-empty stream values win).
+  * If there are still no socials, it reads them from the token's metadata `uri` (`PumpFunApiClient.fetch_token_metadata`, single attempt, outside the API circuit breaker).
+  * Holders come from `PumpFunExecutionClient.get_token_largest_accounts`. The curve's associated token account is relabelled with the curve PDA so the top-5 and Gini checks exclude it. Creator holding falls back to the stream's `initialBuy`.
+  * Every lookup is capped at 2.5 s (`lookup_timeout_seconds`); failures fall back to the missing-data penalties (BUG-57).
+  * Live check: `GET /coins/{mint}` answers 404 for many mints and the client retried it three times (~3.5 s of backoff) before its `coins-v2` fallback, so the lookup always exceeded its budget. `PumpFunApiClient.request` no longer retries non-transient 4xx responses (only 408/425/429 and 5xx) and they don't count towards the circuit breaker. Screening now takes about 1 s per token.
+  * Live check: `ipfs.io` and `dweb.link` now return HTTP 429 ("service worker gateway only"). Metadata URIs on public gateways are read through `pump.mypinata.cloud` (`resolve_metadata_uri`).
+  * `screen_rejected` events list all reasons.
+  * Tests: `tests/unit/bot/test_enrichment.py`, `tests/unit/api/test_client.py`, `tests/unit/sdk/test_execution.py`. `test_geyser_bot_integration.py` no longer depends on the live Pump.fun API.

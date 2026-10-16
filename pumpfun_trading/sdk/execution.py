@@ -506,6 +506,41 @@ class PumpFunExecutionClient:
             f"Token program could not be resolved for {mint}: {last_error}"
         )
 
+    async def get_token_largest_accounts(
+        self, mint: str, *, timeout_seconds: float = 3.0
+    ) -> list[tuple[str, int]]:
+        """Returns the mint's largest token accounts as ``(address, raw_amount)``.
+
+        Used for pre-buy holder screening (BUG-95). Goes straight to the RPC pool,
+        so a failed lookup does not lower ``execution_health_score``.
+        """
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenLargestAccounts",
+            "params": [mint, {"commitment": "confirmed"}],
+        }
+        parsed = await self.rpc_pool.request(
+            payload, max_retries=1, timeout_seconds=timeout_seconds
+        )
+        if not isinstance(parsed, dict) or "error" in parsed:
+            raise RuntimeError(f"getTokenLargestAccounts error: {parsed}")
+        value = (parsed.get("result") or {}).get("value")
+        if not isinstance(value, list):
+            raise RuntimeError(f"Unexpected getTokenLargestAccounts value: {parsed}")
+        accounts: list[tuple[str, int]] = []
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            address = entry.get("address")
+            try:
+                amount = int(entry.get("amount") or 0)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(address, str) and address:
+                accounts.append((address, amount))
+        return accounts
+
     async def get_ata_address(
         self,
         mint: str,

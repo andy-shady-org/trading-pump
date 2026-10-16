@@ -2,13 +2,13 @@
 
 import asyncio
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.run import TradingBot
-from pumpfun_trading.bot.strategy import TradingBotConfig
+from pumpfun_trading.bot.strategy import TokenScreeningVerdict, TradingBotConfig
 from pumpfun_trading.execution.executor import ExecutionResult
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.streams.geyser import (
@@ -115,6 +115,13 @@ async def test_bonding_curve_state_update_active_position_tp_and_sl(bot):
 
 @pytest.mark.asyncio
 async def test_bonding_curve_state_update_new_token_branches(bot):
+    # Screening is covered in unit/bot/test_enrichment.py; keep this test off the
+    # live Pump.fun API and RPC (it used to pass only when mainnet answered).
+    passing = TokenScreeningVerdict(mint=SAMPLE_MINT_2, passed=True, risk_score=0.0)
+    screen = patch.object(
+        bot.enricher, "enrich_and_screen", AsyncMock(return_value=passing)
+    )
+    screen.start()
     # 1. New eligible token
     update_new = BondingCurveStateUpdate(
         mint=SAMPLE_MINT_2,
@@ -159,6 +166,7 @@ async def test_bonding_curve_state_update_new_token_branches(bot):
     bot._stop_requested = True
     await bot._handle_bonding_curve_state_update(update_new)
     bot._stop_requested = False
+    screen.stop()
 
 
 @pytest.mark.asyncio
