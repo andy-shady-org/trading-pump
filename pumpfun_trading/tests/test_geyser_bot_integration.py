@@ -16,8 +16,8 @@ from pumpfun_trading.streams.geyser import (
     CompleteEventUpdate,
     TradeEventUpdate,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "1111111111111111111111111111111111111111111111111111111111111111"
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 SAMPLE_MINT_2 = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 

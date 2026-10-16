@@ -25,7 +25,7 @@ Snapshot at planning time: **65 files** (64 `test_*.py` + `conftest.py`), **~25,
 | T1 | Flat layout that does not mirror the source | Everything in `pumpfun_trading/tests/`; no sub-packages; no 1:1 module correspondence |
 | T2 | Six coverage-padding files (~7.1k lines) organised by coverage % | `test_coverage_95_comprehensive.py` (3,395 lines), `test_coverage_boost_v2.py` (1,984), `test_coverage_95_plus.py` (930), `test_coverage_95_final_push.py` (380), `test_coverage_boost_final.py` (298), `test_runtime_coverage_boost.py` (151) |
 | T3 | Modules split across duplicate base / `_full` / `_regressions` files | `test_api_client.py` + `test_api_client_full.py`; `test_audit_tool.py` + `test_audit_full.py`; `test_execution_sdk.py` + `test_execution_sdk_full.py`; `test_bot_runtime_full.py` + `test_bot_runtime_regressions.py` |
-| T4 | Almost no shared fixtures; setup copied everywhere | 15 fixtures, one 58-line root `conftest.py`; `TradingBotConfig(` built inline **136** times; private-key constants redefined in **13** files; `make_bot` / `_make_bot`; three `make_*pool_keys` variants (`make_pool_keys`, `make_sample_pool_keys`, `make_test_pool_keys`) |
+| T4 | Almost no shared fixtures; setup copied everywhere | 15 fixtures, one 58-line root `conftest.py`; `TradingBotConfig(` built inline **136** times; private-key constants redefined in **13** files; `make_bot` / `_make_bot`; three `make_*pool_keys` variants (`make_pool_keys`, `make_sample_pool_keys`, `make_test_pool_keys`). **Sprint 26 Phase 2:** `tests/support/` built (§3, §5) and the 16 private-key constants (four different values) replaced by `SAMPLE_PRIVATE_KEY`; the inline configs and old helpers are replaced file by file as later phases move them |
 | T5 | Tests coupled to the runtime monolith | **24** files import `pumpfun_trading.bot.run.TradingBot` and reach into private attributes |
 | T6 | Marker noise, no taxonomy | **216** redundant `@pytest.mark.asyncio` although `asyncio_mode = "auto"`; no `unit` / `integration` / `regression` / `slow` markers; no `--strict-markers`; `parametrize` used only twice. **Markers resolved in Sprint 26 Phase 1:** asyncio marks removed, taxonomy registered with `--strict-markers` and applied by directory (§4), `nox -s tests-fast` added. `parametrize` adoption stays with Sprint 27 |
 | T7 | Non-deterministic / slow tests | `time.sleep` in `test_anti_rug_filters.py`, `test_logging_rotation.py`, `test_ops_retention.py`; `asyncio.run` inside async-mode tests in `test_bugfixes_lifecycle_resilience.py`, `test_cross_venue_arbitrage.py`, `test_market_data_resilience.py`, `test_runtime_coverage_boost.py`; no fake clock |
@@ -44,10 +44,11 @@ pumpfun_trading/tests/
 ├── support/               # shared test code, never collected as tests
 │   ├── __init__.py
 │   ├── factories.py       # make_config(), make_bot(), make_position(), make_pool_keys()
-│   ├── payloads.py        # Geyser / curve / trade / complete-event byte builders
-│   ├── fakes.py           # FakeRpc, FakeJito, FakeClock, FakeAlertSink, FakeApiClient
-│   └── constants.py       # SAMPLE_PRIVATE_KEY, OFFLINE_CREATOR, sample mints
+│   ├── payloads.py        # curve account, trade / complete event, buy / sell instruction bytes
+│   ├── fakes.py           # FakeClock, FakeRpc, FakeJito, FakeAlertSink
+│   └── constants.py       # SAMPLE_PRIVATE_KEY, SAMPLE_RPC_URL, sample mints, initial curve reserves
 ├── unit/                  # 1:1 mirror: unit/<pkg>/test_<module>.py
+│   ├── test_support.py    # tests of support/ itself (round-trips payloads through the real parsers)
 │   ├── api/  bot/  cli/  config/  engines/  execution/
 │   ├── infra/  ops/  sdk/  services/  storage/
 │   └── strategies/  streams/  ui/      (each with a package conftest.py)
@@ -62,7 +63,7 @@ pumpfun_trading/tests/
 | `pumpfun_trading/bot/run.py` | `tests/unit/bot/test_run.py` |
 | `pumpfun_trading/strategies/filters.py` | `tests/unit/strategies/test_filters.py` |
 
-A **layout guard test** (Sprint 27, `tests/unit/test_layout.py`) asserts that every non-`__init__` source module has a `unit/` counterpart and that the tests root contains only `conftest.py` and the four directories above.
+A **layout guard test** (Sprint 27, `tests/unit/test_layout.py`) asserts that every non-`__init__` source module has a `unit/` counterpart and that the tests root contains only `conftest.py` and the four directories above. `unit/test_support.py` and the guard itself are the only files allowed directly in `unit/`.
 
 ---
 
@@ -112,6 +113,19 @@ markers = [
 | `support/constants.py` | Keys, mints and addresses reused across files |
 | `unit/<pkg>/conftest.py` | Fixtures only that package's tests need |
 | Root `conftest.py` | Environment isolation (status / audit paths, retry delays) only |
+
+Import support code by its full path, e.g. `from pumpfun_trading.tests.support.factories import make_bot`, so every test file shares one copy of the module.
+
+| Helper | What it gives you |
+|---|---|
+| `make_config(**overrides)` | `TradingBotConfig` with `buy_amount_sol=0.01`, `dry_run=True`; pass `dry_run=False` explicitly for live-path tests |
+| `make_bot(tmp_path, *, config=None, bot_kwargs=None, **config_overrides)` | `TradingBot` with `SAMPLE_PRIVATE_KEY`; status and audit files under `tmp_path` |
+| `make_position(bot_or_manager, mint, ...)` | Opens a position through `PositionManager.record_buy`, so the dict has the live shape |
+| `make_pool_keys(mint, *, pc_mint, unique=True, **overrides)` | Raydium pool keys: fresh valid pubkeys (or `Pubkey.default()` with `unique=False`) and the real authority / Serum ids |
+| `FakeClock` | `time()` / `monotonic()` / `sleep()`; `install(monkeypatch, module)` replaces that module's `time`, `install_async_sleep(monkeypatch, module)` makes its `asyncio.sleep` advance the clock without waiting. Both act per module, never globally |
+| `FakeRpc().on(method, *answers)` | Stand-in for `RpcConnectionPool`: values become `result`, exceptions are raised, callables get the payload; an unregistered method fails the test; `calls` / `broadcasts` record traffic |
+| `FakeJito(status=...)` / `FakeAlertSink()` | Record bundles / alert messages; bundle confirmation answers with `status` |
+| `payloads.bonding_curve_bytes(...)` etc. | Account and event bytes in the exact `streams/geyser.py` / `sdk/execution.py` layout (creator at 49..81) |
 
 ### Regressions
 ```python

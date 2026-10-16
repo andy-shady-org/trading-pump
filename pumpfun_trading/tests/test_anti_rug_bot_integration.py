@@ -9,8 +9,8 @@ from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.streams.geyser import BondingCurveStateUpdate
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "1111111111111111111111111111111111111111111111111111111111111111"
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 SAMPLE_MINT_TOXIC = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 

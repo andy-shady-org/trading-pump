@@ -20,8 +20,8 @@ from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.sdk.execution import (
     PumpFunExecutionClient,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
 SAMPLE_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 SAMPLE_MINT_2 = "So11111111111111111111111111111111111111112"
 

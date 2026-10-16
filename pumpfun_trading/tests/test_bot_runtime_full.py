@@ -9,8 +9,7 @@ import pytest
 
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
-
-SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
 
 @pytest.fixture

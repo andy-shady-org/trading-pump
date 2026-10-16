@@ -8,8 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.infra.rpc_pool import CircuitState
 from pumpfun_trading.strategies.base import TradingBotConfig
-
-SAMPLE_PRIVATE_KEY = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4JjaxnjfCebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
 
 async def test_bot_rpc_pool_initialization_and_status_snapshot() -> None:

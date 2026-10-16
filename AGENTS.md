@@ -47,6 +47,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[REPLAY] Recorded `signal` Is Not An Order:** `--record-replay` captures tag every market trade and new token with `signal`; only snapshots with `reason` (and no `user`) are the bot's own fills. Live-fidelity replay must never treat `signal` strings as exits, and must say plainly that the screener is not replayed.
 - **[TESTS] Green On 3.14 Is Not Green On 3.11:** A global `Path.stat` mock passed on 3.14 but broke `Path.glob` on 3.12/3.13. Never patch `pathlib` methods globally; wrap the real call and fake only the target file. Supported interpreters are 3.11–3.14 (`nox -s tests-<ver>`, CI matrix).
 - **[PACKAGING] Tests Never Ship:** `packages.find` exclude alone still packed `pumpfun_trading/tests` as package data; keep the `MANIFEST.in` prune and run `nox -s package` after any packaging change. Never add a release/publish workflow (proprietary).
+- **[ASYNC] Never Cancel A Dequeued Write:** Cancelling a task awaiting `asyncio.to_thread` also cancels a not-yet-started executor job, so data already taken off a queue is lost on shutdown (BUG-103). Shield in-flight writes and finish them before re-raising `CancelledError`; test shutdown races deterministically (busy one-thread executor), not with wall-clock durations.
 
 
 ## Project Overview

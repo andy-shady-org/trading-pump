@@ -18,8 +18,7 @@ from pumpfun_trading.ui.dashboard import (
     build_dashboard,
     format_sol_amount,
 )
-
-SAMPLE_PRIVATE_KEY = "1111111111111111111111111111111111111111111111111111111111111111"
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
 
 def test_format_sol_amount_switches_to_micro_sol() -> None:

@@ -110,6 +110,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-100** | Low | Bot / Config | **RESOLVED** | An explicit `stream_url=` argument now wins; config, then env, then default (unchanged for `pumpbot`, which never passes it) |
 | **BUG-101** | Medium | SDK / Quoting | **RESOLVED** | Pump.fun builders raise `CurveStateUnavailableError` instead of quoting against initial-curve placeholder reserves |
 | **BUG-102** | High | Security / Telemetry | **RESOLVED** | `ops/redact.py` masks credentials in every URL written to `bot_status.json`, config dicts, `bot.log`, `events.jsonl`, dashboard events and alerts (Sprint 24C phase 1) |
+| **BUG-103** | Medium | Recorder / Replay data | **RESOLVED** | `ReplayRecorder.close()` no longer drops the batch being written at shutdown; the write is shielded and finished before the cancel is honoured |
 
 ---
 
@@ -846,3 +847,14 @@ Found while writing behaviour tests to bring coverage back to 95%. None is on th
   * Raw URLs stay in memory for making requests.
 * **Verification:** `tests/unit/ops/test_redact.py` (provider URL shapes, free-text messages, log formatter, events file), `tests/unit/infra/test_rpc_pool.py` (endpoint dicts, labels, telemetry), `tests/unit/bot/test_run.py::test_status_snapshot_and_events_contain_no_url_credentials`.
 
+
+---
+
+## 10. CI Interpreter Matrix (2026-10-16)
+
+### BUG-103: `ReplayRecorder.close()` Drops the Batch Being Written at Shutdown [RESOLVED]
+* **Location:** `pumpfun_trading/bot/recorder.py` (`ReplayRecorder._write_batch`, `close`)
+* **Description:** Found when `unit/cli/test_record.py::test_harvester_websocket_feed_closed_runs_until_duration` failed on Python 3.11 in CI (`['WsMint1'] == ['WsMint1', 'WsMint2']`). `close()` cancels the flush worker. If the worker had already taken a batch off the queue and was awaiting `asyncio.to_thread(self._sync_append, …)`, the cancel propagated to the executor job: a job the thread pool had not started yet was cancelled and never ran, and a running job kept writing while `close()` went on to close the sink. Either way the batch was gone from the queue, so the final `flush()` could not recover it. Timing-dependent, so it showed up on the slower CI runner first.
+* **Impact:** the last records before shutdown could be missing from `--record-replay` captures and `pumpfun-recorder` datasets (replay parity and tuning input, Sprint 24C). No effect on trading, the audit trail or the status file.
+* **Resolution:** the write runs as a future awaited through `asyncio.shield`; on cancellation the worker waits for it to finish, counts it in `records_written`, then re-raises. Write errors are still logged, not raised.
+* **Verification:** `tests/unit/bot/test_recorder.py` (`regression("BUG-103")`): a write still queued in a busy executor and a write already running when `close()` is called are both kept and counted; both failed before the fix on 3.14 too. Full suite on 3.12 and 3.14: 1,040 passed, coverage 96.30%.

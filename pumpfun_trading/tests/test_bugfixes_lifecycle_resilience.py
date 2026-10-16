@@ -18,8 +18,8 @@ from pumpfun_trading.ops.logging import (
     strip_ansi,
 )
 from pumpfun_trading.storage.status import build_status_snapshot
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-TEST_KEY = "4wT3fE2k8uQe7dY3q1aZ9xL5vNmK8jP2wR1sT4vU7xY8z1aB2c3d4e5f6g7h8j9k"
 TEST_RPC = "https://api.mainnet-beta.solana.com"
 MINT_1 = "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump"
 MINT_2 = "So11111111111111111111111111111111111111112"
@@ -36,7 +36,7 @@ def _make_bot(
         verbose=verbose,
     )
     return TradingBot(
-        private_key_b58=TEST_KEY,
+        private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url=TEST_RPC,
         config=config,
         dry_run=dry_run,

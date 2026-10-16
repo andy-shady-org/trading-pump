@@ -23,8 +23,8 @@ from pumpfun_trading.sdk.costs import (
     TOKEN_ACCOUNT_RENT_LAMPORTS,
     TransactionCosts,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "1111111111111111111111111111111111111111111111111111111111111111"
 MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 TOKENS = 350_000_000_000
 
