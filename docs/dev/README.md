@@ -10,12 +10,14 @@ For user-facing manuals, trading strategy mathematics, and hosted web instance g
 
 | Document | Primary Audience | Description |
 | :--- | :--- | :--- |
-| [**Sprint Backlog & Roadmap (`TODO.md`)**](TODO.md) | Developers / Leads | Active engineering backlog, phased milestones (Phases 1–4), completed deliverables, and sprint task breakdowns. |
+| [**Sprint Backlog & Roadmap (`TODO.md`)**](TODO.md) | Developers / Leads | Active engineering backlog, phased milestones (Phases 0–6, including the Phase 5 Platform Refactor and Phase 6 Hosted Web UI), completed deliverables, and sprint task breakdowns. |
+| [**Architecture Decision Records (`ARCHITECTURE-DECISIONS.md`)**](ARCHITECTURE-DECISIONS.md) | Architects / Developers | Accepted decisions for the Web UI stack (FastAPI, Vue 3 + Vuetify MD3), control plane, container-per-tenant isolation, key handling, database, docs tooling, and test layout. |
+| [**Test Architecture & Migration Plan (`TESTING.md`)**](TESTING.md) | Developers / QA | Test-suite layout (mirrored `unit/`, `integration/`, `property/`, `support/`), markers, conventions, and the file-by-file migration map. |
+| [**Documentation Plan (`DOCUMENTATION-PLAN.md`)**](DOCUMENTATION-PLAN.md) | Writers / Developers | Documentation gap analysis, Zensical / Material docs-site navigation, `mkdocs.yml` outline, and styling conventions. |
 | [**Bug Tracker & Resolution Matrix (`BUGS.md`)**](BUGS.md) | QA / Developers | Identified edge cases, security considerations, unit conversion fixes, and root cause resolution histories. |
 | [**Proposed Features & Roadmap (`PROPOSED-FEATURES.md`)**](PROPOSED-FEATURES.md) | Quant Traders / Architects | Candidate feature proposals, alpha generation strategies, and next-generation architectural enhancements under evaluation. |
-| [**Operations Runbook (`RUNBOOK.md`)**](RUNBOOK.md) | SRE / Bot Operators | Preflight checklists, startup/shutdown procedures, incident response workflows, and deployment hardening. |
-| [**Production Release Gates (`RELEASE-GATE.md`)**](RELEASE-GATE.md) | Release Managers / Leads | Formal quality gates, security review criteria, and sign-off checklists required prior to funded production deployments. |
-| [**30-Day Execution Plan (`NEXT-30-DAYS.md`)**](NEXT-30-DAYS.md) | Core Contributors | Tactical 30-day sprint milestones and near-term delivery objectives. |
+| [**Operations Runbook (`RUNBOOK.md`)**](RUNBOOK.md) | SRE / Bot Operators | Runtime layout, preflight, startup/shutdown, paper pilot procedure, incident drills, daily wallet reconciliation, incident response and rollback. |
+| [**Release Gate & Live Capital Gate (`RELEASE-GATE.md`)**](RELEASE-GATE.md) | Release Managers / Operators | Per-release checklist, staged live capital gate (paper pilot → canary → scale-up), hosted security gate, release record template and versioning policy. |
 
 ---
 
@@ -47,6 +49,7 @@ The test suite enforces a **mandatory minimum of 95% statement and branch covera
 ```bash
 nox -s tests
 ```
+New tests follow the layout and conventions in [`TESTING.md`](TESTING.md).
 
 ---
 
@@ -58,7 +61,7 @@ nox -s tests
 * **Financial Strategy & Wealth Blueprint**: [docs/STRATEGY.md](../STRATEGY.md)
 * **Capital Protection & Risk Safeguards**: [docs/RISK.md](../RISK.md)
 * **Terminal UI & Observability**: [docs/TERMINAL-UI.md](../TERMINAL-UI.md)
-* **FastAPI Web Dashboard Blueprint**: [docs/WEB-UI.md](../WEB-UI.md)
+* **Web Dashboard Blueprint (FastAPI + Vuetify MD3)**: [docs/WEB-UI.md](../WEB-UI.md)
 * **Complete Feature Catalog**: [docs/FEATURES.md](../FEATURES.md)
 * **Historical Replay Backtester**: [docs/REPLAY-ENGINE.md](../REPLAY-ENGINE.md)
 * **Forensic Audit & Accounting**: [docs/AUDIT-TOOL.md](../AUDIT-TOOL.md)

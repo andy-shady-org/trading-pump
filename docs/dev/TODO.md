@@ -33,7 +33,7 @@ These are the highest-value changes to make the bot safer, more operationally sa
 - [x] Add a local `bot_status.json` snapshot file for restart recovery and debugging
 
 #### 4. Audit trail investigation and forensic tooling
-- [x] Add a dedicated audit-search CLI/tooling entry point under `pumpfun_trading/cli.py` or a new subcommand
+- [x] Add a dedicated audit-search CLI/tooling entry point (now `pumpfun_trading/cli/audit.py` / `pumpfun-audit`)
 - [x] Implement audit log search and filtering by:
   - record type
   - state
@@ -311,10 +311,12 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Extract `TokenEnricher` in `pumpfun_trading/bot/enrichment.py` for anti-rug screening, creator profiling, and Gini holder analysis
 - [x] Extract `EventRouter` in `pumpfun_trading/bot/event_router.py` to decouple Geyser/WebSocket stream ingestion from trade execution
 - [x] Extract `StatusPersistenceManager` in `pumpfun_trading/bot/persistence.py` and `AlertDispatcher` in `pumpfun_trading/bot/alerts.py`
-- [x] Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP
+- [ ] **Re-opened:** Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP
+  - The original extraction landed, but `bot/run.py` has since regrown to ~3,770 lines (`__init__` ~500 lines, `_sell_token_locked`, all stream handlers and the WebSocket loop). It is not a lightweight facade. Tracked in **Sprint 28** (Runtime decomposition II).
 - [x] Update existing unit and integration test suites to verify complete behavioral equivalence and 100% test pass rate
 
-#### 26. Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot (FEAT-10)
+#### 26. Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot (FEAT-10) — **SUPERSEDED**
+> Superseded by Phase 6 (Sprints 32–35) and the re-scoped FEAT-10 umbrella (FEAT-31…37) in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md). The Telegram bot moved to **FEAT-45** (P3). The FastAPI backend no longer lives in `pumpfun_trading/ui/web/`; it is a separate control plane (see [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md)). Items below are kept for history only.
 - [ ] Implement interactive Telegram bot in `pumpfun_trading/ui/telegram_bot.py`:
   - [ ] Remote commands: `/status`, `/positions`, `/pnl`, `/pause`, `/resume`, `/sell_all`, `/config`
   - [ ] Admin token and chat ID whitelist verification
@@ -361,7 +363,7 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add dedicated CLI entrypoints for bot, audit, and replay workflows under `pumpfun_trading/cli/`
 - [x] Split command responsibilities so each script is purpose-specific instead of overloading a single `pumpbot` entrypoint
 - [x] Move replay-related command logic into `cli/replay.py` and `engines/replay.py`
-- [x] Keep command packaging aligned with the refactor target layout in `docs/REFACTOR.md`
+- [x] Keep command packaging aligned with the package layout in `AGENTS.md` (the former `docs/REFACTOR.md` target layout has been retired)
 - [x] Add `record` subcommand (`pumpfun record`) and `--record-replay` runtime option for headless market harvesting (FEAT-21)
 - [ ] Expand CLI docs and examples for operators as release tooling matures
 
@@ -376,8 +378,8 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Isolate dashboard rendering under `pumpfun_trading/ui/`
 - [x] Keep terminal display code separate from the core runtime lifecycle and trade logic
 - [ ] Maintain terminal dashboard as a lightweight, zero-dependency console monitor (FEAT-19)
-- [ ] Implement Telegram interactive bot for remote commands (`/status`, `/positions`, `/sell_all`, `/pause`, `/resume`, `/pnl`) (FEAT-10)
-- [ ] Implement FastAPI / WebSockets full-featured web dashboard for complete bot lifecycle control, live portfolio charts, hot config updates, and embedded Markdown documentation browser (FEAT-10)
+- [ ] ~~Implement Telegram interactive bot~~ — superseded, now FEAT-45 (P3)
+- [ ] ~~Implement FastAPI / WebSockets web dashboard in `ui/`~~ — superseded by Phase 6 (Sprints 32–35); the web tier is a separate control plane, `ui/` keeps the terminal dashboard only
 
 ### `docs/` (Comprehensive Documentation Architecture)
 - [x] Create `docs/USER-GUIDE.md` covering setup, environment configuration, key security, launching `pumpbot`, replay workflows, and CLI flag references (FEAT-11)
@@ -424,7 +426,8 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add tests for rolling order flow window aggregations and trade velocity Z-score anomalies
 - [x] Add tests for multi-RPC latency scoring, health checks, failover routing, and broadcast deduplication
 - [x] Add tests for daily equity baseline tracking, drawdown limits, and portfolio emergency lock triggers
-- [ ] Add tests for Telegram command authentication and FastAPI/WebSocket status streaming
+- [ ] Add tests for Telegram command authentication and FastAPI/WebSocket status streaming — superseded, see Sprints 32–33 and FEAT-45
+- [ ] Restructure the suite to mirror the source tree with shared `support/` factories — see Sprints 26–27 and [`TESTING.md`](TESTING.md)
 - [ ] Add unit and mock integration tests for asynchronous stream recording, batch flushing, and replay dataset schema compliance (FEAT-21)
 
 ### `pumpfun_trading/streams/` (Geyser & On-Chain Event Ingestion)
@@ -439,7 +442,7 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add Raydium AMM pool swap instruction builder for post-graduation liquidity trades
 - [x] Implement bundle status polling with fallback fast-path execution on bundle timeouts
 
-### `pumpfun_trading/filters/` & `pumpfun_trading/strategies/`
+### `pumpfun_trading/strategies/` (screening filters live in `strategies/filters.py`)
 - [x] Implement pre-trade screening pipeline: dev wallet history, creator supply cap (<10%), top 5 holder cap (<15%), and social links
 - [x] Implement dynamic trailing stop-loss (activation at +50%, trail drop 15%) and multi-tier profit taking (50% at 2x, 25% at 3.5x, 25% moonbag)
 - [x] Implement Raydium migration monitor tracking curve completion and AMM pool initialization
@@ -452,9 +455,9 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Implement portfolio-level daily equity loss tracker and 24-hour hard-lock circuit breaker (liquidate all & pause on >15% daily drawdown)
 - [x] Add alerting dispatchers for emergency circuit breakers, liquidation events, and RPC degradation
 
-### `pumpfun_trading/ui/`
-- [ ] Implement Telegram interactive bot for remote commands (`/status`, `/positions`, `/sell_all`, `/pause`, `/resume`, `/pnl`)
-- [ ] Implement FastAPI / WebSockets web dashboard for real-time portfolio visualization and hot config updates
+### `pumpfun_trading/ui/` (terminal dashboard follow-ups)
+- [ ] ~~Implement Telegram interactive bot~~ — superseded, now FEAT-45
+- [ ] ~~Implement FastAPI / WebSockets web dashboard~~ — superseded by Phase 6 (Sprints 32–35)
 - [ ] Expand terminal dashboard to display active RPC latencies, Jito bundle status, and Geyser stream health
 
 ## Suggested sprint plan
@@ -586,10 +589,11 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Extract `TokenEnricher` in `pumpfun_trading/bot/enrichment.py` for anti-rug screening, creator profiling, and Gini holder analysis
 - [x] Extract `EventRouter` in `pumpfun_trading/bot/event_router.py` to decouple Geyser/WebSocket stream ingestion from trade execution
 - [x] Extract `StatusPersistenceManager` in `pumpfun_trading/bot/persistence.py` and `AlertDispatcher` in `pumpfun_trading/bot/alerts.py`
-- [x] Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP
+- [ ] **Re-opened:** Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP — `run.py` regrew to ~3,770 lines; see **Sprint 28**
 - [x] Update existing unit and integration test suites to verify complete behavioral equivalence and 100% test pass rate
 
-### Sprint 16: Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot
+### Sprint 16: Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot — **SUPERSEDED**
+> Replaced by Phase 6 (Sprints 32–35). Telegram moved to FEAT-45; the in-app Markdown viewer is replaced by the static docs portal (FEAT-37). Items kept for history only.
 - [ ] Implement interactive Telegram bot for remote mobile control (`/status`, `/positions`, `/sell_all`, `/pause`, `/resume`, `/config`) (FEAT-10)
 - [ ] Implement full-featured FastAPI web backend with asynchronous WebSocket state streaming (FEAT-10)
 - [ ] Build interactive browser dashboard for full bot control, live portfolio equity curves, and hot config adjustment (FEAT-10)
@@ -682,6 +686,179 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Integrate multi-venue arbitrage simulation into `PaperTradingEngine` in `pumpfun_trading/engines/replay.py` (FEAT-28)
 - [x] Add comprehensive unit and integration test suite in `pumpfun_trading/tests/test_cross_venue_arbitrage.py` (FEAT-28)
 
+## Phase 4b: Terminal Income Track (highest priority)
+
+**Funding model.** The terminal UI (`pumpbot`) must generate the income that pays for the Web UI. Phase 6 does not start until the funding gate below passes, so every sprint in this phase outranks Phases 5 and 6.
+
+The bot can trade live, but there is no evidence yet that it is profitable after fees and Jito tips (no completed paper pilot; replay benchmark recorded `Trades: 0`; most money-path fixes BUG-35…94 are unit-tested but not observed on mainnet). It also cannot yet *measure* net income: trade records from `TradingBot._record_trade` (`bot/run.py`) and the realized PnL fed to the daily circuit breaker are gross (`sell_p - entry`) with no transaction fee, priority fee, Jito tip or signature fields, and the snapshot ledger keeps only the last 50 trades. Sprints 24A–24D close those gaps in order of impact on income.
+
+| Sprint | Goal | Touches money path? |
+|---|---|---|
+| 24A | Paper pilot and live canary (evidence) | No (operations only) |
+| 24B | Net PnL accounting and reconciliation (measurement) | Accounting only; restarts Stage 0 for 24h |
+| 24C | Backtest fidelity and strategy tuning (edge) | Config only, unless BUG-61 fixes change live code |
+| 24D | Unattended operation and capital protection (uptime, safety) | Partly (pause / sweep) |
+
+**Rules while the income track runs**
+- Money-path changes (execution, SDK, sizing, exits, risk, stream handlers) are limited to bug fixes and Phase 4b items. Each one goes back through Stage 0 ([`RELEASE-GATE.md` §3.1](RELEASE-GATE.md#31-stages)).
+- Phase 5 Sprints 25–27 (packaging and tests only) may run in parallel. Sprints 28–30 change runtime code and wait until Stage 1 has passed; they are then released between canary windows, each with its own Stage 0 run.
+- Web UI work (Phase 6) waits for the funding gate.
+
+**Funding gate (entry condition for Phase 6)**
+- [ ] Live capital gate Stage 1 passed and the bot is at Stage 2 or above ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate))
+- [ ] Cumulative **net** profit (after fees and tips, reconciled against the wallet) covers the agreed Phase 6 budget (hosting, domain, security review) plus a reserve of at least one month of running costs
+- [ ] Net profit positive for at least 4 consecutive weeks at the current capital stage
+- [ ] Decision and figures recorded in the release record ([`RELEASE-GATE.md` §3.7](RELEASE-GATE.md#37-funding-gate-for-the-web-ui))
+
+### Sprint 24A: Paper Pilot & Live Canary — see [`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate) and [`RUNBOOK.md`](RUNBOOK.md)
+- [ ] Tag the current `main` as a release (`v0.x.y`) after it passes the release gate ([`RELEASE-GATE.md` §2](RELEASE-GATE.md#2-release-gate-every-release))
+- [ ] Set up a dedicated runtime directory outside the repo with explicit `PUMPFUN_STATUS_PATH` / `PUMPFUN_AUDIT_LOG_PATH` / `PUMPFUN_EVENT_LOG_PATH` ([`RUNBOOK.md` §1](RUNBOOK.md#1-runtime-directory-layout))
+- [ ] Run the incident drills in paper mode ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills))
+- [ ] Stage 0: 72h paper pilot on the live stream with replay recording; record the summary in the release record
+- [ ] Stage 1: live canary on a dedicated hot wallet with the canary config (0.01 SOL buys, ≤ 2 positions, 10% daily drawdown; arbitrage, back-running, pre-graduation harvesting, Raydium sniping and copy trading off)
+- [ ] Daily wallet reconciliation (on-chain Δ SOL vs audit realized PnL) logged for every canary day ([`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-reconciliation))
+- [ ] Log every discrepancy or failure in `BUGS.md`; fix before continuing
+- **Acceptance:** Stage 1 exit criteria met — ≥ 100 closed trades, net PnL after fees and tips positive, reconciliation gap within tolerance every day, 0 lost or double-sold positions. Only then increase capital (Stage 2) or plan Phase 5–6 spending around bot income.
+- **Dependency:** the canary's net-PnL criterion needs Sprint 24B. Start Stage 0 straight away; do not start Stage 1 live trading until 24B has landed (or reconcile fees and tips by hand from the transaction signatures each day).
+
+### Sprint 24B: Net PnL Accounting & Reconciliation (FEAT-49)
+- [ ] Capture per-transaction costs at confirmation in `sdk/execution.py` / `execution/executor.py`: signature, network fee, priority fee (compute-unit price × units consumed), Jito tip, ATA rent paid/refunded, actual SOL delta from `getTransaction` pre/post balances
+- [ ] Extend the trade record (`TradingBot._record_trade`) and the audit trail with `signature`, `fee_sol`, `tip_sol`, `rent_sol`, `gross_pnl_sol`, `net_pnl_sol`; existing fields keep their meaning
+- [ ] Feed **net** realized PnL to `DailyEquityTracker` so the daily circuit breaker trips on real losses
+- [ ] `pumpfun-audit pnl` — daily / per-strategy / per-exit-reason net PnL, win rate, expectancy, fees and tips as a share of gross
+- [ ] `pumpfun-audit reconcile --wallet <pubkey>` — on-chain SOL and token balances vs. audit realized PnL and open positions, within the `RELEASE-GATE.md` §3.4 tolerance; non-zero exit code on a gap
+- [ ] Terminal dashboard (`ui/dashboard.py`): show net vs. gross PnL today and since start, fees + tips today, and the reconciliation status in the Risk panel
+- [ ] Persist the full trade history to the audit trail (the 50-entry snapshot ledger stays a display buffer only)
+- [ ] Tests in the mirrored layout ([`TESTING.md`](TESTING.md)); `RUNBOOK.md` §5.3 switched to the new commands
+- **Acceptance:** for a paper/devnet session, `pumpfun-audit reconcile` reproduces the wallet delta within tolerance; net PnL on the dashboard equals the audit `pnl` total; coverage ≥ 95%
+
+### Sprint 24C: Backtest Fidelity & Strategy Tuning (BUG-61)
+- [ ] Resolve BUG-61: `PaperTradingEngine` (`engines/replay.py`) uses the live sizing (`buy_amount_sol`, exposure caps) and the live exit stack (tiered take-profits, trailing stops, max-hold, stagnant exits) from `strategies/exits.py`
+- [ ] Model fees, priority fees, Jito tips and slippage in replay from the 24B cost data, so backtests report **net** PnL
+- [ ] Replay-vs-live parity check: replay the Stage 0 / Stage 1 capture and compare decisions and PnL with the audit trail; differences explained
+- [ ] Tune with `pumpfun-optimize` on recorded **live** captures (train/test split by day; BUG-60 selection on `train_fitness` only); promote a tuned config only through Stage 0
+- [ ] Per-filter and per-exit attribution report (which filters reject winners, which exits leave money on the table) via `pumpfun-audit pnl --by reason`
+- **Acceptance:** replay of a live capture matches live net PnL within an agreed tolerance; a tuned config beats the canary config out-of-sample before it is promoted
+
+### Sprint 24D: Unattended Operation & Capital Protection (FEAT-50, FEAT-42)
+- [ ] Operator pause without a restart: `SIGUSR1` toggles "no new buys, keep managing exits" (early, terminal-only slice of the Sprint 29 `PAUSED` state); state shown on the dashboard and written to the audit trail
+- [ ] Daily PnL summary alert (net PnL, trades, fees + tips, breaker state, reconciliation result) through `bot/alerts.py`, plus alerts on stream/RPC degradation lasting > N minutes
+- [ ] Supervised headless deployment: documented systemd unit / launchd plist with restart limits and log retention (operator slice of FEAT-46); `RUNBOOK.md` updated
+- [ ] FEAT-42 profit sweep (disabled by default): move realized profit above a hot-wallet floor to a cold wallet, audited
+- [ ] Optional, if latency is shown to cost entries: FEAT-39 Yellowstone gRPC transport (isolated in `streams/`)
+- **Acceptance:** 7 days unattended at the current capital stage with no manual restarts; pause and sweep exercised in drills ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills))
+
+## Phase 5: Platform Refactor (required before the Web UI)
+
+**Scheduling around income:** Sprints 25–27 may run in parallel with Phase 4b; Sprints 28–30 change runtime code and start only after live capital Stage 1 has passed (see the Phase 4b rules).
+
+The bot is in production. Phase 5 pays down the structural debt that blocks the hosted Web UI without touching trading behaviour. Every sprint keeps the standard gates: **coverage ≥ 95% (`fail_under` never lowered)**, `nox -s lint`, `nox -s format`, `nox -s mypy` clean, and replay parity (identical decisions on the recorded datasets in `test-data/`) for any runtime change. Finding IDs (R1–R12, T1–T9) are defined in [`TESTING.md`](TESTING.md) and [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md).
+
+| Finding | Summary | Sprint |
+|---|---|---|
+| R1 | `bot/run.py` regrew to ~3,770 lines | 28 |
+| R2 | No typed read-model; `storage/status.py` reads private attributes via `getattr` | 29 |
+| R3 | No `PAUSED` / `HALTED` lifecycle states | 29 |
+| R4 | No command/control interface or event bus | 29 |
+| R5 | Hot config has no validated patch path through the risk pipeline | 29 |
+| R6 | WebSocket ingestion lives in `bot/run.py`, not `streams/` | 28 |
+| R7 | `sdk/execution.py` (~1,650 lines) mixes Pump.fun, Raydium and confirmation logic | 28 |
+| R8 | Packaging hygiene (unused `requests`, Django classifier, no extras, nox only on 3.14, version 0.1.0 vs "Production/Stable") | 25 |
+| R9 | Runtime artifacts and stale `__pycache__` in the repo | 25 |
+| R10 / T1–T9 | Flat, unstructured test suite | 26, 27 |
+| R11 | No real Yellowstone gRPC transport | FEAT-39 (parallel track) |
+| R12 | JSON/JSONL-only persistence; ledger inlined in the snapshot | 30 |
+
+### Sprint 25: Packaging & Repo Hygiene (R8, R9, T8)
+- [ ] `pyproject.toml`: remove unused `requests` dependency; replace the `Framework :: Django` classifier; align `Development Status` with the version
+- [ ] Add optional extras: `[web]` (FastAPI, Uvicorn), `[db]` (SQLAlchemy, Alembic, asyncpg, aiosqlite), `[geyser]` (grpcio, protobuf)
+- [ ] Exclude `pumpfun_trading.tests*` from the wheel (`[tool.setuptools.packages.find] exclude`) (T8)
+- [ ] `noxfile.py`: test matrix for Python 3.11–3.14
+- [ ] `.gitignore` runtime artifacts (`bot.log`, `events.jsonl`, `cov.json`, `coverage.xml`, `*.egg-info`); remove stale root `__pycache__` for retired `audit`/`bot`/`cli`/`replay` modules
+- [ ] Add `CHANGELOG.md` (Keep a Changelog) following the SemVer policy in [`RELEASE-GATE.md` §6](RELEASE-GATE.md#6-versioning-policy); bump the version and tag the first release
+- **Acceptance:** `pip install .` wheel contains no `tests/`; nox matrix green on 3.11–3.14; coverage ≥ 95%
+
+### Sprint 26: Test Foundation (T1, T4, T6, T7) — see [`TESTING.md`](TESTING.md)
+- [ ] Create `pumpfun_trading/tests/support/` (`factories.py`, `payloads.py`, `fakes.py`, `constants.py`) and per-package `conftest.py` files
+- [ ] Replace the 136 inline `TradingBotConfig(` constructions and 13 duplicated private-key constants with `make_config()` / `SAMPLE_PRIVATE_KEY`; unify `make_bot` / `_make_bot` and the three `make_*pool_keys` variants
+- [ ] Register markers (`unit`, `integration`, `regression`, `slow`, `property`) with `--strict-markers`; remove the 216 redundant `@pytest.mark.asyncio` marks (`asyncio_mode = "auto"`)
+- [ ] Replace `time.sleep` (3 files) and nested `asyncio.run` (4 files) with `FakeClock` / awaits
+- [ ] Move clean single-module files into `tests/unit/<pkg>/test_<module>.py` and `*_bot_integration.py` into `tests/integration/` per the migration map
+- [ ] Add `nox -s tests-fast` (`-m "not slow and not integration"`)
+- **Acceptance:** collected test count unchanged (`pytest --collect-only -q`), coverage ≥ 95%, suite runtime not slower
+
+### Sprint 27: Test Consolidation (T2, T3, T5, T9) — see [`TESTING.md`](TESTING.md)
+- [ ] Dissolve the six coverage-padding files (`test_coverage_95_*.py`, `test_coverage_boost_*.py`, `test_runtime_coverage_boost.py`) into their module tests; delete tests that only assert trivia and replace them with behaviour tests
+- [ ] Merge base / `_full` / `_regressions` pairs (`api_client`, `audit`, `execution_sdk`, `bot_runtime`)
+- [ ] Tag regressions `@pytest.mark.regression("BUG-xx")` beside the guarded module; add a check that every resolved BUG in `BUGS.md` has ≥ 1 tagged test
+- [ ] Convert repeated cases to `parametrize`
+- [ ] Add `hypothesis` to the `[dev]` extra and Hypothesis property tests for `sdk/curve.py` and the `streams/geyser.py` parsers (`tests/property/`)
+- [ ] Add characterisation (golden replay) tests pinning `TradingBot` decisions through public entry points (T5 safety net for Sprint 28)
+- [ ] Add the layout guard test (every source module has a `unit/` counterpart)
+- **Acceptance:** no file in the tests root except `conftest.py`; 1:1 mirror verified; coverage ≥ 95%
+
+### Sprint 28: Runtime Decomposition II (R1, R6, R7)
+- [ ] `bot/factory.py`: composition root extracted from `TradingBot.__init__`
+- [ ] `bot/handlers/` (`curve.py`, `trade.py`, `raydium.py`, `new_token.py`) extracted from the stream handlers in `run.py`
+- [ ] `execution/sell_pipeline.py` extracted from `_sell_token_locked`
+- [ ] `ops/metrics.py` for runtime counters and latency telemetry
+- [ ] `streams/websocket.py` for `_run_websocket_stream` (restores the `streams/` boundary)
+- [ ] Split `sdk/execution.py` into Pump.fun, Raydium and confirmation modules (public re-exports kept)
+- [ ] Each extracted module gets its mirrored `tests/unit/<pkg>/test_<module>.py` in the same PR ([`TESTING.md`](TESTING.md))
+- **Acceptance:** `bot/run.py` < 800 lines; golden replay tests from Sprint 27 unchanged; coverage ≥ 95%; mypy clean
+
+### Sprint 29: Typed State, Lifecycle Control & Event Bus (R2–R5)
+- [ ] `bot/state_model.py`: Pydantic `BotStatusView`, `PositionView`, `TradeView`, `HealthView`; `storage/status.py` and `ui/dashboard.py` consume views instead of `getattr(bot, "_…")`
+- [ ] `bot/lifecycle.py`: add `PAUSED` (manage exits, no new buys) and `HALTED` (circuit breaker) states and transitions; the Sprint 24D `SIGUSR1` pause becomes a thin trigger for `BotController.pause()` / `resume()`
+- [ ] `bot/control.py`: `BotController` with `pause()`, `resume()`, `stop()`, `sell_all()`, `apply_config_patch(ConfigPatch)`; each command validated, audited, and routed through the unified risk pipeline
+- [ ] `ops/bus.py`: in-process typed event bus; terminal dashboard subscribes to it
+- [ ] Replace the `TradingBot.config` setter with validated `ConfigPatch` application
+- **Acceptance:** zero `getattr(bot, "_…")` in `storage/` and `ui/`; terminal UI behaviour unchanged; coverage ≥ 95%
+
+### Sprint 30: Persistence Layer (FEAT-35, R12)
+- [ ] `storage/db/` with SQLAlchemy 2.0 async models and Alembic migrations (tables: `tenants`, `users`, `sessions`, `instances`, `config_versions`, `positions`, `trades`, `audit_events`, `equity_snapshots`, `alerts`)
+- [ ] PostgreSQL for hosted mode, SQLite (WAL) for operator/dev mode; selected by URL
+- [ ] Move the trade ledger out of the status snapshot; JSONL dual-write during migration
+- [ ] DB tests on SQLite in-memory plus an opt-in `postgres` marker
+- **Acceptance:** terminal mode runs with and without `[db]`; migrations up/down tested; coverage ≥ 95%
+
+### Sprint 31: Documentation Site & Gap Closure (FEAT-37 build) — see [`DOCUMENTATION-PLAN.md`](DOCUMENTATION-PLAN.md)
+- [ ] Add `mkdocs.yml` (Material-compatible) and a Zensical build; `docs/index.md` landing page
+- [ ] Close every open gap listed in `DOCUMENTATION-PLAN.md` (FEAT-12 duplicate, FEAT-10 status, rest of the RUNBOOK expansion, missing pages); NEXT-30-DAYS is already retired
+- [ ] Convert ASCII diagrams to Mermaid; add front matter, admonitions and tabs
+- [ ] mkdocstrings API/SDK reference; strict build in CI
+- **Acceptance:** `zensical build` (or `mkdocs build --strict`) passes with zero warnings
+
+## Phase 6: Hosted Web UI (replaces Sprint 16)
+
+**Entry condition:** the Phase 4b funding gate has passed. Until then the terminal UI is the only product and Phase 6 stays planned, not started.
+
+Architecture: [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md) and [`docs/WEB-UI.md`](../WEB-UI.md). Features: FEAT-31…FEAT-37 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md).
+
+### Sprint 32: Agent API & Control Plane, Single Tenant (FEAT-31, FEAT-32)
+- [ ] `pumpfun_trading/agent/` aiohttp Agent API (`/health`, `/status`, `/commands/*`, `/config`, `/events` WS) backed by `BotController` and `ops/bus.py`
+- [ ] FastAPI control plane (separate deployable, `[web]` extra): auth (OIDC/JWT + passkeys), RBAC, REST/WSS, OpenAPI
+- [ ] Contract tests between control plane and Agent API
+- **Acceptance:** pause/resume/stop/sell-all/config patch work end-to-end against a dry-run bot; trading-loop latency unchanged
+
+### Sprint 33: Vuetify MD3 PWA MVP (FEAT-33)
+- [ ] `web/` Vue 3 + TypeScript + Vite + Vuetify 3 (`md3` blueprint) + Pinia + generated OpenAPI client + `vite-plugin-pwa`
+- [ ] Views: Overview, Positions, Trades, Controls, Settings
+- [ ] Vitest component tests and Playwright desktop + mobile smoke tests, mirrored under `web/`
+- **Acceptance:** Lighthouse PWA installable; usable at 360 px width; light/dark follows the system
+
+### Sprint 34: Multi-Tenant Orchestrator & Zero-Knowledge Keys (FEAT-34, FEAT-36, FEAT-46)
+- [ ] Docker image (FEAT-46) and orchestrator service (`InstanceBackend`: Docker first) with quotas and private networking
+- [ ] X25519 key envelope; worker-only decryption; buffers zeroed after signer setup
+- [ ] Tenant isolation tests (no cross-tenant reads; no key material in logs, DB or disk)
+- **Acceptance:** two tenants run isolated bots concurrently; security checklist in `RELEASE-GATE.md` signed off
+
+### Sprint 35: Analytics, Audit Search, Embedded Docs & Terminal-UI Deprecation Gate (FEAT-37)
+- [ ] Equity/PnL analytics and audit search views
+- [ ] Serve the docs site at `/docs` with contextual help links from settings
+- [ ] Terminal-UI deprecation gate: Web UI has parity for every operator workflow; terminal UI moves to "maintenance only"
+- **Acceptance:** operator runs one full trading week from the Web UI only
+
 ## Definition of done for a “serious” bot
 
 The bot is production-worthy and alpha-ready when it can:
@@ -699,6 +876,12 @@ The bot is production-worthy and alpha-ready when it can:
 - maintain a clear, queryable audit ledger and provide remote mobile control via Telegram/Web
 - demonstrate consistent risk-adjusted returns (Sharpe ratio > 2.0, Profit Factor > 1.8) across diverse market regimes
 
+Additional rules from Phase 4b onward:
+- The terminal UI (`pumpbot`) is the income path that funds the Web UI. It stays the primary interface until the **Sprint 35** deprecation gate, and no refactor or Web UI work may regress it.
+- Income-track work (Phase 4b) outranks Phases 5 and 6; Phase 6 starts only after the Phase 4b funding gate.
+- Profit is always reported **net** of network fees, priority fees, Jito tips and rent, and reconciled against the wallet.
+- New tests follow the layout and conventions in [`TESTING.md`](TESTING.md) (mirrored `unit/<pkg>/test_<module>.py`, shared `support/` factories, no coverage-named files).
+
 ## Notes
 
-This repo has established a solid, modular, and fully tested production v1 foundation. Phase 4 directs engineering focus toward maximizing capital efficiency, capturing high-alpha market opportunities, eliminating execution leakage, and hardening infrastructure for institutional reliability.
+This repo has established a solid, modular, and fully tested production v1 foundation and can trade live. Phase 4b turns the terminal mode into a measured, reconciled income source; that income funds the rest of the roadmap. Phase 5 pays down structural debt (runtime monolith, test-suite structure, typed state, persistence, docs site) without risking the terminal mode, and Phase 6 delivers the hosted Material Design 3 Web UI once the funding gate has passed.

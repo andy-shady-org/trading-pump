@@ -2,7 +2,9 @@
 
 The Terminal User Interface (`pumpbot`) is an institutional-grade, low-overhead console command center powered by Rich. It is engineered specifically for system operators, algorithmic traders, and liquidity engineers who require zero-overhead local execution, sub-millisecond telemetry monitoring, and immediate cashflow generation to self-fund ongoing project development.
 
-> **Operational Note & Lifecycle Strategy**: The Terminal UI serves as the primary self-funding and testing interface during early development sprints. As the full-featured FastAPI Web Dashboard (FEAT-10) reaches production maturity, the Terminal UI will be maintained as a lightweight diagnostic fallback and eventually retired.
+> **Operational Note & Lifecycle Strategy**: The Terminal UI is the **income path** for the project: profits made with it fund the hosted Web Dashboard (FEAT-10). Web UI work starts only after the funding gate in [`dev/RELEASE-GATE.md` §3.7](dev/RELEASE-GATE.md#37-funding-gate-for-the-web-ui) passes, and the Terminal UI stays the primary interface until the Sprint 35 deprecation gate; after that it is kept as a lightweight diagnostic fallback. Planned terminal improvements for income (net PnL after fees and tips, wallet reconciliation, pause without restart, daily PnL digest) are in Phase 4b of [`dev/TODO.md`](dev/TODO.md#phase-4b-terminal-income-track-highest-priority).
+>
+> **Note on `Daily PnL`:** until Sprint 24B (FEAT-49) it is **gross** realized PnL; network fees, priority fees, Jito tips and rent are not deducted. Use the daily wallet reconciliation in [`dev/RUNBOOK.md` §5.3](dev/RUNBOOK.md#53-daily-wallet-reconciliation) for the real number.
 
 ---
 

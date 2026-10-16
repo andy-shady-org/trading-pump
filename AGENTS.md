@@ -1,5 +1,43 @@
 # AGENTS.md
 
+## Claude 5.5 Opus Self-Correction & Continuous Learning
+
+As **Claude 5.5 Opus**, you are required to treat this repository as a living trading system and this `AGENTS.md` file as your persistent memory. Because quantitative trading environments evolve quickly, you must automatically update your own rules, adapt to edge cases, and self-correct based on runtime or user feedback.
+
+### 1. Triggers for Updates
+You must automatically append a new rule to the **"Local Norms"** or **"Learnings Log"** sections at the bottom of this file if:
+- **User Correction:** The user explicitly corrects your code, math logic, Solana transaction layout, or architectural layout.
+- **Solana/Jito Runtime Failures:** A transaction fails on-chain, a Jito bundle drops, or a zero-copy parser breaks due to an unhandled byte alignment or edge case.
+- **Test Failures:** A test fails because of an unwritten assumption or missed edge case.
+- **Stale Context:** You discover that a file path, codebase map, or dependency listed in this file is outdated.
+
+### 2. Instructions for Self-Updating
+1. **Identify the Root Cause:** Pinpoint exactly what went wrong (e.g., "miscalculated PDA derivation for Token-2022 accumulator").
+2. **Draft a Durable Rule:** Write a concise, actionable directive (a "Do" or "Don't") to prevent the error from happening again. Do not just log the error; write the permanent structural fix.
+3. **Modify the File:** Use your file-editing tools to surgically append the rule to the end of the appropriate section below. Do not overwrite or erase existing rules.
+4. **Keep it Concise:** Keep instructions short and punchy to conserve context tokens for future sessions.
+
+---
+
+## Local Norms
+- **Asynchronous Jito Bundle Polling:** Never block the streaming execution loop when waiting for Jito bundle statuses; always use non-blocking `asyncio` polling or websocket event confirmation.
+- **Micro-Lamport Compute Budget Management:** Every transaction builder must explicitly append a `SetComputeUnitPrice` and a tight, simulated `SetComputeUnitLimit` instruction to prevent transaction drops or wasted fee capital.
+- **Zero-Copy Alignment Checks:** Any structural or byte changes made to binary parsers inside `streams/` must explicitly match the layout offsets of Yellowstone Geyser streaming payloads to prevent memory allocation crashes.
+- **Volatile Key Erasure:** Methods handling private keys within the Web UI runtime must clear variables from scope immediately after building transaction signatures to maintain strict memory security.
+- **Fail-Fast Risk Validation:** All pre-execution checks (such as Gini coefficient boundaries and daily circuit breakers) must execute within a unified, atomic risk pipeline before hitting the instruction assembly layer.
+- **Income Path First:** The terminal UI (`pumpbot`) must earn the money that funds the Web UI. Prioritise Phase 4b (`docs/dev/TODO.md`) over refactors and Web UI work, never regress `pumpbot`, report profit net of fees/priority fees/Jito tips/rent, and don't start Phase 6 before the funding gate (`docs/dev/RELEASE-GATE.md` §3.7).
+- **Mirrored Test Layout:** New tests go in `pumpfun_trading/tests/unit/<pkg>/test_<module>.py` (cross-component flows in `integration/`, Hypothesis in `property/`), build configs/bots/payloads from `tests/support/` factories, and never use coverage-named files (`test_coverage_*`, `*_boost*`, `*_full`). See `docs/dev/TESTING.md`.
+
+## Learnings Log & Avoided Mistakes
+- **[CRITICAL] Slippage Calculation Target:** Avoided calculating slippage based on static REST API prices. Pump.fun bonding curve prices can shift drastically within a single slot. Always compute slippage against the dynamic, local virtual reserves tracked directly from the real-time Geyser stream.
+- **[EXECUTION] Jito Tip Placement:** Avoided appending Jito tips as standalone transactions or placing the tip instruction at the beginning of a transaction. The tip must be the *final instruction* inside the transaction payload within the bundle to guarantee inclusion and prevent MEV searchers from unbundling.
+- **[RISK] Developer Allocation Fraud:** Avoided checking developer wallet balances via static snapshots. Devs can scatter supply across multiple fresh puppet wallets prior to launch. Shifted to evaluating the collective top-5 holder concentration matrix continuously during the first 30 seconds of token creation.
+- **[MATH] Bonding Curve Overflows:** Avoided native integer math for token-to-SOL conversions. High-velocity minting curves can easily overflow standard 64-bit bounds during aggressive volume spikes. Always utilize fixed-point math with explicit scaling factors when tracking $P = \Delta y / \Delta x$.
+- **[STREAMS] No Fake Connections:** Never set a stream to CONNECTED without a real transport; fail fast (`GeyserTransportUnavailableError`) and fall back. Yellowstone account filters must use bonding-curve PDAs, not mints.
+- **[ARB] Chain-Read Reserves Only:** Never execute or bank arbitrage on estimated/placeholder reserves; only `reserves_verified=True` opportunities may execute.
+- **[DOCS] Completion Claims Track Code:** TODO item 25 claimed `bot/run.py` was a "lightweight facade" while it had regrown to ~3,770 lines. Before ticking or citing a completed refactor, verify it against the current code (file size, responsibilities); re-open the item when it regresses.
+
+
 ## Project Overview
 
 This repository contains the `pumpfun-trading` Python package, organized as a modular, high-performance automated trading runtime and quantitative toolkit designed for microcap Solana liquidity on Pump.fun bonding curves.
@@ -19,6 +57,7 @@ pumpfun-trading/
 │   ├── config/       # Environment loading, configuration resolution, and settings validation
 │   ├── engines/      # Historical market replay and paper-trading simulation engine
 │   ├── execution/    # Transaction instruction builders and execution helpers
+│   ├── infra/        # Multi-provider RPC connection pool, latency routing and failover
 │   ├── ops/          # Structured logging (ANSI/NO_COLOR compliant) and telemetry monitoring
 │   ├── sdk/          # Solana on-chain execution SDK, PDA/ATA derivations, and Jito MEV client
 │   ├── services/     # Background service helpers and metadata ingestion
@@ -26,8 +65,15 @@ pumpfun-trading/
 │   ├── strategies/   # Modular signal generation, anti-rug heuristics, trailing exits, and presets
 │   ├── streams/      # Yellowstone Geyser gRPC streaming client & zero-copy binary parsers
 │   ├── ui/           # Rich alternate-screen live terminal dashboard
-│   └── tests/        # Comprehensive unit and integration test suite (>=95% coverage)
+│   └── tests/        # Test suite (>=95% coverage); see docs/dev/TESTING.md
+│       ├── conftest.py   # environment isolation only
+│       ├── support/      # shared factories, fakes, payload builders, constants
+│       ├── unit/         # 1:1 mirror of the source: unit/<pkg>/test_<module>.py
+│       ├── integration/  # cross-component flows and replay end-to-end
+│       └── property/     # Hypothesis property tests (curve math, parsers)
 ```
+
+> The `tests/` sub-layout is the target from Sprints 26–27; until migration completes, legacy flat `test_*.py` files still exist in the tests root.
 
 ---
 
@@ -36,7 +82,7 @@ pumpfun-trading/
 The documentation is organized in a clear, audience-separated star topology:
 
 ### 1. User & Operator Manuals (`docs/`)
-Accessible to end-users, quant traders, and bot operators; embedded into the FastAPI Web UI:
+Accessible to end-users, quant traders, and bot operators; planned to be published as a Zensical/Material site served at `/docs` by the Web UI control plane (see `docs/dev/DOCUMENTATION-PLAN.md`):
 
 * [**`docs/USER-GUIDE.md`**](docs/USER-GUIDE.md): Central knowledge hub and primary onboarding portal for both hosted Web UI instances and operator Terminal UI mode.
 * [**`docs/ENVIRONMENTAL-VARIABLES.md`**](docs/ENVIRONMENTAL-VARIABLES.md): Exhaustive environment variables manual, fallback aliases, default values, and production configuration recipes.
@@ -44,7 +90,7 @@ Accessible to end-users, quant traders, and bot operators; embedded into the Fas
 * [**`docs/STRATEGY.md`**](docs/STRATEGY.md): Wealth generation blueprint, bonding curve pricing math ($P = \Delta y / \Delta x$), fractional Kelly bankroll management, multi-tier profit scaling, dynamic trailing stops, and anti-rug heuristic scoring.
 * [**`docs/RISK.md`**](docs/RISK.md): Multi-tier capital preservation, position concentration caps, daily hard-stop circuit breakers (FEAT-09), startup on-chain reconciliation, and emergency exit queues.
 * [**`docs/TERMINAL-UI.md`**](docs/TERMINAL-UI.md): Rich console dashboard manual, sub-millisecond slot latency telemetry, and multi-channel alerting (Discord, Slack, Telegram) for operator self-funding.
-* [**`docs/WEB-UI.md`**](docs/WEB-UI.md): Architecture specification for the full-featured FastAPI web dashboard (FEAT-10), volatile in-memory keypair security (zero disk persistence), hot config mutations, and terminal UI deprecation roadmap.
+* [**`docs/WEB-UI.md`**](docs/WEB-UI.md): Architecture specification for the hosted multi-tenant Web Dashboard (FEAT-10): FastAPI control plane, Vue 3 + Vuetify MD3 PWA, container-per-tenant bots, zero-knowledge key ingestion, draft API, and terminal UI deprecation roadmap.
 * [**`docs/FEATURES.md`**](docs/FEATURES.md): Standardized catalog of completed architectural capabilities (FEAT-01 through FEAT-30).
 * [**`docs/REPLAY-ENGINE.md`**](docs/REPLAY-ENGINE.md): Historical market replay and strategy backtesting simulator (`pumpfun-replay`).
 * [**`docs/AUDIT-TOOL.md`**](docs/AUDIT-TOOL.md): Forensic trade accounting and telemetry inspection CLI (`pumpfun-audit`).
@@ -53,12 +99,14 @@ Accessible to end-users, quant traders, and bot operators; embedded into the Fas
 Internal engineering documentation for maintainers, contributors, and SRE:
 
 * [**`docs/dev/README.md`**](docs/dev/README.md): Developer and contributor portal index.
-* [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Sprint backlog, milestone tracking (Phases 1–4), and architectural tasks.
+* [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Sprint backlog, milestone tracking (Phases 0–6, incl. Phase 4b Terminal Income Track with the Web UI funding gate, Phase 5 Platform Refactor and Phase 6 Hosted Web UI), and architectural tasks.
+* [**`docs/dev/ARCHITECTURE-DECISIONS.md`**](docs/dev/ARCHITECTURE-DECISIONS.md): Architecture decision records (web stack, control plane, tenant isolation, key handling, database, docs tooling, test layout).
+* [**`docs/dev/TESTING.md`**](docs/dev/TESTING.md): Test architecture, conventions, markers, and the file-by-file test migration map.
+* [**`docs/dev/DOCUMENTATION-PLAN.md`**](docs/dev/DOCUMENTATION-PLAN.md): Documentation gap analysis, Zensical / Material docs-site plan, and styling conventions.
 * [**`docs/dev/BUGS.md`**](docs/dev/BUGS.md): Bug tracker, root cause analyses, and resolution verification matrix.
 * [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Candidate architectural proposals, alpha enhancement ideas, and unscheduled feature backlog.
-* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook, preflight checks, and deployment hardening.
-* [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Quality release gates, security checklists, and sign-off criteria.
-* [**`docs/dev/NEXT-30-DAYS.md`**](docs/dev/NEXT-30-DAYS.md): Tactical 30-day milestone execution plan.
+* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook: runtime layout, paper pilot, incident drills, wallet reconciliation, incident response and rollback.
+* [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Per-release checklist, staged live capital gate (paper → canary → scale-up), hosted security gate, and versioning policy.
 
 ---
 
@@ -113,7 +161,7 @@ All contributions must strictly satisfy project quality gates:
 * **Static Type Safety**: 0 type violations under strict Mypy checks (`nox -s mypy`).
 * **Unit & Integration Test Coverage**: Mandatory minimum of **95% statement and branch coverage** across all modules (`nox -s tests`).
 * **Clean Commits & Documentation**: Keep `docs/dev/TODO.md` and feature docs updated with all architectural changes.
-
+* **Bugs & Regression Prevention**: All runtime failures, edge cases, and user corrections must be logged in the **"Learnings Log"** section of this file with actionable rules to prevent recurrence. All bugs must be logged in `docs/dev/BUGS.md` with root cause analysis and resolution verification.
 ---
 
 ## Build & Installation
