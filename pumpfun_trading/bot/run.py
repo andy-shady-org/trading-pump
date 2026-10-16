@@ -85,6 +85,9 @@ from pumpfun_trading.streams.geyser import (
 )
 from pumpfun_trading.ui.dashboard import build_dashboard
 
+# Raw base-unit virtual token reserves are ~1.07e15; UI units are ~1.07e9 (BUG-75).
+RAW_TOKEN_UNITS_THRESHOLD = 1_000_000_000_000
+
 
 class TradingBot:
     """Production-ready Pump.fun trading bot with modular SOLID architecture and lifecycle safeguards."""
@@ -183,7 +186,13 @@ class TradingBot:
         self.take_profit = self.config.take_profit
         self.stop_loss = self.config.stop_loss
         self.max_active_positions = self.config.max_active_positions
-        self.max_positions_per_mint = self.config.max_positions_per_mint
+        # Positions are tracked one lot per mint, so pyramiding is unsupported (BUG-92).
+        if self.config.max_positions_per_mint != 1:
+            logging.getLogger(__name__).warning(
+                "max_positions_per_mint=%s is not supported; using 1.",
+                self.config.max_positions_per_mint,
+            )
+        self.max_positions_per_mint = 1
         self.min_market_cap_sol = self.config.min_market_cap_sol
         self.max_buy_attempts_per_mint = self.config.max_buy_attempts_per_mint
         self.min_balance_sol = self.config.min_balance_sol
@@ -620,14 +629,18 @@ class TradingBot:
             await self.replay_recorder.close()
         if hasattr(self, "rpc_pool") and self.rpc_pool is not None:
             await self.rpc_pool.close()
-        if hasattr(self, "execution") and hasattr(self.execution, "close"):
-            res = self.execution.close()
-            if asyncio.iscoroutine(res):
-                await res
-        if hasattr(self, "api") and hasattr(self.api, "close"):
-            res = self.api.close()
-            if asyncio.iscoroutine(res):
-                await res
+        await self._close_http_clients()
+
+    async def _close_http_clients(self) -> None:
+        for client in (getattr(self, "execution", None), getattr(self, "api", None)):
+            if client is None or not hasattr(client, "close"):
+                continue
+            try:
+                res = client.close()
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception as exc:
+                self._log(f"Error closing client: {exc}", level=logging.DEBUG)
 
     def _configure_alerting(self) -> None:
         self.alerts.provider = (self.alert_provider or "").lower().strip()
@@ -678,6 +691,11 @@ class TradingBot:
         if isinstance(positions, dict):
             self.position_manager.restore_from_dict(positions)
             self.active_positions = self.position_manager.get_all_positions()
+            for mint, pos in self.active_positions.items():
+                if pos.pop("migrating", False):
+                    self._migrating_mints.add(mint)
+                if pos.get("pool_keys") is None:
+                    pos.pop("pool_keys", None)
         elif isinstance(positions, list):
             self.position_manager.clear()
             self.active_positions = self.position_manager.get_all_positions()
@@ -808,6 +826,13 @@ class TradingBot:
     def _transition_to(self, next_state: TradingBotState, reason: str = "") -> None:
         current = self.state
         if current == next_state:
+            return
+        if current == TradingBotState.SHUTDOWN and next_state != TradingBotState.IDLE:
+            # In-flight work finishing after shutdown must not revive the bot (BUG-91).
+            self._log(
+                f"Shutdown in progress; skipped transition to {next_state} ({reason})",
+                level=logging.DEBUG,
+            )
             return
         if next_state not in self._VALID_STATE_TRANSITIONS.get(current, set()):
             if current == TradingBotState.IDLE and next_state == TradingBotState.BUYING:
@@ -1369,6 +1394,19 @@ class TradingBot:
                     "trailing_stop_active": bool(
                         position.get("trailing_stop_active", False)
                     ),
+                    # Cost basis and venue metadata survive restarts (BUG-45).
+                    "cost_sol": float(position.get("cost_sol") or 0.0),
+                    "entry_sol": float(
+                        position.get("entry_sol") or position.get("cost_sol") or 0.0
+                    ),
+                    "position_id": position.get("position_id"),
+                    "buy_signature": position.get("buy_signature"),
+                    "entry_reason": position.get("entry_reason"),
+                    "entry_time": position.get("entry_time"),
+                    "migrating": mint in self._migrating_mints,
+                    "pool_keys": self._serialize_pool_keys(
+                        self._exit_pool_keys(mint, position)
+                    ),
                 }
                 for mint, position in self.active_positions.items()
             },
@@ -1489,7 +1527,8 @@ class TradingBot:
             return False
         if self._is_recently_seen(mint):
             return False
-        if mint in self.active_positions:
+        open_lots = 1 if mint in self.active_positions else 0
+        if open_lots >= self.max_positions_per_mint:
             return False
         if len(self.active_positions) >= self.max_active_positions:
             return False
@@ -1582,6 +1621,10 @@ class TradingBot:
                     "reason": reason or "entry",
                 },
             )
+
+        if self._stop_requested:
+            # Never send a new order once shutdown was requested (BUG-91).
+            return False
 
         t_exec_start = time.perf_counter()
         exec_res = await self.executor.execute_buy(
@@ -1702,6 +1745,10 @@ class TradingBot:
 
         resolved_name = await self._resolve_token_name(mint, token_name)
         position_name = (resolved_name or mint).strip() or mint
+
+        if self._stop_requested:
+            # Never send a new order once shutdown was requested (BUG-91).
+            return False
 
         exec_res = await self.executor.execute_raydium_buy(
             mint=mint,
@@ -1974,6 +2021,14 @@ class TradingBot:
             self._sell_locks[mint] = lock
         return lock
 
+    @staticmethod
+    def _serialize_pool_keys(pool: Any) -> dict[str, Any] | None:
+        if isinstance(pool, RaydiumPoolKeys):
+            return pool.to_dict()
+        if isinstance(pool, dict):
+            return dict(pool)
+        return None
+
     def _exit_pool_keys(self, mint: str, position: dict[str, Any]) -> Any:
         pool = self._raydium_exit_pools.get(mint)
         if pool is not None:
@@ -2135,11 +2190,11 @@ class TradingBot:
             self._transition_to(TradingBotState.HOLDING, reason=f"sell_failed {mint}")
             return False
 
+        # `buy_price` is a per-token unit price, never the position cost (BUG-45).
         pos_entry = float(
             position.get("cost_sol")
             or position.get("entry_sol")
-            or position.get("buy_price")
-            or position.get("entry_price")
+            or getattr(self.config, "buy_amount_sol", 0.0)
             or 0.0
         )
         entry_mc = float(position.get("entry_market_cap", 0.0) or 0.0)
@@ -2983,7 +3038,9 @@ class TradingBot:
             if v_sol > 0 and v_tokens > 0:
                 sol_val = v_sol / 1_000_000_000.0 if v_sol > 1_000_000 else v_sol
                 token_val = (
-                    v_tokens / 1_000_000.0 if v_tokens > 1_000_000_000 else v_tokens
+                    v_tokens / 1_000_000.0
+                    if v_tokens > RAW_TOKEN_UNITS_THRESHOLD
+                    else v_tokens
                 )
                 if token_val > 0:
                     current_market_cap = sol_val * (1_000_000_000.0 / token_val)
@@ -3120,7 +3177,9 @@ class TradingBot:
             if v_sol > 0 and v_tokens > 0:
                 sol_val = v_sol / 1_000_000_000.0 if v_sol > 1_000_000 else v_sol
                 token_val = (
-                    v_tokens / 1_000_000.0 if v_tokens > 1_000_000_000 else v_tokens
+                    v_tokens / 1_000_000.0
+                    if v_tokens > RAW_TOKEN_UNITS_THRESHOLD
+                    else v_tokens
                 )
                 if token_val > 0:
                     current_market_cap = sol_val * (1_000_000_000.0 / token_val)
@@ -3645,6 +3704,8 @@ class TradingBot:
             if self.replay_recorder is not None:
                 await self.replay_recorder.close()
             self.persistence.close()
+            # Release HTTP sessions held by the execution and API clients (BUG-74).
+            await self._close_http_clients()
             if self.state != TradingBotState.SHUTDOWN:
                 self._transition_to(TradingBotState.SHUTDOWN, reason="bot_terminated")
 

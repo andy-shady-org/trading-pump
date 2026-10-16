@@ -52,9 +52,9 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-42** | High | Strategy / Exit Engine | **RESOLVED** | Take-profit tiers are not latched on emit; pre-graduation tranches are latched before the fill |
 | **BUG-43** | High | Strategy / Exit Engine | **RESOLVED** | Pre-graduation `target_tier` 1/2 marks the 2.0x/3.5x take-profit tiers as done |
 | **BUG-44** | High | Bot / Graduation | **RESOLVED** | Graduated positions cannot be sold on Raydium |
-| **BUG-45** | High | Bot / Persistence | **OPEN** | Status snapshot drops `cost_sol` and `pool_keys`; after restart, unit `buy_price` is used as position cost |
+| **BUG-45** | High | Bot / Persistence | **RESOLVED** | Status snapshot drops `cost_sol` and `pool_keys`; after restart, unit `buy_price` is used as position cost |
 | **BUG-46** | High | Bot / Health | **RESOLVED** | `_risk_killed` stays set after transient stream or RPC problems; only a restart clears it |
-| **BUG-47** | High | Bot / Daily Circuit Breaker | **OPEN** | Daily equity tracker does not roll over at UTC midnight while the breaker is latched |
+| **BUG-47** | High | Bot / Daily Circuit Breaker | **RESOLVED** | Daily equity tracker does not roll over at UTC midnight while the breaker is latched |
 | **BUG-48** | High | Execution / Sell Proceeds | **RESOLVED** | Live sell proceeds are the slippage floor (`min_sol_lamports`), not actual SOL received |
 | **BUG-49** | High | Execution / Buy Fill Size | **RESOLVED** | Buy fill size is the whole ATA balance; fallback estimate uses the post-trade curve |
 | **BUG-50** | High | Execution / Raydium Buy | **RESOLVED** | Live Raydium buys record `token_amount=0` |
@@ -77,12 +77,12 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-67** | Medium | Infra / RPC Pool | **RESOLVED** | JSON-RPC error responses are recorded as endpoint successes |
 | **BUG-68** | Medium | SDK / Creator Vault | **RESOLVED** | Creator vault falls back to the trader's own wallet when the creator is unknown |
 | **BUG-69** | Medium | SDK / Token Program | **RESOLVED** | Token-2022 detection errors silently fall back to SPL Token |
-| **BUG-70** | Medium | Bot / Risk Limits | **OPEN** | `check_loss_per_trade` never fires with defaults and can divide by zero |
-| **BUG-71** | Medium | Bot / Risk Limits | **OPEN** | Exposure cap uses full `cost_sol` after partial exits |
+| **BUG-70** | Medium | Bot / Risk Limits | **RESOLVED** | `check_loss_per_trade` never fires with defaults and can divide by zero |
+| **BUG-71** | Medium | Bot / Risk Limits | **RESOLVED** | Exposure cap uses full `cost_sol` after partial exits |
 | **BUG-72** | Medium | Storage / Status Snapshot | **OPEN** | `storage.write_status_snapshot` is non-atomic and persists a monotonic clock value |
 | **BUG-73** | Medium | Execution / Confirmation | **RESOLVED** | Confirmation timeouts are treated as definite failures (untracked fills, possible double sells) |
-| **BUG-74** | Medium | Bot / Resource Lifecycle | **OPEN** | `start()`/`run()` and `get_coins_by_mints` leave aiohttp sessions open (`get_coins_by_mints` fixed; bot lifecycle pending) |
-| **BUG-75** | Medium | Bot / WebSocket Market Cap | **OPEN** | WebSocket market-cap unit check can inflate market cap by ~1e6 |
+| **BUG-74** | Medium | Bot / Resource Lifecycle | **RESOLVED** | `start()`/`run()` and `get_coins_by_mints` leave aiohttp sessions open (both fixed) |
+| **BUG-75** | Medium | Bot / WebSocket Market Cap | **RESOLVED** | WebSocket market-cap unit check can inflate market cap by ~1e6 |
 | **BUG-76** | Medium | Strategy / Exit Engine | **RESOLVED** | Stop-loss and take-profit cannot fire when `entry_market_cap <= 0` |
 | **BUG-77** | Medium | Strategy / Memory | **OPEN** | Per-mint screening, order-flow, and graduation caches grow without limit |
 | **BUG-78** | Medium | Strategy / Risk Validation | **OPEN** | `validate_risk_limits` ignores exposure, position size, and concentration caps |
@@ -98,8 +98,8 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-88** | Medium | UI / Dashboard | **OPEN** | Position reason always shows `watch` (reads `reason`, not `entry_reason`) |
 | **BUG-89** | Medium | CLI / Events | **OPEN** | `pumpfun-events --tail` exits instead of waiting for the file to appear |
 | **BUG-90** | Medium | CLI / Arbitrage | **OPEN** | `pumpfun-arb --monitor` / `--live` only evaluate hardcoded sample reserves |
-| **BUG-91** | Low | Bot / Lifecycle | **OPEN** | An in-flight buy that finishes after shutdown tries to move SHUTDOWN → MONITORING |
-| **BUG-92** | Low | Bot / Config | **OPEN** | `max_positions_per_mint` is stored but never used |
+| **BUG-91** | Low | Bot / Lifecycle | **RESOLVED** | An in-flight buy that finishes after shutdown tries to move SHUTDOWN → MONITORING |
+| **BUG-92** | Low | Bot / Config | **MITIGATED** | `max_positions_per_mint` is stored but never used (values other than 1 are now clamped to 1 with a warning; per-mint pyramiding is a follow-up) |
 | **BUG-93** | Low | SDK / PDA Helpers | **RESOLVED** | Associated bonding-curve helper uses `FEE_RECIPIENT` as the token-program seed |
 | **BUG-94** | Low | Bot / Persistence | **OPEN** | Failed atomic status writes leave stray `.tmp.<pid>` files |
 
@@ -423,7 +423,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Positions held through migration get stuck. BUG-35 and BUG-39 make it worse.
 * **Remedy:** Mark the position as `migrating` on completion. When pool keys arrive, attach them and sell through Raydium (after BUG-36/51 are fixed).
 
-### BUG-45: Persisted Positions Drop Cost Basis and Raydium Metadata [OPEN]
+### BUG-45: Persisted Positions Drop Cost Basis and Raydium Metadata [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`get_status_snapshot` ~L1320–1361, restore ~L673–676, PnL in `_sell_token` ~L2059–2074, 2128–2131, 2189–2192)
 * **Description:** The snapshot's `active_positions` keeps `buy_price` (a per-token unit price) but drops `cost_sol` / `entry_sol` / `position_id` / `pool_keys`. After a restart, `_sell_token` falls back to `buy_price` as if it were the total SOL spent.
 * **Impact:** Realized PnL after a restart is roughly the full sale proceeds, which inflates daily PnL and skews the circuit breaker. Restored Raydium positions can't find their pool.
@@ -435,7 +435,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** A 60s Geyser gap or one flaky balance call stops all new entries until the process restarts.
 * **Remedy:** Track the "stream stale" and "RPC error" causes separately from real risk-limit breaches, and clear them automatically on recovery or after a cooldown.
 
-### BUG-47: Daily Equity Tracker Does Not Roll Over at UTC Midnight While the Breaker Is Latched [OPEN]
+### BUG-47: Daily Equity Tracker Does Not Roll Over at UTC Midnight While the Breaker Is Latched [RESOLVED]
 * **Location:** `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.evaluate_circuit_breaker` ~L140–189, `initialize_or_rollover` ~L84–90)
 * **Description:** While `circuit_breaker_engaged` is set and the lock hasn't expired, `evaluate_circuit_breaker` returns early and never calls `initialize_or_rollover`. When a rollover does happen, it resets `circuit_breaker_action` but not `circuit_breaker_engaged` / `locked_at_timestamp`. The unlock path doesn't reset `realized_daily_pnl_sol`.
 * **Impact:** A lock at 23:00 UTC with `emergency_hard_lock_hours=24` carries into the next trading day, and the new day's baseline and PnL never start.
@@ -577,13 +577,13 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** For Token-2022 Pump mints, a transient error produces the wrong ATA seeds and the wrong token program in the instruction, so the trade fails.
 * **Remedy:** Retry, and abort the trade if the mint owner can't be read. Cache successful results.
 
-### BUG-70: `check_loss_per_trade` Never Fires With Defaults and Can Divide by Zero [OPEN]
+### BUG-70: `check_loss_per_trade` Never Fires With Defaults and Can Divide by Zero [RESOLVED]
 * **Location:** `pumpfun_trading/bot/risk.py` (~L569–574)
 * **Description:** The check compares a market-cap loss ratio (at most 1.0) to `max_loss_per_trade_sol / buy_amount_sol` (default `0.02 / 0.01 = 2.0`), so it can never trigger. If `buy_amount_sol == 0`, it raises `ZeroDivisionError` on the hot path.
 * **Impact:** The per-trade loss cap does nothing.
 * **Remedy:** Compare `cost_sol * loss_ratio` to `max_loss_per_trade_sol`, and guard against a zero denominator.
 
-### BUG-71: Exposure Cap Uses Full `cost_sol` After Partial Exits [OPEN]
+### BUG-71: Exposure Cap Uses Full `cost_sol` After Partial Exits [RESOLVED]
 * **Location:** `pumpfun_trading/bot/risk.py` (`check_risk_limits` ~L474–476), compare `pumpfun_trading/bot/position_manager.py` (~L524–537)
 * **Description:** Exposure adds up the full original `cost_sol` without scaling by the remaining token fraction. `PositionManager.total_cost_sol()` scales correctly (BUG-21), but this path was not updated.
 * **Impact:** After take-profit partial sells, `max_total_exposure_sol` and the concentration checks block new entries that should be allowed.
@@ -601,13 +601,13 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** A buy that lands late leaves tokens untracked, and a sell that lands late can be sold again.
 * **Remedy:** After a timeout, check the signature status and balances again before deciding. Key retries by signature. Run a preflight on the RPC fallback, or simulate first.
 
-### BUG-74: aiohttp Sessions Left Open [OPEN]
+### BUG-74: aiohttp Sessions Left Open [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`start()` `finally` ~L3550–3567, `close()` ~L610–626, `run()` ~L3569–3574), `pumpfun_trading/api/client.py` (`get_coins_by_mints` ~L263–267)
 * **Description:** On shutdown, `start()` never calls `execution.close()` or `api.close()`, and `run()` never calls `close()`. `get_coins_by_mints` creates a new `PumpFunApiClient` on every call and never closes it, and also ignores `self`'s settings.
 * **Impact:** Sockets and file descriptors leak during long sessions ("Unclosed client session" warnings).
 * **Remedy:** Call `await self.close()` from `start()`'s `finally`, and use `self.post(...)` in `get_coins_by_mints`.
 
-### BUG-75: WebSocket Market-Cap Unit Check Can Inflate Market Cap ~1e6× [OPEN]
+### BUG-75: WebSocket Market-Cap Unit Check Can Inflate Market Cap ~1e6× [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (~L2892–2898, ~L3030–3035)
 * **Description:** If `v_tokens > 1_000_000_000`, the code assumes raw base units and divides by 1e6. PumpPortal reports about 1.073e9 virtual tokens in UI units, which also passes that threshold.
 * **Impact:** Entry filters, TP/SL, and trailing stops can run on market caps that are wrong by a factor of about a million. (Medium confidence: depends on the payload format.)
@@ -707,13 +707,13 @@ These were found by reading the code. They have not been reproduced or fixed yet
 
 ## 6. Open Issues — Project-Wide Audit (2026-10-16): Low Severity
 
-### BUG-91: In-Flight Buy After Shutdown Attempts SHUTDOWN → MONITORING [OPEN]
+### BUG-91: In-Flight Buy After Shutdown Attempts SHUTDOWN → MONITORING [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`_buy_token` ~L1598–1601, `_buy_raydium_token` ~L1697–1700, `_transition_to` ~L807–811)
 * **Description:** Observed in `runtime/bot.log` on 2026-10-16: "Ignored invalid state transition from SHUTDOWN to MONITORING due to buy_failed". Shutdown does not cancel or wait for buy tasks that are still running. When one of them fails, it tries to move the bot back to `MONITORING`.
 * **Impact:** The state machine blocks it, but a buy can still be sent after shutdown was requested, and if it fills, the result is never recorded.
 * **Remedy:** Check `_stop_requested` before sending and before transitioning, and cancel or wait for in-flight trade tasks during shutdown.
 
-### BUG-92: `max_positions_per_mint` Is Ignored [OPEN]
+### BUG-92: `max_positions_per_mint` Is Ignored [MITIGATED]
 * **Location:** `pumpfun_trading/bot/run.py` (stored ~L186, `_should_buy` ~L1472–1473)
 * **Description:** `_should_buy` rejects any mint already in `active_positions`, so values above 1 have no effect.
 * **Impact:** This config setting does nothing.

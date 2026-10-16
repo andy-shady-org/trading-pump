@@ -86,7 +86,11 @@ class DailyEquityTracker:
             self.starting_equity_sol = current_equity
             self.peak_daily_equity_sol = current_equity
             self.realized_daily_pnl_sol = 0.0
+            # A new UTC trading day also releases any daily lock (BUG-47).
+            self.circuit_breaker_engaged = False
             self.circuit_breaker_action = CircuitBreakerAction.NONE
+            self.locked_at_timestamp = None
+            self.lock_reason = ""
             return True
         return False
 
@@ -165,6 +169,11 @@ class DailyEquityTracker:
         if profit_drawdown_tolerance_pct is not None:
             self.profit_drawdown_tolerance_pct = profit_drawdown_tolerance_pct
 
+        # Roll over on a UTC date change even while latched (BUG-47).
+        self.initialize_or_rollover(
+            current_wallet_balance_sol, open_positions_valuation_sol, now_utc
+        )
+
         # Check if currently locked
         if self.circuit_breaker_engaged:
             lock_duration_seconds = max(0.0, float(emergency_hard_lock_hours)) * 3600.0
@@ -185,6 +194,7 @@ class DailyEquityTracker:
                     + float(open_positions_valuation_sol),
                 )
                 self.peak_daily_equity_sol = self.starting_equity_sol
+                self.realized_daily_pnl_sol = 0.0
             else:
                 return True, self.lock_reason or "portfolio circuit breaker active"
 
@@ -471,8 +481,10 @@ def check_risk_limits(
     default_cost = float(
         getattr(getattr(bot, "config", None), "buy_amount_sol", 0.0) or 0.0
     )
+    # Exposure is the cost still at risk after partial exits (BUG-71).
     total_exposure = sum(
-        _extract_position_cost(pos, default_cost) for pos in current_positions.values()
+        _extract_position_cost(pos, default_cost) * _extract_position_fraction(pos)
+        for pos in current_positions.values()
     )
     if total_exposure + proposed_entry_sol > bot.config.max_total_exposure_sol:
         bot._last_event = (
@@ -493,7 +505,7 @@ def check_risk_limits(
     )
     if bot.config.max_total_exposure_sol > 0:
         candidate_costs = [
-            _extract_position_cost(pos, default_cost)
+            _extract_position_cost(pos, default_cost) * _extract_position_fraction(pos)
             for pos in current_positions.values()
         ] + [proposed_entry_sol]
         max_per_token_ratio = max(candidate_costs) / bot.config.max_total_exposure_sol
@@ -566,11 +578,21 @@ def check_loss_per_trade(
     if entry_market_cap <= 0:
         return True
 
-    loss_ratio = 1.0 - (current_market_cap / entry_market_cap)
-    if loss_ratio > bot.config.max_loss_per_trade_sol / bot.config.buy_amount_sol:
+    max_loss_sol = float(getattr(bot.config, "max_loss_per_trade_sol", 0.0) or 0.0)
+    if max_loss_sol <= 0:
+        return True
+
+    # Compare the SOL at risk, not a market-cap ratio, to the SOL cap (BUG-70).
+    default_cost = float(getattr(bot.config, "buy_amount_sol", 0.0) or 0.0)
+    effective_cost = _extract_position_cost(
+        position, default_cost
+    ) * _extract_position_fraction(position)
+    loss_ratio = max(0.0, 1.0 - (current_market_cap / entry_market_cap))
+    loss_sol = effective_cost * loss_ratio
+    if loss_sol > max_loss_sol:
         bot._last_event = (
-            f"risk limit: trade loss {loss_ratio:.2%} exceeds max "
-            f"{bot.config.max_loss_per_trade_sol / bot.config.buy_amount_sol:.2%}"
+            f"risk limit: trade loss {loss_sol:.4f} SOL exceeds max "
+            f"{max_loss_sol:.4f} SOL"
         )
         return False
     return True
