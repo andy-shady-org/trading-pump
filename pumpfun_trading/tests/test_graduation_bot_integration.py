@@ -112,9 +112,13 @@ async def test_bonding_curve_reserve_tracking_and_complete_exit(bot):
     )
     await bot._handle_complete_event_update(complete_ev)
 
-    # Position should have exited on graduation
-    assert GRAD_MINT not in bot.active_positions
+    # BUG-44: the completed curve rejects sells, so the position waits for the pool
+    assert GRAD_MINT in bot.active_positions
     assert bot.graduation_engine.get_candidate(GRAD_MINT).is_completed is True
+
+    # Once the Raydium pool appears, the held position exits through the AMM
+    await bot._handle_raydium_pool_update(make_pool_keys(GRAD_MINT))
+    assert GRAD_MINT not in bot.active_positions
 
 
 @pytest.mark.asyncio

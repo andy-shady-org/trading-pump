@@ -28,17 +28,18 @@ async def test_bot_kill_switches_when_health_stale_or_balance_check_fails():
     bot._last_health_check = 0.0
 
     await bot._update_health_state()
-    assert bot._risk_killed is True
+    # BUG-46: stale stream pauses trading without latching the kill switch.
+    assert bot._risk_killed is False
     assert bot._health_ok is False
+    assert bot._health_ok_for_trading() is False
 
-    bot._risk_killed = False
     bot._health_ok = True
     bot.execution = AsyncMock()
     bot.execution.get_balance_sol = AsyncMock(side_effect=RuntimeError("API down"))
 
     assert await bot._check_account_equity_guard(required_sol=0.1) is False
-    assert bot._risk_killed is True
-    assert "risk kill: API balance check failed" in bot._last_event
+    assert bot._risk_killed is False
+    assert "balance check failed" in bot._last_event
 
 
 @pytest.mark.asyncio
@@ -80,7 +81,8 @@ async def test_websocket_failure_sets_risk_kill_and_reconnect_status():
     bot._last_message_at = time.monotonic() - 10
 
     await bot._update_health_state()
-    assert bot._risk_killed is True
+    assert bot._risk_killed is False
+    assert bot._health_ok is False
     assert bot._last_status == "health timeout"
     assert "stream stale" in bot._last_event
 

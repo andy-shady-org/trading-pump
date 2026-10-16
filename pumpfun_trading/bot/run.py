@@ -573,6 +573,10 @@ class TradingBot:
         )
 
         self._trade_lock = asyncio.Lock()
+        # Per-mint sell serialization (BUG-41) and graduation exit state (BUG-44).
+        self._sell_locks: dict[str, asyncio.Lock] = {}
+        self._migrating_mints: set[str] = set()
+        self._raydium_exit_pools: dict[str, RaydiumPoolKeys] = {}
         self._config = self.config
         self.safe_startup()
 
@@ -715,8 +719,15 @@ class TradingBot:
 
         exit_retry_queue = snapshot.get("exit_retry_queue")
         if isinstance(exit_retry_queue, dict):
+            # Monotonic timestamps are meaningless after a restart: retry now (BUG-39).
+            now_mono = time.monotonic()
             self._exit_retry_queue = {
-                str(k): dict(v)
+                str(k): {
+                    **dict(v),
+                    "first_attempt": now_mono,
+                    "last_attempt": now_mono,
+                    "next_retry_at": now_mono,
+                }
                 for k, v in exit_retry_queue.items()
                 if isinstance(v, dict)
             }
@@ -1209,11 +1220,11 @@ class TradingBot:
 
             return True
         except Exception as exc:
+            # A failed balance read is transient: skip this entry only (BUG-46).
             self._log(
                 f"Error checking account equity guard: {exc}", level=logging.WARNING
             )
-            self._risk_killed = True
-            self._last_event = "risk kill: API balance check failed"
+            self._last_event = "entry skipped: balance check failed"
             return False
 
     async def _validate_balance(self) -> bool:
@@ -1368,6 +1379,15 @@ class TradingBot:
             "paper_trade": self.paper_trade,
             "health_ok": self._health_ok,
             "risk_killed": self._risk_killed,
+            "exit_retry_queue": {
+                mint: {
+                    "reason": entry.get("reason", ""),
+                    "retries": entry.get("retries", 1),
+                    "retry_count": entry.get("retry_count", 1),
+                    "slippage_bps": entry.get("slippage_bps"),
+                }
+                for mint, entry in self._exit_retry_queue.items()
+            },
             "buy_attempts": dict(self._buy_attempts),
             "seen_mints": dict(self._seen_mints),
             "trade_ledger": list(self._trade_ledger),
@@ -1947,7 +1967,51 @@ class TradingBot:
             self._write_status_snapshot()
         return reconciled
 
+    def _mint_lock(self, mint: str) -> asyncio.Lock:
+        lock = self._sell_locks.get(mint)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._sell_locks[mint] = lock
+        return lock
+
+    def _exit_pool_keys(self, mint: str, position: dict[str, Any]) -> Any:
+        pool = self._raydium_exit_pools.get(mint)
+        if pool is not None:
+            return pool
+        raw = position.get("pool_keys")
+        if isinstance(raw, RaydiumPoolKeys):
+            return raw
+        if isinstance(raw, dict):
+            try:
+                return RaydiumPoolKeys.from_dict(raw)
+            except Exception:
+                return None
+        return None
+
     async def _sell_token(
+        self,
+        mint: str,
+        *,
+        sell_amount_tokens: int | None = None,
+        sell_fraction: float = 1.0,
+        reason: str = "exit",
+        target_tier: int | str | None = None,
+        slippage_bps: int | None = None,
+        retry_count: int = 0,
+    ) -> bool:
+        """Sell under a per-mint lock so concurrent exits cannot overlap (BUG-41)."""
+        async with self._mint_lock(mint):
+            return await self._sell_token_locked(
+                mint,
+                sell_amount_tokens=sell_amount_tokens,
+                sell_fraction=sell_fraction,
+                reason=reason,
+                target_tier=target_tier,
+                slippage_bps=slippage_bps,
+                retry_count=retry_count,
+            )
+
+    async def _sell_token_locked(
         self,
         mint: str,
         *,
@@ -1964,6 +2028,11 @@ class TradingBot:
 
         position = self.active_positions[mint]
         pos_name = position.get("name") or mint
+        pool_keys = self._exit_pool_keys(mint, position)
+        if pool_keys is None and mint in self._migrating_mints:
+            # The curve is complete; hold until the AMM pool is known (BUG-44).
+            self._last_event = f"awaiting pool {mint[:8]}"
+            return False
 
         self._transition_to(
             TradingBotState.SELLING, reason=f"selling {mint} ({reason})"
@@ -2021,13 +2090,23 @@ class TradingBot:
 
         effective_slippage = slippage_bps or self.base_exit_slippage_bps
         t_sell_start = time.perf_counter()
-        exec_res = await self.executor.execute_sell(
-            mint=mint,
-            token_amount=tokens_to_sell,
-            slippage_bps=effective_slippage,
-            reason=reason,
-            dry_run=self.dry_run,
-        )
+        if pool_keys is not None:
+            exec_res = await self.executor.execute_raydium_sell(
+                mint,
+                pool_keys,
+                tokens_to_sell,
+                slippage_bps=effective_slippage,
+                reason=reason,
+                dry_run=self.dry_run,
+            )
+        else:
+            exec_res = await self.executor.execute_sell(
+                mint=mint,
+                token_amount=tokens_to_sell,
+                slippage_bps=effective_slippage,
+                reason=reason,
+                dry_run=self.dry_run,
+            )
         sell_latency_ms = (time.perf_counter() - t_sell_start) * 1000.0
 
         if hasattr(self, "event_logger") and self.event_logger is not None:
@@ -2695,10 +2774,18 @@ class TradingBot:
         )
 
         if mint in self.active_positions:
-            self._log(
-                f"Position held for graduating token {mint}; executing priority exit before Raydium AMM migration."
-            )
-            await self._sell_token(mint, reason="bonding_curve_graduated")
+            # A completed curve rejects trades: exit on the AMM instead (BUG-44).
+            self._migrating_mints.add(mint)
+            self._exit_retry_queue.pop(mint, None)
+            candidate = self.graduation_engine.get_candidate(mint)
+            pool = getattr(candidate, "pool_keys", None) if candidate else None
+            if isinstance(pool, RaydiumPoolKeys):
+                self._raydium_exit_pools[mint] = pool
+                await self._sell_token(mint, reason="bonding_curve_graduated")
+            else:
+                self._log(
+                    f"Position held for graduating token {mint}; waiting for the AMM pool to exit."
+                )
 
     async def _handle_raydium_pool_update(self, pool_keys: RaydiumPoolKeys) -> None:
         """Handle Raydium AMM pool creation and dispatch graduation breakout buys."""
@@ -2710,10 +2797,14 @@ class TradingBot:
         self._last_event = f"raydium pool {mint[:8]}"
         self.graduation_engine.record_raydium_pool(mint=mint, pool_keys=pool_keys)
 
-        if not self.config.enable_raydium_migration_sniping:
+        if mint in self.active_positions:
+            # Attach the pool to the held position and exit through the AMM (BUG-44).
+            self._raydium_exit_pools[mint] = pool_keys
+            if mint in self._migrating_mints:
+                await self._sell_token(mint, reason="bonding_curve_graduated")
             return
 
-        if mint in self.active_positions:
+        if not self.config.enable_raydium_migration_sniping:
             return
 
         signal = self.graduation_engine.evaluate_graduation_signal(
@@ -3385,6 +3476,7 @@ class TradingBot:
                 await asyncio.sleep(5)
                 await self._update_health_state()
                 await self._refresh_active_positions_market_caps()
+                await self._process_exit_retry_queue()
                 await self._check_and_enforce_circuit_breaker()
                 self._prune_seen_mints()
                 self._write_status_snapshot()
@@ -3487,18 +3579,8 @@ class TradingBot:
 
         try:
             if self.geyser_client and (self.geyser_endpoint or is_custom_listen):
-                if hasattr(self.geyser_client, "on_bonding_curve"):
-                    self.geyser_client.on_bonding_curve(
-                        self.event_router.route_geyser_curve_update
-                    )
-                if hasattr(self.geyser_client, "on_trade"):
-                    self.geyser_client.on_trade(
-                        self.event_router.route_geyser_trade_update
-                    )
-                if hasattr(self.geyser_client, "on_complete"):
-                    self.geyser_client.on_complete(
-                        self.event_router.route_geyser_complete_update
-                    )
+                # Events are consumed via listen() only; registering callbacks too
+                # would route every event twice (BUG-40).
                 if hasattr(self.geyser_client, "start"):
                     await self.geyser_client.start()
                 self._record_event(

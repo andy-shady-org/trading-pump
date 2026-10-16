@@ -335,7 +335,9 @@ def test_health_checks():
     # Timeout
     bot._last_health_check = time.monotonic() - 20.0
     assert not health_ok_for_trading(bot)
-    assert bot._risk_killed is True
+    # BUG-46: a health timeout pauses trading but never latches the kill switch.
+    assert bot._risk_killed is False
+    assert bot._health_ok is False
 
     # mark_health_check
     mark_health_check(bot)
@@ -351,12 +353,13 @@ def test_health_checks():
     bot._health_ok = True
     update_health_state(bot)
     assert bot._health_ok is False
-    assert bot._risk_killed is True
+    assert bot._risk_killed is False
 
-    # update_health_state when fresh
+    # update_health_state when fresh: trading resumes automatically
     bot._last_message_at = time.monotonic()
     update_health_state(bot)
     assert bot._health_ok is True
+    assert health_ok_for_trading(bot)
 
 
 def test_lifecycle_transitions():

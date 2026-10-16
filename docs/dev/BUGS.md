@@ -46,14 +46,14 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-36** | Critical | SDK / Raydium Sell | **RESOLVED** | `build_raydium_sell_tx` uses buy-direction token accounts (WSOL → token) |
 | **BUG-37** | Critical | Execution / Atomic Arbitrage | **OPEN** | Arb bundle Raydium legs use the token ATA as both source and destination |
 | **BUG-38** | Critical | Strategy / Pre-Graduation Exits | **RESOLVED** | Curve progress of ~1% is read as 92–100%, so pre-graduation tranches fire immediately |
-| **BUG-39** | High | Bot / Exit Retry Queue | **OPEN** | `_process_exit_retry_queue` is never called from the runtime |
-| **BUG-40** | High | Bot / Geyser Dispatch | **OPEN** | Geyser events are handled twice (callbacks and `listen()`) |
-| **BUG-41** | High | Bot / Concurrency | **OPEN** | Sells are not covered by `_trade_lock`, so the same mint can be sold twice at once |
+| **BUG-39** | High | Bot / Exit Retry Queue | **RESOLVED** | `_process_exit_retry_queue` is never called from the runtime |
+| **BUG-40** | High | Bot / Geyser Dispatch | **RESOLVED** | Geyser events are handled twice (callbacks and `listen()`) |
+| **BUG-41** | High | Bot / Concurrency | **RESOLVED** | Sells are not covered by `_trade_lock`, so the same mint can be sold twice at once |
 | **BUG-42** | High | Strategy / Exit Engine | **RESOLVED** | Take-profit tiers are not latched on emit; pre-graduation tranches are latched before the fill |
 | **BUG-43** | High | Strategy / Exit Engine | **RESOLVED** | Pre-graduation `target_tier` 1/2 marks the 2.0x/3.5x take-profit tiers as done |
-| **BUG-44** | High | Bot / Graduation | **OPEN** | Graduated positions cannot be sold on Raydium |
+| **BUG-44** | High | Bot / Graduation | **RESOLVED** | Graduated positions cannot be sold on Raydium |
 | **BUG-45** | High | Bot / Persistence | **OPEN** | Status snapshot drops `cost_sol` and `pool_keys`; after restart, unit `buy_price` is used as position cost |
-| **BUG-46** | High | Bot / Health | **OPEN** | `_risk_killed` stays set after transient stream or RPC problems; only a restart clears it |
+| **BUG-46** | High | Bot / Health | **RESOLVED** | `_risk_killed` stays set after transient stream or RPC problems; only a restart clears it |
 | **BUG-47** | High | Bot / Daily Circuit Breaker | **OPEN** | Daily equity tracker does not roll over at UTC midnight while the breaker is latched |
 | **BUG-48** | High | Execution / Sell Proceeds | **RESOLVED** | Live sell proceeds are the slippage floor (`min_sol_lamports`), not actual SOL received |
 | **BUG-49** | High | Execution / Buy Fill Size | **RESOLVED** | Buy fill size is the whole ATA balance; fallback estimate uses the post-trade curve |
@@ -387,19 +387,19 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** With `enable_pre_graduation_harvesting`, positions are partly sold right after entry at about 1% curve progress. Together with BUG-43, this can turn into a full exit.
 * **Remedy:** Use one scale everywhere: always pass a fraction, or always compare percent to percent. Do not guess the unit from `> 1.0`.
 
-### BUG-39: Exit Retry Queue Is Never Processed [OPEN]
+### BUG-39: Exit Retry Queue Is Never Processed [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`_process_exit_retry_queue` ~L1870; enqueued at ~L1831–1868, 1992, 2055; never called from `start()` / `_run_health_loop()`)
 * **Description:** Failed sells go into `_exit_retry_queue` with backoff and slippage that rises to `max_exit_slippage_bps`, but only tests call `_process_exit_retry_queue`. `get_status_snapshot` also leaves the queue out, so the restore code for it never runs.
 * **Impact:** The escalating-slippage exit path (BUG-08) is dead in production. During a fast dump, sells keep failing at base slippage.
 * **Remedy:** Drain the queue from the health loop and after stream reconnects. Persist it using wall-clock `next_retry_at` values.
 
-### BUG-40: Geyser Events Are Handled Twice [OPEN]
+### BUG-40: Geyser Events Are Handled Twice [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`start()` ~L3489–3520), `pumpfun_trading/streams/geyser.py` (`dispatch_*` ~L641–697)
 * **Description:** `start()` registers `on_bonding_curve` / `on_trade` / `on_complete` callbacks that call the event router, and it also iterates `listen()` into the same router. Geyser's `dispatch_*` both triggers the callbacks and enqueues the event.
 * **Impact:** Every curve, trade, and complete event is processed twice. `order_flow_engine.record_trade` double-counts trades, which skews the buy ratio and z-score and can trigger false momentum entries. Exit evaluation runs twice, which leads to concurrent sells (BUG-41).
 * **Remedy:** Use either callbacks or `listen()`, not both.
 
-### BUG-41: Sells Are Not Covered by `_trade_lock` [OPEN]
+### BUG-41: Sells Are Not Covered by `_trade_lock` [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`_sell_token` callers ~L1290–1302, 2351, 2527–2549, 2697–2701, 3085–3108, 3340–3377)
 * **Description:** `_trade_lock` only wraps buy paths. The health-loop market-cap refresh, Geyser/WebSocket exit checks, graduation exits, copy-trade mirrors, and emergency liquidation all call `_sell_token` without a lock.
 * **Impact:** Two tasks can read the same balance and submit overlapping full or partial sells for the same mint. The second one fails or oversells, and position accounting ends up out of sync.
@@ -417,7 +417,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** After two harvest fills, the rest of the position is fully sold right away and the 2.0x / 3.5x tiers never run.
 * **Remedy:** Give pre-graduation tranches their own tier IDs (e.g. `"pre_grad_1"`) or a separate flag.
 
-### BUG-44: Graduated Positions Cannot Exit on Raydium [OPEN]
+### BUG-44: Graduated Positions Cannot Exit on Raydium [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`CompleteEvent` handling ~L2697–2701, `_handle_raydium_pool_update` ~L2716–2717)
 * **Description:** When a curve completes, the bot tries to sell through the Pump.fun bonding curve, which no longer accepts trades. The position stays open. When the Raydium pool shows up, `_handle_raydium_pool_update` returns early for any mint that is already held, so it never attaches `pool_keys` or sells through the AMM.
 * **Impact:** Positions held through migration get stuck. BUG-35 and BUG-39 make it worse.
@@ -429,7 +429,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Realized PnL after a restart is roughly the full sale proceeds, which inflates daily PnL and skews the circuit breaker. Restored Raydium positions can't find their pool.
 * **Remedy:** Persist `position_manager.to_dict()` (or at least `cost_sol`, remaining tokens, `position_id`, `pool_keys`). Never use unit `buy_price` as position cost.
 
-### BUG-46: `_risk_killed` Stays Set After Transient Stream or RPC Problems [OPEN]
+### BUG-46: `_risk_killed` Stays Set After Transient Stream or RPC Problems [RESOLVED]
 * **Location:** `pumpfun_trading/bot/health.py` (~L9–24, ~L28–48), `pumpfun_trading/bot/run.py` (`_check_account_equity_guard` ~L1189–1217)
 * **Description:** A stale stream or health check sets `_risk_killed = True`. When the stream recovers, `mark_health_check` only resets `_health_ok`. `_check_account_equity_guard` also sets `_risk_killed = True` on any exception from `get_balance_sol()`. Only `start()` or a manual circuit-breaker reset clears the flag.
 * **Impact:** A 60s Geyser gap or one flaky balance call stops all new entries until the process restarts.

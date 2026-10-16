@@ -15,12 +15,13 @@ def health_ok_for_trading(bot: Any) -> bool:
         time.monotonic() - bot._last_health_check
         > bot.config.health_check_timeout_seconds
     ):
+        # Transient: blocks entries until the next healthy check, but does not
+        # latch the risk kill switch (BUG-46).
         bot._last_status = "health timeout"
         bot._health_ok = False
-        bot._risk_killed = True
-        bot._last_event = "risk kill: health timeout"
+        bot._last_event = "trading paused: health timeout"
         if hasattr(bot, "_record_event"):
-            bot._record_event("risk kill: health timeout", alert=True)
+            bot._record_event("trading paused: health timeout", alert=True)
         return False
     return True
 
@@ -39,10 +40,9 @@ def update_health_state(bot: Any) -> None:
     ):
         if bot._health_ok:
             bot._health_ok = False
-            bot._risk_killed = True
             bot._last_status = "health timeout"
-            bot._last_event = "risk kill: stream stale"
+            bot._last_event = "trading paused: stream stale"
             if hasattr(bot, "_record_event"):
-                bot._record_event("risk kill: stream stale", alert=True)
+                bot._record_event("trading paused: stream stale", alert=True)
     else:
         mark_health_check(bot)

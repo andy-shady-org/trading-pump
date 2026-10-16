@@ -661,7 +661,9 @@ async def test_circuit_breaker_edge_cases_and_liquidation_branches():
     )
     bot._sell_token = AsyncMock(return_value=True)
     await bot._handle_complete_event_update(complete_update_active)
-    bot._sell_token.assert_called_once_with(mint1, reason="bonding_curve_graduated")
+    # BUG-44: no curve sell after completion; the exit waits for the AMM pool.
+    bot._sell_token.assert_not_called()
+    assert mint1 in bot._migrating_mints
 
     # 4. _handle_new_token_event missing mint and stopped requested
     await bot._handle_new_token_event({})

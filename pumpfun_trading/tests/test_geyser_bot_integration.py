@@ -1,12 +1,16 @@
 """Comprehensive integration and coverage tests for Yellowstone Geyser bot runtime."""
 
+import asyncio
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
 from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
+from pumpfun_trading.execution.executor import ExecutionResult
+from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -271,13 +275,42 @@ async def test_complete_event_update_branches(bot):
     )
     await bot._handle_complete_event_update(complete_update)
 
-    # 2. Active token complete event triggers exit
+    # 2. Active token complete event marks the position migrating (BUG-44):
+    # the completed curve rejects sells, so the exit waits for the AMM pool.
     bot.active_positions[SAMPLE_MINT] = {
         "name": "GraduatingToken",
         "entry_market_cap": 30.0,
         "current_market_cap": 85.0,
     }
     await bot._handle_complete_event_update(complete_update)
+    assert SAMPLE_MINT in bot.active_positions
+    assert SAMPLE_MINT in bot._migrating_mints
+    assert await bot._sell_token(SAMPLE_MINT, reason="retry") is False
+
+    # The Raydium pool for a held mint is attached and the exit goes via the AMM.
+    pool_keys = RaydiumPoolKeys(
+        amm_id="Amm111",
+        amm_authority="Auth111",
+        amm_open_orders="Open111",
+        amm_target_orders="Target111",
+        pool_coin_token_account="CoinVault111",
+        pool_pc_token_account="PcVault111",
+        serum_program_id="Serum111",
+        serum_market="Market111",
+        serum_bids="Bids111",
+        serum_asks="Asks111",
+        serum_event_queue="Events111",
+        serum_coin_vault="SerumCoin111",
+        serum_pc_vault="SerumPc111",
+        serum_vault_signer="Signer111",
+        coin_mint=SAMPLE_MINT,
+        pc_mint="So11111111111111111111111111111111111111112",
+        lp_mint="LpMint111",
+    )
+    raydium_sell = AsyncMock(wraps=bot.executor.execute_raydium_sell)
+    bot.executor.execute_raydium_sell = raydium_sell
+    await bot._handle_raydium_pool_update(pool_keys)
+    raydium_sell.assert_awaited_once()
     assert SAMPLE_MINT not in bot.active_positions
 
     # 3. Stop requested ignored
@@ -337,7 +370,10 @@ async def test_bot_full_geyser_streaming_lifecycle(bot):
     bot.geyser_client.listen = mock_listen
     await bot.start()
 
-    assert SAMPLE_MINT not in bot.active_positions
+    # The completed curve leaves any held position waiting for the AMM (BUG-44).
+    assert SAMPLE_MINT not in bot.active_positions or (
+        SAMPLE_MINT in bot._migrating_mints
+    )
     assert bot.state == TradingBotState.SHUTDOWN
     await bot.close()
 
@@ -484,4 +520,81 @@ async def test_websocket_stream_dispatch_when_stream_url_configured(tmp_path):
 
     assert ws_stream_called is True
     assert bot.state == TradingBotState.SHUTDOWN
+    await bot.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_sells_same_mint_send_one_order(bot):
+    """BUG-41: overlapping exits for one mint are serialized; only one sell is sent."""
+    bot.active_positions[SAMPLE_MINT] = {
+        "name": "RaceToken",
+        "token_amount": 100_000_000,
+        "entry_market_cap": 30.0,
+        "current_market_cap": 30.0,
+    }
+    calls = 0
+
+    async def slow_sell(**kwargs):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)
+        return ExecutionResult(
+            success=True, mint=SAMPLE_MINT, is_buy=False, amount_sol=0.01
+        )
+
+    bot.executor.execute_sell = slow_sell
+    results = await asyncio.gather(
+        bot._sell_token(SAMPLE_MINT, reason="a"),
+        bot._sell_token(SAMPLE_MINT, reason="b"),
+    )
+    assert calls == 1
+    assert results.count(True) == 1
+    assert SAMPLE_MINT not in bot.active_positions
+
+
+@pytest.mark.asyncio
+async def test_health_loop_drains_exit_retry_queue(bot, monkeypatch):
+    """BUG-39: the runtime health loop processes the exit retry queue."""
+    drained = asyncio.Event()
+
+    async def fake_process(websocket=None):
+        drained.set()
+        bot._stop_requested = True
+
+    async def fast_sleep(_seconds):
+        return None
+
+    bot._process_exit_retry_queue = fake_process
+    monkeypatch.setattr("pumpfun_trading.bot.run.asyncio.sleep", fast_sleep)
+    await asyncio.wait_for(bot._run_health_loop(), timeout=5)
+    assert drained.is_set()
+
+
+def test_exit_retry_queue_persisted_without_monotonic_times(bot):
+    """BUG-39: the snapshot keeps the queue, minus process-local clock values."""
+    bot._enqueue_exit_retry(SAMPLE_MINT, reason="sell_exec_failed")
+    entry = bot.get_status_snapshot()["exit_retry_queue"][SAMPLE_MINT]
+    assert entry["reason"] == "sell_exec_failed"
+    assert "next_retry_at" not in entry
+
+
+@pytest.mark.asyncio
+async def test_geyser_events_routed_once(bot):
+    """BUG-40: start() consumes listen() only and does not also register callbacks."""
+    bot.geyser_client.on_bonding_curve = AsyncMock()
+    bot.geyser_client.on_trade = AsyncMock()
+    bot.geyser_client.on_complete = AsyncMock()
+
+    async def mock_listen():
+        yield CompleteEventUpdate(
+            mint=SAMPLE_MINT_2, user="U", bonding_curve="C", timestamp=1
+        )
+        bot.request_shutdown()
+
+    routed = AsyncMock()
+    bot.event_router.route_geyser_complete_update = routed
+    bot.geyser_client.listen = mock_listen
+    await bot.start()
+    routed.assert_awaited_once()
+    bot.geyser_client.on_complete.assert_not_called()
     await bot.close()
