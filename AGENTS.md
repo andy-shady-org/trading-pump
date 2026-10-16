@@ -36,6 +36,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[STREAMS] No Fake Connections:** Never set a stream to CONNECTED without a real transport; fail fast (`GeyserTransportUnavailableError`) and fall back. Yellowstone account filters must use bonding-curve PDAs, not mints.
 - **[ARB] Chain-Read Reserves Only:** Never execute or bank arbitrage on estimated/placeholder reserves; only `reserves_verified=True` opportunities may execute.
 - **[DOCS] Completion Claims Track Code:** TODO item 25 claimed `bot/run.py` was a "lightweight facade" while it had regrown to ~3,770 lines. Before ticking or citing a completed refactor, verify it against the current code (file size, responsibilities); re-open the item when it regresses.
+- **[SCREENING] Stream Payloads Are Not Enrichment:** PumpPortal/Geyser create events carry no socials or holders. Always enrich screened tokens (API record, metadata `uri`, `getTokenLargestAccounts`) with bounded timeouts, since screening runs inside `_trade_lock`; never skip enrichment because stream data was passed (BUG-95). Keep tests off live endpoints.
 
 
 ## Project Overview

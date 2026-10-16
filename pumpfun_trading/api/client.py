@@ -6,6 +6,42 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+# ipfs.io / dweb.link now answer HTTP 429 ("service worker gateway only"), so
+# token metadata is read through Pump.fun's own Pinata gateway (BUG-95).
+IPFS_GATEWAY = "https://pump.mypinata.cloud/ipfs/"
+_PUBLIC_IPFS_HOSTS = (
+    "https://ipfs.io/ipfs/",
+    "https://dweb.link/ipfs/",
+    "https://cloudflare-ipfs.com/ipfs/",
+    "https://cf-ipfs.com/ipfs/",
+    "https://gateway.pinata.cloud/ipfs/",
+)
+# Client errors that are final answers, not transient failures.
+_RETRYABLE_CLIENT_STATUSES = frozenset({408, 425, 429})
+
+
+class PumpFunApiHttpError(RuntimeError):
+    """HTTP error response from a Pump.fun (or metadata) endpoint."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def is_retryable(self) -> bool:
+        return self.status >= 500 or self.status in _RETRYABLE_CLIENT_STATUSES
+
+
+def resolve_metadata_uri(uri: str) -> str:
+    """Maps ``ipfs://`` and rate-limited public gateway URLs to ``IPFS_GATEWAY``."""
+    url = str(uri or "").strip()
+    if url.startswith("ipfs://"):
+        return IPFS_GATEWAY + url[len("ipfs://") :].lstrip("/")
+    for prefix in _PUBLIC_IPFS_HOSTS:
+        if url.startswith(prefix):
+            return IPFS_GATEWAY + url[len(prefix) :]
+    return url
+
 
 class PumpFunApiClient:
     """Client for Pump.fun frontend / analytics HTTP APIs.
@@ -67,6 +103,11 @@ class PumpFunApiClient:
             return path
         return f"{self.base_url}{path}"
 
+    def _record_circuit_failure(self) -> None:
+        self._circuit_failures += 1
+        if self._circuit_failures >= self.circuit_breaker_threshold:
+            self._circuit_open_until = time.monotonic() + self.circuit_cooldown_seconds
+
     def _backoff_delay(self, attempt: int) -> float:
         return self.retry_backoff_seconds * (2**attempt)
 
@@ -88,8 +129,9 @@ class PumpFunApiClient:
         ) as resp:
             text = await resp.text()
             if resp.status >= 400:
-                raise RuntimeError(
-                    f"PumpFun API {method.upper()} {path} failed: HTTP {resp.status} :: {text[:500]}"
+                raise PumpFunApiHttpError(
+                    f"PumpFun API {method.upper()} {path} failed: HTTP {resp.status} :: {text[:500]}",
+                    resp.status,
                 )
             try:
                 return json_module.loads(text) if text else {}
@@ -124,16 +166,22 @@ class PumpFunApiClient:
                 )
                 self._circuit_failures = 0
                 return result
+            except PumpFunApiHttpError as exc:
+                # A 404 for a not-yet-indexed mint is an answer: retrying only adds
+                # ~3.5 s of backoff and must not trip the circuit (BUG-95).
+                if not exc.is_retryable:
+                    raise
+                last_error = exc
+                if attempt >= self.max_retries:
+                    self._record_circuit_failure()
+                    raise
+                await asyncio.sleep(self._backoff_delay(attempt))
             except (
                 Exception
             ) as exc:  # pragma: no cover - retry path exercised via tests
                 last_error = exc
                 if attempt >= self.max_retries:
-                    self._circuit_failures += 1
-                    if self._circuit_failures >= self.circuit_breaker_threshold:
-                        self._circuit_open_until = (
-                            time.monotonic() + self.circuit_cooldown_seconds
-                        )
+                    self._record_circuit_failure()
                     raise
                 await asyncio.sleep(self._backoff_delay(attempt))
 
@@ -297,6 +345,18 @@ class PumpFunApiClient:
             raise RuntimeError(
                 f"Mint {mint} not found via the public Pump.fun metadata endpoints."
             ) from exc
+
+    async def fetch_token_metadata(self, uri: str) -> dict[str, Any]:
+        """Fetches a token's off-chain metadata JSON (name, socials) from its URI.
+
+        Makes a single attempt outside the retry loop and circuit breaker, so a
+        slow IPFS gateway can't disable the Pump.fun API for other callers (BUG-95).
+        """
+        url = resolve_metadata_uri(uri)
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(f"Unsupported token metadata URI: {uri!r}")
+        payload = await self._request_once("GET", url)
+        return payload if isinstance(payload, dict) else {}
 
     async def get_coin_info(self, mint: str) -> Dict[str, Any]:
         payload = await self.get_coin(mint)

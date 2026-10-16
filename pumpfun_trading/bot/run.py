@@ -2581,7 +2581,7 @@ class TradingBot:
                         f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
                     )
                     reasons_str = (
-                        screening_verdict.reasons[0]
+                        "; ".join(screening_verdict.reasons)
                         if screening_verdict.reasons
                         else "anti-rug"
                     )
@@ -3115,7 +3115,7 @@ class TradingBot:
                     f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
                 )
                 reasons_str = (
-                    screening_verdict.reasons[0]
+                    "; ".join(screening_verdict.reasons)
                     if screening_verdict.reasons
                     else "anti-rug"
                 )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, Optional
@@ -17,6 +18,13 @@ from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.strategies.base import TradingBotConfig
 
 logger = logging.getLogger(__name__)
+
+# Per-lookup budget for screening I/O; screening runs inside the trade lock.
+DEFAULT_LOOKUP_TIMEOUT_SECONDS = 2.5
+# Pump.fun mints have a fixed 1B-token supply (6 decimals).
+PUMP_TOTAL_SUPPLY_UI = 1_000_000_000.0
+_SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+_TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 
 
 def _timestamp_ms(value: Any) -> float:
@@ -45,6 +53,37 @@ def count_launches_last_24h(coins: list[Any], *, now: float | None = None) -> in
     return count
 
 
+def merge_token_data(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Merges two token payloads; non-empty ``overlay`` values win (BUG-95)."""
+    merged = dict(base)
+    for key, value in overlay.items():
+        if value not in (None, "", [], {}) or key not in merged:
+            merged[key] = value
+    return merged
+
+
+def creator_initial_buy_pct(
+    coin_data: dict[str, Any], *, total_supply_ui: float = PUMP_TOTAL_SUPPLY_UI
+) -> float | None:
+    """Creator's share of supply from the create transaction's ``initialBuy``.
+
+    PumpPortal reports ``initialBuy`` in whole tokens; raw base units are
+    detected by size and scaled down (6 decimals).
+    """
+    raw = coin_data.get("initialBuy")
+    if raw is None:
+        return None
+    try:
+        amount = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if amount <= 0:
+        return None
+    if amount > total_supply_ui:
+        amount /= 1_000_000.0
+    return min(1.0, amount / total_supply_ui)
+
+
 class TokenEnricher:
     """Handles off-chain token metadata enrichment, creator profiling, and anti-rug screening."""
 
@@ -55,8 +94,10 @@ class TokenEnricher:
         config: Optional[TradingBotConfig] = None,
         strategy: Optional[TradingStrategy] = None,
         screening_cache: Optional[ScreeningCache] = None,
+        lookup_timeout_seconds: float = DEFAULT_LOOKUP_TIMEOUT_SECONDS,
     ) -> None:
         self.api = api_client
+        self.lookup_timeout_seconds = lookup_timeout_seconds
         self.execution = execution_client
         self.config = config or TradingBotConfig()
         self.strategy = strategy or TradingStrategy(self.config)
@@ -84,16 +125,16 @@ class TokenEnricher:
         if cached_verdict is not None:
             return cached_verdict
 
-        coin_data: dict[str, Any] = dict(token_data or {})
-        if not coin_data and self.api:
-            try:
-                fetched = await self.api.get_coin(mint)
-                if isinstance(fetched, dict):
-                    coin_data = fetched
-            except Exception as exc:
-                logger.debug(
-                    "Metadata query for %s failed during screening: %s", mint, exc
-                )
+        # Stream payloads (e.g. PumpPortal newToken) carry no socials or holders, so
+        # always look the token up and fetch on-chain holders, in parallel (BUG-95).
+        fetched, chain_holders = await asyncio.gather(
+            self._fetch_coin(mint), self._fetch_largest_holders(mint)
+        )
+        coin_data = merge_token_data(fetched, token_data or {})
+        if not TokenMetadata.from_dict(coin_data).social_links_count():
+            coin_data = merge_token_data(
+                coin_data, await self._fetch_offchain_metadata(coin_data)
+            )
 
         metadata = TokenMetadata.from_dict(coin_data) if coin_data else None
 
@@ -107,7 +148,10 @@ class TokenEnricher:
         )
         if creator and isinstance(creator, str) and self.api:
             try:
-                creator_coins = await self.api.get_creator_coins(creator, limit=20)
+                creator_coins = await asyncio.wait_for(
+                    self.api.get_creator_coins(creator, limit=20),
+                    timeout=self.lookup_timeout_seconds,
+                )
                 coins_list: list[Any] | None = None
                 if isinstance(creator_coins, list):
                     coins_list = creator_coins
@@ -144,11 +188,19 @@ class TokenEnricher:
             or coin_data.get("creatorPct")
             or coin_data.get("dev_holding_pct")
         )
+        if creator_holding_val is None:
+            creator_holding_val = creator_initial_buy_pct(coin_data)
         creator_pct = (
             float(creator_holding_val) if creator_holding_val is not None else 0.0
         )
 
-        if isinstance(holders_data, list):
+        if not isinstance(holders_data, list) and chain_holders:
+            holder_distribution = HolderDistribution(
+                creator_initial_pct=creator_pct,
+                bonding_curve_address=bonding_curve_pda,
+                top_holders=self._label_curve_account(mint, chain_holders),
+            )
+        elif isinstance(holders_data, list):
             top_holders_list = []
             for h in holders_data:
                 if isinstance(h, dict):
@@ -231,3 +283,96 @@ class TokenEnricher:
             )
 
         return verdict
+
+    async def _fetch_coin(self, mint: str) -> dict[str, Any]:
+        """Pump.fun API record for the mint, or ``{}`` if not (yet) indexed."""
+        if not self.api:
+            return {}
+        try:
+            fetched = await asyncio.wait_for(
+                self.api.get_coin(mint), timeout=self.lookup_timeout_seconds
+            )
+        except Exception as exc:
+            logger.debug("Metadata query for %s failed during screening: %s", mint, exc)
+            return {}
+        return fetched if isinstance(fetched, dict) else {}
+
+    async def _fetch_offchain_metadata(
+        self, coin_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Metadata JSON behind the token ``uri`` (socials live there), or ``{}``."""
+        uri = (
+            coin_data.get("uri")
+            or coin_data.get("metadata_uri")
+            or coin_data.get("metadataUri")
+        )
+        if not self.api or not isinstance(uri, str) or not uri.strip():
+            return {}
+        try:
+            fetched = await asyncio.wait_for(
+                self.api.fetch_token_metadata(uri),
+                timeout=self.lookup_timeout_seconds,
+            )
+        except Exception as exc:
+            logger.debug("Token metadata fetch from %s failed: %s", uri, exc)
+            return {}
+        if not isinstance(fetched, dict):
+            return {}
+        # Only take social fields; the URI JSON's own "uri"/"image" keys are not ours.
+        return {
+            key: fetched[key]
+            for key in (
+                "description",
+                "twitter",
+                "telegram",
+                "website",
+                "discord",
+                "extensions",
+                "links",
+                "socials",
+            )
+            if key in fetched
+        }
+
+    async def _fetch_largest_holders(self, mint: str) -> list[tuple[str, int]]:
+        """On-chain largest token accounts for the mint, or ``[]`` on failure."""
+        if not self.execution:
+            return []
+        try:
+            holders = await asyncio.wait_for(
+                self.execution.get_token_largest_accounts(
+                    mint, timeout_seconds=self.lookup_timeout_seconds
+                ),
+                timeout=self.lookup_timeout_seconds,
+            )
+        except Exception as exc:
+            logger.debug("Largest-holder query for %s failed: %s", mint, exc)
+            return []
+        return holders if isinstance(holders, list) else []
+
+    def _label_curve_account(
+        self, mint: str, holders: list[tuple[str, int]]
+    ) -> list[tuple[str, int]]:
+        """Relabels the bonding curve's token account with the curve PDA.
+
+        ``getTokenLargestAccounts`` returns token accounts, so the curve's tokens sit
+        in its associated account. Using the PDA lets the top-5 and Gini checks
+        exclude it.
+        """
+        if not self.execution:  # pragma: no cover - holders imply an execution client
+            return list(holders)
+        try:
+            curve_pda = ""
+            curve_accounts: set[str] = set()
+            for program in (_SPL_TOKEN_PROGRAM, _TOKEN_2022_PROGRAM):
+                pda, associated = self.execution.get_bonding_curve_pda(
+                    mint, token_program=program
+                )
+                curve_pda = str(pda)
+                curve_accounts.add(str(associated))
+        except Exception:
+            return list(holders)
+        return [
+            (curve_pda if addr in curve_accounts else addr, amount)
+            for addr, amount in holders
+        ]

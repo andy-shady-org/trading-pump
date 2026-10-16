@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pumpfun_trading.bot.position_manager import PositionManager
@@ -503,16 +503,17 @@ async def test_dynamic_slippage_uses_live_reserves_and_real_notional(
     """BUG-52: policy gets live curve reserves, the real SOL size and curve updates."""
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
     policy = executor.execution_policy
-    policy.resolve_parameters = MagicMock(wraps=policy.resolve_parameters)
+    resolve_spy = MagicMock(wraps=policy.resolve_parameters)
 
-    await executor.execute_buy("Mint111", 0.1)
-    buy_kwargs = policy.resolve_parameters.call_args
-    assert buy_kwargs.args[1] == pytest.approx(0.1)
-    assert buy_kwargs.kwargs["virtual_sol_reserves"] == pytest.approx(30.0)
-    assert buy_kwargs.kwargs["virtual_token_reserves"] == 1_000_000_000
+    with patch.object(policy, "resolve_parameters", resolve_spy):
+        await executor.execute_buy("Mint111", 0.1)
+        buy_kwargs = resolve_spy.call_args
+        assert buy_kwargs.args[1] == pytest.approx(0.1)
+        assert buy_kwargs.kwargs["virtual_sol_reserves"] == pytest.approx(30.0)
+        assert buy_kwargs.kwargs["virtual_token_reserves"] == 1_000_000_000
 
-    await executor.execute_sell("Mint111", 500_000)
-    sell_kwargs = policy.resolve_parameters.call_args
+        await executor.execute_sell("Mint111", 500_000)
+        sell_kwargs = resolve_spy.call_args
     assert sell_kwargs.kwargs["is_buy"] is False
     assert sell_kwargs.args[1] == pytest.approx(0.0148, rel=0.01)
     assert len(policy.get_estimator("Mint111").get_observations()) == 2
