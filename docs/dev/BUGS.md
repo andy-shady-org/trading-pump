@@ -109,6 +109,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-99** | Medium | Bot / Arbitrage Accounting | **RESOLVED** | Landed arbitrage is booked net: fee, priority fee and tip read from the bundle transaction (modelled when unavailable or in dry-run) and fed to the daily breaker |
 | **BUG-100** | Low | Bot / Config | **RESOLVED** | An explicit `stream_url=` argument now wins; config, then env, then default (unchanged for `pumpbot`, which never passes it) |
 | **BUG-101** | Medium | SDK / Quoting | **RESOLVED** | Pump.fun builders raise `CurveStateUnavailableError` instead of quoting against initial-curve placeholder reserves |
+| **BUG-102** | High | Security / Telemetry | **OPEN** | RPC endpoint URLs, including provider API keys in the query string, are written in full to `bot_status.json`; fix scheduled in Sprint 24C |
 
 ---
 
@@ -818,4 +819,20 @@ Found while writing behaviour tests to bring coverage back to 95%. None is on th
 * **Remedy:** Raise `CurveStateUnavailableError` on zero reserves and let the graduation / Raydium path handle the exit; tests currently pin the fallback.
 * **Resolution (2026-10-16):** `PumpFunExecutionClient._live_curve_reserves` raises `CurveStateUnavailableError` when the curve reports no virtual reserves, so `build_buy_tx` / `build_sell_tx` never quote against the 30 SOL / 1.073e15 constants. Callers that pass their own `token_amount` / `min_sol_output` (quoted from stream reserves) are unaffected; a failed sell goes to the exit retry queue as before.
 * **Verification:** `tests/unit/sdk/test_execution.py` (`test_build_tx_zero_reserves_refuses_to_quote`, `test_build_tx_zero_reserves_with_explicit_limits_still_builds`).
+
+---
+
+## 9. Open Issues — Stage 0 on v0.2.0 (2026-10-16)
+
+### BUG-102: RPC API Key Written in Plain Text to `bot_status.json` [OPEN]
+* **Location:** `pumpfun_trading/infra/rpc_pool.py` (`RpcEndpoint.to_dict` → `"url"`, `RpcPoolConfig.to_dict` → `"endpoints"`), `pumpfun_trading/bot/run.py` (`get_status_snapshot` → `rpc_pool_telemetry`, ~L1557)
+* **Description:** Found while diagnosing the Stage 0 restart on v0.2.0 (PumpPortal HTTP 502 outage). `data/bot_status.json` → `rpc_pool_telemetry.endpoints[].url` holds the full Helius URL including `?api-key=…`. `RpcEndpoint.to_dict` serialises `self.url` unmasked, and the snapshot copies it verbatim. The same pattern can affect any other URL that carries a credential (`stream_url` in `TradingBotConfig.to_dict`, the Geyser endpoint in log/event messages, `aiohttp` error strings that include `url=`).
+* **Impact:** Anyone who sees the status file, a screenshot of the dashboard/status, a shared log or incident bundle, or (later) a Web UI view built from the snapshot gets the RPC key and can spend the operator's RPC quota or get the account rate-limited. No direct loss of funds (the wallet key is not exposed), but it breaks the key-handling rules for the hosted Web UI (`AGENTS.md` Security & Key Management) and must be fixed before any status data leaves the operator's machine.
+* **Workaround until fixed:** don't share `bot_status.json`, `bot.log` or incident bundles unredacted; rotate the RPC key if they were already shared.
+* **Remedy:**
+  * Add a single `redact_url()` helper (e.g. `ops/redact.py`) that keeps scheme, host and path but replaces credential-bearing parts: query values (`api-key`, `apikey`, `token`, `key`, `x-token`, …), `user:password@` userinfo, and long path segments that are keys (QuickNode / Alchemy style `/v2/<key>`) with `***`.
+  * Use it in `RpcEndpoint.to_dict`, `RpcPoolConfig.to_dict`, `TradingBotConfig.to_dict` (`stream_url`, `api_base_url`), and in every log, event and alert message that includes an endpoint or stream URL (`bot/run.py`, `streams/geyser.py`, `infra/rpc_pool.py`). Keep the raw URL only in memory for making requests.
+  * Keep the existing `label` (host) as the human-readable identifier.
+  * Tests in the mirrored layout: `tests/unit/ops/test_redact.py` (table of provider URL shapes), `tests/unit/infra/test_rpc_pool.py` (telemetry has no key), and a snapshot test asserting no `api-key=` / known secret appears anywhere in `get_status_snapshot()` output.
+* **Scheduled:** Sprint 24C (`docs/dev/TODO.md`). Not on the money path; needs a 24h Stage 0 re-run only if it lands together with other runtime changes.
 

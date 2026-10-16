@@ -696,7 +696,7 @@ The bot can trade live, but there is no evidence yet that it is profitable after
 |---|---|---|
 | 24A | Paper pilot and live canary (evidence) | No (operations only) |
 | 24B | Net PnL accounting and reconciliation (measurement) | Accounting only; restarts Stage 0 for 24h |
-| 24C | Backtest fidelity and strategy tuning (edge) | Config only, unless BUG-61 fixes change live code |
+| 24C | Backtest fidelity and strategy tuning (edge); BUG-102 secret redaction | Config only, unless BUG-61 fixes change live code; BUG-102 touches telemetry/logging only |
 | 24D | Unattended operation and capital protection (uptime, safety) | Partly (pause / sweep) |
 
 **Rules while the income track runs**
@@ -739,13 +739,14 @@ Branch `sprint-24b-net-pnl`.
 - [ ] Verify on mainnet with the first canary trades: `pumpfun-audit reconcile` passes and every full exit shows a negative `rent_sol`. *Partly done (read-only):* the cost parser was run on real third-party Pump.fun sells that close the token account and reads the rent refund, fee and priority fee correctly; this also showed mainnet rent is now ~0.0015 SOL, so the modelled paper rent was corrected. Only the bot's own canary trades can close this item
 - **Acceptance:** for a paper/devnet session, `pumpfun-audit reconcile` reproduces the wallet delta within tolerance; net PnL on the dashboard equals the audit `pnl` total; coverage ≥ 95%
 
-### Sprint 24C: Backtest Fidelity & Strategy Tuning (BUG-61)
+### Sprint 24C: Backtest Fidelity & Strategy Tuning (BUG-61, BUG-102)
+- [ ] **BUG-102 (do first):** stop writing RPC API keys to disk. Add a `redact_url()` helper (`ops/redact.py`) that masks credential query values (`api-key`, `token`, `key`, …), `user:pass@` userinfo and key-like path segments; use it in `RpcEndpoint.to_dict` / `RpcPoolConfig.to_dict` (`infra/rpc_pool.py`), `TradingBotConfig.to_dict` (`stream_url`, `api_base_url`) and every log/event/alert message that prints an endpoint or stream URL (`bot/run.py`, `streams/geyser.py`). Tests: `unit/ops/test_redact.py`, `unit/infra/test_rpc_pool.py`, and a snapshot test asserting no secret appears in `get_status_snapshot()`. See BUG-102 in [`BUGS.md`](BUGS.md) §9
 - [ ] Resolve BUG-61: `PaperTradingEngine` (`engines/replay.py`) uses the live sizing (`buy_amount_sol`, exposure caps) and the live exit stack (tiered take-profits, trailing stops, max-hold, stagnant exits) from `strategies/exits.py`
 - [ ] Model fees, priority fees, Jito tips and slippage in replay from the 24B cost data, so backtests report **net** PnL
 - [ ] Replay-vs-live parity check: replay the Stage 0 / Stage 1 capture and compare decisions and PnL with the audit trail; differences explained
 - [ ] Tune with `pumpfun-optimize` on recorded **live** captures (train/test split by day; BUG-60 selection on `train_fitness` only); promote a tuned config only through Stage 0
 - [ ] Per-filter and per-exit attribution report (which filters reject winners, which exits leave money on the table) via `pumpfun-audit pnl --by reason`
-- **Acceptance:** replay of a live capture matches live net PnL within an agreed tolerance; a tuned config beats the canary config out-of-sample before it is promoted
+- **Acceptance:** `bot_status.json`, `bot.log`, `events.jsonl` and alerts from a Stage 0 run contain no RPC/stream credential (BUG-102); replay of a live capture matches live net PnL within an agreed tolerance; a tuned config beats the canary config out-of-sample before it is promoted
 
 ### Sprint 24D: Unattended Operation & Capital Protection (FEAT-50, FEAT-42)
 - [ ] Operator pause without a restart: `SIGUSR1` toggles "no new buys, keep managing exits" (early, terminal-only slice of the Sprint 29 `PAUSED` state); state shown on the dashboard and written to the audit trail
