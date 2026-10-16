@@ -28,7 +28,7 @@ Update this table whenever a gate run finishes. Link the release record rather t
 | Net PnL measurement | Implemented on branch `sprint-24b-net-pnl` (fees, tips, rent per trade; `pumpfun-audit pnl` / `reconcile`, last result on the dashboard); release gate green (922 tests, coverage 96.3%); test-pass bugs BUG-97…101 fixed; cost parser checked read-only on real mainnet sells; the bot's own canary trades not yet reconciled | Sprint 24B (FEAT-49, BUG-96) |
 | Funding gate for the Web UI ([§3.7](#37-funding-gate-for-the-web-ui)) | Not passed | – |
 | Mainnet-verified money paths | Pump.fun `buy`/`sell` layout only (BUG-34) | `BUGS.md` |
-| Open (mitigated) defects that limit live scope | BUG-37, BUG-55, BUG-59, BUG-61, BUG-90, BUG-92 | See [§3.5](#35-features-that-must-stay-off-until-proven) |
+| Open (mitigated) defects that limit live scope | BUG-37, BUG-55, BUG-59, BUG-90, BUG-92 (BUG-61 resolved in Sprint 24C) | See [§3.5](#35-features-that-must-stay-off-until-proven) |
 
 ---
 
@@ -144,7 +144,7 @@ These stay disabled in Stages 1–2 until the listed condition is met and a rele
 | `enable_raydium_migration_sniping`, graduation exits via Raydium | BUG-36/44/50/51 fixes not mainnet-verified | Raydium buy and sell simulated on mainnet, then one live round trip at canary size |
 | Geyser endpoint (`PUMPFUN_GEYSER_ENDPOINT`) | BUG-55 mitigated; no real gRPC transport, falls back to WebSocket | FEAT-39 delivered |
 | `max_positions_per_mint` > 1 | BUG-92 clamps it to 1 | Per-mint pyramiding implemented |
-| Replay/optimizer output as proof of profitability | BUG-61: replay does not run live sizing or tiered/trailing exits | BUG-61 fully resolved |
+| Replay/optimizer output as proof of profitability | BUG-61 is resolved (live sizing, exits and modelled costs), but the screener is not replayed and parity with live has not been shown yet | `pumpfun-replay --compare-audit` passes on a Stage 0 and a Stage 1 capture (`RUNBOOK.md` §6.1) |
 
 ### 3.6 Stop triggers (any stage)
 Stop the bot, drop back one stage and open a `BUGS.md` entry if any of these happen:

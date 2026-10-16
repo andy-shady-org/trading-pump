@@ -14,6 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TextIO
 
+from pumpfun_trading.ops.redact import redact_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -324,7 +326,11 @@ class DiagnosticEventLogger:
             return
 
         try:
-            lines = [json.dumps(evt.to_dict(), sort_keys=True) + "\n" for evt in batch]
+            # Mask credentials in any URL an event carries (BUG-102).
+            lines = [
+                redact_text(json.dumps(evt.to_dict(), sort_keys=True)) + "\n"
+                for evt in batch
+            ]
             self._file_handle.writelines(lines)
             self._file_handle.flush()
             self._total_written_count += len(batch)

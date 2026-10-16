@@ -18,6 +18,8 @@ from typing import Any, Optional, Sequence
 
 import aiohttp
 
+from pumpfun_trading.ops.redact import redact_url
+
 # JSON-RPC errors caused by the request itself (bad params, missing account,
 # preflight/simulation or signature failure). Every other error code is treated
 # as an endpoint problem and triggers failover.
@@ -58,6 +60,8 @@ class RpcEndpoint:
             clean_url = (
                 self.url.replace("https://", "").replace("http://", "").split("/")[0]
             )
+            # Never let ``user:password@`` userinfo into the label (BUG-102).
+            clean_url = clean_url.rsplit("@", 1)[-1].split("?")[0]
             self.label = clean_url or "rpc_endpoint"
 
     def record_success(self, latency_seconds: float) -> None:
@@ -177,7 +181,7 @@ class RpcEndpoint:
     def to_dict(self) -> dict[str, Any]:
         """Serialize endpoint metrics to dictionary representation."""
         return {
-            "url": self.url,
+            "url": redact_url(self.url),
             "label": self.label,
             "weight": self.weight,
             "state": self.state.value,
@@ -213,7 +217,8 @@ class RpcPoolConfig:
         """Convert configuration to dictionary."""
         return {
             "endpoints": [
-                e.url if isinstance(e, RpcEndpoint) else e for e in self.endpoints
+                redact_url(e.url if isinstance(e, RpcEndpoint) else e)
+                for e in self.endpoints
             ],
             "health_check_interval_seconds": self.health_check_interval_seconds,
             "circuit_breaker_threshold": self.circuit_breaker_threshold,

@@ -68,7 +68,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-58** | High | Bot / Dev Wallet Enrichment | **RESOLVED** | `tokens_launched_24h` of 0 falls back to the creator's lifetime launch count |
 | **BUG-59** | High | Bot / Cross-Venue Arbitrage | **MITIGATED** | Arbitrage is quoted and executed on made-up pool reserves |
 | **BUG-60** | High | Engines / Optimizer | **RESOLVED** | Holdout (test) fitness is used to select trials (train/test leakage) |
-| **BUG-61** | High | Engines / Replay | **MITIGATED** | Paper replay ignores most parameters the optimizer searches |
+| **BUG-61** | High | Engines / Replay | **RESOLVED** | Live-fidelity replay runs the live sizing, risk limits, exit stack and modelled costs; the optimizer searches the exit stack again (Sprint 24C) |
 | **BUG-62** | High | Engines / Replay Metrics | **RESOLVED** | Profit factor is computed from return percentages, not SOL PnL |
 | **BUG-63** | High | Engines / Replay Arbitrage | **RESOLVED** | Replay arbitrage adds profit on every snapshot without committing capital |
 | **BUG-64** | High | Ops / Retention | **RESOLVED** | `ops prune` can delete any file in the target directory; `--max-files` is ignored |
@@ -109,7 +109,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-99** | Medium | Bot / Arbitrage Accounting | **RESOLVED** | Landed arbitrage is booked net: fee, priority fee and tip read from the bundle transaction (modelled when unavailable or in dry-run) and fed to the daily breaker |
 | **BUG-100** | Low | Bot / Config | **RESOLVED** | An explicit `stream_url=` argument now wins; config, then env, then default (unchanged for `pumpbot`, which never passes it) |
 | **BUG-101** | Medium | SDK / Quoting | **RESOLVED** | Pump.fun builders raise `CurveStateUnavailableError` instead of quoting against initial-curve placeholder reserves |
-| **BUG-102** | High | Security / Telemetry | **OPEN** | RPC endpoint URLs, including provider API keys in the query string, are written in full to `bot_status.json`; fix scheduled in Sprint 24C |
+| **BUG-102** | High | Security / Telemetry | **RESOLVED** | `ops/redact.py` masks credentials in every URL written to `bot_status.json`, config dicts, `bot.log`, `events.jsonl`, dashboard events and alerts (Sprint 24C phase 1) |
 
 ---
 
@@ -530,12 +530,14 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** The walk-forward holdout is used during selection, so the reported out-of-sample scores are optimistically biased.
 * **Remedy:** Select on `train_fitness` only, and use test metrics only for reporting.
 
-### BUG-61: Paper Replay Ignores Most Parameters the Optimizer Searches [MITIGATED]
+### BUG-61: Paper Replay Ignores Most Parameters the Optimizer Searches [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L40–54, ~L478–561), `pumpfun_trading/engines/optimizer.py` (~L352–509, ~L802–828)
 * **Description:** The search space varies `buy_amount_sol`, tiered take-profits, trailing stops, drawdown caps, market-cap filters, and more. `PaperTradingEngine` only uses `take_profit` / `stop_loss` / `max_active_positions` and a few flags. It sizes positions with `buy_fraction` of cash and never runs the tiered or trailing exits.
 * **Impact:** Fitness is mostly flat across these parameters, and exported "calibrated" configs don't match what was actually simulated.
 * **Remedy:** Run the live `TradingStrategy` sizing and exit logic in replay, or limit the search space to fields the engine actually uses.
 * **Resolution (MITIGATED):** `build_default_strategy_search_space` now searches only what replay reads (`take_profit`, `stop_loss_pct`, `max_active_positions`, momentum thresholds). Follow-up: port live sizing and tiered/trailing exits into `PaperTradingEngine`, then widen the space again.
+* **Resolution (2026-10-16, Sprint 24C phases 2–4):** `PaperTradingEngine(live_fidelity=True)` spends `buy_amount_sol` per entry behind the live risk limits (`max_buy_attempts_per_mint`, exposure, position cap, concentration, reserve) and manages exits with `strategies/exits.evaluate_exit_strategy` (stop-loss, stagnant/max-hold on the replay clock, tiered partial sells, moonbag floor, trailing stop). `engines/costs.py` books the paper-mode cost model, so `pnl` is net. `pumpfun-replay --config/--preset` and every optimizer trial use it; trials start with `reserve + 2 × max exposure` of cash. The search space again includes the tier, moonbag, trailing and timeout parameters. Captures from `--record-replay` replay the bot's own fills as entries; the screener is not replayed (no enrichment data in captures).
+* **Verification:** `tests/unit/engines/test_replay.py`, `test_costs.py`, `test_parity.py`, `test_optimizer.py::test_trial_fitness_responds_to_live_exit_parameters`; `tests/test_strategy_optimizer.py::test_build_default_strategy_search_space` updated to the widened space.
 
 ### BUG-62: Profit Factor Computed From Return Percentages [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L605–617), consumed by `pumpfun_trading/engines/optimizer.py` (~L636–645)
@@ -822,9 +824,9 @@ Found while writing behaviour tests to bring coverage back to 95%. None is on th
 
 ---
 
-## 9. Open Issues — Stage 0 on v0.2.0 (2026-10-16)
+## 9. Stage 0 on v0.2.0 (2026-10-16)
 
-### BUG-102: RPC API Key Written in Plain Text to `bot_status.json` [OPEN]
+### BUG-102: RPC API Key Written in Plain Text to `bot_status.json` [RESOLVED]
 * **Location:** `pumpfun_trading/infra/rpc_pool.py` (`RpcEndpoint.to_dict` → `"url"`, `RpcPoolConfig.to_dict` → `"endpoints"`), `pumpfun_trading/bot/run.py` (`get_status_snapshot` → `rpc_pool_telemetry`, ~L1557)
 * **Description:** Found while diagnosing the Stage 0 restart on v0.2.0 (PumpPortal HTTP 502 outage). `data/bot_status.json` → `rpc_pool_telemetry.endpoints[].url` holds the full Helius URL including `?api-key=…`. `RpcEndpoint.to_dict` serialises `self.url` unmasked, and the snapshot copies it verbatim. The same pattern can affect any other URL that carries a credential (`stream_url` in `TradingBotConfig.to_dict`, the Geyser endpoint in log/event messages, `aiohttp` error strings that include `url=`).
 * **Impact:** Anyone who sees the status file, a screenshot of the dashboard/status, a shared log or incident bundle, or (later) a Web UI view built from the snapshot gets the RPC key and can spend the operator's RPC quota or get the account rate-limited. No direct loss of funds (the wallet key is not exposed), but it breaks the key-handling rules for the hosted Web UI (`AGENTS.md` Security & Key Management) and must be fixed before any status data leaves the operator's machine.
@@ -835,4 +837,12 @@ Found while writing behaviour tests to bring coverage back to 95%. None is on th
   * Keep the existing `label` (host) as the human-readable identifier.
   * Tests in the mirrored layout: `tests/unit/ops/test_redact.py` (table of provider URL shapes), `tests/unit/infra/test_rpc_pool.py` (telemetry has no key), and a snapshot test asserting no `api-key=` / known secret appears anywhere in `get_status_snapshot()` output.
 * **Scheduled:** Sprint 24C (`docs/dev/TODO.md`). Not on the money path; needs a 24h Stage 0 re-run only if it lands together with other runtime changes.
+* **Resolution (2026-10-16, Sprint 24C phase 1):** new `ops/redact.py` with `redact_url()` (masks `user:pass@`, credential query values such as `api-key`/`token`/`key`, and key-like path segments; Solana addresses in API paths are kept) and `redact_text()` (every URL inside a message). Applied at the persistence chokepoints rather than per call site:
+  * `RpcEndpoint.to_dict` / `RpcPoolConfig.to_dict` (status `rpc_pool_telemetry`); endpoint labels drop userinfo and query strings.
+  * `TradingBotConfig.to_dict` (`stream_url`, `api_base_url`, `rpc_endpoints`). Note: a config exported by `pumpfun-optimize` therefore carries `***` in place of a key; keep keys in the environment, not in config files.
+  * `AnsiStrippingFormatter` (every line of `bot.log` and console logs, including `aiohttp` errors with `url=`).
+  * `TradingBot._record_event` (dashboard events, `last_event` in the status file, alerts).
+  * `DiagnosticEventLogger` JSONL writer (`events.jsonl`).
+  * Raw URLs stay in memory for making requests.
+* **Verification:** `tests/unit/ops/test_redact.py` (provider URL shapes, free-text messages, log formatter, events file), `tests/unit/infra/test_rpc_pool.py` (endpoint dicts, labels, telemetry), `tests/unit/bot/test_run.py::test_status_snapshot_and_events_contain_no_url_credentials`.
 

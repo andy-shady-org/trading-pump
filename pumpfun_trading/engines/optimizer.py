@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.engines.replay import PaperTradingEngine
 from pumpfun_trading.strategies.base import TradingBotConfig
 
@@ -344,12 +345,13 @@ class ParameterSpace:
 def build_default_strategy_search_space(
     base_config: TradingBotConfig | None = None,
 ) -> ParameterSpace:
-    """Search space limited to parameters `PaperTradingEngine` actually reads.
+    """Search space limited to parameters the live-fidelity replay reads.
 
-    Replay simulates flat take-profit/stop-loss exits, `max_active_positions`
-    and momentum entries only. Sizing, tiered/trailing exits, drawdown caps,
-    market-cap and anti-rug knobs are not simulated, so searching them gave a
-    flat fitness landscape and exported configs that were never tested (BUG-61).
+    Trials replay with the live exit stack and modelled costs (Sprint 24C), so
+    the tiered take-profits, moonbag floor, trailing stop and stagnant/max-hold
+    timeouts are searched again (BUG-61). Sizing (``buy_amount_sol``) and the
+    risk caps stay operator choices, and the anti-rug / social / holder screens
+    are not searched because a capture does not record the enrichment data.
     """
     cfg = base_config or TradingBotConfig()
     space = ParameterSpace()
@@ -403,7 +405,7 @@ def build_default_strategy_search_space(
         )
     )
 
-    # 3. Flat exits (replay ignores tiered and trailing exits)
+    # 3. Stop-loss and single-target take-profit (used when tiers are off)
     space.add_parameter(
         FloatParam(
             name="stop_loss_pct",
@@ -423,6 +425,29 @@ def build_default_strategy_search_space(
             default=getattr(cfg, "take_profit", 1.5),
         )
     )
+
+    # 4. Live exit stack (strategies/exits.py), honoured by live-fidelity replay
+    for name, low, high, step, fallback in (
+        ("tier_1_take_profit", 1.3, 3.0, 0.1, 2.0),
+        ("tier_1_sell_fraction", 0.2, 0.8, 0.05, 0.5),
+        ("tier_2_take_profit", 2.0, 5.0, 0.1, 3.5),
+        ("tier_2_sell_fraction", 0.1, 0.5, 0.05, 0.25),
+        ("moonbag_trailing_floor", 1.2, 3.0, 0.1, 2.5),
+        ("trailing_stop_activation_pct", 0.1, 1.0, 0.05, 0.5),
+        ("trailing_stop_drop_pct", 0.05, 0.35, 0.01, 0.15),
+        ("stagnant_timeout_seconds", 30.0, 600.0, 15.0, 120.0),
+        ("max_hold_time_seconds", 120.0, 1800.0, 60.0, 600.0),
+    ):
+        default = float(getattr(cfg, name, fallback))
+        space.add_parameter(
+            FloatParam(
+                name=name,
+                min_val=low,
+                max_val=high,
+                step=step,
+                default=min(high, max(low, default)),
+            )
+        )
 
     return space
 
@@ -674,6 +699,16 @@ class WalkForwardValidator:
         return list(snapshots[:split_idx]), list(snapshots[split_idx:])
 
 
+def trial_bankroll_sol(config: TradingBotConfig) -> float:
+    """Starting cash for a trial: the reserve plus twice the deployable exposure.
+
+    Returns, drawdown and Sharpe are measured against capital the live caps can
+    actually put at risk; a fixed 100 SOL made 0.01 SOL trades look flat.
+    """
+    exposure = max(float(config.max_total_exposure_sol), float(config.buy_amount_sol))
+    return max(0.0, float(config.reserve_balance_sol)) + 2.0 * max(exposure, 0.0)
+
+
 def evaluate_trial_on_snapshots(
     trial_id: int,
     parameters: dict[str, Any],
@@ -695,11 +730,20 @@ def evaluate_trial_on_snapshots(
         **{k: v for k, v in cfg_dict.items() if k in valid_fields}
     )
 
+    # Fitness is scored on profit after modelled fees, tips and rent (Sprint 24C).
+    cost_model = ReplayCostModel.from_env(
+        close_token_account_on_full_exit=active_config.close_token_account_on_full_exit
+    )
+
+    bankroll = trial_bankroll_sol(active_config)
+
     # 1. Train Evaluation
     engine_train = PaperTradingEngine(
-        initial_cash=100.0,
+        initial_cash=bankroll,
         max_positions=active_config.max_active_positions,
         strategy_config=active_config,
+        live_fidelity=True,
+        cost_model=cost_model,
     )
     summary_train = engine_train.run_simulation(train_snapshots)
     train_fitness = evaluate_fitness(
@@ -711,9 +755,11 @@ def evaluate_trial_on_snapshots(
     overfit_delta = 0.0
     if test_snapshots and len(test_snapshots) > 0:
         engine_test = PaperTradingEngine(
-            initial_cash=100.0,
+            initial_cash=bankroll,
             max_positions=active_config.max_active_positions,
             strategy_config=active_config,
+            live_fidelity=True,
+            cost_model=cost_model,
         )
         summary_test = engine_test.run_simulation(test_snapshots)
         test_fitness = evaluate_fitness(

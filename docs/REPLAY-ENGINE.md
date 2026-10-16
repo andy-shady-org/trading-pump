@@ -62,6 +62,29 @@ The replay engine also includes a realistic fee/slippage assumption via:
 
 This keeps the simulation more realistic than a pure zero-cost trade model while still remaining lightweight enough for quick replay runs.
 
+The steps above describe the **simple** model, used when no config or preset is given (or with `--simple-exits`).
+
+## Live-fidelity replay (Sprint 24C, BUG-61)
+
+With `--config` or `--preset`, replay runs the same sizing, risk limits and exits as the live bot, and books the same modelled costs as paper mode:
+
+- **Sizing and limits:** every entry spends `buy_amount_sol`. It is skipped, with the reason counted in `entry_rejections`, when the live limits would refuse it: `max_buy_attempts_per_mint`, `max_total_exposure_sol`, `max_position_size_sol`, `max_token_concentration_pct` or `reserve_balance_sol`.
+- **Exits:** the live exit stack from `strategies/exits.py`: stop-loss, stagnant-curve and max-hold timeouts, tiered take-profits (partial sells), moonbag floor, trailing stop, or single take-profit when tiers are off. Time-based exits run on the replay clock for every open position, like the live refresh loop. A graduated curve exits as `bonding_curve_graduated`. Each sell records `reason` (the exit type), `exit_detail`, `partial` and `hold_seconds`.
+- **Costs** (`engines/costs.py`; turn off with `--no-costs`): Pump.fun's fee on each side (125 bps), the 5,000-lamport network fee plus `--priority-fee-lamports`, the Jito tip (`--tip-lamports`, default `PUMPFUN_JITO_TIP_LAMPORTS` when `PUMPFUN_USE_JITO` is on) and the token-account rent, paid on the buy and refunded when a full exit closes the account. Sells carry `gross_pnl_sol`, `costs_sol` and `net_pnl_sol`; `pnl` is net, so win rate, profit factor and the optimizer's fitness are all after costs.
+- **Entries:** on a capture recorded by `pumpbot --record-replay`, replay buys only where the live bot bought (its recorded fills), so exits, sizing and costs can be compared with the audit trail. On datasets without fills (synthetic scenarios, harvester output) it buys on buy signals. The bot's own fills and other wallets' trades are price points, never exit orders.
+
+!!! warning "What live-fidelity replay does not replay"
+    The entry screener (social links, holder distribution, creator history) needs enrichment data that a capture does not record, so replay cannot say which tokens the screener would pass. Treat replay results as a test of **sizing, exits and costs**, not of token selection.
+
+### Replay-vs-live parity (`--compare-audit`)
+
+```bash
+pumpfun-replay --path data/replay_capture.jsonl --config configs/canary.json \
+  --compare-audit data/audit_trail.jsonl --mode summary
+```
+
+Lines up the replay trades with the audit trail per mint: entries in both / live only / replay only, exit reasons (live reason text is normalised to the exit type), and net PnL. It exits with code 1 when the net PnL gap is larger than `max(--parity-tolerance-sol, --parity-tolerance-pct × |live net PnL|)` (defaults 0.002 SOL and 10%). Expected, explainable differences: live fills at the executed price while replay fills at the recorded market cap, live costs come from the transaction (dynamic tips) while replay uses the model, and live exits can lag by one refresh.
+
 ## Command usage
 
 The replay feature is exposed through the dedicated `pumpfun-replay` CLI command:

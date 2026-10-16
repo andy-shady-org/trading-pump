@@ -6,6 +6,31 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 
 Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/dev/BUGS.md) and [`docs/dev/PROPOSED-FEATURES.md`](docs/dev/PROPOSED-FEATURES.md)) and ends with its release record ([`RELEASE-GATE.md` §5](docs/dev/RELEASE-GATE.md#5-release-record)).
 
+## [Unreleased]
+
+Sprint 24C of the Terminal Income Track (branch `sprint-24c-backtest-fidelity`): no more API keys on disk, and backtests that run the live sizing, exits and costs.
+
+### Security
+- BUG-102: new `ops/redact.py` (`redact_url`, `redact_text`) masks credentials in URLs (`?api-key=`, `token`, `user:pass@`, key-like path segments; Solana addresses are kept). Applied to the RPC pool telemetry and config dicts (`bot_status.json`), `TradingBotConfig.to_dict` (`stream_url`, `api_base_url`, `rpc_endpoints`), every `bot.log` line, dashboard events and alerts, and `events.jsonl`. Raw URLs stay in memory for requests.
+
+### Added
+- Live-fidelity replay (BUG-61): `PaperTradingEngine(live_fidelity=True)` uses `buy_amount_sol`, the live risk limits (rejections counted in `entry_rejections`) and the live exit stack (`strategies/exits.py`), with partial tier sells and time-based exits on the replay clock.
+- `engines/costs.py` `ReplayCostModel`: replay books the paper-mode costs (125 bps protocol fee each side, base + priority fee, Jito tip, rent paid and refunded); sells carry `gross_pnl_sol`, `costs_sol`, `net_pnl_sol`.
+- `engines/parity.py` and `pumpfun-replay --compare-audit AUDIT` (`--parity-tolerance-sol`, `--parity-tolerance-pct`): replay-vs-live parity report, exit code 1 outside the tolerance.
+- `pumpfun-replay` flags `--simple-exits`, `--no-costs`, `--tip-lamports`, `--priority-fee-lamports`.
+
+### Changed
+- `pumpfun-replay --config/--preset` now runs live-fidelity replay with costs; results are not comparable with earlier replays (use `--simple-exits --no-costs` for the old model). On `--record-replay` captures, entries are the bot's own recorded fills; recorded `signal` strings are no longer treated as exit orders.
+- `pumpfun-optimize`: trials run live-fidelity replay with costs (fitness is net), start with `reserve_balance_sol + 2 × max_total_exposure_sol` of cash instead of 100 SOL, and the search space includes the tier, moonbag, trailing-stop and timeout parameters again.
+- A config exported by `pumpfun-optimize` masks credentials in its URLs.
+
+### Release record – Unreleased
+- Commit: – (branch `sprint-24c-backtest-fidelity`, not merged)
+- Release gate: PASS (`nox -s lint mypy tests`)
+- Tests: 1004 collected, all passed; coverage 96.29% (statement + branch)
+- Replay parity: tooling added; not yet run on a live capture
+- Capital stage after this release: unchanged (0). BUG-102 touches logging/telemetry only; the trading path is unchanged, so a 24h Stage 0 re-run is enough
+
 ## [0.2.0] - 2026-10-16
 
 Sprint 24B of the Terminal Income Track: the bot now measures profit **after** costs, recovers token-account rent on every full exit, and checks its books against the wallet. This is the build the official Stage 0 paper pilot and the Stage 1 live canary must run on.
@@ -98,6 +123,7 @@ First tagged build (`v0.0.1-alpha` points at the same commit). Baseline for the 
 - Capital stage after this release: 0
 - Sign-off: –
 
+[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/andy-shady-org/pumpfun-trading/tree/v0.1.0

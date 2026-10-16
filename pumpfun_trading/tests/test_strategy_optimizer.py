@@ -165,7 +165,8 @@ def test_parameter_space_operations():
 def test_build_default_strategy_search_space():
     cfg = TradingBotConfig(take_profit=1.8, max_active_positions=5)
     space = build_default_strategy_search_space(cfg)
-    # Only knobs PaperTradingEngine reads are searched (BUG-61).
+    # Only knobs the live-fidelity replay reads are searched (BUG-61): the live
+    # exit stack is back in the space, sizing and risk caps are not.
     assert set(space.names) == {
         "max_active_positions",
         "momentum_min_z_score",
@@ -174,12 +175,21 @@ def test_build_default_strategy_search_space():
         "momentum_window_seconds",
         "stop_loss_pct",
         "take_profit",
+        "tier_1_take_profit",
+        "tier_1_sell_fraction",
+        "tier_2_take_profit",
+        "tier_2_sell_fraction",
+        "moonbag_trailing_floor",
+        "trailing_stop_activation_pct",
+        "trailing_stop_drop_pct",
+        "stagnant_timeout_seconds",
+        "max_hold_time_seconds",
     }
     for unused in (
         "buy_amount_sol",
         "take_profit_tier1_multiplier",
-        "trailing_stop_drop_pct",
         "max_daily_drawdown_pct",
+        "max_total_exposure_sol",
     ):
         assert unused not in space.names
 

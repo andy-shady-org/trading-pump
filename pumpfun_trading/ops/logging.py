@@ -14,6 +14,7 @@ from typing import Any
 from rich.console import Console
 
 from pumpfun_trading.config.env import sanitize_env_for_logging
+from pumpfun_trading.ops.redact import redact_text
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -66,11 +67,11 @@ def get_configured_console(file: Any = None, **kwargs: Any) -> Console:
 
 
 class AnsiStrippingFormatter(logging.Formatter):
-    """Log formatter that removes ANSI escape sequences for file and non-TTY outputs."""
+    """Log formatter that strips ANSI escapes and masks credentials in URLs (BUG-102)."""
 
     def format(self, record: logging.LogRecord) -> str:
         formatted = super().format(record)
-        return strip_ansi(formatted)
+        return redact_text(strip_ansi(formatted))
 
 
 def setup_structured_logging(
