@@ -45,12 +45,12 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-35** | Critical | Bot / Position State | **OPEN** | RPC token-balance failure reads as zero, so live positions are deleted as "dust" |
 | **BUG-36** | Critical | SDK / Raydium Sell | **OPEN** | `build_raydium_sell_tx` uses buy-direction token accounts (WSOL → token) |
 | **BUG-37** | Critical | Execution / Atomic Arbitrage | **OPEN** | Arb bundle Raydium legs use the token ATA as both source and destination |
-| **BUG-38** | Critical | Strategy / Pre-Graduation Exits | **OPEN** | Curve progress of ~1% is read as 92–100%, so pre-graduation tranches fire immediately |
+| **BUG-38** | Critical | Strategy / Pre-Graduation Exits | **RESOLVED** | Curve progress of ~1% is read as 92–100%, so pre-graduation tranches fire immediately |
 | **BUG-39** | High | Bot / Exit Retry Queue | **OPEN** | `_process_exit_retry_queue` is never called from the runtime |
 | **BUG-40** | High | Bot / Geyser Dispatch | **OPEN** | Geyser events are handled twice (callbacks and `listen()`) |
 | **BUG-41** | High | Bot / Concurrency | **OPEN** | Sells are not covered by `_trade_lock`, so the same mint can be sold twice at once |
-| **BUG-42** | High | Strategy / Exit Engine | **OPEN** | Take-profit tiers are not latched on emit; pre-graduation tranches are latched before the fill |
-| **BUG-43** | High | Strategy / Exit Engine | **OPEN** | Pre-graduation `target_tier` 1/2 marks the 2.0x/3.5x take-profit tiers as done |
+| **BUG-42** | High | Strategy / Exit Engine | **RESOLVED** | Take-profit tiers are not latched on emit; pre-graduation tranches are latched before the fill |
+| **BUG-43** | High | Strategy / Exit Engine | **RESOLVED** | Pre-graduation `target_tier` 1/2 marks the 2.0x/3.5x take-profit tiers as done |
 | **BUG-44** | High | Bot / Graduation | **OPEN** | Graduated positions cannot be sold on Raydium |
 | **BUG-45** | High | Bot / Persistence | **OPEN** | Status snapshot drops `cost_sol` and `pool_keys`; after restart, unit `buy_price` is used as position cost |
 | **BUG-46** | High | Bot / Health | **OPEN** | `_risk_killed` stays set after transient stream or RPC problems; only a restart clears it |
@@ -63,16 +63,16 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-53** | High | SDK / Jito Confirmation | **OPEN** | Bundles that landed with an on-chain error are reported as successful |
 | **BUG-54** | High | SDK / ATA Creation | **OPEN** | An ATA lookup error adds a non-idempotent `create_associated_token_account` |
 | **BUG-55** | High | Streams / Geyser | **OPEN** | Yellowstone client never opens a gRPC stream and subscribes to mint keys instead of curve PDAs |
-| **BUG-56** | High | Strategy / Anti-Rug | **OPEN** | `max_gini_coefficient` (0.85) is only a soft penalty; hard reject happens only above 0.95 |
-| **BUG-57** | High | Strategy / Anti-Rug | **OPEN** | Anti-rug checks pass when holder or dev data is missing |
-| **BUG-58** | High | Bot / Dev Wallet Enrichment | **OPEN** | `tokens_launched_24h` of 0 falls back to the creator's lifetime launch count |
+| **BUG-56** | High | Strategy / Anti-Rug | **RESOLVED** | `max_gini_coefficient` (0.85) is only a soft penalty; hard reject happens only above 0.95 |
+| **BUG-57** | High | Strategy / Anti-Rug | **RESOLVED** | Anti-rug checks pass when holder or dev data is missing |
+| **BUG-58** | High | Bot / Dev Wallet Enrichment | **RESOLVED** | `tokens_launched_24h` of 0 falls back to the creator's lifetime launch count |
 | **BUG-59** | High | Bot / Cross-Venue Arbitrage | **OPEN** | Arbitrage is quoted and executed on made-up pool reserves |
 | **BUG-60** | High | Engines / Optimizer | **OPEN** | Holdout (test) fitness is used to select trials (train/test leakage) |
 | **BUG-61** | High | Engines / Replay | **OPEN** | Paper replay ignores most parameters the optimizer searches |
 | **BUG-62** | High | Engines / Replay Metrics | **OPEN** | Profit factor is computed from return percentages, not SOL PnL |
 | **BUG-63** | High | Engines / Replay Arbitrage | **OPEN** | Replay arbitrage adds profit on every snapshot without committing capital |
 | **BUG-64** | High | Ops / Retention | **OPEN** | `ops prune` can delete any file in the target directory; `--max-files` is ignored |
-| **BUG-65** | Medium | Bot / Token Amount Fallbacks | **OPEN** | Remaining balance of `0` is treated as missing and replaced with 100,000,000 raw tokens |
+| **BUG-65** | Medium | Bot / Token Amount Fallbacks | **RESOLVED** | Remaining balance of `0` is treated as missing and replaced with 100,000,000 raw tokens |
 | **BUG-66** | Medium | SDK / Curve Math | **OPEN** | Buy/sell curve quotes ignore Pump.fun protocol and creator fees |
 | **BUG-67** | Medium | Infra / RPC Pool | **OPEN** | JSON-RPC error responses are recorded as endpoint successes |
 | **BUG-68** | Medium | SDK / Creator Vault | **OPEN** | Creator vault falls back to the trader's own wallet when the creator is unknown |
@@ -83,12 +83,12 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-73** | Medium | Execution / Confirmation | **OPEN** | Confirmation timeouts are treated as definite failures (untracked fills, possible double sells) |
 | **BUG-74** | Medium | Bot / Resource Lifecycle | **OPEN** | `start()`/`run()` and `get_coins_by_mints` leave aiohttp sessions open |
 | **BUG-75** | Medium | Bot / WebSocket Market Cap | **OPEN** | WebSocket market-cap unit check can inflate market cap by ~1e6 |
-| **BUG-76** | Medium | Strategy / Exit Engine | **OPEN** | Stop-loss and take-profit cannot fire when `entry_market_cap <= 0` |
+| **BUG-76** | Medium | Strategy / Exit Engine | **RESOLVED** | Stop-loss and take-profit cannot fire when `entry_market_cap <= 0` |
 | **BUG-77** | Medium | Strategy / Memory | **OPEN** | Per-mint screening, order-flow, and graduation caches grow without limit |
 | **BUG-78** | Medium | Strategy / Risk Validation | **OPEN** | `validate_risk_limits` ignores exposure, position size, and concentration caps |
-| **BUG-79** | Medium | Strategy / Sybil Detection | **OPEN** | When no trades fall inside the wash-trade window, the full trade history is used instead |
-| **BUG-80** | Medium | Services / Market Data | **OPEN** | Missing market cap defaults to 30 SOL |
-| **BUG-81** | Medium | SDK / Raydium Parsing | **OPEN** | `parse_raydium_initialize2_accounts` never reads `pc_mint` from the account list |
+| **BUG-79** | Medium | Strategy / Sybil Detection | **RESOLVED** | When no trades fall inside the wash-trade window, the full trade history is used instead |
+| **BUG-80** | Medium | Services / Market Data | **RESOLVED** | Missing market cap defaults to 30 SOL |
+| **BUG-81** | Medium | SDK / Raydium Parsing | **RESOLVED** | `parse_raydium_initialize2_accounts` never reads `pc_mint` from the account list |
 | **BUG-82** | Medium | Engines / Replay | **OPEN** | Pre-graduation harvesting in replay only runs when cross-venue arbitrage is enabled |
 | **BUG-83** | Medium | Engines / Replay | **OPEN** | Replay can sell and buy again in the same snapshot at an already-known price |
 | **BUG-84** | Medium | Engines / Replay | **OPEN** | ISO-8601 timestamps sort as time 0 |
@@ -381,7 +381,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Live arbitrage bundles fail or do nothing. Tips and fees are still at risk.
 * **Remedy:** Choose WSOL ATA vs token ATA by direction, add create/wrap/unwrap instructions, and derive ATAs with the mint's real token program.
 
-### BUG-38: Pre-Graduation Progress of ~1% Read as 92–100% [OPEN]
+### BUG-38: Pre-Graduation Progress of ~1% Read as 92–100% [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/exits.py` (`evaluate_exit_strategy` ~L242–252)
 * **Description:** `GraduationCandidate.progress_pct` is a 0–100 percentage. The exit engine only divides by 100 when the value is `> 1.0`. Values from 0.92 to 1.0 (under 1 SOL of real reserves) are left as-is and compared to the fractional tranche targets (`0.92` / `0.97`). They pass, and at exactly `1.0` every tranche fires.
 * **Impact:** With `enable_pre_graduation_harvesting`, positions are partly sold right after entry at about 1% curve progress. Together with BUG-43, this can turn into a full exit.
@@ -405,13 +405,13 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Two tasks can read the same balance and submit overlapping full or partial sells for the same mint. The second one fails or oversells, and position accounting ends up out of sync.
 * **Remedy:** Add a per-mint lock (or reuse `_trade_lock`) that covers the whole balance-check → sell → `record_sell` sequence.
 
-### BUG-42: Take-Profit Tiers Not Latched on Emit; Pre-Grad Tranches Latched Before the Fill [OPEN]
+### BUG-42: Take-Profit Tiers Not Latched on Emit; Pre-Grad Tranches Latched Before the Fill [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/exits.py` (~L247–253 vs ~L307–366), `pumpfun_trading/strategies/base.py` (`TradingStrategy.evaluate_exit`)
 * **Description:** Tier 1/2 decisions only set `tier_X_executed` later in `record_partial_exit`. If the exit is evaluated again before the fill, the same 50%/25% sell is issued again. Pre-graduation tranches do the opposite: they add to `executed_pre_grad_tranches` before the sell lands, so a failed sell is never retried. `TradingStrategy.evaluate_exit` builds a throwaway `PositionExitState` from a dict, so state changes are lost.
 * **Impact:** Duplicate partial sells, or tranches that silently get skipped.
 * **Remedy:** Set a pending flag when the decision is made, mark it executed only when the fill is confirmed, and clear it on failure. Write the state back when the caller passed a dict.
 
-### BUG-43: Pre-Graduation `target_tier` Marks the Take-Profit Ladder as Done [OPEN]
+### BUG-43: Pre-Graduation `target_tier` Marks the Take-Profit Ladder as Done [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/exits.py` (~L83–89, ~L247–278)
 * **Description:** Pre-graduation tranches return `target_tier = idx + 1` (1 or 2). `record_partial_exit(tier=1/2)` then sets `tier_1_executed` / `tier_2_executed` and turns on `moonbag_active`. On the next evaluation the moonbag check (`perf <= moonbag_trailing_floor` = 2.5x) is true for a position still near 1.x.
 * **Impact:** After two harvest fills, the rest of the position is fully sold right away and the 2.0x / 3.5x tiers never run.
@@ -489,19 +489,19 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Setting a Geyser endpoint makes the bot sit idle with no market data while showing a healthy connection. Even with a real transport, curve reserves would not be received.
 * **Remedy:** Implement the gRPC subscribe (or fail fast when no transport is available), and subscribe to the curve PDAs.
 
-### BUG-56: Configured Gini Cap Is Not a Hard Reject [OPEN]
+### BUG-56: Configured Gini Cap Is Not a Hard Reject [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/filters.py` (`evaluate_holder_distribution` ~L378–387)
 * **Description:** `docs/STRATEGY.md` and `max_gini_coefficient` (0.85) say tokens with G > 0.85 are rejected. The code only sets `passed = False` when G > 0.95, and only checks Gini at all when there are at least 5 top holders. For 0.85 < G ≤ 0.95 it adds about 16 penalty points, which is well under `max_acceptable_risk_score` (50).
 * **Impact:** Highly concentrated tokens pass the anti-rug screen.
 * **Remedy:** Reject when `gini > max_gini`, and fail closed when the holder sample is too small.
 
-### BUG-57: Anti-Rug Checks Pass When Data Is Missing [OPEN]
+### BUG-57: Anti-Rug Checks Pass When Data Is Missing [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/filters.py` (~L311–313, 342–343, 362–363, 423–424; `calculate_gini_coefficient`; `token_is_eligible`)
 * **Description:** `evaluate_dev_wallet(None)`, `evaluate_creator_holdings(0)`, `evaluate_holder_distribution(None / empty)`, and `evaluate_cluster_heuristics(None)` all pass. `calculate_gini_coefficient([])` returns `0.0` (perfect equality), and `token_is_eligible(screening_verdict=None)` passes.
 * **Impact:** When enrichment fails or times out, serial ruggers and concentrated tokens get through, which is exactly when the screen matters most.
 * **Remedy:** When `enable_anti_rug_filters` is on, missing data should reject the token or add a large penalty.
 
-### BUG-58: 24h Launch Count of 0 Falls Back to the Lifetime Count [OPEN]
+### BUG-58: 24h Launch Count of 0 Falls Back to the Lifetime Count [RESOLVED]
 * **Location:** `pumpfun_trading/bot/enrichment.py` (~L87–109)
 * **Description:** `tokens_launched_24h=count_24h or len(creator_coins)` turns a real `0` into the creator's lifetime launch count. The dict-response branch sets the 24h count to `len(coins_list)` without any time filter. Timestamps are also compared to `now_ms` without checking whether they are in seconds or milliseconds.
 * **Impact:** Legitimate developers with past launches are flagged as serial launchers and rejected. The 24h serial-launcher signal is unreliable.
@@ -547,7 +547,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 
 ## 5. Open Issues — Project-Wide Audit (2026-10-16): Medium Severity
 
-### BUG-65: Remaining Balance of `0` Replaced With 100,000,000 Raw Tokens [OPEN]
+### BUG-65: Remaining Balance of `0` Replaced With 100,000,000 Raw Tokens [RESOLVED]
 * **Location:** `pumpfun_trading/execution/liquidator.py` (~L38–40), `pumpfun_trading/bot/position_manager.py` (`Position.from_dict` ~L131–136, `record_sell` ~L356–357), `pumpfun_trading/strategies/exits.py` (`PositionExitState.from_dict` ~L119–130, `effective_balance` ~L199–211)
 * **Description:** These places use `x or y or 100_000_000`. A real `0` is falsy, so a fully sold position falls back to `token_amount` / `initial_token_amount`, or to the 100M default.
 * **Impact:** Emergency liquidation or exit logic submits sells for tokens that aren't there. Combined with BUG-50, this always happens for live Raydium positions.
@@ -613,7 +613,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Entry filters, TP/SL, and trailing stops can run on market caps that are wrong by a factor of about a million. (Medium confidence: depends on the payload format.)
 * **Remedy:** Use separate ranges for raw vs UI units (raw is ≳ 1e12), or use on-chain curve reserves.
 
-### BUG-76: Stop-Loss Cannot Fire When `entry_market_cap <= 0` [OPEN]
+### BUG-76: Stop-Loss Cannot Fire When `entry_market_cap <= 0` [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/exits.py` (~L35–37, ~L226–234)
 * **Description:** `performance` is hardcoded to `1.0` when entry MC is 0 or missing, so neither the stop-loss (`<= 0.85`) nor take-profit (`>= 2.0`) can trigger. Time-based exits also fail when `now` is a replay timestamp and `entry_time` defaulted to `time.time()`, because the negative duration is clamped to 0.
 * **Impact:** Positions with no stop-loss.
@@ -631,19 +631,19 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Anything that relies on `TradingStrategy.validate_risk` (replay, optimizer, external callers) has much weaker protection than the live bot.
 * **Remedy:** Delegate to `bot/risk.check_risk_limits`, or implement the same caps here.
 
-### BUG-79: Sybil Wash-Trade Window Falls Back to the Full History [OPEN]
+### BUG-79: Sybil Wash-Trade Window Falls Back to the Full History [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/cluster.py` (~L329–340)
 * **Description:** If no trades fall inside `now - window`, the function uses all trades. With replay timestamps and the default `now = time.time()`, the window is always empty.
 * **Impact:** In replay, wash ratios are computed over the full history, so time-windowed detection is silently disabled.
 * **Remedy:** Return "no wash activity" when the window is empty, and take `now` from the trade clock.
 
-### BUG-80: Missing Market Cap Defaults to 30 SOL [OPEN]
+### BUG-80: Missing Market Cap Defaults to 30 SOL [RESOLVED]
 * **Location:** `pumpfun_trading/services/market_data.py` (`get_market_cap_sol` ~L40–48)
 * **Description:** When no market-cap key parses, the function returns `30.0`, which looks like a real initial curve.
 * **Impact:** Tokens with missing or malformed API data can pass min-MC filters or fail max-MC filters, and can be used as an entry MC.
 * **Remedy:** Return `None` or `0.0` and let callers skip those tokens.
 
-### BUG-81: `parse_raydium_initialize2_accounts` Never Reads `pc_mint` [OPEN]
+### BUG-81: `parse_raydium_initialize2_accounts` Never Reads `pc_mint` [RESOLVED]
 * **Location:** `pumpfun_trading/sdk/raydium.py` (~L172–225)
 * **Description:** `pc_mint` defaults to `WSOL_MINT`, which is truthy, so `accounts[9] if not pc_mint else pc_mint` always keeps WSOL.
 * **Impact:** Pools quoted in something other than SOL (and the 18-account fallback layout) get the wrong `pc_mint` and the wrong ATAs.

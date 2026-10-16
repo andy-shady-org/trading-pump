@@ -313,7 +313,18 @@ class SybilWashTradingDetector:
         now: float | None = None,
     ) -> SybilWashVerdict:
         """Analyze a sequence of trade events for sybil wash-trading patterns."""
-        if not trades:
+        current_time = float(now if now is not None else time.time())
+        cutoff_time = current_time - self.time_window_seconds
+
+        # Filter trades within analysis window; an empty window means no wash
+        # activity, never a fallback to the full history (BUG-79).
+        recent_trades: list[dict[str, Any]] = []
+        for t in trades or ():
+            ts = float(t.get("timestamp") or current_time)
+            if ts >= cutoff_time:
+                recent_trades.append(t)
+
+        if not recent_trades:
             return SybilWashVerdict(
                 is_wash_trading=False,
                 wash_volume_sol=0.0,
@@ -325,19 +336,6 @@ class SybilWashTradingDetector:
                 reasons=[],
                 risk_penalty=0.0,
             )
-
-        current_time = float(now if now is not None else time.time())
-        cutoff_time = current_time - self.time_window_seconds
-
-        # Filter trades within analysis window
-        recent_trades: list[dict[str, Any]] = []
-        for t in trades:
-            ts = float(t.get("timestamp") or current_time)
-            if ts >= cutoff_time:
-                recent_trades.append(t)
-
-        if not recent_trades:
-            recent_trades = list(trades)
 
         total_sol_volume = sum(
             float(t.get("sol_amount") or t.get("amount_sol") or 0.0)

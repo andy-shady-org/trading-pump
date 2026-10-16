@@ -45,7 +45,8 @@ class MarketDataService:
                     return float(value)
                 except (TypeError, ValueError):
                     continue
-        return 30.0
+        # Missing data must not look like a fresh ~30 SOL curve (BUG-80).
+        return 0.0
 
     async def get_token_name(self, data: dict[str, Any]) -> str | None:
         token_name = str(

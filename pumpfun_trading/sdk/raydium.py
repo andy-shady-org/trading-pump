@@ -172,7 +172,7 @@ def build_raydium_swap_instruction(
 def parse_raydium_initialize2_accounts(
     accounts: list[str],
     coin_mint: str = "",
-    pc_mint: str = WSOL_MINT,
+    pc_mint: str = "",
 ) -> Optional[RaydiumPoolKeys]:
     """Parse Raydium AMM Initialize2 instruction accounts list into RaydiumPoolKeys.
 
@@ -243,7 +243,9 @@ def parse_raydium_initialize2_accounts(
             coin_mint=(
                 accounts[14] if len(accounts) > 14 and not coin_mint else coin_mint
             ),
-            pc_mint=accounts[15] if len(accounts) > 15 and not pc_mint else pc_mint,
+            pc_mint=(
+                pc_mint or (accounts[15] if len(accounts) > 15 else "") or WSOL_MINT
+            ),
             lp_mint=accounts[16] if len(accounts) > 16 else "",
         )
     except Exception:

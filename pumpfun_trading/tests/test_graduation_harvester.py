@@ -172,10 +172,10 @@ def test_pre_graduation_staged_take_profit_tranches():
     assert dec_92.sell_fraction == 0.30
     assert dec_92.sell_tokens == 300_000
     assert dec_92.exit_type == "pre_graduation_tranche"
-    assert dec_92.target_tier == 1
+    assert dec_92.target_tier == "pre_grad_1"
 
     # Simulate fill of tranche 1
-    state.record_partial_exit(tier=1, sold_tokens=300_000)
+    state.record_partial_exit(tier="pre_grad_1", sold_tokens=300_000)
     assert state.remaining_token_amount == 700_000
 
     # Repeating at 93% should not re-trigger tranche 1
@@ -190,9 +190,69 @@ def test_pre_graduation_staged_take_profit_tranches():
     )
     assert dec_97.action == ExitAction.PARTIAL_EXIT
     assert dec_97.sell_tokens == 300_000
-    assert dec_97.target_tier == 2
+    assert dec_97.target_tier == "pre_grad_2"
 
     # Simulate fill of tranche 2
-    state.record_partial_exit(tier=2, sold_tokens=300_000)
-    assert state.remaining_token_amount == 400_000  # 40% moonbag retained
-    assert state.moonbag_active is True
+    state.record_partial_exit(tier="pre_grad_2", sold_tokens=300_000)
+    assert state.remaining_token_amount == 400_000  # 40% retained
+    # Pre-grad tranches must not consume the 2.0x/3.5x take-profit ladder (BUG-43)
+    assert state.tier_1_executed is False
+    assert state.tier_2_executed is False
+    assert state.moonbag_active is False
+    assert state.executed_pre_grad_tranches == {0, 1}
+
+
+def _harvest_config() -> TradingBotConfig:
+    return TradingBotConfig(
+        enable_pre_graduation_harvesting=True,
+        enable_tiered_take_profit=False,
+        enable_stagnant_exit=False,
+        enable_max_hold_timeout=False,
+        take_profit=10.0,
+        pre_graduation_tranches=(
+            {"progress_pct": 0.92, "sell_fraction": 0.30},
+            {"progress_pct": 0.97, "sell_fraction": 0.30},
+        ),
+        min_sell_balance=1000,
+    )
+
+
+def _fresh_state() -> PositionExitState:
+    return PositionExitState(
+        entry_market_cap=30.0,
+        current_market_cap=30.0,
+        peak_market_cap=30.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+    )
+
+
+@pytest.mark.parametrize("progress", [0.92, 0.97, 1.0])
+def test_pre_graduation_low_percent_progress_does_not_fire(progress):
+    # BUG-38: 0.92-1.0 is ~1% curve progress, not 92-100%
+    dec = evaluate_exit_strategy(
+        _harvest_config(),
+        _fresh_state(),
+        current_market_cap=31.0,
+        curve_progress_pct=progress,
+    )
+    assert dec.action == ExitAction.HOLD
+
+
+def test_pre_graduation_tranche_pending_until_fill_then_retries():
+    # BUG-42: a tranche emitted but never filled is not lost forever
+    config = _harvest_config()
+    state = _fresh_state()
+    first = evaluate_exit_strategy(
+        config, state, current_market_cap=31.0, curve_progress_pct=93.0, now=1000.0
+    )
+    assert first.target_tier == "pre_grad_1"
+    assert 0 not in state.executed_pre_grad_tranches
+    again = evaluate_exit_strategy(
+        config, state, current_market_cap=31.0, curve_progress_pct=93.0, now=1001.0
+    )
+    assert again.action == ExitAction.HOLD
+    retry = evaluate_exit_strategy(
+        config, state, current_market_cap=31.0, curve_progress_pct=93.0, now=1100.0
+    )
+    assert retry.target_tier == "pre_grad_1"

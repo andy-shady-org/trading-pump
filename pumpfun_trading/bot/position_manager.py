@@ -122,17 +122,13 @@ class Position:
             data.get("peak_market_cap", max(entry_mc, curr_mc))
             or max(entry_mc, curr_mc)
         )
-        initial_tokens = int(
-            data.get("initial_token_amount")
-            or data.get("token_amount")
-            or data.get("initial_units", 0)
-            or (100_000_000 if bool(data.get("dry_run")) else 0)
+        initial_tokens = _first_present_int(
+            data, ("initial_token_amount", "token_amount", "initial_units"), 0
         )
-        remaining_tokens = int(
-            data.get("remaining_token_amount")
-            or data.get("token_amount")
-            or data.get("remaining_units", initial_tokens)
-            or initial_tokens
+        remaining_tokens = _first_present_int(
+            data,
+            ("remaining_token_amount", "token_amount", "remaining_units"),
+            initial_tokens,
         )
         cost_sol = float(data.get("cost_sol") or data.get("entry_sol", 0.0) or 0.0)
         entry_sol = float(data.get("entry_sol") or data.get("cost_sol", 0.0) or 0.0)
@@ -176,6 +172,17 @@ class Position:
             last_price=last_p,
             metadata=dict(data.get("metadata", {}) or {}),
         )
+
+
+def _first_present_int(
+    data: Mapping[str, Any], keys: tuple[str, ...], default: int
+) -> int:
+    """Returns the first non-None value; a real 0 is kept, not replaced (BUG-65)."""
+    for key in keys:
+        value = data.get(key)
+        if value is not None:
+            return int(value)
+    return default
 
 
 def _extract_position_fraction(pos: Any) -> float:
@@ -345,7 +352,7 @@ class PositionManager:
         mint: str,
         sold_tokens: int,
         proceeds_sol: float = 0.0,
-        target_tier: int | None = None,
+        target_tier: int | str | None = None,
         is_partial: bool = False,
     ) -> tuple[bool, int]:
         """Records a token sell. Returns (is_fully_closed, remaining_tokens)."""
@@ -353,18 +360,16 @@ class PositionManager:
             return True, 0
 
         pos = self._positions[mint]
-        current_remaining = int(
-            pos.get("remaining_token_amount") or pos.get("token_amount") or 0
+        current_remaining = _first_present_int(
+            pos, ("remaining_token_amount", "token_amount"), 0
         )
         new_remaining = max(0, current_remaining - int(sold_tokens))
         pos["remaining_token_amount"] = new_remaining
         pos["token_amount"] = new_remaining
 
-        if target_tier == 1:
-            pos["tier_1_executed"] = True
-        elif target_tier == 2:
-            pos["tier_2_executed"] = True
-            pos["moonbag_active"] = True
+        exit_state = PositionExitState.from_dict(pos)
+        exit_state.record_partial_exit(target_tier, 0)
+        exit_state.write_back(pos)
 
         if (
             not is_partial
@@ -454,15 +459,18 @@ class PositionManager:
             curve_progress_pct=curve_progress_pct,
         )
 
-        pos["trailing_stop_active"] = exit_state.trailing_stop_active
-        pos["tier_1_executed"] = exit_state.tier_1_executed
-        pos["tier_2_executed"] = exit_state.tier_2_executed
-        pos["moonbag_active"] = exit_state.moonbag_active
-        pos["executed_pre_grad_tranches"] = list(exit_state.executed_pre_grad_tranches)
-        pos["last_price_change_at"] = exit_state.last_price_change_at
-        pos["last_price"] = exit_state.last_price
+        exit_state.write_back(pos)
 
         return decision
+
+    def clear_pending_exit(self, mint: str, target_tier: int | str | None) -> None:
+        """Rolls back a pending exit latch after a failed sell (BUG-42)."""
+        pos = self._positions.get(mint)
+        if pos is None or target_tier is None:
+            return
+        exit_state = PositionExitState.from_dict(pos)
+        exit_state.clear_exit_pending(target_tier)
+        exit_state.write_back(pos)
 
     def calculate_unrealized_pnl(
         self, mint: str | None = None, current_market_cap: float | None = None

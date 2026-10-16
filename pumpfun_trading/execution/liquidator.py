@@ -35,9 +35,16 @@ class OrderLiquidator:
             return False
 
         pos = self.position_manager.get_position(mint) or {}
-        token_amount = int(
-            pos.get("remaining_token_amount") or pos.get("token_amount") or 100_000_000
-        )
+        raw_amount = pos.get("remaining_token_amount")
+        if raw_amount is None:
+            raw_amount = pos.get("token_amount")
+        token_amount = int(raw_amount or 0)
+        if token_amount <= 0:
+            # Never invent a sell size for an unknown or empty position (BUG-65).
+            logger.warning(
+                "Skipping liquidation for %s: no tracked token balance", mint
+            )
+            return False
 
         logger.warning(
             "Liquidating position for %s (%d tokens, reason: %s, urgency: %s)",

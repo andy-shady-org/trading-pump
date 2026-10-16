@@ -97,7 +97,7 @@ async def test_market_data_service_fallback_and_resilience_paths():
 
     service = MarketDataService(AsyncClient())
     assert await service.get_market_cap_sol({"market_cap": "8.25"}) == 8.25
-    assert await service.get_market_cap_sol({}) == 30.0
+    assert await service.get_market_cap_sol({}) == 0.0
     assert await service.get_token_name({"name": "  Token  "}) == "Token"
     assert await service.get_token_name({}) is None
 
@@ -143,7 +143,7 @@ def test_market_data_service_handles_missing_client_and_invalid_data():
         )
     ) == {"name": "fallback"}
 
-    assert await_async(service.get_market_cap_sol({"marketCapSol": "bad"})) == 30.0
+    assert await_async(service.get_market_cap_sol({"marketCapSol": "bad"})) == 0.0
     assert await_async(service.get_token_name({"tokenName": "  "})) is None
 
 

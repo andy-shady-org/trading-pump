@@ -19,6 +19,32 @@ from pumpfun_trading.strategies.base import TradingBotConfig
 logger = logging.getLogger(__name__)
 
 
+def _timestamp_ms(value: Any) -> float:
+    """Normalizes epoch seconds or milliseconds to milliseconds."""
+    try:
+        ts = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return ts * 1000.0 if 0 < ts < 1e12 else ts
+
+
+def count_launches_last_24h(coins: list[Any], *, now: float | None = None) -> int:
+    """Counts creator coins created in the last 24h (BUG-58)."""
+    now_ms = (now if now is not None else time.time()) * 1000.0
+    day_ago_ms = now_ms - 86_400_000.0
+    count = 0
+    for coin in coins:
+        if not isinstance(coin, dict):
+            continue
+        created_ms = max(
+            _timestamp_ms(coin.get("created_timestamp")),
+            _timestamp_ms(coin.get("createdAt")),
+        )
+        if created_ms > day_ago_ms:
+            count += 1
+    return count
+
+
 class TokenEnricher:
     """Handles off-chain token metadata enrichment, creator profiling, and anti-rug screening."""
 
@@ -77,34 +103,23 @@ class TokenEnricher:
             or coin_data.get("user")
             or coin_data.get("creatorAddress")
             or coin_data.get("dev_wallet")
+            or coin_data.get("traderPublicKey")
         )
         if creator and isinstance(creator, str) and self.api:
             try:
                 creator_coins = await self.api.get_creator_coins(creator, limit=20)
+                coins_list: list[Any] | None = None
                 if isinstance(creator_coins, list):
-                    now_ms = time.time() * 1000
-                    day_ago_ms = now_ms - (86400 * 1000)
-                    count_24h = sum(
-                        1
-                        for c in creator_coins
-                        if isinstance(c, dict)
-                        and (
-                            c.get("created_timestamp", 0) > day_ago_ms
-                            or c.get("createdAt", 0) > day_ago_ms
-                        )
-                    )
-                    dev_profile = DevWalletProfile(
-                        creator_address=creator,
-                        tokens_launched_24h=count_24h or len(creator_coins),
-                        total_tokens_launched=len(creator_coins),
-                    )
+                    coins_list = creator_coins
                 elif isinstance(creator_coins, dict):
                     coins_list = (
                         creator_coins.get("coins") or creator_coins.get("items") or []
                     )
+                if coins_list is not None:
+                    # A real 24h count of 0 stays 0 (BUG-58).
                     dev_profile = DevWalletProfile(
                         creator_address=creator,
-                        tokens_launched_24h=len(coins_list),
+                        tokens_launched_24h=count_launches_last_24h(coins_list),
                         total_tokens_launched=len(coins_list),
                     )
             except Exception as exc:

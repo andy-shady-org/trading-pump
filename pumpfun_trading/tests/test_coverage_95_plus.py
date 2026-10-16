@@ -305,6 +305,7 @@ async def test_bot_run_all_missing_branches(tmp_path):
         "mint": SAMPLE_MINT,
         "name": "FreshCoin",
         "marketCapSol": 25.0,
+        "traderPublicKey": "DevWa11et1111111111111111111111111111111111",
     }
     await bot._handle_message(msg_new, AsyncMock())
     assert SAMPLE_MINT in bot.active_positions

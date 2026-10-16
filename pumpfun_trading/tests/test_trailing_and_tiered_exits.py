@@ -673,3 +673,67 @@ def test_preset_stagnant_and_max_hold_configs():
     assert cfg_agg.enable_stagnant_exit is True
     assert cfg_agg.stagnant_timeout_seconds == 60.0
     assert cfg_agg.max_hold_time_seconds == 300.0
+
+
+def _tiered_config() -> TradingBotConfig:
+    return TradingBotConfig(
+        enable_tiered_take_profit=True,
+        enable_trailing_stop=False,
+        enable_stagnant_exit=False,
+        enable_max_hold_timeout=False,
+        dry_run=True,
+    )
+
+
+def test_tier_1_latched_pending_until_fill():
+    # BUG-42: a second evaluation before the fill must not re-issue tier 1
+    config = _tiered_config()
+    state = PositionExitState(30.0, 30.0, 30.0, 1_000_000, 1_000_000)
+    first = evaluate_exit_strategy(config, state, current_market_cap=65.0, now=10.0)
+    assert first.action == ExitAction.PARTIAL_EXIT and first.target_tier == 1
+    second = evaluate_exit_strategy(config, state, current_market_cap=65.0, now=11.0)
+    assert second.action == ExitAction.HOLD
+    state.record_partial_exit(tier=1, sold_tokens=first.sell_tokens)
+    assert state.tier_1_executed and not state.pending_exit_tiers
+
+
+def test_tier_pending_survives_dict_roundtrip_and_strategy_writes_back():
+    config = _tiered_config()
+    strategy = TradingStrategy(config)
+    pos = {
+        "entry_market_cap": 30.0,
+        "current_market_cap": 30.0,
+        "initial_token_amount": 1_000_000,
+        "remaining_token_amount": 1_000_000,
+    }
+    first = strategy.evaluate_exit(pos, current_market_cap=65.0)
+    assert first.target_tier == 1
+    assert "tier_1" in pos["pending_exit_tiers"]
+    assert (
+        strategy.evaluate_exit(pos, current_market_cap=65.0).action == ExitAction.HOLD
+    )
+
+
+def test_zero_entry_market_cap_adopts_current_as_baseline():
+    # BUG-76: stop-loss must be able to fire even if entry MC was unknown
+    config = _tiered_config()
+    state = PositionExitState(0.0, 0.0, 0.0, 1_000_000, 1_000_000)
+    hold = evaluate_exit_strategy(config, state, current_market_cap=30.0)
+    assert hold.action == ExitAction.HOLD
+    assert state.entry_market_cap == 30.0
+    stop = evaluate_exit_strategy(config, state, current_market_cap=20.0)
+    assert stop.exit_type == "stop_loss"
+
+
+def test_zero_remaining_is_not_replaced_by_phantom_balance():
+    # BUG-65: remaining 0 stays 0 and produces no sell
+    restored = PositionExitState.from_dict(
+        {
+            "entry_market_cap": 30.0,
+            "initial_token_amount": 500,
+            "remaining_token_amount": 0,
+        }
+    )
+    assert restored.remaining_token_amount == 0
+    dec = evaluate_exit_strategy(_tiered_config(), restored, current_market_cap=10.0)
+    assert dec.action == ExitAction.HOLD and dec.reason == "no_remaining_balance"

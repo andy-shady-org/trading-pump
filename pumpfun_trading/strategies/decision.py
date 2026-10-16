@@ -188,12 +188,15 @@ class TradingStrategy:
             if isinstance(position, PositionExitState)
             else PositionExitState.from_dict(position)
         )
-        return evaluate_exit_strategy(
+        decision = evaluate_exit_strategy(
             self.config,
             state,
             current_market_cap=current_market_cap,
             token_balance=token_balance,
         )
+        if isinstance(position, dict):
+            state.write_back(position)
+        return decision
 
     def update_peak(
         self,

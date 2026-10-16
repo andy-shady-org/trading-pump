@@ -211,6 +211,7 @@ async def test_new_token_event_blocks_scam_and_buys_clean(bot):
         "mint": SAMPLE_MINT,
         "name": "CleanToken",
         "marketCapSol": 25.0,
+        "traderPublicKey": "DevClean11111111111111111111111111111111111",
         "creatorHoldingPct": 0.04,
         "twitter": "https://x.com/CleanToken",
     }
@@ -267,7 +268,9 @@ async def test_bot_enrich_and_screen_api_error_branches(bot):
     # 1. API get_coin failure
     bot.api.get_coin = AsyncMock(side_effect=RuntimeError("Network error"))
     verdict_api_fail = await bot._enrich_and_screen_token("FailMint1")
-    assert verdict_api_fail.passed is True
+    # No dev or holder data at all fails closed (BUG-57)
+    assert verdict_api_fail.passed is False
+    assert verdict_api_fail.flags.get("missing_dev_data") is True
 
     # 2. Creator coins returns dictionary with "coins"
     coin_dict_data = {

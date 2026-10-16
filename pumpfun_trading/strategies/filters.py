@@ -298,6 +298,10 @@ class ScreeningCache:
 # Global screening cache instance
 _GLOBAL_SCREENING_CACHE = ScreeningCache(default_ttl=60.0)
 
+# Risk points added per missing enrichment source; both missing exceeds the
+# default max_acceptable_risk_score (50) so the screen fails closed (BUG-57).
+MISSING_SCREENING_DATA_PENALTY = 30.0
+
 
 def evaluate_dev_wallet(
     profile: DevWalletProfile | None,
@@ -382,9 +386,8 @@ def evaluate_holder_distribution(
         reasons.append(
             f"High holder inequality (Gini: {gini:.2f}, max allowed: {max_gini:.2f})"
         )
-        # Gini alone is soft warning unless extreme
-        if gini > 0.95:
-            passed = False
+        # The configured Gini cap is a hard reject (BUG-56)
+        passed = False
 
     return passed, penalty, reasons
 
@@ -517,6 +520,16 @@ def evaluate_token_heuristics(
     all_reasons: list[str] = []
     flags: dict[str, Any] = {}
     hard_failed = False
+
+    # 0. Missing enrichment data must not read as a clean pass (BUG-57)
+    if dev_profile is None or not dev_profile.creator_address:
+        total_risk_score += MISSING_SCREENING_DATA_PENALTY
+        all_reasons.append("Dev wallet data unavailable")
+        flags["missing_dev_data"] = True
+    if holder_distribution is None or not holder_distribution.top_holders:
+        total_risk_score += MISSING_SCREENING_DATA_PENALTY
+        all_reasons.append("Holder distribution data unavailable")
+        flags["missing_holder_data"] = True
 
     # 1. Dev wallet profiling
     dev_pass, dev_penalty, dev_reasons = evaluate_dev_wallet(

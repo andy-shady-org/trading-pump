@@ -228,6 +228,7 @@ async def test_bot_message_handlers_and_events(base_bot):
         "mint": mint,
         "name": "FreshToken",
         "marketCapSol": 25.0,
+        "traderPublicKey": "DevWa11et1111111111111111111111111111111111",
     }
     await base_bot._handle_message(new_token_msg, mock_ws)
     assert mint in base_bot.active_positions

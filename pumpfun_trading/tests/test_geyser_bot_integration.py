@@ -43,6 +43,7 @@ async def test_bonding_curve_state_update_active_position_tp_and_sl(bot):
     # Setup active position
     bot.active_positions[SAMPLE_MINT] = {
         "name": "TestToken",
+        "token_amount": 100_000_000,
         "entry_market_cap": 30.0,
         "current_market_cap": 30.0,
     }
@@ -86,6 +87,7 @@ async def test_bonding_curve_state_update_active_position_tp_and_sl(bot):
     # 3. Stop loss hit (20 SOL <= 30 * 0.85)
     bot.active_positions[SAMPLE_MINT] = {
         "name": "TestToken2",
+        "token_amount": 100_000_000,
         "entry_market_cap": 30.0,
         "current_market_cap": 30.0,
     }
@@ -175,6 +177,7 @@ async def test_trade_event_update_branches(bot):
     # 2. Active position with trade update
     bot.active_positions[SAMPLE_MINT] = {
         "name": "TokenTrade",
+        "token_amount": 100_000_000,
         "entry_market_cap": 30.0,
         "current_market_cap": 30.0,
     }
@@ -212,6 +215,7 @@ async def test_trade_event_update_branches(bot):
     # 4. Active position triggering stop loss on sell trade
     bot.active_positions[SAMPLE_MINT] = {
         "name": "TokenTrade2",
+        "token_amount": 100_000_000,
         "entry_market_cap": 30.0,
         "current_market_cap": 30.0,
     }

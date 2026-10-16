@@ -325,12 +325,24 @@ async def test_concurrent_mint_events_do_not_exceed_max_positions():
     # Dispatch concurrent new token events
     task1 = asyncio.create_task(
         bot._handle_new_token_event(
-            {"mint": mint1, "marketCapSol": 35.0, "name": "Coin1"}, ws
+            {
+                "mint": mint1,
+                "marketCapSol": 35.0,
+                "name": "Coin1",
+                "traderPublicKey": "DevWa11et1111111111111111111111111111111111",
+            },
+            ws,
         )
     )
     task2 = asyncio.create_task(
         bot._handle_new_token_event(
-            {"mint": mint2, "marketCapSol": 35.0, "name": "Coin2"}, ws
+            {
+                "mint": mint2,
+                "marketCapSol": 35.0,
+                "name": "Coin2",
+                "traderPublicKey": "DevWa11et1111111111111111111111111111111111",
+            },
+            ws,
         )
     )
 

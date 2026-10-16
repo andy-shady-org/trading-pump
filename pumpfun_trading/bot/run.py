@@ -1954,7 +1954,7 @@ class TradingBot:
         sell_amount_tokens: int | None = None,
         sell_fraction: float = 1.0,
         reason: str = "exit",
-        target_tier: int | None = None,
+        target_tier: int | str | None = None,
         slippage_bps: int | None = None,
         retry_count: int = 0,
     ) -> bool:
