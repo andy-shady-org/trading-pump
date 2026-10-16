@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from typing import Any
+
+from rich.table import Table
 
 from pumpfun_trading.engines.replay import (
     render_replay_dashboard,
@@ -60,6 +63,52 @@ def build_parser(
     parser.add_argument("--mint-name", default=None, help="Filter by mint name")
     parser.add_argument("--token-name", default=None, help="Filter by token name")
     parser.add_argument(
+        "--simple-exits",
+        action="store_true",
+        help=(
+            "With --config/--preset, use the legacy take-profit/stop-loss replay "
+            "instead of the live sizing and exit stack"
+        ),
+    )
+    parser.add_argument(
+        "--no-costs",
+        action="store_true",
+        help="Live-fidelity replay without modelled fees, tips and rent (gross PnL)",
+    )
+    parser.add_argument(
+        "--tip-lamports",
+        type=int,
+        default=None,
+        help="Modelled Jito tip per trade (default: PUMPFUN_JITO_TIP_LAMPORTS, 0 if PUMPFUN_USE_JITO=false)",
+    )
+    parser.add_argument(
+        "--priority-fee-lamports",
+        type=int,
+        default=0,
+        help="Modelled priority fee per trade in lamports",
+    )
+    parser.add_argument(
+        "--compare-audit",
+        default=None,
+        metavar="AUDIT_PATH",
+        help=(
+            "Compare the live-fidelity replay with this audit trail (replay-vs-live "
+            "parity); exits 1 when net PnL differs by more than the tolerance"
+        ),
+    )
+    parser.add_argument(
+        "--parity-tolerance-sol",
+        type=float,
+        default=0.002,
+        help="Absolute net PnL tolerance for --compare-audit (SOL)",
+    )
+    parser.add_argument(
+        "--parity-tolerance-pct",
+        type=float,
+        default=0.10,
+        help="Relative net PnL tolerance for --compare-audit (fraction of live net PnL)",
+    )
+    parser.add_argument(
         "--initial-cash",
         type=float,
         default=100.0,
@@ -106,12 +155,26 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
         take_profit = config.take_profit if config is not None else 1.5
         stop_loss = config.stop_loss if config is not None else 0.85
         max_positions = config.max_active_positions if config is not None else 1
+        # A config/preset replays with the live sizing and exit stack (BUG-61)
+        # and, unless --no-costs, books modelled fees, tips and rent.
+        live = config is not None and not getattr(args, "simple_exits", False)
+        cost_model = None
+        if live and config is not None and not getattr(args, "no_costs", False):
+            from pumpfun_trading.engines.costs import ReplayCostModel
+
+            cost_model = ReplayCostModel.from_env(
+                close_token_account_on_full_exit=config.close_token_account_on_full_exit,
+                priority_fee_lamports=getattr(args, "priority_fee_lamports", 0),
+                tip_lamports=getattr(args, "tip_lamports", None),
+            )
         engine = PaperTradingEngine(
             initial_cash=initial_cash,
             take_profit=take_profit,
             stop_loss=stop_loss,
             max_positions=max_positions,
             strategy_config=config,
+            live_fidelity=live,
+            cost_model=cost_model,
         )
 
     summary = run_replay(
@@ -121,6 +184,10 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
         mint_name=getattr(args, "mint_name", None),
         token_name=getattr(args, "token_name", None),
     )
+    audit_path = getattr(args, "compare_audit", None)
+    if audit_path:
+        _run_parity(summary, audit_path, args)
+        return
     mode = getattr(args, "replay_output", None) or getattr(args, "replay_mode", None)
     if mode is None:
         legacy = getattr(args, "mode", None)
@@ -132,6 +199,65 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
         render_replay_trades(summary.get("trades", []), console)
         return
     render_replay_dashboard(summary, console)
+
+
+def _run_parity(
+    summary: dict[str, Any], audit_path: str, args: argparse.Namespace
+) -> None:
+    """Print the replay-vs-live parity report; exit 1 outside the tolerance."""
+    from pumpfun_trading.bot.audit import load_audit_records
+    from pumpfun_trading.bot.pnl import trade_payloads
+    from pumpfun_trading.engines.parity import compare_replay_to_audit
+
+    if not summary.get("live_fidelity"):
+        raise SystemExit(
+            "--compare-audit needs a live-fidelity replay: pass --config or --preset "
+            "and don't use --simple-exits"
+        )
+    report = compare_replay_to_audit(
+        summary.get("trades", []),
+        trade_payloads(load_audit_records(audit_path)),
+        tolerance_sol=float(getattr(args, "parity_tolerance_sol", 0.002)),
+        tolerance_pct=float(getattr(args, "parity_tolerance_pct", 0.10)),
+    )
+    table = Table(title="Replay vs live (per mint)", header_style="bold cyan")
+    for column in (
+        "Mint",
+        "Status",
+        "Live exits",
+        "Replay exits",
+        "Live net",
+        "Replay net",
+    ):
+        table.add_column(column)
+    for row in report["mints"]:
+        if row["status"] == "no_entry":
+            continue
+        table.add_row(
+            str(row["mint"])[:12],
+            row["status"]
+            + (
+                ""
+                if row["exit_match"] or row["status"] != "both"
+                else " (exit differs)"
+            ),
+            ", ".join(row["live_exits"]) or "-",
+            ", ".join(row["replay_exits"]) or "-",
+            f"{row['live_net_pnl_sol']:.6f}",
+            f"{row['replay_net_pnl_sol']:.6f}",
+        )
+    console.print(table)
+    counts = report["counts"]
+    verdict = "PASS" if report["within_tolerance"] else "GAP"
+    console.print(
+        f"Entries in both: {counts['both']} (same exit: {counts['exit_match']}), "
+        f"live only: {counts['live_only']}, replay only: {counts['replay_only']}\n"
+        f"Net PnL live {report['live_net_pnl_sol']:.6f} SOL, replay "
+        f"{report['replay_net_pnl_sol']:.6f} SOL, gap {report['gap_sol']:+.6f} "
+        f"(allowed ±{report['allowed_gap_sol']:.6f}): {verdict}"
+    )
+    if not report["within_tolerance"]:
+        raise SystemExit(1)
 
 
 def main() -> None:

@@ -1,0 +1,66 @@
+"""Unit tests for ``engines/costs.py`` replay cost model (Sprint 24C)."""
+
+from __future__ import annotations
+
+import pytest
+
+from pumpfun_trading.engines.costs import DEFAULT_JITO_TIP_LAMPORTS, ReplayCostModel
+from pumpfun_trading.sdk.costs import TOKEN_ACCOUNT_RENT_LAMPORTS
+from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS
+
+
+def test_buy_costs_pay_fee_tip_and_rent() -> None:
+    costs = ReplayCostModel(priority_fee_lamports=10_000).buy_costs()
+
+    assert costs.network_fee_lamports == 5_000 + 10_000
+    assert costs.tip_lamports == DEFAULT_JITO_TIP_LAMPORTS
+    assert costs.rent_lamports == TOKEN_ACCOUNT_RENT_LAMPORTS
+
+
+@pytest.mark.parametrize(
+    ("full_exit", "close", "rent"),
+    [
+        (True, True, -TOKEN_ACCOUNT_RENT_LAMPORTS),
+        (True, False, 0),
+        (False, True, 0),
+    ],
+)
+def test_sell_costs_refund_rent_only_on_closing_full_exit(
+    full_exit: bool, close: bool, rent: int
+) -> None:
+    model = ReplayCostModel(close_token_account_on_full_exit=close)
+
+    assert model.sell_costs(full_exit=full_exit).rent_lamports == rent
+
+
+@pytest.mark.parametrize(
+    ("env", "tip"),
+    [
+        ({}, DEFAULT_JITO_TIP_LAMPORTS),
+        ({"PUMPFUN_JITO_TIP_LAMPORTS": "250000"}, 250_000),
+        ({"PUMPFUN_USE_JITO": "false", "PUMPFUN_JITO_TIP_LAMPORTS": "250000"}, 0),
+        ({"PUMPFUN_JITO_TIP_LAMPORTS": "lots"}, DEFAULT_JITO_TIP_LAMPORTS),
+    ],
+)
+def test_from_env_uses_live_tip_settings(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], tip: int
+) -> None:
+    monkeypatch.delenv("PUMPFUN_USE_JITO", raising=False)
+    monkeypatch.delenv("PUMPFUN_JITO_TIP_LAMPORTS", raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    model = ReplayCostModel.from_env()
+
+    assert model.tip_lamports == tip
+    assert model.protocol_fee_bps == PUMP_DEFAULT_FEE_BPS
+
+
+def test_from_env_explicit_values_win() -> None:
+    model = ReplayCostModel.from_env(
+        tip_lamports=-5, priority_fee_lamports=7, close_token_account_on_full_exit=False
+    )
+
+    assert model.tip_lamports == 0
+    assert model.priority_fee_lamports == 7
+    assert model.close_token_account_on_full_exit is False

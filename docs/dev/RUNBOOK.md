@@ -115,6 +115,24 @@ Stage 0 of the live capital gate. Exit criteria: [`RELEASE-GATE.md` §3.2](RELEA
 5. **Continue to 72 hours** without restarting. Run the drills in §7 on a separate paper instance, not on the pilot itself, so uptime is not reset.
 6. Summarise: uptime, peak RSS, number of entries and exits by reason, breaker trips, simulated PnL. Put the summary in the release record.
 
+### 6.1 Replay parity and tuning on captures (Sprint 24C)
+
+Run these on a **copy** of the capture, from a second runtime directory, never against the running pilot's files.
+
+1. **Parity check** (after Stage 0, and again on the first Stage 1 canary days):
+   ```bash
+   pumpfun-replay --path data/replay_capture.jsonl --config configs/canary.json \
+     --compare-audit data/audit_trail.jsonl --mode summary
+   ```
+   Exit code 0 means the replay's net PnL is within tolerance of the audit trail. Explain every "exit differs", "live only" and "replay only" row in the release record before trusting replay for tuning. Live fills at executed prices and real (dynamic) tips, so small gaps are expected.
+2. **Exit attribution:** `pumpfun-audit pnl --group-by reason` (live) and the replay `--mode trades` ledger (`reason`, `hold_seconds`) show which exits earn and which give money back. The replay summary's `entry_rejections` shows which risk limit blocked entries.
+3. **Tune** only once parity passes, on at least two days of capture, with the split on a day boundary:
+   ```bash
+   pumpfun-optimize --dataset data/replay_capture.jsonl --config configs/canary.json \
+     --method genetic --train-split 0.5 --seed 7 --export-config configs/canary-tuned.json
+   ```
+   Fitness is net of modelled costs. Promote the tuned config only if its **test** (out-of-sample) score beats the canary config's, and only through a fresh Stage 0 run (`RELEASE-GATE.md` §3). The exported file masks any credential in URLs (BUG-102), so keep endpoints in the environment.
+
 ## 7. Incident drills
 
 Run these in paper mode before Stage 1 and after any release that touches lifecycle, persistence or execution.

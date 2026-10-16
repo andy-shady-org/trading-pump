@@ -286,3 +286,42 @@ def test_grid_search_empty_grid_raises(
 
     with pytest.raises(ValueError, match="No grid configurations"):
         GridSearchOptimizer(space, seed=0).optimize([{}])
+
+
+def test_trial_fitness_responds_to_live_exit_parameters() -> None:
+    """BUG-61: exit-stack parameters change the simulated result."""
+    snapshots = [
+        {"mint": "A", "price": 1.0, "timestamp": 0.0, "buy_signal": True},
+        {"mint": "A", "price": 1.6, "timestamp": 10.0},
+        {"mint": "A", "price": 1.4, "timestamp": 20.0},
+        {"mint": "A", "price": 0.5, "timestamp": 30.0},
+    ]
+    base = TradingBotConfig(
+        buy_amount_sol=0.01,
+        max_position_size_sol=0.01,
+        max_total_exposure_sol=0.03,
+        max_token_concentration_pct=1.0,
+        reserve_balance_sol=0.0,
+        enable_momentum_signals=False,
+        enable_tiered_take_profit=False,
+        take_profit=10.0,
+        trailing_stop_activation_pct=0.3,
+    )
+
+    tight = optimizer_module.evaluate_trial_on_snapshots(
+        1, {"trailing_stop_drop_pct": 0.1}, snapshots, base_config=base
+    )
+    loose = optimizer_module.evaluate_trial_on_snapshots(
+        2, {"trailing_stop_drop_pct": 0.3}, snapshots, base_config=base
+    )
+
+    # Tight trailing stop sells at 1.4x; loose one rides down to the stop-loss.
+    assert tight.train_fitness.net_pnl > 0 > loose.train_fitness.net_pnl
+    assert tight.train_fitness.total_return > 0 > loose.train_fitness.total_return
+
+
+def test_trial_bankroll_scales_with_live_caps() -> None:
+    cfg = TradingBotConfig(
+        buy_amount_sol=0.01, max_total_exposure_sol=0.03, reserve_balance_sol=0.15
+    )
+    assert optimizer_module.trial_bankroll_sol(cfg) == pytest.approx(0.21)

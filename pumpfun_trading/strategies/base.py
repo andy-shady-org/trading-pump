@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pumpfun_trading.ops.redact import redact_url
+
 
 @dataclass(frozen=True)
 class TradingBotConfig:
@@ -166,8 +168,8 @@ class TradingBotConfig:
             "paper_trade": self.paper_trade,
             "verbose": self.verbose,
             "headless": self.headless,
-            "stream_url": self.stream_url,
-            "api_base_url": self.api_base_url,
+            "stream_url": redact_url(self.stream_url),
+            "api_base_url": redact_url(self.api_base_url),
             "strategy_preset": self.strategy_preset,
             "max_total_exposure_sol": self.max_total_exposure_sol,
             "max_position_size_sol": self.max_position_size_sol,
@@ -224,7 +226,7 @@ class TradingBotConfig:
             "copy_trading_mirror_sells": self.copy_trading_mirror_sells,
             "copy_trading_require_anti_rug_screen": self.copy_trading_require_anti_rug_screen,
             "enable_rpc_pool": self.enable_rpc_pool,
-            "rpc_endpoints": list(self.rpc_endpoints),
+            "rpc_endpoints": [redact_url(u) for u in self.rpc_endpoints],
             "rpc_pool_health_check_interval_seconds": self.rpc_pool_health_check_interval_seconds,
             "rpc_pool_circuit_breaker_threshold": self.rpc_pool_circuit_breaker_threshold,
             "rpc_pool_circuit_breaker_cooldown_seconds": self.rpc_pool_circuit_breaker_cooldown_seconds,

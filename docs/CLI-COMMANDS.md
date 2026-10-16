@@ -226,6 +226,13 @@ pumpfun replay --path <DATASET_PATH> [OPTIONS]
 | `--preset` | — | Choice | `None` | Overrides strategy preset (`conservative`, `balanced`, `aggressive`). |
 | `--config` | — | File Path | `None` | Path to custom strategy JSON configuration file. |
 | `--initial-cash` | — | Float | `100.0` | Initial starting capital in SOL for the backtest. |
+| `--simple-exits` | — | Flag | off | With `--config`/`--preset`, use the legacy fraction-of-cash sizing and flat take-profit/stop-loss instead of the live sizing and exit stack. |
+| `--no-costs` | — | Flag | off | Live-fidelity replay without modelled fees, tips and rent (reports gross PnL). |
+| `--tip-lamports` | — | Integer | `PUMPFUN_JITO_TIP_LAMPORTS` | Modelled Jito tip per trade (0 when `PUMPFUN_USE_JITO=false`). |
+| `--priority-fee-lamports` | — | Integer | `0` | Modelled priority fee per trade. |
+| `--compare-audit` | — | File Path | `None` | Replay-vs-live parity report against this audit trail; exit code 1 when net PnL differs by more than the tolerance. |
+| `--parity-tolerance-sol` | — | Float | `0.002` | Absolute net PnL tolerance for `--compare-audit`. |
+| `--parity-tolerance-pct` | — | Float | `0.10` | Relative tolerance (fraction of live net PnL) for `--compare-audit`. |
 | `--mint` | — | Base58 | `None` | Filters replay execution to a single token mint address. |
 | `--mint-name` | `--token-name` | String | `None` | Filters replay execution by token symbol or display name. |
 
@@ -235,6 +242,13 @@ pumpfun replay --path <DATASET_PATH> [OPTIONS]
 Run a full interactive backtest with summary tables and trade ledgers:
 ```bash
 pumpfun-replay --path runtime/market_replay.jsonl --mode dashboard
+```
+
+#### Recipe 1b: Replay a Live Capture and Check Parity
+Replay a Stage 0 / Stage 1 capture with the live sizing, exits and costs, and compare it with the bot's audit trail (see [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#live-fidelity-replay-sprint-24c-bug-61)):
+```bash
+pumpfun-replay --path data/replay_capture.jsonl --config configs/canary.json \
+  --compare-audit data/audit_trail.jsonl --mode summary
 ```
 
 #### Recipe 2: Condensed Financial Performance Summary
@@ -410,6 +424,8 @@ pumpfun-events --path events.jsonl --latency-stats
 
 ### Purpose & Operational Utility
 The `pumpfun-optimize` CLI (and `pumpfun optimize` subcommand) executes automated multi-objective strategy calibration and hyperparameter tuning across historical replay datasets (`.jsonl` / `.jsonl.gz`) under `FEAT-27`. It solves parameter decay across changing volatility regimes by evaluating thousands of parameter combinations using evolutionary genetic algorithms, random search, or deterministic grids.
+
+Since Sprint 24C every trial runs the [live-fidelity replay](REPLAY-ENGINE.md#live-fidelity-replay-sprint-24c-bug-61) with modelled costs, so fitness is **net of fees, tips and rent**, and the search space covers the live exit stack again (tiered take-profits, moonbag floor, trailing stop, stagnant and max-hold timeouts). Each trial starts with `reserve_balance_sol + 2 × max_total_exposure_sol` of cash, so returns and drawdown are measured against the capital the live caps can put at risk. Sizing, risk caps and screening thresholds are not searched. Trials are selected on the training split only (BUG-60); `--train-split` is chronological.
 
 ### Command Syntax
 ```bash

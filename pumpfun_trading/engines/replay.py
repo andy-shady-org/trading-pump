@@ -12,15 +12,43 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 
+from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.strategies.arbitrage import CrossVenueDisparityMonitor
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.copy_trading import CopyTradeEngine
+from pumpfun_trading.strategies.exits import (
+    ExitAction,
+    ExitDecision,
+    PositionExitState,
+    evaluate_exit_strategy,
+)
 from pumpfun_trading.strategies.graduation import GraduationEngine
 from pumpfun_trading.strategies.momentum import OrderFlowEngine
 
+# Abstract token units per replay position. The live exit stack works in raw
+# token amounts; replay only needs the fraction sold, so each position starts
+# with this many units (far above any ``min_sell_balance``).
+LIVE_POSITION_TOKEN_UNITS = 10**12
+
 
 class PaperTradingEngine:
-    """Lightweight paper-trading engine for historical token snapshots."""
+    """Lightweight paper-trading engine for historical token snapshots.
+
+    With ``live_fidelity=True`` (requires ``strategy_config``) the engine sizes
+    entries and manages exits exactly like the live bot (BUG-61): a fixed
+    ``buy_amount_sol`` per entry gated by the live risk limits, and the full exit
+    stack from ``strategies/exits.py`` (stop-loss, stagnant and max-hold
+    timeouts, tiered take-profits, moonbag floor, trailing stop). Passing a
+    ``cost_model`` (live-fidelity only) also books the modelled fee, priority fee,
+    Jito tip and token-account rent of every trade, so ``pnl`` is net of costs.
+
+    ``entry_mode`` picks the live-fidelity entries: ``live_fills`` buys only where
+    the live bot bought (its recorded fills, so exits and sizing can be compared
+    with the audit trail); ``signals`` buys on buy signals; ``auto`` (default)
+    uses ``live_fills`` when the dataset contains recorded fills. The live
+    screener (social links, holders, creator history) is not replayed, because a
+    capture does not record the enrichment data.
+    """
 
     def __init__(
         self,
@@ -38,7 +66,18 @@ class PaperTradingEngine:
         enable_copy_trading: bool = False,
         enable_cross_venue_arbitrage: bool = False,
         arb_cooldown_seconds: float = 60.0,
+        live_fidelity: bool = False,
+        cost_model: ReplayCostModel | None = None,
+        entry_mode: str = "auto",
     ) -> None:
+        if entry_mode not in {"auto", "live_fills", "signals"}:
+            raise ValueError(f"Unsupported entry_mode: {entry_mode}")
+        if live_fidelity and strategy_config is None:
+            raise ValueError("live_fidelity=True requires a strategy_config")
+        if cost_model is not None and not live_fidelity:
+            raise ValueError("cost_model requires live_fidelity=True")
+        if cost_model is not None:
+            fee_bps = cost_model.protocol_fee_bps
         if strategy_config is not None:
             if take_profit == 1.5 and hasattr(strategy_config, "take_profit"):
                 take_profit = strategy_config.take_profit
@@ -55,6 +94,9 @@ class PaperTradingEngine:
         self.take_profit = float(take_profit)
         self.stop_loss = float(stop_loss)
         self.strategy_config = strategy_config
+        self.live_fidelity = bool(live_fidelity)
+        self.cost_model = cost_model
+        self.entry_mode = entry_mode
         self.enable_order_flow_momentum = enable_order_flow_momentum or (
             bool(strategy_config.enable_momentum_signals) if strategy_config else False
         )
@@ -304,6 +346,165 @@ class PaperTradingEngine:
             return True
         return bool(snapshot.get("should_sell"))
 
+    @staticmethod
+    def _is_live_fill(snapshot: dict[str, Any], side: str) -> bool:
+        """A fill the live bot recorded (``--record-replay``): ``signal`` plus a
+        ``reason``. Market-trade and new-token snapshots carry no ``reason``."""
+        return (
+            str(snapshot.get("signal") or "").lower() == side
+            and "reason" in snapshot
+            and "user" not in snapshot
+        )
+
+    def _live_entry_size(
+        self,
+        cash: float,
+        positions: dict[str, dict[str, Any]],
+        mint: str,
+        buys_per_mint: dict[str, int],
+        rejections: dict[str, int],
+    ) -> float:
+        """SOL to spend on a live-fidelity entry, or 0.0 when a live limit rejects it.
+
+        Mirrors ``bot/risk.py::check_risk_limits`` and the account equity guard.
+        """
+        cfg = self.strategy_config
+        assert cfg is not None
+        entry = float(cfg.buy_amount_sol)
+        reason = ""
+        exposure = sum(float(p["cost_basis"]) for p in positions.values())
+        attempts_cap = int(cfg.max_buy_attempts_per_mint)
+        exposure_cap = float(cfg.max_total_exposure_sol)
+        if entry <= 0:
+            reason = "no_buy_amount"
+        elif attempts_cap > 0 and buys_per_mint.get(mint, 0) >= attempts_cap:
+            reason = "max_buy_attempts_per_mint"
+        elif exposure + entry > exposure_cap:
+            reason = "max_total_exposure"
+        elif entry > float(cfg.max_position_size_sol):
+            reason = "max_position_size"
+        elif exposure_cap > 0 and (
+            max([float(p["cost_basis"]) for p in positions.values()] + [entry])
+            / exposure_cap
+            > float(cfg.max_token_concentration_pct)
+        ):
+            reason = "token_concentration"
+        elif cash - entry < float(cfg.reserve_balance_sol):
+            reason = "reserve_balance"
+        if reason:
+            rejections[reason] = rejections.get(reason, 0) + 1
+            return 0.0
+        return entry
+
+    def _sell_value(self, quantity: float, price: float) -> float:
+        """SOL received for selling ``quantity`` at ``price`` after slippage and fee."""
+        exec_sell_price = price * (1.0 - self.slippage_bps / 10_000.0)
+        return quantity * exec_sell_price * (1.0 - self.fee_bps / 10_000.0)
+
+    def _live_exit_pass(
+        self,
+        *,
+        mint: str,
+        price: float,
+        ts: float,
+        raw_ts: Any,
+        positions: dict[str, dict[str, Any]],
+        trades: list[dict[str, Any]],
+        last_prices: dict[str, float],
+        forced_reason: str,
+    ) -> tuple[float, bool]:
+        """Run the live exit stack over every open position.
+
+        The snapshot's own mint is re-priced; the others are evaluated at their
+        last price so time-based exits (stagnant, max-hold) fire on the replay
+        clock like the live refresh loop. Returns ``(cash_in, exited_mint)``.
+        """
+        cfg = self.strategy_config
+        assert cfg is not None
+        cash_in = 0.0
+        exited_mint = False
+        for pos_mint in list(positions):
+            position = positions[pos_mint]
+            state: PositionExitState = position["exit_state"]
+            if pos_mint == mint and forced_reason:
+                state.update_price(
+                    price, now=ts, threshold_pct=cfg.stagnant_price_delta_threshold_pct
+                )
+                decision = ExitDecision(
+                    action=ExitAction.FULL_EXIT,
+                    sell_fraction=1.0,
+                    sell_tokens=state.remaining_token_amount,
+                    reason=forced_reason,
+                    exit_type=forced_reason,
+                )
+            else:
+                decision = evaluate_exit_strategy(
+                    cfg,
+                    state,
+                    current_market_cap=price if pos_mint == mint else None,
+                    now=ts,
+                )
+            if decision.action == ExitAction.HOLD:
+                continue
+            remaining = state.remaining_token_amount
+            full = decision.action == ExitAction.FULL_EXIT
+            # A held position always has units left (full exits delete it), and the
+            # exit stack never asks for fewer than one unit.
+            sell_tokens = remaining if full else min(decision.sell_tokens, remaining)
+            ratio = sell_tokens / remaining
+            full = full or ratio >= 1.0
+            sold_qty = float(position["quantity"]) * ratio
+            cost_part = float(position["cost_basis"]) * ratio
+            exit_price = last_prices.get(pos_mint, position["entry_price"])
+            exit_value = self._sell_value(sold_qty, exit_price)
+            buy_cost_part = float(position.get("costs_sol", 0.0)) * ratio
+            sell_cost = (
+                self.cost_model.sell_costs(full_exit=full).total_cost_sol
+                if self.cost_model is not None
+                else 0.0
+            )
+            gross_pnl = exit_value - cost_part
+            costs = buy_cost_part + sell_cost
+            pnl = gross_pnl - costs
+            trade_name = position.get("name") or ""
+            trades.append(
+                {
+                    "index": len(trades),
+                    "timestamp": raw_ts,
+                    "mint": pos_mint,
+                    "name": trade_name,
+                    "mint_name": trade_name,
+                    "token_name": trade_name,
+                    "action": "sell",
+                    "partial": not full,
+                    "entry_price": position["entry_price"],
+                    "exit_price": exit_price,
+                    "quantity": sold_qty,
+                    "cost": cost_part,
+                    "proceeds": exit_value,
+                    "pnl": pnl,
+                    "gross_pnl_sol": gross_pnl,
+                    "costs_sol": costs,
+                    "net_pnl_sol": pnl,
+                    "return_pct": pnl / cost_part if cost_part > 0 else 0.0,
+                    "reason": decision.exit_type,
+                    "exit_detail": decision.reason,
+                    "hold_seconds": max(0.0, ts - state.entry_time),
+                }
+            )
+            cash_in += exit_value - sell_cost
+            if full:
+                del positions[pos_mint]
+                exited_mint = exited_mint or pos_mint == mint
+            else:
+                position["quantity"] = float(position["quantity"]) - sold_qty
+                position["cost_basis"] = float(position["cost_basis"]) - cost_part
+                position["costs_sol"] = (
+                    float(position.get("costs_sol", 0.0)) - buy_cost_part
+                )
+                state.record_partial_exit(decision.target_tier, sell_tokens)
+        return cash_in, exited_mint
+
     def run(self, snapshots: Sequence[dict[str, Any]]) -> dict[str, Any]:
         cash = self.initial_cash
         positions: dict[str, dict[str, Any]] = {}
@@ -311,6 +512,15 @@ class PaperTradingEngine:
         equity_history: list[dict[str, Any]] = []
         last_prices: dict[str, float] = {}
         last_arb_at: dict[str, float] = {}
+        buys_per_mint: dict[str, int] = {}
+        entry_rejections: dict[str, int] = {}
+        mirror_live_entries = self.live_fidelity and (
+            self.entry_mode == "live_fills"
+            or (
+                self.entry_mode == "auto"
+                and any(self._is_live_fill(s, "buy") for s in snapshots)
+            )
+        )
 
         for index, snapshot in enumerate(snapshots):
             mint = self._snapshot_mint(snapshot)
@@ -513,7 +723,29 @@ class PaperTradingEngine:
                 graduation_triggered = self.enable_raydium_graduation
 
             exited_this_snapshot = False
-            if mint in positions:
+            if self.live_fidelity:
+                forced_reason = ""
+                if mint in positions:
+                    if copy_trade_sell_triggered:
+                        forced_reason = f"copy_trade_exit_{copy_wallet_label}"
+                    elif is_curve_complete:
+                        forced_reason = "bonding_curve_graduated"
+                    elif snapshot.get("sell_signal") is True:
+                        # Only an explicit flag: recorded ``signal`` strings are
+                        # market trades or the bot's own fills, not exit orders.
+                        forced_reason = "sell_signal"
+                cash_in, exited_this_snapshot = self._live_exit_pass(
+                    mint=mint,
+                    price=price,
+                    ts=ts,
+                    raw_ts=self._snapshot_timestamp(snapshot),
+                    positions=positions,
+                    trades=trades,
+                    last_prices=last_prices,
+                    forced_reason=forced_reason,
+                )
+                cash += cash_in
+            elif mint in positions:
                 position = positions[mint]
                 price_multiplier = (
                     price / position["entry_price"]
@@ -574,23 +806,41 @@ class PaperTradingEngine:
             if (
                 mint not in positions
                 and not exited_this_snapshot
-                and self._buy_signal(
-                    snapshot,
-                    momentum_triggered=momentum_triggered,
-                    graduation_triggered=graduation_triggered,
-                    copy_trade_triggered=copy_trade_buy_triggered,
-                    pre_grad_triggered=pre_grad_triggered,
+                and (
+                    self._is_live_fill(snapshot, "buy")
+                    if mirror_live_entries
+                    else self._buy_signal(
+                        (
+                            snapshot
+                            if not (self.live_fidelity and "user" in snapshot)
+                            else {k: v for k, v in snapshot.items() if k != "signal"}
+                        ),
+                        momentum_triggered=momentum_triggered,
+                        graduation_triggered=graduation_triggered,
+                        copy_trade_triggered=copy_trade_buy_triggered,
+                        pre_grad_triggered=pre_grad_triggered,
+                    )
                 )
                 and len(positions) < self.max_positions
             ):
-                spend_budget = max(0.0, min(cash * self.buy_fraction, cash))
+                if self.live_fidelity:
+                    spend_budget = self._live_entry_size(
+                        cash, positions, mint, buys_per_mint, entry_rejections
+                    )
+                else:
+                    spend_budget = max(0.0, min(cash * self.buy_fraction, cash))
                 if spend_budget > 0:
                     fee_rate = self.fee_bps / 10_000.0
                     slippage_rate = self.slippage_bps / 10_000.0
                     net_spend = spend_budget / (1.0 + fee_rate)
                     exec_price = price * (1.0 + slippage_rate)
                     quantity = net_spend / exec_price if exec_price > 0 else 0.0
-                    if quantity > 0 and cash >= spend_budget:
+                    buy_cost = (
+                        self.cost_model.buy_costs().total_cost_sol
+                        if self.cost_model is not None
+                        else 0.0
+                    )
+                    if quantity > 0 and cash >= spend_budget + buy_cost:
                         positions[mint] = {
                             "mint": mint,
                             "name": name,
@@ -599,7 +849,20 @@ class PaperTradingEngine:
                             "entry_timestamp": self._snapshot_timestamp(snapshot),
                             "cost_basis": spend_budget,
                         }
-                        cash -= spend_budget
+                        if self.live_fidelity:
+                            positions[mint]["exit_state"] = PositionExitState(
+                                entry_market_cap=price,
+                                current_market_cap=price,
+                                peak_market_cap=price,
+                                initial_token_amount=LIVE_POSITION_TOKEN_UNITS,
+                                remaining_token_amount=LIVE_POSITION_TOKEN_UNITS,
+                                entry_time=ts,
+                                last_price_change_at=ts,
+                                last_price=price,
+                            )
+                            buys_per_mint[mint] = buys_per_mint.get(mint, 0) + 1
+                            positions[mint]["costs_sol"] = buy_cost
+                        cash -= spend_budget + buy_cost
                         if copy_trade_buy_triggered:
                             buy_reason = f"copy_trade_{copy_wallet_label}"
                         elif graduation_triggered:
@@ -622,6 +885,8 @@ class PaperTradingEngine:
                                 "entry_price": price,
                                 "exit_price": None,
                                 "quantity": quantity,
+                                "cost": spend_budget,
+                                "costs_sol": buy_cost,
                                 "pnl": 0.0,
                                 "return_pct": 0.0,
                                 "reason": buy_reason,
@@ -701,7 +966,28 @@ class PaperTradingEngine:
             ),
             "trades": trades,
             "equity_history": equity_history,
-            "positions": positions,
+            "positions": {
+                m: {k: v for k, v in pos.items() if k != "exit_state"}
+                for m, pos in positions.items()
+            },
+            "live_fidelity": self.live_fidelity,
+            "costs_modelled": self.cost_model is not None,
+            "entries_from": "live_fills" if mirror_live_entries else "signals",
+            "gross_pnl_sol": sum(
+                float(t.get("gross_pnl_sol", t.get("pnl") or 0.0))
+                for t in trades
+                if t.get("action") in {"sell", "arbitrage"}
+            ),
+            "costs_sol": sum(
+                float(t.get("costs_sol") or 0.0)
+                for t in trades
+                if t.get("action") == "sell"
+            ),
+            "net_pnl_sol": sum(sell_pnls),
+            "open_position_costs_sol": sum(
+                float(pos.get("costs_sol", 0.0)) for pos in positions.values()
+            ),
+            "entry_rejections": entry_rejections,
         }
         self.trades = trades
         return summary
@@ -760,6 +1046,19 @@ def render_replay_summary(
         ("open_positions", summary.get("open_positions")),
     ):
         table.add_row(str(key), str(value))
+    if summary.get("live_fidelity"):
+        table.add_row(
+            "mode",
+            "live fidelity" + (" + costs" if summary.get("costs_modelled") else ""),
+        )
+        for key in ("gross_pnl_sol", "costs_sol", "net_pnl_sol"):
+            table.add_row(key, f"{float(summary.get(key) or 0.0):.6f}")
+        rejections = summary.get("entry_rejections") or {}
+        if rejections:
+            table.add_row(
+                "entry_rejections",
+                ", ".join(f"{k}={v}" for k, v in sorted(rejections.items())),
+            )
     target.print(table)
 
 

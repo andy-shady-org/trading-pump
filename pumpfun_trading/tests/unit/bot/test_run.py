@@ -770,3 +770,32 @@ def test_init_stream_url_resolution_prefers_env_over_default(
     )
     assert bot.config.buy_amount_sol == pytest.approx(0.02)
     assert bot.stream_url == expected
+
+
+def test_status_snapshot_and_events_contain_no_url_credentials(
+    tmp_path: Path,
+) -> None:
+    """BUG-102: provider keys never reach the status file, events or alerts."""
+    key = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url=f"https://mainnet.helius-rpc.com/?api-key={key}",
+        stream_url=f"wss://feed.example.com/data?token={key}",
+        config=TradingBotConfig(buy_amount_sol=0.01),
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        verbose=False,
+    )
+    sent: list[str] = []
+    bot.alert_enabled = True
+    bot._send_alert = sent.append  # type: ignore[method-assign, assignment]
+
+    bot._record_event(f"stream connected: {bot.stream_url}")
+
+    snapshot = json.dumps(bot.get_status_snapshot(), default=str)
+    assert key not in snapshot
+    assert "api-key=***" in snapshot
+    assert key not in json.dumps(bot.config.to_dict())
+    assert sent == ["stream connected: wss://feed.example.com/data?token=***"]
+    # The raw URLs stay in memory for making requests.
+    assert key in bot.stream_url

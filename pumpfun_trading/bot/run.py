@@ -81,6 +81,7 @@ from pumpfun_trading.ops.logging import (
     get_configured_console,
     setup_structured_logging,
 )
+from pumpfun_trading.ops.redact import redact_text
 from pumpfun_trading.ops.retention import LogRetentionManager, RetentionPolicy
 from pumpfun_trading.sdk.costs import (
     BASE_FEE_LAMPORTS_PER_SIGNATURE,
@@ -1230,6 +1231,8 @@ class TradingBot:
         return snapshot
 
     def _record_event(self, event_message: str, alert: bool = True) -> None:
+        # Events feed the status file, dashboard and alerts: never carry a key (BUG-102).
+        event_message = redact_text(event_message)
         formatted = f"[{time.strftime('%H:%M:%S')}] {event_message}"
         self._recent_events.append(formatted)
         self._last_event = event_message

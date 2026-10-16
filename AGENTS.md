@@ -43,7 +43,8 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[TESTS] Mirrored Test Packages:** Every `tests/unit/<pkg>/` directory needs an `__init__.py`; without it, same-named modules (`unit/cli/test_events.py`, `unit/ops/test_events.py`) collide in pytest and mypy.
 - **[OPS] Rotate By On-Disk Name:** Background gzip means `X.1` may still be plain. Shift archives by the name actually on disk (never re-derive `.gz`), and join the pending compression before the next rotation (BUG-97).
 - **[TESTS] No Network In Tests:** Tests that called mainnet passed locally and failed in CI on HTTP 429. `tests/conftest.py` blocks non-local DNS; stub `get_token_program_for_mint` (or use `offline_trade_rpc`) for ATA/builder paths, and give mocked aiohttp sessions `closed = False` and a mocked `request`.
-- **[SECURITY] Redact URLs Before Persisting:** Provider URLs carry API keys (`?api-key=`, `/v2/<key>`). Never write a raw endpoint or stream URL to status files, logs, events or alerts; serialise through a redaction helper and identify endpoints by host label (BUG-102).
+- **[SECURITY] Redact URLs Before Persisting:** Provider URLs carry API keys (`?api-key=`, `/v2/<key>`). Never write a raw endpoint or stream URL to status files, logs, events or alerts; serialise through `ops/redact.py` (`redact_url` / `redact_text`) and identify endpoints by host label (BUG-102).
+- **[REPLAY] Recorded `signal` Is Not An Order:** `--record-replay` captures tag every market trade and new token with `signal`; only snapshots with `reason` (and no `user`) are the bot's own fills. Live-fidelity replay must never treat `signal` strings as exits, and must say plainly that the screener is not replayed.
 
 
 ## Project Overview
