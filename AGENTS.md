@@ -37,6 +37,11 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[ARB] Chain-Read Reserves Only:** Never execute or bank arbitrage on estimated/placeholder reserves; only `reserves_verified=True` opportunities may execute.
 - **[DOCS] Completion Claims Track Code:** TODO item 25 claimed `bot/run.py` was a "lightweight facade" while it had regrown to ~3,770 lines. Before ticking or citing a completed refactor, verify it against the current code (file size, responsibilities); re-open the item when it regresses.
 - **[SCREENING] Stream Payloads Are Not Enrichment:** PumpPortal/Geyser create events carry no socials or holders. Always enrich screened tokens (API record, metadata `uri`, `getTokenLargestAccounts`) with bounded timeouts, since screening runs inside `_trade_lock`; never skip enrichment because stream data was passed (BUG-95). Keep tests off live endpoints.
+- **[EXECUTION] Close What You Open:** Every buy of a new mint pays ~0.002 SOL token-account rent (BUG-96). A full exit must close the account in the sell transaction (only when the sell empties it), and every trade record must carry its fees, tip and rent; never report or gate on gross PnL.
+- **[TESTS] No Cost RPC In Tests:** Post-fill cost capture calls `getTransaction`. `tests/conftest.py` stubs `PumpFunExecutionClient.get_transaction_costs`; only modules that set `USES_REAL_TRANSACTION_COSTS = True` (and patch `rpc_pool.request`) may call the real one.
+- **[EXECUTION] Don't Hard-Code Rent:** Mainnet rent was lowered (Token-2022 ATA 1,513,840 lamports, not 2,039,280). Live costs must come from the transaction meta; modelled values are estimates, so re-check them with `getMinimumBalanceForRentExemption` before relying on them.
+- **[TESTS] Mirrored Test Packages:** Every `tests/unit/<pkg>/` directory needs an `__init__.py`; without it, same-named modules (`unit/cli/test_events.py`, `unit/ops/test_events.py`) collide in pytest and mypy.
+- **[OPS] Rotate By On-Disk Name:** Background gzip means `X.1` may still be plain. Shift archives by the name actually on disk (never re-derive `.gz`), and join the pending compression before the next rotation (BUG-97).
 
 
 ## Project Overview

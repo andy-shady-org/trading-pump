@@ -103,6 +103,12 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-93** | Low | SDK / PDA Helpers | **RESOLVED** | Associated bonding-curve helper uses `FEE_RECIPIENT` as the token-program seed |
 | **BUG-94** | Low | Bot / Persistence | **RESOLVED** | Failed atomic status writes leave stray `.tmp.<pid>` files |
 | **BUG-95** | Critical | Bot / Screening | **RESOLVED** | Stream-fed tokens are now enriched from the Pump.fun API, the metadata URI and `getTokenLargestAccounts`; dashboard shows every rejection reason |
+| **BUG-96** | High | Execution / Rent Recovery | **RESOLVED** | A full Pump.fun exit now closes the token account in the same transaction (`CloseAccount`), refunding ~0.0015 SOL rent per trade (mainnet rent, 2026-10); rent is tracked in the net PnL (Sprint 24B) |
+| **BUG-97** | Medium | Ops / Log Retention | **RESOLVED** | Rotation shifts archives by their on-disk name (`.N` stays plain, `.N.gz` stays compressed) and waits for the previous background gzip before shifting |
+| **BUG-98** | Low | Ops / Diagnostics | **RESOLVED** | `emit` normalises unknown category/severity strings to LIFECYCLE/INFO (as `DiagnosticEvent` does) instead of raising |
+| **BUG-99** | Medium | Bot / Arbitrage Accounting | **RESOLVED** | Landed arbitrage is booked net: fee, priority fee and tip read from the bundle transaction (modelled when unavailable or in dry-run) and fed to the daily breaker |
+| **BUG-100** | Low | Bot / Config | **RESOLVED** | An explicit `stream_url=` argument now wins; config, then env, then default (unchanged for `pumpbot`, which never passes it) |
+| **BUG-101** | Medium | SDK / Quoting | **RESOLVED** | Pump.fun builders raise `CurveStateUnavailableError` instead of quoting against initial-curve placeholder reserves |
 
 ---
 
@@ -755,3 +761,61 @@ These were found by reading the code. They have not been reproduced or fixed yet
   * Live check: `ipfs.io` and `dweb.link` now return HTTP 429 ("service worker gateway only"). Metadata URIs on public gateways are read through `pump.mypinata.cloud` (`resolve_metadata_uri`).
   * `screen_rejected` events list all reasons.
   * Tests: `tests/unit/bot/test_enrichment.py`, `tests/unit/api/test_client.py`, `tests/unit/sdk/test_execution.py`. `test_geyser_bot_integration.py` no longer depends on the live Pump.fun API.
+
+### BUG-96: Token-Account Rent Is Never Recovered After a Full Exit [RESOLVED]
+* **Location:** `pumpfun_trading/sdk/execution.py` (`build_sell_tx`, `sell`), `pumpfun_trading/execution/executor.py` (`execute_sell`), `pumpfun_trading/bot/run.py` (`_sell_token_locked`)
+* **Description:** Found while planning Sprint 24B from the Stage 0 paper run. Every buy of a new token creates the wallet's associated token account (idempotent create, BUG-54), which locks the rent-exempt minimum (2,039,280 lamports for a 165-byte SPL account when the bug was found; mainnet rent has since been lowered to 1,513,840 lamports for the 170-byte Token-2022 accounts Pump.fun uses, about 0.0015 SOL). The sell path never closed that account: `close_account` was only used for the temporary WSOL account in Raydium swaps. Each closed position therefore left an empty token account holding its rent.
+* **Impact:** At canary size (0.01 SOL buys) the stranded rent is about 15–20% of every position, and it was invisible because trade records were gross (no fee, tip or rent fields). Over the 100+ trades of a canary that is 0.2+ SOL locked in empty accounts, enough on its own to turn a small gross profit into a net loss.
+* **Remedy:** Close the token account in the same transaction as the final sell, only when the sell empties it.
+* **Resolution (RESOLVED):**
+  * `build_sell_tx(..., close_token_account=True)` appends an SPL `CloseAccount` (rent to the wallet, owner the wallet) after the sell and before the Jito tip, using the mint's real token program (SPL Token or Token-2022).
+  * `OrderExecutor.execute_sell(..., close_token_account=True)` only closes when the pre-trade balance read equals the amount sold, because closing a non-empty account fails the whole transaction. If a closing sell fails or is not confirmed, the mint is flagged and the retry sells without the close.
+  * `TradingBot._sell_token_locked` requests the close on every full exit; partial exits never close. `close_token_account_on_full_exit` (default `true`) turns it off.
+  * Rent is recorded per trade (`rent_sol`: positive when paid on a buy, negative when refunded on a close), read from the transaction meta in live mode and modelled in paper mode (FEAT-49).
+  * Not covered: dust left after a full sell (balance ≤ `min_sell_balance`) and Raydium exits still leave the account open; a burn-and-close sweep is a follow-up.
+  * Tests: `tests/unit/sdk/test_execution.py`, `tests/unit/execution/test_executor.py`, `tests/unit/bot/test_run.py`. Mainnet check (read-only, 2026-10-16): `parse_transaction_costs` run on three recent third-party Pump.fun sells that close the token account reads the refund as negative rent (−1,488,440 / −1,513,840 lamports, matching `getMinimumBalanceForRentExemption` for 165/170 bytes) and splits fee and priority fee correctly. The bot's own sells still need checking on the first canary trades with `pumpfun-audit reconcile`.
+  * The modelled paper rent (`sdk/costs.TOKEN_ACCOUNT_RENT_LAMPORTS`) was updated from 2,039,280 to 1,513,840 lamports after that check.
+
+## 8. Sprint 24B Test Pass Findings (2026-10-16, resolved)
+
+Found while writing behaviour tests to bring coverage back to 95%. None is on the canary's money path with the canary config (arbitrage is off, the stream URL comes from the config). All five were fixed in Sprint 24B on `sprint-24b-net-pnl`.
+
+### BUG-97: Rotation Can Store Plain Text Under a `.gz` Name [RESOLVED]
+* **Location:** `pumpfun_trading/ops/retention.py` (`RotatedFileSink.rotate_now`)
+* **Description:** With compression on, `X.1` is gzipped by a background thread. If the next rotation runs before that finishes (or the gzip failed), the shift loop moves `X.1` to `_get_rotated_filename(2)`, which is `X.2.gz`. Reproduced in a test: `b.log.2.gz` contained `pending-raw`. The compression thread can also still be reading `X.1` while it is shifted or deleted.
+* **Impact:** Corrupt-looking archives; `pumpfun-events` / `zcat` fail on them. No trading impact.
+* **Remedy:** Shift by actual on-disk name (keep `.N` vs `.N.gz` as found) and serialise compression with rotation (a lock, or compress synchronously).
+* **Resolution (2026-10-16):** `rotate_now` shifts each backup by its actual name, so an uncompressed `X.1` becomes `X.2` and `X.N.gz` becomes `X.(N+1).gz`; both overflow forms are pruned. The background compression thread is tracked and joined (up to 60 s, with a warning) before the next shift, and a failed gzip is logged and leaves the plain archive in place.
+* **Verification:** `tests/unit/ops/test_retention.py` (`…uncompressed_backup_keeps_plain_name`, `…waits_for_previous_compression`, `…still_running_after_timeout_warns`, `test_compress_quietly_…`).
+
+### BUG-98: Unknown Diagnostic Category Raises From `emit` [RESOLVED]
+* **Location:** `pumpfun_trading/ops/events.py` (`DiagnosticEventLogger.emit`)
+* **Description:** `enabled_categories=["foo"]` with `emit(category="foo", ...)` raises `ValueError` from `EventCategory("foo")`, although `emit` is documented as never raising on the hot path. `DiagnosticEvent.__post_init__` already falls back to a default category.
+* **Remedy:** Use the same fallback in `emit` (or validate `enabled_categories` at construction).
+* **Resolution (2026-10-16):** `emit` resolves the category and severity with the same fallback as `DiagnosticEvent` (unknown → `LIFECYCLE` / `INFO`) before the category filter.
+* **Verification:** `tests/unit/ops/test_events.py` (`test_emit_unknown_enabled_category_falls_back_instead_of_raising`, `test_emit_unknown_category_respects_lifecycle_filter`).
+
+### BUG-99: Arbitrage Trades Are Booked Gross [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_evaluate_and_execute_arbitrage`)
+* **Description:** A landed arbitrage bundle is recorded with `_record_trade(action="ARBITRAGE", ...)` without `costs`, and its profit goes to `DailyEquityTracker` without `costs_sol`, so network fees and the Jito tip are not deducted (FEAT-49 rule: never report or gate on gross PnL).
+* **Impact:** None while arbitrage stays off (`RELEASE-GATE.md` §3.5, BUG-37/59/90). Must be fixed before arbitrage is enabled.
+* **Remedy:** Read the bundle transactions' costs with `get_transaction_costs` (or model them in dry-run) and pass them through `build_pnl_fields`.
+* **Resolution (2026-10-16):** `TradingBot._arbitrage_costs` reads the landed bundle's fee, priority fee, tip and rent with `get_transaction_costs` (8 s cap); in dry-run, or if the lookup fails, it books the opportunity's modelled gas and tip. The record carries `signature` and the cost fields, `build_pnl_fields` treats `ARBITRAGE` as a round trip (gross = output − input, cash flow = gross − costs), and `_book_trade_costs` feeds the net result to the daily breaker. Dry-run wallets are credited gross and charged the costs.
+* **Verification:** `tests/unit/bot/test_run.py` (`test_arbitrage_whale_backrun_landed_books_net_profit_in_dry_run`, `test_arbitrage_landed_live_books_transaction_costs`), `tests/unit/bot/test_pnl.py` (`test_build_pnl_fields_arbitrage_is_a_net_round_trip`). Arbitrage stays off for the canary (BUG-37/59/90).
+
+### BUG-100: Explicit `stream_url` Argument Is Overridden [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`TradingBot.__init__`, stream URL resolution)
+* **Description:** `TradingBotConfig.stream_url` defaults to `wss://pumpportal.fun/api/data`, which is not the "default" sentinel, so the config value wins over the constructor's `stream_url=`; with the sentinel, `PUMPFUN_STREAM_URL` / `PUMPFUN_WS_URL` also beat the explicit argument.
+* **Impact:** Low: `pumpbot` passes the URL through the config. Surprising for library callers and tests.
+* **Remedy:** Precedence explicit argument → env → config → default; a test pins the current order and must be updated with the fix.
+* **Resolution (2026-10-16):** precedence is now explicit argument → config URL → `PUMPFUN_STREAM_URL` / `PUMPFUN_WS_URL` → default. Config-over-env was kept on purpose: `pumpbot` never passes the argument, so a running pilot resolves the same URL as before.
+* **Verification:** `tests/unit/bot/test_run.py` (`test_init_stream_url_resolution_prefers_env_over_default`, explicit-argument case).
+
+### BUG-101: Builders Quote Against Placeholder Reserves on a Drained Curve [RESOLVED]
+* **Location:** `pumpfun_trading/sdk/execution.py` (`build_buy_tx`, `build_sell_tx`)
+* **Description:** When the curve account reports zero virtual reserves (completed or graduated curve), both builders fall back to the initial-curve constants (30 SOL / 1.073e15 tokens) to compute the minimum output, against the Learnings Log rule to quote slippage only from live reserves.
+* **Impact:** A sell on a drained curve can carry a wrong `min_sol_output`; normally the program rejects trades on a completed curve, so the risk is a misleading quote rather than a loss.
+* **Remedy:** Raise `CurveStateUnavailableError` on zero reserves and let the graduation / Raydium path handle the exit; tests currently pin the fallback.
+* **Resolution (2026-10-16):** `PumpFunExecutionClient._live_curve_reserves` raises `CurveStateUnavailableError` when the curve reports no virtual reserves, so `build_buy_tx` / `build_sell_tx` never quote against the 30 SOL / 1.073e15 constants. Callers that pass their own `token_amount` / `min_sol_output` (quoted from stream reserves) are unaffected; a failed sell goes to the exit retry queue as before.
+* **Verification:** `tests/unit/sdk/test_execution.py` (`test_build_tx_zero_reserves_refuses_to_quote`, `test_build_tx_zero_reserves_with_explicit_limits_still_builds`).
+

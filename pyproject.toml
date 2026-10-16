@@ -7,7 +7,7 @@ name = "pumpfun-trading"
 authors = [
     {name="Andy Wilson", email="andy@shady.org"},
 ]
-version = "0.1.1"
+version = "0.2.0"
 description = "Pump.fun API and execution client library (proprietary, private use only)"
 readme = "README.md"
 requires-python = ">=3.11"

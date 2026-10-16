@@ -30,6 +30,11 @@ from pumpfun_trading.bot.lifecycle import (
     VALID_STATE_TRANSITIONS,
 )
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
+from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
+from pumpfun_trading.bot.reconcile import (
+    ReconciliationStatusReader,
+    reconcile_status_path,
+)
 from pumpfun_trading.bot.position_manager import (
     CapitalDisplacementEngine,
     PositionManager,
@@ -77,6 +82,14 @@ from pumpfun_trading.ops.logging import (
     setup_structured_logging,
 )
 from pumpfun_trading.ops.retention import LogRetentionManager, RetentionPolicy
+from pumpfun_trading.sdk.costs import (
+    BASE_FEE_LAMPORTS_PER_SIGNATURE,
+    COST_SOURCE_TRANSACTION_META,
+    LAMPORTS_PER_SOL,
+    TransactionCosts,
+    model_transaction_costs,
+)
+from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -85,6 +98,9 @@ from pumpfun_trading.streams.geyser import (
 )
 from pumpfun_trading.ui.dashboard import build_dashboard
 
+# Upper bound on the post-landing ``getTransaction`` cost lookup of an arbitrage
+# bundle (BUG-99); on timeout the modelled costs are booked instead.
+ARBITRAGE_COST_LOOKUP_TIMEOUT_SECONDS = 8.0
 # Raw base-unit virtual token reserves are ~1.07e15; UI units are ~1.07e9 (BUG-75).
 RAW_TOKEN_UNITS_THRESHOLD = 1_000_000_000_000
 
@@ -141,11 +157,15 @@ class TradingBot:
         base = config or resolved
         if not isinstance(base, TradingBotConfig):
             base = TradingBotConfig.from_dict(base if isinstance(base, dict) else {})
+        # Precedence (BUG-100): an explicit ``stream_url=`` argument wins, then a
+        # config URL, then PUMPFUN_STREAM_URL / PUMPFUN_WS_URL, then the default.
+        # ``pumpbot`` never passes the argument, so its order is unchanged.
+        default_stream_url = "http://127.0.0.1:10000"
         env_stream_url = os.getenv("PUMPFUN_STREAM_URL") or os.getenv("PUMPFUN_WS_URL")
         effective_stream_url = stream_url
-        if effective_stream_url == "http://127.0.0.1:10000" and env_stream_url:
-            effective_stream_url = env_stream_url
-        elif base.stream_url and base.stream_url != "http://127.0.0.1:10000":
+        if stream_url and stream_url != default_stream_url:
+            effective_stream_url = stream_url
+        elif base.stream_url and base.stream_url != default_stream_url:
             effective_stream_url = base.stream_url
         elif env_stream_url:
             effective_stream_url = env_stream_url
@@ -218,6 +238,8 @@ class TradingBot:
         self._recent_actions: deque[dict[str, Any]] = deque(maxlen=50)
         self._recent_events: deque[str] = deque(maxlen=20)
         self._trade_sequence = 0
+        # Session gross/net PnL and costs since the status file was created (FEAT-49).
+        self._pnl_totals = PnlTotals()
         self._health_ok = True
         self._risk_killed = False
         self._last_health_check = time.monotonic()
@@ -629,6 +651,15 @@ class TradingBot:
 
         return format_uptime(self.uptime_seconds)
 
+    def reconciliation_status(self) -> dict[str, Any] | None:
+        """Last ``pumpfun-audit reconcile`` result for this audit trail (FEAT-49)."""
+        path = reconcile_status_path(getattr(self, "audit_log_path", None))
+        reader = getattr(self, "_reconcile_reader", None)
+        if not isinstance(reader, ReconciliationStatusReader) or reader.path != path:
+            reader = ReconciliationStatusReader(path)
+            self._reconcile_reader = reader
+        return reader.read()
+
     async def close(self) -> None:
         """Closes persistence handles and background resources."""
         self.persistence.close()
@@ -683,6 +714,7 @@ class TradingBot:
                 "recent_events": list(self._recent_events),
                 "alert_provider": self.alert_provider,
                 "alert_enabled": self.alert_enabled,
+                "reconciliation": self.reconciliation_status(),
             }
         )
         self.persistence.write_status_snapshot(snapshot)
@@ -793,6 +825,9 @@ class TradingBot:
             int(snapshot.get("trade_sequence", self._trade_sequence)),
             len(self._trade_ledger),
         )
+        pnl_totals = snapshot.get("pnl_totals")
+        if isinstance(pnl_totals, dict):
+            self._pnl_totals = PnlTotals.from_dict(pnl_totals)
 
         equity_tracker_data = snapshot.get("daily_equity_tracker")
         if isinstance(equity_tracker_data, dict):
@@ -1006,6 +1041,29 @@ class TradingBot:
         self._trade_sequence += 1
         return f"trade-{self._trade_sequence:06d}"
 
+    @staticmethod
+    def _execution_costs(exec_res: Any) -> TransactionCosts | None:
+        """Transaction costs attached to an execution result, if any (FEAT-49)."""
+        costs = getattr(exec_res, "costs", None)
+        return costs if isinstance(costs, TransactionCosts) else None
+
+    def _paper_round_trip_fee_factor(self) -> float:
+        """``(1 - fee)^2``: share of SOL left after the buy and sell protocol fees."""
+        fee_bps = getattr(self.execution, "pump_fee_bps", PUMP_DEFAULT_FEE_BPS)
+        if not isinstance(fee_bps, int) or not 0 <= fee_bps < 10_000:
+            fee_bps = PUMP_DEFAULT_FEE_BPS
+        return (1.0 - fee_bps / 10_000.0) ** 2
+
+    def _book_trade_costs(self, net_pnl_sol: float, costs_sol: float) -> None:
+        """Feeds net realized PnL to the daily breaker; paper wallets pay costs too."""
+        tracker = getattr(self, "daily_equity_tracker", None)
+        if tracker is not None:
+            tracker.record_realized_trade(net_pnl_sol, costs_sol)
+        if costs_sol and (self.dry_run or self.paper_trade):
+            self.wallet_balance_sol = max(
+                0.0, float(self.wallet_balance_sol) - float(costs_sol)
+            )
+
     def _record_trade(
         self,
         *,
@@ -1023,6 +1081,8 @@ class TradingBot:
         entry_price: float | None = None,
         exit_price: float | None = None,
         unit_price_sol: float | None = None,
+        signature: str | None = None,
+        costs: TransactionCosts | None = None,
     ) -> None:
         trade_id = trade_id or self._next_trade_id()
         position_id = position_id or trade_id
@@ -1100,7 +1160,20 @@ class TradingBot:
             "exit_price": float(effective_sell_price),
             "reason": reason or "",
             "timestamp": time.time(),
+            "signature": signature,
+            "dry_run": bool(self.dry_run),
+            "strategy": getattr(self.config, "strategy_preset", None),
         }
+        # Net of network fee, priority fee, Jito tip and token-account rent (FEAT-49).
+        record.update(
+            build_pnl_fields(
+                action=action,
+                cost_sol=float(entry or 0.0),
+                proceeds_sol=float(exit_value or 0.0),
+                costs=costs,
+            )
+        )
+        self._pnl_totals.add(record)
         self._trade_ledger.append(record)
         if len(self._trade_ledger) > 50:
             self._trade_ledger.pop(0)
@@ -1446,6 +1519,11 @@ class TradingBot:
             "recent_actions": list(self._recent_actions),
             "recent_events": list(self._recent_events),
             "trade_sequence": self._trade_sequence,
+            "pnl_totals": self._pnl_totals.to_dict(),
+            "daily_realized_costs_sol": self.daily_equity_tracker.realized_daily_costs_sol,
+            "daily_realized_gross_pnl_sol": (
+                self.daily_equity_tracker.realized_daily_gross_pnl_sol
+            ),
             "daily_equity_tracker": self.daily_equity_tracker.to_dict(),
             "daily_drawdown_pct": drawdown,
             "daily_realized_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
@@ -1680,10 +1758,20 @@ class TradingBot:
 
         trade_id = self._next_trade_id()
         position_id = trade_id
+        buy_costs = self._execution_costs(exec_res)
+        cost_basis = float(effective_buy_amount)
+        if (
+            buy_costs is not None
+            and buy_costs.source == COST_SOURCE_TRANSACTION_META
+            and buy_costs.swap_sol
+            and buy_costs.swap_sol > 0
+        ):
+            # SOL actually paid into the curve, read from the transaction.
+            cost_basis = float(buy_costs.swap_sol)
         self.position_manager.record_buy(
             mint=mint,
             token_amount=exec_res.token_amount or (100_000_000 if self.dry_run else 0),
-            cost_sol=effective_buy_amount,
+            cost_sol=cost_basis,
             entry_market_cap=float(market_cap_sol or 30.0),
             name=position_name,
             buy_signature=exec_res.signature,
@@ -1694,8 +1782,10 @@ class TradingBot:
         self.active_positions = self.position_manager.get_all_positions()
         if self.dry_run or self.paper_trade:
             self.wallet_balance_sol = max(
-                0.0, float(self.wallet_balance_sol) - float(effective_buy_amount)
+                0.0, float(self.wallet_balance_sol) - float(cost_basis)
             )
+        buy_costs_sol = buy_costs.total_cost_sol if buy_costs is not None else 0.0
+        self._book_trade_costs(-buy_costs_sol, buy_costs_sol)
 
         self._buy_attempts[mint] = 0
         self._mark_seen(mint)
@@ -1708,8 +1798,10 @@ class TradingBot:
             action="buy",
             token_name=position_name,
             mint_name=position_name,
-            entry=effective_buy_amount,
+            entry=cost_basis,
             reason=reason or "entry",
+            signature=exec_res.signature,
+            costs=buy_costs,
         )
         if self.replay_recorder is not None:
             price = (
@@ -1805,6 +1897,11 @@ class TradingBot:
             self.wallet_balance_sol = max(
                 0.0, float(self.wallet_balance_sol) - float(buy_amount)
             )
+        raydium_costs = self._execution_costs(exec_res)
+        raydium_costs_sol = (
+            raydium_costs.total_cost_sol if raydium_costs is not None else 0.0
+        )
+        self._book_trade_costs(-raydium_costs_sol, raydium_costs_sol)
 
         self._buy_attempts[mint] = 0
         self._mark_seen(mint)
@@ -1819,6 +1916,8 @@ class TradingBot:
             mint_name=position_name,
             entry=buy_amount,
             reason=reason or "raydium_graduation_snipe",
+            signature=exec_res.signature,
+            costs=raydium_costs,
         )
         if self.replay_recorder is not None:
             self.replay_recorder.record_snapshot(
@@ -2175,6 +2274,8 @@ class TradingBot:
                 slippage_bps=effective_slippage,
                 reason=reason,
                 dry_run=self.dry_run,
+                # A full exit closes the token account to recover rent (BUG-96).
+                close_token_account=not is_partial,
             )
         sell_latency_ms = (time.perf_counter() - t_sell_start) * 1000.0
 
@@ -2226,10 +2327,13 @@ class TradingBot:
         frac = max(0.0, min(1.0, frac))
 
         if self.dry_run:
+            # Pump.fun charges its fee on the buy and on the sell; live swap
+            # amounts include it, so paper proceeds must too (FEAT-49).
+            fee_factor = self._paper_round_trip_fee_factor()
             if entry_mc > 0 and curr_mc > 0 and cost_sol > 0:
-                sell_p = (cost_sol * frac) * (curr_mc / entry_mc)
+                sell_p = (cost_sol * frac) * (curr_mc / entry_mc) * fee_factor
             elif cost_sol > 0:
-                sell_p = cost_sol * frac
+                sell_p = cost_sol * frac * fee_factor
             else:
                 sell_p = float(getattr(exec_res, "amount_sol", 0.0) or 0.0)
         else:
@@ -2261,6 +2365,8 @@ class TradingBot:
             self.wallet_balance_sol = max(
                 0.0, float(self.wallet_balance_sol) + float(sell_p)
             )
+        sell_costs = self._execution_costs(exec_res)
+        sell_costs_sol = sell_costs.total_cost_sol if sell_costs is not None else 0.0
 
         pos_id = (
             position.get("position_id")
@@ -2275,8 +2381,9 @@ class TradingBot:
             frac = max(0.0, min(1.0, frac))
             partial_entry = pos_entry * frac if pos_entry > 0 else pos_entry
             trade_pnl = sell_p - partial_entry
+            net_trade_pnl = trade_pnl - sell_costs_sol
             if getattr(self, "daily_equity_tracker", None) is not None:
-                self.daily_equity_tracker.record_realized_trade(trade_pnl)
+                self._book_trade_costs(net_trade_pnl, sell_costs_sol)
                 if hasattr(self, "event_logger") and self.event_logger is not None:
                     self.event_logger.emit(
                         category=EventCategory.RISK,
@@ -2286,6 +2393,8 @@ class TradingBot:
                         mint_name=pos_name,
                         data={
                             "trade_pnl": trade_pnl,
+                            "net_trade_pnl": net_trade_pnl,
+                            "costs_sol": sell_costs_sol,
                             "is_partial": True,
                             "realized_daily_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
                             "effective_baseline_sol": self.daily_equity_tracker.effective_baseline_sol,
@@ -2302,6 +2411,8 @@ class TradingBot:
                 buy_price=pos_entry,
                 sell_price=sell_p,
                 reason=reason,
+                signature=exec_res.signature,
+                costs=sell_costs,
             )
             if self.replay_recorder is not None:
                 curr_mc = float(
@@ -2336,8 +2447,9 @@ class TradingBot:
         frac = max(0.0, min(1.0, frac))
         effective_entry = pos_entry * frac if pos_entry > 0 else pos_entry
         trade_pnl = sell_p - effective_entry
+        net_trade_pnl = trade_pnl - sell_costs_sol
         if getattr(self, "daily_equity_tracker", None) is not None:
-            self.daily_equity_tracker.record_realized_trade(trade_pnl)
+            self._book_trade_costs(net_trade_pnl, sell_costs_sol)
             if hasattr(self, "event_logger") and self.event_logger is not None:
                 self.event_logger.emit(
                     category=EventCategory.RISK,
@@ -2347,6 +2459,8 @@ class TradingBot:
                     mint_name=pos_name,
                     data={
                         "trade_pnl": trade_pnl,
+                        "net_trade_pnl": net_trade_pnl,
+                        "costs_sol": sell_costs_sol,
                         "is_partial": False,
                         "realized_daily_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
                         "effective_baseline_sol": self.daily_equity_tracker.effective_baseline_sol,
@@ -2363,6 +2477,8 @@ class TradingBot:
             buy_price=pos_entry,
             sell_price=sell_p,
             reason=reason,
+            signature=exec_res.signature,
+            costs=sell_costs,
         )
         if self.replay_recorder is not None:
             curr_mc = float(
@@ -2927,6 +3043,36 @@ class TradingBot:
                     virtual_token=virt_tok,
                 )
 
+    async def _arbitrage_costs(
+        self, opp: ArbitrageOpportunity, signature: str | None
+    ) -> TransactionCosts:
+        """Fee, priority fee and tip of a landed arbitrage bundle (BUG-99)."""
+        getter = getattr(self.execution, "get_transaction_costs", None)
+        if signature and not (self.dry_run or self.paper_trade) and callable(getter):
+            try:
+                costs = await asyncio.wait_for(
+                    getter(signature, opp.mint, is_buy=True),
+                    timeout=ARBITRAGE_COST_LOOKUP_TIMEOUT_SECONDS,
+                )
+                if isinstance(costs, TransactionCosts):
+                    return costs
+            except Exception as exc:
+                self._log(
+                    f"[ARBITRAGE] could not read costs of {signature}: {exc}; "
+                    "booking modelled costs",
+                    level=logging.WARNING,
+                )
+        gas_lamports = int(round(float(opp.estimated_fees_sol) * LAMPORTS_PER_SOL))
+        return model_transaction_costs(
+            priority_fee_lamports=max(
+                0, gas_lamports - BASE_FEE_LAMPORTS_PER_SIGNATURE
+            ),
+            tip_lamports=int(
+                round(float(opp.estimated_jito_tip_sol) * LAMPORTS_PER_SOL)
+            ),
+            signature=signature,
+        )
+
     async def _evaluate_and_execute_arbitrage(
         self,
         mint: str,
@@ -2996,7 +3142,15 @@ class TradingBot:
                 return
             res = await self.arb_executor.execute_arbitrage(opp)
             if res.get("success"):
-                net_profit = float(res.get("net_profit_sol", 0.0))
+                # Book net of the bundle's network fee, priority fee and Jito tip
+                # (BUG-99): read from the landed transaction, modelled otherwise.
+                signature = res.get("signature")
+                arb_costs = await self._arbitrage_costs(
+                    opp, signature if isinstance(signature, str) else None
+                )
+                gross_profit = float(opp.expected_output_sol) - float(
+                    opp.optimal_input_sol
+                )
                 self._record_trade(
                     mint=mint,
                     action="ARBITRAGE",
@@ -3005,12 +3159,14 @@ class TradingBot:
                     entry_price=opp.pump_spot_price,
                     exit_price=opp.raydium_spot_price,
                     reason="cross_venue_arbitrage",
+                    signature=signature if isinstance(signature, str) else None,
+                    costs=arb_costs,
                 )
-                self.daily_equity_tracker.record_realized_trade(
-                    pnl_sol=net_profit,
+                if self.dry_run or self.paper_trade:
+                    self.wallet_balance_sol += gross_profit
+                self._book_trade_costs(
+                    gross_profit - arb_costs.total_cost_sol, arb_costs.total_cost_sol
                 )
-                if self.dry_run:
-                    self.wallet_balance_sol += net_profit
                 if hasattr(self, "event_logger") and self.event_logger:
                     self.event_logger.emit(
                         category=EventCategory.ARBITRAGE,

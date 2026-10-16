@@ -78,15 +78,20 @@ Watch for: reconnect loops, stale-stream or RPC-error health flags, the circuit 
 Required every day of the live canary, recommended afterwards.
 
 ```bash
-# On-chain SOL balance (lamports) at the start and end of the day
+# On-chain SOL balance (lamports) at the start of the day (keep it for --start-balance)
 curl -s "$PUMPFUN_RPC_URL" -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"getBalance","params":["<wallet-pubkey>"]}' | jq '.result.value'
 
-# Realized PnL and trade counts for the day from the audit trail
-pumpfun-audit --path data/audit_trail.jsonl --date-from <YYYY-MM-DD> --date-to <YYYY-MM-DD> --summary
+# Net PnL for the day: gross, fees, Jito tips, rent, net, win rate, per exit reason
+pumpfun-audit pnl --path data/audit_trail.jsonl --date-from <YYYY-MM-DD> --date-to <YYYY-MM-DD> --group-by reason
+
+# Wallet vs. audit trail: every trade signature, lost/phantom positions and the
+# whole-wallet change since the start balance. Exit code 1 means a gap.
+pumpfun-audit reconcile --path data/audit_trail.jsonl --wallet <wallet-pubkey> \
+  --date-from <YYYY-MM-DD> --date-to <YYYY-MM-DD> --start-balance <SOL at start of day>
 ```
 
-The audit realized PnL is **gross** until Sprint 24B (FEAT-49): it has no fee, priority-fee, tip or rent fields. Until then, sum the day's costs from the transaction signatures (`getTransaction` → `meta.fee`, plus the Jito tip transfer) and subtract them yourself. Sprint 24B replaces this section with `pumpfun-audit pnl` and `pumpfun-audit reconcile`.
+Since Sprint 24B (FEAT-49) every trade record carries `signature`, `fee_sol`, `priority_fee_sol`, `tip_sol`, `rent_sol`, `costs_sol`, `gross_pnl_sol`, `net_pnl_sol` and `cash_flow_sol`, and the daily breaker runs on net PnL. `cost_source` says where the costs came from: `transaction_meta` (read from the confirmed transaction), `modelled` (paper mode, or a live trade whose transaction could not be read) or `none` (records written before Sprint 24B; live sells measured from the wallet delta, which is already net of fee and tip). `reconcile` skips paper trades. Each run stores its result in `data/reconcile_status.json` (next to the audit trail), and the running bot shows it on the dashboard as `Reconciliation` (`GAP` in red, `STALE` after 36 h). Full exits close the token account and refund its rent (BUG-96), so a closed position shows a negative `rent_sol`.
 
 Record: wallet Δ SOL, audit realized PnL, the gap between them, closed trades, fees and Jito tips. The gap must stay within the tolerance in [`RELEASE-GATE.md` §3.4](RELEASE-GATE.md#34-stage-1--daily-reconciliation-and-exit-criteria); a larger gap is an incident (§5.2).
 

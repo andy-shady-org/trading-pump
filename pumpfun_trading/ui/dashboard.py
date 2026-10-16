@@ -7,6 +7,16 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
 
+from pumpfun_trading.bot.pnl import PnlTotals
+from pumpfun_trading.bot.reconcile import describe_reconciliation_status
+
+
+def format_sol_amount(value: float) -> str:
+    """Signed SOL amount; values under 0.001 SOL are shown in µSOL (BUG-19)."""
+    if value != 0.0 and abs(value) < 0.001:
+        return f"{value * 1_000_000:+.4f} µSOL"
+    return f"{value:+.4f} SOL"
+
 
 def format_compact_tokens(amount: int | float | None) -> str:
     """Format token amount with compact metric suffixes (K, M, B)."""
@@ -38,6 +48,23 @@ def format_uptime(seconds: float | int | None) -> str:
     if minutes > 0:
         return f"{minutes:02d}m {secs:02d}s"
     return f"{secs}s"
+
+
+def _reconciliation_text(bot: Any) -> str:
+    """Last wallet reconciliation, coloured: green OK, red GAP, yellow stale/none."""
+    reader = getattr(bot, "reconciliation_status", None)
+    status = None
+    if callable(reader):
+        try:
+            status = reader()
+        except Exception:
+            status = None
+    text = describe_reconciliation_status(status if isinstance(status, dict) else None)
+    if text.startswith("OK"):
+        return f"[green]{text}[/green]"
+    if text.startswith("GAP"):
+        return f"[red]{text}[/red]"
+    return f"[yellow]{text}[/yellow]"
 
 
 def build_dashboard(bot: Any) -> Panel:
@@ -97,13 +124,22 @@ def build_dashboard(bot: Any) -> Panel:
         tracker, "realized_daily_pnl_sol"
     ):
         pnl = float(tracker.realized_daily_pnl_sol or 0.0)
-        if pnl != 0.0 and abs(pnl) < 0.001:
-            pnl_str = f"{pnl * 1_000_000:+.4f} µSOL"
-        else:
-            pnl_str = f"{pnl:+.4f} SOL"
-        risk.add_row("Daily PnL", pnl_str)
+        # Realized PnL is net of fees, tips and rent since Sprint 24B (FEAT-49).
+        risk.add_row("Daily PnL (net)", format_sol_amount(pnl))
+        risk.add_row(
+            "Daily PnL (gross)",
+            format_sol_amount(float(tracker.realized_daily_gross_pnl_sol or 0.0)),
+        )
+        risk.add_row(
+            "Costs today",
+            format_sol_amount(float(tracker.realized_daily_costs_sol or 0.0)),
+        )
+        totals = getattr(bot, "_pnl_totals", None)
+        if isinstance(totals, PnlTotals):
+            risk.add_row("Session net PnL", format_sol_amount(totals.net_pnl_sol))
         breaker_status = "LOCKED" if tracker.circuit_breaker_engaged else "ok"
         risk.add_row("Circuit breaker", breaker_status)
+        risk.add_row("Reconciliation", _reconciliation_text(bot))
     else:
         risk.add_row("", "")
         risk.add_row("", "")

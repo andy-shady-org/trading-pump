@@ -184,9 +184,11 @@ async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
     assert len(bot._trade_ledger) == 1
     last_trade = bot._trade_ledger[-1]
     assert last_trade["action"] == "partial_sell"
-    # Cost basis for 50% is 0.05 SOL, exit proceeds at 2x is 0.10 SOL
-    assert last_trade["exit"] == pytest.approx(0.10)
-    assert last_trade["sell_price"] == pytest.approx(0.10)
+    # Cost basis for 50% is 0.05 SOL; exit proceeds at 2x are 0.10 SOL before the
+    # modelled buy and sell protocol fees (FEAT-49).
+    proceeds = 0.10 * bot._paper_round_trip_fee_factor()
+    assert last_trade["exit"] == pytest.approx(proceeds)
+    assert last_trade["sell_price"] == pytest.approx(proceeds)
     assert last_trade["entry"] == pytest.approx(0.05)
 
     # 2. Execute full exit on remaining 50%
@@ -198,8 +200,8 @@ async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
     assert len(bot._trade_ledger) == 2
     full_trade = bot._trade_ledger[-1]
     assert full_trade["action"] == "sell"
-    assert full_trade["exit"] == pytest.approx(0.10)
-    assert full_trade["sell_price"] == pytest.approx(0.10)
+    assert full_trade["exit"] == pytest.approx(proceeds)
+    assert full_trade["sell_price"] == pytest.approx(proceeds)
 
     # Verify audit file lines contain valid sell_price
     assert audit_file.exists()
@@ -210,14 +212,16 @@ async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
         json.loads(line) for line in lines if json.loads(line).get("type") == "trade"
     ]
     assert len(trade_records) == 2
-    assert trade_records[0]["payload"]["sell_price"] == pytest.approx(0.10)
-    assert trade_records[1]["payload"]["sell_price"] == pytest.approx(0.10)
+    assert trade_records[0]["payload"]["sell_price"] == pytest.approx(proceeds)
+    assert trade_records[1]["payload"]["sell_price"] == pytest.approx(proceeds)
 
-    # Verify DailyEquityTracker realized PnL was incremented on both partial and full sells
-    # Partial sell PnL = 0.10 - 0.05 = +0.05 SOL
-    # Full sell PnL = 0.10 - 0.05 = +0.05 SOL
-    # Total realized daily PnL = +0.10 SOL
-    assert bot.daily_equity_tracker.realized_daily_pnl_sol == pytest.approx(0.10)
+    # Both sells are banked: gross = 2 x (proceeds - 0.05); net also pays the
+    # modelled fees and refunds the token-account rent on the full exit.
+    tracker = bot.daily_equity_tracker
+    assert tracker.realized_daily_gross_pnl_sol == pytest.approx(2 * proceeds - 0.10)
+    costs = sum(t["costs_sol"] for t in bot._trade_ledger)
+    assert tracker.realized_daily_pnl_sol == pytest.approx(2 * proceeds - 0.10 - costs)
+    assert full_trade["rent_sol"] < 0
 
 
 @pytest.mark.asyncio
@@ -421,7 +425,11 @@ async def test_buy_confirmation_timeout_with_tokens_received_is_success(
     res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
     assert res.success
     assert res.token_amount == 7_000_000
-    assert res.metadata == {"fill_source": "balance_delta", "confirmed": False}
+    assert res.metadata == {
+        "fill_source": "balance_delta",
+        "confirmed": False,
+        "requested_sol": 0.1,
+    }
 
 
 @pytest.mark.asyncio

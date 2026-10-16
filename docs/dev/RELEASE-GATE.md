@@ -25,7 +25,7 @@ Update this table whenever a gate run finishes. Link the release record rather t
 |---|---|---|
 | Release gate for the current `main` | Not yet run against a tagged version | – |
 | Live capital stage | **Stage 0 – Paper pilot: not passed** | No completed 72h pilot; replay benchmark recorded `Trades: 0` |
-| Net PnL measurement | **Not available** – trade records are gross, no fee/tip fields | Sprint 24B (FEAT-49) |
+| Net PnL measurement | Implemented on branch `sprint-24b-net-pnl` (fees, tips, rent per trade; `pumpfun-audit pnl` / `reconcile`, last result on the dashboard); release gate green (922 tests, coverage 96.3%); test-pass bugs BUG-97…101 fixed; cost parser checked read-only on real mainnet sells; the bot's own canary trades not yet reconciled | Sprint 24B (FEAT-49, BUG-96) |
 | Funding gate for the Web UI ([§3.7](#37-funding-gate-for-the-web-ui)) | Not passed | – |
 | Mainnet-verified money paths | Pump.fun `buy`/`sell` layout only (BUG-34) | `BUGS.md` |
 | Open (mitigated) defects that limit live scope | BUG-37, BUG-55, BUG-59, BUG-61, BUG-90, BUG-92 | See [§3.5](#35-features-that-must-stay-off-until-proven) |
@@ -124,7 +124,7 @@ Every day of the canary, follow [`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-
 - realized PnL for the day from the audit trail
 - number of closed trades, fees and Jito tips paid
 
-> Until Sprint 24B (FEAT-49) lands, the audit trail records **gross** PnL only and has no fee, tip or signature fields. Fees and tips must then be summed by hand from the day's transaction signatures (`getTransaction` `meta.fee` and the tip transfer). Do not start live trading in Stage 1 without one of the two.
+> Sprint 24B (FEAT-49) records fees, tips, rent and signatures on every trade: use `pumpfun-audit pnl` for the day's net PnL and `pumpfun-audit reconcile --wallet <pubkey> --start-balance <SOL>` for the wallet check (exit code 1 = gap above tolerance). Builds without Sprint 24B record **gross** PnL only; on those, sum fees and tips by hand from the transaction signatures, and do not start Stage 1 without one of the two.
 
 Promotion to Stage 2 requires **all** of:
 - [ ] ≥ 100 closed trades
@@ -202,7 +202,7 @@ Keep one record per release (or capital stage) in the `CHANGELOG.md` entry, or i
 - **PATCH:** bug fixes with no config or format change.
 - **MINOR:** new features, new config keys (with safe defaults), or changes to defaults.
 - **MAJOR:** reserved for `1.0.0` (first release that passes Stage 2) and later breaking changes.
-- `CHANGELOG.md` follows *Keep a Changelog*; every entry lists the BUG/FEAT IDs it covers and links its release record. Creating it is tracked in Sprint 25 of [`TODO.md`](TODO.md).
+- `CHANGELOG.md` follows *Keep a Changelog*; every entry lists the BUG/FEAT IDs it covers and links its release record. It lives at the repo root ([`CHANGELOG.md`](../../CHANGELOG.md)); write the entry before tagging.
 - Tag releases as `vX.Y.Z` on the commit that passed the release gate. Only tagged versions run on a funded wallet.
 
 ---

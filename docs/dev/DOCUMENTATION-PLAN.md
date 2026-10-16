@@ -34,7 +34,7 @@ Every gap is fixed in Sprint 31 unless noted.
 | D10 | Missing deployment guide | – | New `docs/DEPLOYMENT.md`: systemd unit, Docker/compose (FEAT-46), secrets handling, log retention | 31 |
 | D11 | Missing troubleshooting / FAQ | – | New `docs/TROUBLESHOOTING.md` built from `BUGS.md` symptoms and common operator errors | 31 |
 | D12 | Missing glossary | – | New `docs/GLOSSARY.md` (bonding curve, virtual reserves, PDA, ATA, Jito tip, Gini, moonbag, …) | 31 |
-| D13 | No CHANGELOG or versioning policy | – | SemVer policy **done** in `RELEASE-GATE.md` §6; `CHANGELOG.md` (Keep a Changelog) still to create | 25 |
+| D13 | No CHANGELOG or versioning policy | – | SemVer policy **done** in `RELEASE-GATE.md` §6; `CHANGELOG.md` (Keep a Changelog) **done** at the repo root | 25 |
 | D14 | No API / SDK reference | – | mkdocstrings pages for `sdk/`, `strategies/`, `streams/`, `execution/`, `api/` | 31 |
 | D15 | `README.md` and `USER-GUIDE.md` overlap | `README.md`, `docs/USER-GUIDE.md` | README becomes a short overview + quickstart linking to the site; `USER-GUIDE.md` stays the full onboarding guide | 31 |
 | D16 | Stale references in the backlog | `docs/dev/TODO.md` (`docs/REFACTOR.md`, `pumpfun_trading/cli.py`, `pumpfun_trading/filters/`) | **Done** in this planning pass | – |

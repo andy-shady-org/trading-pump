@@ -11,6 +11,11 @@ from pumpfun_trading.execution.policy import (
     DynamicSlippageResult,
 )
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool
+from pumpfun_trading.sdk.costs import (
+    COST_SOURCE_TRANSACTION_META,
+    TOKEN_ACCOUNT_RENT_LAMPORTS,
+    TransactionCosts,
+)
 from pumpfun_trading.sdk.curve import (
     INITIAL_VIRTUAL_SOL_LAMPORTS,
     INITIAL_VIRTUAL_TOKEN_RAW,
@@ -41,6 +46,8 @@ class ExecutionResult:
     error: str | None = None
     dry_run: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Fees, tip and rent of the trade transaction (FEAT-49); ``None`` if unknown.
+    costs: TransactionCosts | None = None
 
 
 class OrderExecutor:
@@ -49,6 +56,8 @@ class OrderExecutor:
     # Post-trade balance reads lag the confirmation; poll a few times (BUG-49/73).
     balance_retry_attempts: int = 3
     balance_retry_delay_seconds: float = 0.5
+    # Upper bound for reading fees/tips from getTransaction after a fill.
+    cost_capture_timeout_seconds: float = 8.0
 
     def __init__(
         self,
@@ -67,11 +76,56 @@ class OrderExecutor:
         self.execution_policy = execution_policy or AdaptiveExecutionPolicy(self.config)
         self._locks: dict[str, asyncio.Lock] = {}
         self._exit_retry_queue: dict[str, dict[str, Any]] = {}
+        # Mints whose closing sell failed; later sells skip the close (BUG-96).
+        self._close_disabled_mints: set[str] = set()
 
     def get_lock(self, mint: str) -> asyncio.Lock:
         if mint not in self._locks:
             self._locks[mint] = asyncio.Lock()
         return self._locks[mint]
+
+    async def _capture_costs(
+        self, signature: str, mint: str, *, is_buy: bool
+    ) -> TransactionCosts | None:
+        """Real fee, tip, rent and swap amount from the transaction (FEAT-49)."""
+        getter = getattr(self.execution, "get_transaction_costs", None)
+        if getter is None:
+            return None
+        try:
+            costs = await asyncio.wait_for(
+                getter(signature, mint, is_buy=is_buy),
+                timeout=self.cost_capture_timeout_seconds,
+            )
+        except Exception as exc:
+            logger.warning("Could not read costs of %s (%s): %s", signature, mint, exc)
+            return None
+        return costs if isinstance(costs, TransactionCosts) else None
+
+    def _model_costs(
+        self, *, rent_lamports: int = 0, signature: str | None = None
+    ) -> TransactionCosts | None:
+        """Modelled fee, tip and rent for paper trades and live fallbacks."""
+        model = getattr(self.execution, "model_trade_costs", None)
+        if model is None:
+            return None
+        try:
+            costs = model(rent_lamports=rent_lamports, signature=signature)
+        except Exception as exc:
+            logger.debug("Could not model trade costs: %s", exc)
+            return None
+        return costs if isinstance(costs, TransactionCosts) else None
+
+    def _should_close_token_account(
+        self, mint: str, token_amount: int, pre_tokens: int | None
+    ) -> bool:
+        """Close only when the sell empties the account; a non-empty close fails."""
+        return (
+            bool(getattr(self.config, "close_token_account_on_full_exit", True))
+            and mint not in self._close_disabled_mints
+            and pre_tokens is not None
+            and token_amount > 0
+            and pre_tokens == token_amount
+        )
 
     def _fee_bps(self) -> int:
         fee = getattr(self.execution, "pump_fee_bps", PUMP_DEFAULT_FEE_BPS)
@@ -253,15 +307,21 @@ class OrderExecutor:
             if simulated_token_amount <= 0:
                 simulated_token_amount = 100_000_000
 
+            dry_signature = f"dry_run_buy_{mint[:8]}_{int(time.time())}"
             return ExecutionResult(
                 success=True,
-                signature=f"dry_run_buy_{mint[:8]}_{int(time.time())}",
+                signature=dry_signature,
                 mint=mint,
                 is_buy=True,
                 amount_sol=amount_sol,
                 token_amount=simulated_token_amount,
                 reason=reason,
                 dry_run=True,
+                # A fresh position pays the token-account rent (FEAT-49).
+                costs=self._model_costs(
+                    rent_lamports=TOKEN_ACCOUNT_RENT_LAMPORTS,
+                    signature=dry_signature,
+                ),
             )
 
         async with self.get_lock(mint):
@@ -343,18 +403,28 @@ class OrderExecutor:
                 acquired_tokens = self._estimate_buy_tokens(amount_sol, reserves)
                 fill_source = "pre_trade_quote"
 
+            costs = await self._capture_costs(signature, mint, is_buy=True)
+            spent_sol = amount_sol
+            if costs is not None and costs.swap_sol and costs.swap_sol > 0:
+                # Actual SOL paid into the curve, not the requested size.
+                spent_sol = costs.swap_sol
+            if costs is None:
+                rent = TOKEN_ACCOUNT_RENT_LAMPORTS if pre_tokens == 0 else 0
+                costs = self._model_costs(rent_lamports=rent, signature=signature)
             return ExecutionResult(
                 success=True,
                 signature=signature,
                 mint=mint,
                 is_buy=True,
-                amount_sol=amount_sol,
+                amount_sol=spent_sol,
                 token_amount=acquired_tokens,
                 reason=reason,
                 metadata={
                     "fill_source": fill_source,
                     "confirmed": bool(confirmed),
+                    "requested_sol": amount_sol,
                 },
+                costs=costs,
             )
 
     async def execute_sell(
@@ -367,7 +437,14 @@ class OrderExecutor:
         urgency: str = "normal",
         reason: str = "exit",
         dry_run: bool | None = None,
+        close_token_account: bool = False,
     ) -> ExecutionResult:
+        """Sell on the bonding curve.
+
+        ``close_token_account`` marks a full exit: the token account is closed in
+        the same transaction to refund its rent (BUG-96), but only if the live
+        balance equals ``token_amount``.
+        """
         is_dry_run = self.dry_run if dry_run is None else dry_run
 
         effective_urgency = urgency
@@ -427,15 +504,24 @@ class OrderExecutor:
                     est_sol = float(lamports) / 1_000_000_000.0
                 except Exception:
                     pass
+            dry_signature = f"dry_run_sell_{mint[:8]}_{int(time.time())}"
+            closes = close_token_account and bool(
+                getattr(self.config, "close_token_account_on_full_exit", True)
+            )
             return ExecutionResult(
                 success=True,
-                signature=f"dry_run_sell_{mint[:8]}_{int(time.time())}",
+                signature=dry_signature,
                 mint=mint,
                 is_buy=False,
                 amount_sol=est_sol,
                 token_amount=token_amount,
                 reason=reason,
                 dry_run=True,
+                metadata={"closed_token_account": closes},
+                costs=self._model_costs(
+                    rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
+                    signature=dry_signature,
+                ),
             )
 
         async with self.get_lock(mint):
@@ -484,15 +570,30 @@ class OrderExecutor:
 
             pre_sol = await self._read_sol_lamports()
             pre_tokens = await self._read_token_balance(mint)
+            closes = close_token_account and self._should_close_token_account(
+                mint, token_amount, pre_tokens
+            )
             try:
-                signature = await self.execution.sell(
-                    mint,
-                    bonding_curve,
-                    token_amount,
-                    min_sol_output=min_sol_lamports,
-                    slippage_bps=effective_slippage_bps,
-                )
+                if closes:
+                    signature = await self.execution.sell(
+                        mint,
+                        bonding_curve,
+                        token_amount,
+                        min_sol_output=min_sol_lamports,
+                        slippage_bps=effective_slippage_bps,
+                        close_token_account=True,
+                    )
+                else:
+                    signature = await self.execution.sell(
+                        mint,
+                        bonding_curve,
+                        token_amount,
+                        min_sol_output=min_sol_lamports,
+                        slippage_bps=effective_slippage_bps,
+                    )
             except Exception as exc:
+                if closes:
+                    self._close_disabled_mints.add(mint)
                 logger.warning("Sell transaction failed for %s: %s", mint, exc)
                 return ExecutionResult(
                     success=False,
@@ -517,6 +618,9 @@ class OrderExecutor:
             if not confirmed and not await self._detect_token_decrease(
                 mint, pre_tokens, token_amount
             ):
+                if closes:
+                    # Retry without the close in case it made the sell fail.
+                    self._close_disabled_mints.add(mint)
                 logger.warning(
                     "Sell confirmation failed for %s (sig=%s)", mint, signature
                 )
@@ -535,13 +639,32 @@ class OrderExecutor:
                     "Sell %s for %s landed after confirmation timeout", signature, mint
                 )
 
-            proceeds = await self._measure_sol_proceeds(pre_sol, expected_lamports)
-            if proceeds is not None:
-                proceeds_source = "sol_balance_delta"
-            elif expected_lamports > 0:
-                proceeds, proceeds_source = expected_lamports, "pre_trade_quote"
+            self._close_disabled_mints.discard(mint)
+            costs = await self._capture_costs(signature, mint, is_buy=False)
+            proceeds: int | None
+            if (
+                costs is not None
+                and costs.source == COST_SOURCE_TRANSACTION_META
+                and costs.swap_lamports is not None
+                and costs.swap_lamports > 0
+            ):
+                # Exact swap output from the transaction meta (BUG-48, FEAT-49).
+                proceeds, proceeds_source = costs.swap_lamports, "transaction_meta"
             else:
-                proceeds, proceeds_source = max(0, min_sol_lamports), "min_out"
+                proceeds = await self._measure_sol_proceeds(pre_sol, expected_lamports)
+                if proceeds is not None:
+                    # The wallet delta is already net of fee and tip.
+                    proceeds_source, costs = "sol_balance_delta", None
+                else:
+                    if expected_lamports > 0:
+                        proceeds, proceeds_source = expected_lamports, "pre_trade_quote"
+                    else:
+                        proceeds = max(0, min_sol_lamports)
+                        proceeds_source = "min_out"
+                    costs = self._model_costs(
+                        rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
+                        signature=signature,
+                    )
             return ExecutionResult(
                 success=True,
                 signature=signature,
@@ -553,7 +676,9 @@ class OrderExecutor:
                 metadata={
                     "proceeds_source": proceeds_source,
                     "confirmed": bool(confirmed),
+                    "closed_token_account": closes,
                 },
+                costs=costs,
             )
 
     async def execute_raydium_buy(
@@ -570,15 +695,20 @@ class OrderExecutor:
 
         if is_dry_run:
             logger.info("DRY RUN RAYDIUM BUY: %s @ %.4f SOL", mint, amount_sol)
+            dry_signature = f"dry_run_raydium_buy_{mint[:8]}_{int(time.time())}"
             return ExecutionResult(
                 success=True,
-                signature=f"dry_run_raydium_buy_{mint[:8]}_{int(time.time())}",
+                signature=dry_signature,
                 mint=mint,
                 is_buy=True,
                 amount_sol=amount_sol,
                 token_amount=100_000_000,
                 reason=reason,
                 dry_run=True,
+                costs=self._model_costs(
+                    rent_lamports=TOKEN_ACCOUNT_RENT_LAMPORTS,
+                    signature=dry_signature,
+                ),
             )
 
         async with self.get_lock(mint):
@@ -638,6 +768,10 @@ class OrderExecutor:
                     mint, attempts=self.balance_retry_attempts
                 )
                 fill_source = "post_trade_balance"
+            costs = await self._capture_costs(signature, mint, is_buy=True)
+            if costs is None:
+                rent = TOKEN_ACCOUNT_RENT_LAMPORTS if pre_tokens == 0 else 0
+                costs = self._model_costs(rent_lamports=rent, signature=signature)
             return ExecutionResult(
                 success=True,
                 signature=signature,
@@ -647,6 +781,7 @@ class OrderExecutor:
                 token_amount=max(0, acquired or 0),
                 reason=reason,
                 metadata={"fill_source": fill_source, "confirmed": bool(confirmed)},
+                costs=costs,
             )
 
     async def execute_raydium_sell(
@@ -663,14 +798,16 @@ class OrderExecutor:
 
         if is_dry_run:
             logger.info("DRY RUN RAYDIUM SELL: %s for %d tokens", mint, token_amount)
+            dry_signature = f"dry_run_raydium_sell_{mint[:8]}_{int(time.time())}"
             return ExecutionResult(
                 success=True,
-                signature=f"dry_run_raydium_sell_{mint[:8]}_{int(time.time())}",
+                signature=dry_signature,
                 mint=mint,
                 is_buy=False,
                 token_amount=token_amount,
                 reason=reason,
                 dry_run=True,
+                costs=self._model_costs(signature=dry_signature),
             )
 
         async with self.get_lock(mint):
@@ -722,6 +859,7 @@ class OrderExecutor:
                     error="raydium_sell_confirmation_failed",
                 )
 
+            # Proceeds are the wallet delta, so fee and tip are already netted out.
             proceeds = await self._measure_sol_proceeds(pre_sol, 0)
             return ExecutionResult(
                 success=True,
