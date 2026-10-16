@@ -1,39 +1,147 @@
-"""Unit tests for Raydium graduation tracking and GraduationEngine."""
+"""Unit tests for ``strategies/graduation.py``."""
+
+from __future__ import annotations
+
+import pytest
 
 from pumpfun_trading.strategies.graduation import (
     GraduationCandidate,
     GraduationEngine,
     GraduationTracker,
+    GraduationTrajectory,
     RaydiumPoolKeys,
 )
+from pumpfun_trading.tests.support.factories import make_pool_keys
 
 
-def make_sample_pool_keys(
-    mint: str = "TestMint1111111111111111111111111111111111",
-) -> RaydiumPoolKeys:
-    return RaydiumPoolKeys(
-        amm_id="RaydiumAmm1111111111111111111111111111111111",
-        amm_authority="RaydiumAuth111111111111111111111111111111111",
-        amm_open_orders="OpenOrders1111111111111111111111111111111111",
-        amm_target_orders="TargetOrders11111111111111111111111111111111",
-        pool_coin_token_account="CoinVault111111111111111111111111111111111",
-        pool_pc_token_account="PcVault111111111111111111111111111111111111",
-        serum_program_id="srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX",
-        serum_market="SerumMarket11111111111111111111111111111111",
-        serum_bids="SerumBids11111111111111111111111111111111111",
-        serum_asks="SerumAsks11111111111111111111111111111111111",
-        serum_event_queue="EventQueue111111111111111111111111111111111",
-        serum_coin_vault="SerumCoinVault11111111111111111111111111111",
-        serum_pc_vault="SerumPcVault1111111111111111111111111111111",
-        serum_vault_signer="SerumSigner1111111111111111111111111111111",
-        coin_mint=mint,
-        pc_mint="So11111111111111111111111111111111111111112",
-        lp_mint="LpMint1111111111111111111111111111111111111",
+def test_graduation_acceleration_and_trajectory_classification():
+    mint = "GradMint1111111111111111111111111111111111"
+    tracker = GraduationTracker(
+        mint=mint,
+        target_graduation_sol=85.0,
+        real_sol_reserves=50.0,
+        timestamp=1000.0,
     )
+
+    # 1. Steady accumulation: 50 -> 60 -> 70 SOL
+    tracker.update_reserves(
+        real_sol_reserves=55.0,
+        virtual_sol_reserves=35.0,
+        market_cap_sol=55.0,
+        timestamp=1010.0,
+    )
+    tracker.update_reserves(
+        real_sol_reserves=62.0,
+        virtual_sol_reserves=37.0,
+        market_cap_sol=62.0,
+        timestamp=1020.0,
+    )
+
+    vel, accel = tracker.calculate_acceleration(
+        window_seconds=30.0, current_time=1020.0
+    )
+    assert vel > 0.0
+    assert accel >= 0.0
+
+    traj_organic = tracker.classify_trajectory(current_time=1020.0, unique_buyers=5)
+    assert isinstance(traj_organic, GraduationTrajectory)
+    assert traj_organic.trajectory_type == "organic"
+    assert traj_organic.progress_pct == pytest.approx((62.0 / 85.0) * 100.0, rel=1e-2)
+
+    # 2. Syndicate sweep: massive single buy spike with 1 buyer
+    tracker_sweep = GraduationTracker(
+        mint="SweepMint222",
+        target_graduation_sol=85.0,
+        real_sol_reserves=50.0,
+        timestamp=1000.0,
+    )
+    tracker_sweep.update_reserves(
+        real_sol_reserves=75.0,
+        virtual_sol_reserves=45.0,
+        market_cap_sol=75.0,
+        timestamp=1005.0,
+    )
+    traj_sweep = tracker_sweep.classify_trajectory(current_time=1005.0, unique_buyers=1)
+    assert traj_sweep.trajectory_type == "syndicate_sweep"
+
+    # 3. Volume exhaustion / selling retracement
+    tracker_exhaust = GraduationTracker(
+        mint="ExhaustMint333",
+        target_graduation_sol=85.0,
+        real_sol_reserves=65.0,
+        timestamp=1000.0,
+    )
+    tracker_exhaust.update_reserves(
+        real_sol_reserves=64.0,
+        virtual_sol_reserves=40.0,
+        market_cap_sol=64.0,
+        timestamp=1010.0,
+    )
+    traj_exhaust = tracker_exhaust.classify_trajectory(
+        current_time=1010.0, unique_buyers=1
+    )
+    assert traj_exhaust.trajectory_type == "exhaustion"
+    assert traj_exhaust.recommended_action == "avoid"
+
+
+def test_graduation_engine_pre_graduation_entry_signal():
+    engine = GraduationEngine(target_graduation_sol=85.0)
+    mint = "HarvestMint444"
+
+    # Initially untracked
+    sig_none = engine.evaluate_pre_graduation_harvesting_entry(mint)
+    assert not sig_none.triggered
+
+    # Track below 70% progress (e.g. 50 SOL / 85 SOL = 58.8%)
+    engine.update_bonding_curve(
+        mint=mint,
+        bonding_curve="CurvePubkey444",
+        real_sol_reserves=50.0,
+        virtual_sol_reserves=35.0,
+        market_cap_sol=50.0,
+        timestamp=1000.0,
+    )
+    sig_below = engine.evaluate_pre_graduation_harvesting_entry(
+        mint, min_progress_pct=70.0, max_progress_pct=85.0
+    )
+    assert not sig_below.triggered
+    assert "progress_outside_window" in sig_below.reason
+
+    # Advance into 75% progress with positive acceleration (50 -> 56 -> 65 SOL, a > 0)
+    engine.update_bonding_curve(
+        mint=mint,
+        bonding_curve="CurvePubkey444",
+        real_sol_reserves=56.0,
+        virtual_sol_reserves=38.0,
+        market_cap_sol=56.0,
+        timestamp=1010.0,
+    )
+    engine.update_bonding_curve(
+        mint=mint,
+        bonding_curve="CurvePubkey444",
+        real_sol_reserves=65.0,
+        virtual_sol_reserves=42.0,
+        market_cap_sol=65.0,
+        timestamp=1020.0,
+    )
+
+    sig_entry = engine.evaluate_pre_graduation_harvesting_entry(
+        mint,
+        min_progress_pct=70.0,
+        max_progress_pct=85.0,
+        min_acceleration=0.0,
+        current_time=1020.0,
+    )
+    assert sig_entry.triggered
+    assert sig_entry.stage == "pre_graduation"
+    assert "pre_graduation_acceleration_surge" in sig_entry.reason
 
 
 def test_raydium_pool_keys_to_and_from_dict():
-    keys = make_sample_pool_keys()
+    keys = make_pool_keys(
+        "TestMint1111111111111111111111111111111111",
+        amm_id="RaydiumAmm1111111111111111111111111111111111",
+    )
     d = keys.to_dict()
     assert d["amm_id"] == "RaydiumAmm1111111111111111111111111111111111"
     assert d["coin_mint"] == "TestMint1111111111111111111111111111111111"
@@ -110,7 +218,7 @@ def test_graduation_tracker_lifecycle_and_signals():
     assert sig_completed.stage == "graduated"
 
     # Set Raydium pool keys
-    pool_keys = make_sample_pool_keys(mint="MintB1111111111111111111111111111111111111")
+    pool_keys = make_pool_keys(mint="MintB1111111111111111111111111111111111111")
     tracker.set_raydium_pool(pool_keys, timestamp=1030.0)
     assert tracker.candidate.raydium_pool_id == pool_keys.amm_id
     assert tracker.candidate.pool_keys == pool_keys
@@ -180,7 +288,7 @@ def test_graduation_engine_multi_token_management():
     assert c2.is_completed is True
 
     # Record Raydium pool initialization
-    keys2 = make_sample_pool_keys("Token22222222222222222222222222222222222222")
+    keys2 = make_pool_keys("Token22222222222222222222222222222222222222")
     engine.record_raydium_pool(
         "Token22222222222222222222222222222222222222", keys2, timestamp=t0 + 20
     )

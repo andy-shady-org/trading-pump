@@ -1,5 +1,6 @@
 import pytest
 
+from pumpfun_trading.strategies import filters as filters_module
 from pumpfun_trading.strategies.decision import TradingStrategy
 from pumpfun_trading.strategies.filters import (
     DevWalletProfile,
@@ -15,7 +16,6 @@ from pumpfun_trading.strategies.filters import (
     evaluate_token_heuristics,
     passes_anti_rug_screening,
 )
-from pumpfun_trading.strategies import filters as filters_module
 from pumpfun_trading.strategies.presets import resolve_strategy_config
 from pumpfun_trading.tests.support.fakes import FakeClock
 

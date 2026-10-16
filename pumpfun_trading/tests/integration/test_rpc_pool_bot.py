@@ -4,15 +4,15 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.infra.rpc_pool import CircuitState
-from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
+from pumpfun_trading.tests.support.factories import make_config
 
 
 async def test_bot_rpc_pool_initialization_and_status_snapshot() -> None:
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         strategy_preset="balanced",
         enable_rpc_pool=True,
         rpc_endpoints=(
@@ -47,7 +47,8 @@ async def test_bot_rpc_pool_initialization_and_status_snapshot() -> None:
 
 
 async def test_bot_rpc_pool_transparent_query_failover() -> None:
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_rpc_pool=True,
         rpc_endpoints=(
             "https://rpc-node1.solana.com",
@@ -117,7 +118,8 @@ async def test_bot_rpc_pool_transparent_query_failover() -> None:
 
 
 async def test_bot_rpc_pool_lifecycle_and_health_loop() -> None:
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_rpc_pool=True,
         rpc_endpoints=(
             "https://rpc1.solana.com",

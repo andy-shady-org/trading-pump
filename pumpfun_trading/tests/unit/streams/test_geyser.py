@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import struct
+
 import base58
 import pytest
 

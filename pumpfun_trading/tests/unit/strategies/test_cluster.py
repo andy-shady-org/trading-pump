@@ -3,7 +3,6 @@
 import pytest
 
 from pumpfun_trading.config.env import get_runtime_env
-from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.cluster import (
     ClusterAnalysisVerdict,
     FundingCluster,
@@ -22,6 +21,7 @@ from pumpfun_trading.strategies.filters import (
     passes_anti_rug_screening,
 )
 from pumpfun_trading.strategies.presets import resolve_strategy_config
+from pumpfun_trading.tests.support.factories import make_config
 
 
 def test_wallet_node_and_funding_cluster_data_models():
@@ -237,7 +237,8 @@ def test_funding_cluster_analyzer_evaluation_and_verdict():
 
 
 def test_evaluate_cluster_heuristics_and_filters_integration():
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_cluster_analysis=True,
         max_cluster_concentration_pct=0.25,
         max_single_cluster_pct=0.20,
@@ -306,7 +307,8 @@ def test_evaluate_cluster_heuristics_and_filters_integration():
 
 
 def test_strategy_decision_evaluate_cluster_graph():
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         strategy_preset="balanced",
         enable_cluster_analysis=True,
     )
@@ -364,7 +366,8 @@ def test_presets_and_environment_variable_loading(monkeypatch):
 async def test_token_enricher_enrich_and_screen_with_cluster_analysis():
     from pumpfun_trading.bot.enrichment import TokenEnricher
 
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_anti_rug_filters=True,
         enable_cluster_analysis=True,
         max_cluster_concentration_pct=0.25,

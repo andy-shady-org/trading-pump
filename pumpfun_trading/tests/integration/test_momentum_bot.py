@@ -8,10 +8,10 @@ import pytest
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import (
     TokenScreeningVerdict,
-    TradingBotConfig,
 )
 from pumpfun_trading.streams.geyser import TradeEventUpdate
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
+from pumpfun_trading.tests.support.factories import make_config
 
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 MOMENTUM_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
@@ -19,7 +19,7 @@ MOMENTUM_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 
 @pytest.fixture
 def bot(tmp_path):
-    config = TradingBotConfig(
+    config = make_config(
         buy_amount_sol=0.01,
         take_profit=1.5,
         stop_loss=0.85,
@@ -87,7 +87,7 @@ async def test_geyser_trade_event_momentum_buy_trigger(bot):
 
 
 async def test_momentum_buy_suppressed_when_active_positions_full(bot):
-    bot.config = TradingBotConfig(
+    bot.config = make_config(
         max_active_positions=1,
         enable_momentum_signals=True,
         momentum_min_z_score=1.5,
@@ -136,7 +136,7 @@ async def test_momentum_buy_suppressed_when_active_positions_full(bot):
 
 async def test_momentum_buy_screen_rejected_when_anti_rug_fails(bot):
     # Enable anti-rug filters
-    bot.config = TradingBotConfig(
+    bot.config = make_config(
         enable_momentum_signals=True,
         enable_anti_rug_filters=True,
         momentum_min_z_score=1.5,
@@ -191,7 +191,7 @@ async def test_momentum_buy_screen_rejected_when_anti_rug_fails(bot):
 
 async def test_active_position_exits_on_trade_event_update(bot):
     # Setup holding position with non-tiered exit
-    bot.config = TradingBotConfig(
+    bot.config = make_config(
         take_profit=1.5,
         stop_loss=0.85,
         enable_tiered_take_profit=False,

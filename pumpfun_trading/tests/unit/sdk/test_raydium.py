@@ -14,39 +14,14 @@ from pumpfun_trading.sdk.execution import (
 )
 from pumpfun_trading.sdk.raydium import (
     RAYDIUM_AMM_PROGRAM_ID,
-    RAYDIUM_AUTHORITY_V4,
-    SERUM_PROGRAM_ID_V3,
-    WSOL_MINT,
     SWAP_BASE_IN_DISCRIMINATOR,
-    RaydiumPoolKeys,
     build_raydium_swap_instruction,
     calculate_raydium_swap_out,
     parse_raydium_initialize2_accounts,
     parse_raydium_pool_from_tx,
 )
 from pumpfun_trading.strategies.presets import resolve_strategy_config
-
-
-def make_test_pool_keys() -> RaydiumPoolKeys:
-    return RaydiumPoolKeys(
-        amm_id=str(Keypair().pubkey()),
-        amm_authority=RAYDIUM_AUTHORITY_V4,
-        amm_open_orders=str(Keypair().pubkey()),
-        amm_target_orders=str(Keypair().pubkey()),
-        pool_coin_token_account=str(Keypair().pubkey()),
-        pool_pc_token_account=str(Keypair().pubkey()),
-        serum_program_id=SERUM_PROGRAM_ID_V3,
-        serum_market=str(Keypair().pubkey()),
-        serum_bids=str(Keypair().pubkey()),
-        serum_asks=str(Keypair().pubkey()),
-        serum_event_queue=str(Keypair().pubkey()),
-        serum_coin_vault=str(Keypair().pubkey()),
-        serum_pc_vault=str(Keypair().pubkey()),
-        serum_vault_signer=str(Keypair().pubkey()),
-        coin_mint=str(Keypair().pubkey()),
-        pc_mint=WSOL_MINT,
-        lp_mint=str(Keypair().pubkey()),
-    )
+from pumpfun_trading.tests.support.factories import make_pool_keys
 
 
 def test_calculate_raydium_swap_out():
@@ -72,7 +47,7 @@ def test_calculate_raydium_swap_out():
 
 
 def test_build_raydium_swap_instruction():
-    pool_keys = make_test_pool_keys()
+    pool_keys = make_pool_keys(str(Keypair().pubkey()))
     user_kp = Keypair()
     source_ata = Keypair().pubkey()
     dest_ata = Keypair().pubkey()
@@ -173,7 +148,7 @@ async def test_execution_client_raydium_buy_tx():
     client._raydium_reserves = mock_reserves  # type: ignore
     client.get_token_program_for_mint = mock_token_program  # type: ignore
 
-    pool_keys = make_test_pool_keys()
+    pool_keys = make_pool_keys(str(Keypair().pubkey()))
     tx = await client.build_raydium_buy_tx(
         pool_keys=pool_keys,
         sol_amount=0.02,

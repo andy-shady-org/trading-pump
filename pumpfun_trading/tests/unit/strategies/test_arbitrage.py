@@ -1,57 +1,16 @@
-"""Comprehensive test suite for FEAT-28: Cross-Venue Arbitrage & Mempool Back-Running Engine."""
+"""Unit tests for ``strategies/arbitrage.py``."""
 
 from __future__ import annotations
 
 import pytest
-from solders.keypair import Keypair
-from solders.pubkey import Pubkey
 
-from pumpfun_trading.cli.arbitrage import (
-    build_arbitrage_parser,
-    run_arbitrage_cli,
-)
-from pumpfun_trading.engines.replay import PaperTradingEngine
-from pumpfun_trading.execution.arbitrage import (
-    AtomicArbitrageBuilder,
-    AtomicArbitrageExecutor,
-)
-from pumpfun_trading.sdk.execution import PumpFunExecutionClient
-from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.strategies.arbitrage import (
-    ArbitrageOpportunity,
     CrossVenueDisparityMonitor,
     MempoolBackrunEngine,
     OptimalArbitrageCalculator,
     calculate_cross_venue_spread,
 )
-from pumpfun_trading.strategies.base import TradingBotConfig
-from pumpfun_trading.strategies.presets import resolve_strategy_config
-
-
-def _mock_pool_keys(
-    mint: str = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-) -> RaydiumPoolKeys:
-    """Helper creating mock Raydium AMM v4 pool keys."""
-    dummy = str(Pubkey.default())
-    return RaydiumPoolKeys(
-        amm_id=dummy,
-        amm_authority=dummy,
-        amm_open_orders=dummy,
-        amm_target_orders=dummy,
-        pool_coin_token_account=dummy,
-        pool_pc_token_account=dummy,
-        serum_program_id=dummy,
-        serum_market=dummy,
-        serum_bids=dummy,
-        serum_asks=dummy,
-        serum_event_queue=dummy,
-        serum_coin_vault=dummy,
-        serum_pc_vault=dummy,
-        serum_vault_signer=dummy,
-        coin_mint=mint,
-        pc_mint="So11111111111111111111111111111111111111112",
-        lp_mint=dummy,
-    )
+from pumpfun_trading.tests.support.factories import make_pool_keys
 
 
 def test_spread_calculation_and_directions() -> None:
@@ -155,7 +114,7 @@ def test_disparity_monitor_evaluation_and_hurdle_filtering() -> None:
         min_arbitrage_input_sol=0.01,
         jito_tip_profit_share_pct=0.50,
     )
-    keys = _mock_pool_keys()
+    keys = make_pool_keys("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", unique=False)
 
     # Valid profitable opportunity
     opp = monitor.evaluate_spread(
@@ -209,7 +168,7 @@ def test_mempool_backrun_engine() -> None:
         whale_sol_threshold=1.0,
         min_curve_impact_pct=0.02,
     )
-    keys = _mock_pool_keys()
+    keys = make_pool_keys("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", unique=False)
 
     # Small trade (< 1.0 SOL) does not trigger backrun evaluation
     small_opp = engine.evaluate_whale_transaction(
@@ -237,149 +196,3 @@ def test_mempool_backrun_engine() -> None:
     assert whale_opp is not None
     assert whale_opp.direction == "raydium_to_pump"
     assert whale_opp.is_profitable
-
-
-async def test_atomic_arbitrage_builder_and_executor() -> None:
-    """Test assembly of atomic multi-hop transactions with dual-leg swaps and dynamic Jito tips."""
-    kp = Keypair()
-    priv_b58 = kp.to_base58_string() if hasattr(kp, "to_base58_string") else str(kp)
-    client = PumpFunExecutionClient(private_key_b58=priv_b58)
-    builder = AtomicArbitrageBuilder(client)
-    executor = AtomicArbitrageExecutor(
-        execution_client=client, builder=builder, dry_run=True
-    )
-
-    keys = _mock_pool_keys()
-    opp = ArbitrageOpportunity(
-        mint=keys.coin_mint,
-        direction="pump_to_raydium",
-        pump_spot_price=0.000030,
-        raydium_spot_price=0.000045,
-        spread_pct=0.50,
-        optimal_input_sol=0.10,
-        expected_output_sol=0.14,
-        gross_profit_sol=0.04,
-        estimated_fees_sol=0.0003,
-        estimated_jito_tip_sol=0.02,
-        net_profit_sol=0.0197,
-        timestamp=1700000000.0,
-        pool_keys=keys,
-        pump_reserves=(30_000_000_000, 1_000_000_000_000_000),
-        raydium_reserves=(85_000_000_000, 200_000_000_000_000),
-        leg1_min_amount_out=3_000_000_000,
-        leg2_min_amount_out=135_000_000,
-    )
-
-    # 1. Build atomic instructions
-    ixs = builder.build_arbitrage_instructions(opp)
-    assert len(ixs) >= 4  # compute_limit, compute_price, leg1, leg2, tip
-    assert ixs[0].program_id == Pubkey.from_string(
-        "ComputeBudget111111111111111111111111111111"
-    )
-
-    # 2. Reverse direction instruction check
-    rev_opp = ArbitrageOpportunity(
-        mint=keys.coin_mint,
-        direction="raydium_to_pump",
-        pump_spot_price=0.000045,
-        raydium_spot_price=0.000030,
-        spread_pct=0.50,
-        optimal_input_sol=0.10,
-        expected_output_sol=0.14,
-        gross_profit_sol=0.04,
-        estimated_fees_sol=0.0003,
-        estimated_jito_tip_sol=0.02,
-        net_profit_sol=0.0197,
-        timestamp=1700000000.0,
-        pool_keys=keys,
-        leg1_min_amount_out=3_000_000_000,
-        leg2_min_amount_out=135_000_000,
-    )
-    rev_ixs = builder.build_arbitrage_instructions(rev_opp)
-    assert len(rev_ixs) >= 4
-
-    # 3. Dry-run simulation execution
-    sim_res = await executor.execute_arbitrage(opp)
-    assert sim_res["success"] is True
-    assert sim_res["status"] == "simulated"
-    assert sim_res["net_profit_sol"] == opp.net_profit_sol
-
-
-def test_strategy_config_and_presets_integration() -> None:
-    """Verify TradingBotConfig arbitrage fields and preset calibrations."""
-    cfg = TradingBotConfig(
-        enable_cross_venue_arbitrage=True,
-        enable_mempool_backrunning=True,
-        min_arbitrage_profit_sol=0.004,
-        min_arbitrage_spread_pct=0.02,
-        max_arbitrage_input_sol=0.75,
-        min_arbitrage_input_sol=0.02,
-        arbitrage_jito_tip_profit_share_pct=0.45,
-    )
-    assert cfg.enable_cross_venue_arbitrage is True
-    assert cfg.min_arbitrage_profit_sol == 0.004
-    d = cfg.to_dict()
-    assert d["enable_cross_venue_arbitrage"] is True
-    assert d["max_arbitrage_input_sol"] == 0.75
-
-    # Check presets
-    cons = resolve_strategy_config("conservative")
-    assert cons.enable_cross_venue_arbitrage is True
-    assert cons.min_arbitrage_spread_pct == 0.020
-
-    bal = resolve_strategy_config("balanced")
-    assert bal.enable_cross_venue_arbitrage is True
-    assert bal.min_arbitrage_spread_pct == 0.015
-
-    agg = resolve_strategy_config("aggressive")
-    assert agg.enable_cross_venue_arbitrage is True
-    assert agg.min_arbitrage_spread_pct == 0.010
-
-
-def test_arbitrage_cli_parser_and_execution() -> None:
-    """Test CLI argument parsing and execution for pumpfun-arb."""
-    parser = build_arbitrage_parser()
-    args = parser.parse_args(
-        [
-            "--min-spread",
-            "0.02",
-            "--min-profit",
-            "0.005",
-            "--max-input",
-            "0.40",
-            "--raw",
-        ]
-    )
-    assert args.min_spread == 0.02
-    assert args.min_profit == 0.005
-    assert args.max_input == 0.40
-    assert args.raw is True
-
-    exit_code = run_arbitrage_cli(args)
-    assert exit_code == 0
-
-
-def test_paper_trading_engine_arbitrage_simulation() -> None:
-    """Verify PaperTradingEngine simulates cross-venue arbitrage profits over multi-venue datasets."""
-    engine = PaperTradingEngine(
-        initial_cash=10.0,
-        enable_cross_venue_arbitrage=True,
-    )
-    snapshots = [
-        {
-            "timestamp": 1700000001,
-            "mint": "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump",
-            "name": "ArbToken",
-            "price": 0.000035,
-            "virtual_sol_reserves": 35_000_000_000,
-            "virtual_token_reserves": 900_000_000_000_000,
-            "raydium_sol_reserve": 85.0,  # 85 SOL
-            "raydium_token_reserve": 180_000_000_000_000,  # 180M tokens
-        }
-    ]
-    summary = engine.run(snapshots)
-    assert summary["total_trades"] >= 1
-    assert summary["final_cash"] > 10.0  # Realized arbitrage profit generated!
-    arb_trade = summary["trades"][0]
-    assert arb_trade["side"] == "ARBITRAGE"
-    assert arb_trade["pnl"] > 0.0

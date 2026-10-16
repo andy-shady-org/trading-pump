@@ -7,6 +7,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -90,3 +91,172 @@ async def test_close_drains_records_still_in_queue(tmp_path: Path) -> None:
 
     assert _mints(path) == ["A", "B", "C"]
     assert recorder.records_written == 3
+
+
+async def test_replay_recorder_lifecycle(tmp_path: Path):
+    """Test ReplayRecorder buffering, background batching, and graceful closing."""
+    log_file = tmp_path / "test_nested" / "market.jsonl"
+    recorder = ReplayRecorder(
+        output_path=log_file,
+        batch_size=10,
+        flush_interval_seconds=0.2,
+    )
+
+    assert not recorder.is_running
+    assert recorder.records_written == 0
+    assert recorder.queue_size == 0
+
+    await recorder.start()
+    assert recorder.is_running
+    assert log_file.parent.exists()
+
+    # Enqueue 15 records (should trigger 1 batch immediately + 5 buffered)
+    for i in range(15):
+        recorder.record_snapshot(
+            {
+                "timestamp": 1700000000.0 + i,
+                "mint": f"Mint{i}",
+                "price": 0.000000028 + (i * 0.000000001),
+                "market_cap_sol": 28.0 + (i * 0.1),
+            }
+        )
+
+    # Allow worker to flush
+    await asyncio.sleep(0.3)
+    assert recorder.records_written >= 10
+
+    # Enqueue 5 more and close gracefully
+    for i in range(15, 20):
+        recorder.record_snapshot(
+            {
+                "timestamp": 1700000000.0 + i,
+                "mint": f"Mint{i}",
+                "price": 0.000000028,
+                "market_cap_sol": 28.0,
+            }
+        )
+
+    await recorder.close()
+    assert not recorder.is_running
+    assert recorder.records_written == 20
+
+    # Verify file contents
+    assert log_file.exists()
+    lines = [
+        line.strip()
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(lines) == 20
+    first_record = json.loads(lines[0])
+    assert first_record["mint"] == "Mint0"
+    assert first_record["price"] == pytest.approx(0.000000028)
+
+
+async def test_replay_recorder_edge_cases(tmp_path: Path):
+    """Test ReplayRecorder edge cases like write errors and closed state."""
+    log_file = tmp_path / "edge_market.jsonl"
+    recorder = ReplayRecorder(output_path=log_file, batch_size=5)
+
+    # Calling record_snapshot when closed
+    recorder._closed = True
+    recorder.record_snapshot({"mint": "ClosedMint"})
+    assert recorder.queue_size == 0
+
+    # Test empty batch write
+    await recorder._write_batch([])
+    assert recorder.records_written == 0
+
+    # Test write batch exception logging
+    recorder._closed = False
+    with patch.object(recorder, "_sync_append", side_effect=OSError("Disk full")):
+        await recorder._write_batch([{"test": 1}])
+
+    # Test record snapshot exception handling
+    with patch.object(
+        recorder._queue, "put_nowait", side_effect=Exception("Queue broken")
+    ):
+        recorder.record_snapshot({"test": 1})
+
+    # Test flush with items
+    recorder._queue.put_nowait({"mint": "FlushMint"})
+    await recorder.flush()
+    assert recorder.records_written == 1
+
+    # Test close when task raises exception
+    await recorder.start()
+    if recorder._worker_task is not None:
+        recorder._worker_task.cancel()
+    await recorder.close()
+
+
+async def test_replay_recorder_drain_and_worker_branches(tmp_path: Path):
+    """Test ReplayRecorder queue draining when multiple items are available."""
+    log_file = tmp_path / "drain_market.jsonl"
+    recorder = ReplayRecorder(
+        output_path=log_file, batch_size=5, flush_interval_seconds=0.1
+    )
+
+    # Put 4 items into queue before start so worker drains them in one batch
+    recorder.record_snapshot({"item": 1})
+    recorder.record_snapshot({"item": 2})
+    recorder.record_snapshot({"item": 3})
+    recorder.record_snapshot({"item": 4})
+    assert recorder.queue_size == 4
+
+    await recorder.start()
+    # Call start again (branch line 50->exit when already running)
+    await recorder.start()
+
+    await asyncio.sleep(0.2)
+    assert recorder.records_written == 4
+    await recorder.close()
+
+
+async def test_replay_recorder_worker_inner_drain(tmp_path: Path):
+    """Test ReplayRecorder worker inner draining loop."""
+    log_file = tmp_path / "inner_drain.jsonl"
+    recorder = ReplayRecorder(
+        output_path=log_file, batch_size=3, flush_interval_seconds=0.01
+    )
+    await recorder.start()
+    recorder._queue.put_nowait({"item": 1})
+    recorder._queue.put_nowait({"item": 2})
+    recorder._queue.put_nowait({"item": 3})
+    await asyncio.sleep(0.05)
+    await recorder.close()
+    assert recorder.records_written == 3
+
+
+async def test_replay_recorder_flush_and_close_branches(tmp_path: Path):
+    """Test ReplayRecorder flush QueueEmpty branch and close without start."""
+    log_file = tmp_path / "flush_empty.jsonl"
+    recorder = ReplayRecorder(output_path=log_file, batch_size=5)
+
+    # Close without start
+    await recorder.close()
+    assert not recorder.is_running
+
+    # Flush with 1 item triggering QueueEmpty on next iteration
+    recorder._queue.put_nowait({"item": 1})
+    await recorder.flush()
+    assert recorder.records_written == 1
+
+
+async def test_replay_recorder_worker_error(tmp_path: Path):
+    """Test ReplayRecorder worker exception resiliency."""
+    log_file = tmp_path / "worker_err.jsonl"
+    recorder = ReplayRecorder(
+        output_path=log_file, batch_size=2, flush_interval_seconds=0.05
+    )
+    await recorder.start()
+
+    # Trigger exception in _write_batch inside worker
+    with patch.object(
+        recorder, "_write_batch", side_effect=[Exception("Batch error"), None]
+    ):
+        recorder.record_snapshot({"mint": "Mint1"})
+        recorder.record_snapshot({"mint": "Mint2"})
+        await asyncio.sleep(0.15)
+
+    await recorder.close()

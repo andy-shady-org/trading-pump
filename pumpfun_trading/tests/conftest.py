@@ -18,9 +18,8 @@ _TESTS_ROOT = Path(__file__).parent
 def _layer_marker(path: Path) -> str:
     """Return the taxonomy marker for a test file (docs/dev/TESTING.md).
 
-    ``integration/`` and ``property/`` map to their own markers; legacy flat
-    files named ``*_integration.py`` count as integration until they move.
-    Everything else is ``unit``.
+    ``integration/`` and ``property/`` map to their own markers; everything
+    else is ``unit``.
     """
     try:
         parts = path.relative_to(_TESTS_ROOT).parts
@@ -28,8 +27,6 @@ def _layer_marker(path: Path) -> str:
         return "unit"
     if parts and parts[0] in ("integration", "property"):
         return parts[0]
-    if path.stem.endswith("_integration"):
-        return "integration"
     return "unit"
 
 

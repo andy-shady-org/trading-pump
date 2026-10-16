@@ -16,8 +16,10 @@ from pumpfun_trading.bot.enrichment import (
     creator_initial_buy_pct,
     merge_token_data,
 )
+from pumpfun_trading.bot.strategy import ScreeningCache, TokenScreeningVerdict
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.tests.support.factories import make_config
 
 CREATOR = str(Pubkey.new_unique())
 METADATA_URI = "https://ipfs.io/ipfs/QmTestMetadata"
@@ -25,7 +27,8 @@ METADATA_URI = "https://ipfs.io/ipfs/QmTestMetadata"
 
 def _strict_config() -> TradingBotConfig:
     """Matches the `conservative` screening thresholds used by the canary."""
-    return TradingBotConfig(
+    return make_config(
+        dry_run=False,
         enable_anti_rug_filters=True,
         enable_cluster_analysis=False,
         require_social_links=True,
@@ -252,3 +255,52 @@ def test_creator_initial_buy_pct(
         assert result is None
     else:
         assert result == pytest.approx(expected)
+
+
+async def test_token_enricher_disabled():
+    config = make_config(dry_run=False, enable_anti_rug_filters=False)
+    enricher = TokenEnricher(config=config)
+    verdict = await enricher.enrich_and_screen("Mint111")
+    assert verdict.passed
+    assert verdict.risk_score == 0.0
+
+
+async def test_token_enricher_cache_hit():
+    cache = ScreeningCache(default_ttl=60)
+    cached = TokenScreeningVerdict(mint="Mint111", passed=True, risk_score=10.0)
+    cache.set("Mint111", cached)
+
+    config = make_config(dry_run=False, enable_anti_rug_filters=True)
+    enricher = TokenEnricher(config=config, screening_cache=cache)
+    verdict = await enricher.enrich_and_screen("Mint111")
+    assert verdict is cached
+
+
+async def test_token_enricher_with_mock_api():
+    mock_api = MagicMock(spec=PumpFunApiClient)
+    mock_api.get_coin = AsyncMock(
+        return_value={
+            "mint": "Mint111",
+            "name": "TestToken",
+            "creator": "Creator111",
+            "creatorHoldingPct": 0.05,
+            "holders": [
+                {"address": "Holder1", "amount": 100_000},
+                {"address": "Holder2", "amount": 50_000},
+            ],
+            "totalSupply": 1_000_000_000,
+        }
+    )
+    mock_api.get_creator_coins = AsyncMock(
+        return_value=[
+            {"mint": "Past1", "created_timestamp": 1_000_000_000_000},
+        ]
+    )
+
+    config = make_config(
+        dry_run=False, enable_anti_rug_filters=True, max_acceptable_risk_score=50.0
+    )
+    enricher = TokenEnricher(api_client=mock_api, config=config)
+    verdict = await enricher.enrich_and_screen("Mint111")
+    assert isinstance(verdict, TokenScreeningVerdict)
+    assert verdict.passed

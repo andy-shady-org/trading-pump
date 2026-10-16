@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from pumpfun_trading.bot.position_manager import PositionManager
 from pumpfun_trading.execution.executor import OrderExecutor
@@ -14,8 +15,8 @@ from pumpfun_trading.sdk.curve import (
     BondingCurveVolatilityEstimator,
     calculate_spot_price,
 )
-from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.presets import resolve_strategy_config
+from pumpfun_trading.tests.support.factories import make_config
 
 
 def test_curve_volatility_estimator_math():
@@ -104,7 +105,8 @@ def test_curve_volatility_estimator_math():
 
 
 def test_adaptive_execution_policy_urgency_tiers():
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         min_slippage_bps=100,
         max_slippage_bps=500,
         max_exit_slippage_bps=5000,
@@ -171,7 +173,7 @@ def test_adaptive_execution_policy_urgency_tiers():
 
 
 async def test_order_executor_dynamic_slippage():
-    config = TradingBotConfig(
+    config = make_config(
         dry_run=True,
         enable_dynamic_slippage=True,
         min_slippage_bps=120,
@@ -202,7 +204,7 @@ async def test_order_executor_dynamic_slippage():
 
 
 async def test_order_liquidator_emergency_urgency():
-    config = TradingBotConfig(
+    config = make_config(
         dry_run=True,
         max_exit_slippage_bps=5000,
     )

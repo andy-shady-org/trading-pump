@@ -20,6 +20,7 @@ from pumpfun_trading.engines.parity import (
 )
 from pumpfun_trading.engines.replay import PaperTradingEngine
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.tests.support.factories import make_config
 
 
 @pytest.mark.parametrize(
@@ -105,7 +106,8 @@ def test_compare_marks_mints_without_entries() -> None:
 
 
 def _config() -> TradingBotConfig:
-    return TradingBotConfig(
+    return make_config(
+        dry_run=False,
         buy_amount_sol=0.01,
         max_position_size_sol=0.01,
         max_total_exposure_sol=0.03,

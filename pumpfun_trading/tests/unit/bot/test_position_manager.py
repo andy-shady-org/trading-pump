@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,7 +15,9 @@ from pumpfun_trading.bot.position_manager import (
     _extract_position_fraction,
 )
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.strategies.decision import PositionEvEvaluator
 from pumpfun_trading.strategies.exits import ExitAction, PositionExitState
+from pumpfun_trading.tests.support.factories import make_config
 
 MINT = "MintAAA111"
 CANDIDATE = "MintCandidate999"
@@ -314,9 +317,8 @@ def test_total_cost_sol_uses_entry_sol_then_config_default() -> None:
 
 
 def test_displacement_engine_default_evaluator_is_position_ev() -> None:
-    from pumpfun_trading.strategies.decision import PositionEvEvaluator
 
-    config = TradingBotConfig()
+    config = make_config(dry_run=False)
     engine = CapitalDisplacementEngine(config, PositionManager(config))
 
     assert isinstance(engine.ev_evaluator, PositionEvEvaluator)
@@ -353,7 +355,9 @@ def test_evaluate_displacement_candidate_already_held_declines() -> None:
 
 
 def test_evaluate_displacement_free_capacity_declines() -> None:
-    config = TradingBotConfig(max_active_positions=5, max_total_exposure_sol=10.0)
+    config = make_config(
+        dry_run=False, max_active_positions=5, max_total_exposure_sol=10.0
+    )
     engine = CapitalDisplacementEngine(
         config, PositionManager(config), _FakeEvEvaluator([], 1.0)
     )
@@ -416,7 +420,7 @@ def test_evaluate_displacement_large_ev_delta_displaces_weakest() -> None:
 
 @pytest.fixture
 def base_config() -> TradingBotConfig:
-    return TradingBotConfig(
+    return make_config(
         buy_amount_sol=0.1,
         take_profit=1.5,
         stop_loss=0.8,
@@ -820,3 +824,84 @@ def test_position_manager_partial_exit_valuation_and_pnl(
     # Unrealized PnL = 0.0875 - 0.025 = +0.0625 SOL
     assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.0875
     assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.0625
+
+
+def test_capital_displacement_engine_rules():
+    config = make_config(
+        dry_run=False,
+        max_active_positions=1,
+        max_total_exposure_sol=0.1,
+        enable_capital_rotation=True,
+        displacement_min_conviction_percentile=0.95,
+        displacement_hurdle_rate_pct=0.03,
+        min_hold_before_displacement_seconds=45.0,
+        buy_amount_sol=0.05,
+        min_slippage_bps=100,
+    )
+    pos_mgr = PositionManager(config)
+    engine = CapitalDisplacementEngine(config, pos_mgr)
+
+    now = 1000.0
+
+    # Case 1: Portfolio has capacity (0 positions held)
+    dec_capacity = engine.evaluate_displacement("Cand1", current_time=now)
+    assert not dec_capacity.displace
+    assert dec_capacity.reason == "portfolio_has_capacity"
+
+    # Add a position to saturate capacity
+    pos_mgr.record_buy(
+        mint="Stagnant1",
+        token_amount=1_000_000,
+        cost_sol=0.05,
+        entry_market_cap=30.0,
+    )
+    pos = pos_mgr.get_position("Stagnant1")
+    pos["entry_time"] = now - 20.0  # held 20s (less than 45s min hold)
+
+    # Case 2: Protected position (cannot displace young holding)
+    dec_protected = engine.evaluate_displacement("Cand1", current_time=now)
+    assert not dec_protected.displace
+    assert dec_protected.reason == "no_displaceable_positions"
+
+    # Age the position past 45s
+    pos["entry_time"] = now - 120.0
+    pos["last_price_change_at"] = now - 120.0
+    pos["z_score"] = 0.0
+    pos["net_inflow_sol"] = 0.0
+
+    # Case 3: Weak candidate with low conviction percentile (below 0.95)
+    weak_signal = MagicMock(
+        triggered=True,
+        z_score=0.5,
+        buy_sell_ratio=1.1,
+        net_sol_inflow=0.05,
+        unique_buyers=2,
+    )
+    dec_low_ev = engine.evaluate_displacement(
+        "WeakCand",
+        candidate_signal=weak_signal,
+        conviction_percentile=0.90,
+        current_time=now,
+    )
+    assert not dec_low_ev.displace
+    assert "conviction_below_min_percentile" in dec_low_ev.reason
+
+    # Case 4: High conviction breakout candidate (exceeds hurdle)
+    strong_signal = MagicMock(
+        triggered=True,
+        z_score=4.5,
+        buy_sell_ratio=6.0,
+        net_sol_inflow=4.0,
+        unique_buyers=12,
+    )
+    dec_displace = engine.evaluate_displacement(
+        "StrongCand",
+        candidate_signal=strong_signal,
+        conviction_percentile=0.98,
+        current_time=now,
+    )
+    assert dec_displace.displace
+    assert dec_displace.displaced_mint == "Stagnant1"
+    assert dec_displace.target_mint == "StrongCand"
+    assert dec_displace.ev_delta > 0.05
+    assert dec_displace.reason == "positive_ev_displacement"

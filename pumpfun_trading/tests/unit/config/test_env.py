@@ -1,15 +1,45 @@
+"""Unit tests for ``config/env.py``."""
+
+from __future__ import annotations
+
 import base58
 import pytest
 from solders.keypair import Keypair
 
 from pumpfun_trading.config.env import (
     decode_keypair,
+    get_env_bool,
+    get_env_float,
+    get_env_int,
     load_keypair_from_env,
+    mask_secret,
     sanitize_env_for_logging,
     validate_required_runtime_env,
 )
-from pumpfun_trading.ops.logging import setup_structured_logging
-from pumpfun_trading.ops.monitoring import build_runtime_summary, runtime_is_healthy
+from pumpfun_trading.ops.logging import log_runtime_event, setup_structured_logging
+
+
+def test_runtime_env_and_logging_helpers(monkeypatch, tmp_path):
+    monkeypatch.setenv("PUMPFUN_PRIVATE_KEY", "supersecretkey123")
+    monkeypatch.setenv("PUMPFUN_RPC_URL", "https://example.com/rpc")
+    assert get_env_bool("PUMPFUN_USE_SSL", True) is True
+    assert get_env_bool("PUMPFUN_USE_SSL", False) is False
+    assert get_env_float("PUMPFUN_TEST_FLOAT", 2.5) == 2.5
+    assert get_env_float("PUMPFUN_TEST_FLOAT_BAD", 3.5) == 3.5
+    assert get_env_int("PUMPFUN_TEST_INT", 7) == 7
+    assert get_env_int("PUMPFUN_TEST_INT_BAD", 9) == 9
+    assert mask_secret("") == "<unset>"
+    assert mask_secret("abc") == "********"
+    assert "supersecretkey123" not in str(sanitize_env_for_logging())
+    validate_required_runtime_env()
+
+    logger = setup_structured_logging(
+        logger_name="pumpfun_trading.coverage_test",
+        log_file=str(tmp_path / "audit.log"),
+        console=False,
+    )
+    log_runtime_event(logger, "coverage_check", component="tests", ok=True)
+    assert (tmp_path / "audit.log").exists()
 
 
 def test_runtime_env_is_masked_and_validated(monkeypatch):
@@ -20,32 +50,6 @@ def test_runtime_env_is_masked_and_validated(monkeypatch):
     masked = sanitize_env_for_logging()
     assert "supersecretkey123456" not in str(masked)
     assert "PUMPFUN_PRIVATE_KEY" in masked
-
-
-def test_structured_logging_and_runtime_summary():
-    logger = setup_structured_logging(
-        logger_name="pumpfun_trading.test", log_file=None, console=False
-    )
-    assert logger.name == "pumpfun_trading.test"
-
-    class DummyBot:
-        state = type("S", (), {"value": "monitoring"})()
-        _health_ok = True
-        _risk_killed = False
-        _stop_requested = False
-        active_positions = {"a": {}, "b": {}}
-        _buy_attempts = {"a": 2}
-
-        def _metrics_snapshot(self):
-            return {"buys": 1, "sells": 0}
-
-        _last_event = "ready"
-        _last_status = "monitoring"
-
-    bot = DummyBot()
-    summary = build_runtime_summary(bot)
-    assert summary["active_positions"] == 2
-    assert runtime_is_healthy(bot) is True
 
 
 def test_decode_and_load_keypair_from_env(monkeypatch):

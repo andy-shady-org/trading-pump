@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import io
 import json
@@ -14,14 +15,18 @@ import warnings
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
 from rich.console import Console
 
 from pumpfun_trading.cli import record as record_cli
-from pumpfun_trading.streams.geyser import BondingCurveStateUpdate
+from pumpfun_trading.cli import record as record_module
+from pumpfun_trading.cli.bot import build_parser as build_bot_parser
+from pumpfun_trading.cli.record import build_record_parser, run_record_cli
+from pumpfun_trading.streams.geyser import BondingCurveStateUpdate, TradeEventUpdate
+from pumpfun_trading.tests.support.fakes import FakeClock
 
 MINT = "RecMint1111111111111111111111111111111111"
 _real_sleep = asyncio.sleep
@@ -405,3 +410,356 @@ def test_record_module_run_as_script_generates_synthetic_dataset(
     lines = [line for line in out.read_text().splitlines() if line]
     assert len(lines) >= 12
     assert all("mint" in json.loads(line) for line in lines)
+
+
+def test_record_cli_parser_and_execution(tmp_path: Path):
+    """Test CLI argument parsing and dispatching for recorder tools."""
+    parser = build_record_parser()
+    args = parser.parse_args(
+        [
+            "-o",
+            str(tmp_path / "cli_synth.jsonl"),
+            "--synthetic",
+            "flash_rug",
+            "--synthetic-steps",
+            "40",
+        ]
+    )
+    assert args.output == str(tmp_path / "cli_synth.jsonl")
+    assert args.synthetic == "flash_rug"
+    assert args.synthetic_steps == 40
+
+    run_record_cli(args)
+    assert (tmp_path / "cli_synth.jsonl").exists()
+
+    # Test bot parser --record-replay option
+    bot_parser = build_bot_parser()
+    bot_args = bot_parser.parse_args(["--record-replay", "custom_replay.jsonl"])
+    assert bot_args.record_replay == "custom_replay.jsonl"
+
+
+def test_record_cli_from_mint(tmp_path: Path):
+    """Test CLI execution for REST export mode."""
+    parser = build_record_parser()
+    out = tmp_path / "cli_rest.jsonl"
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--from-mint",
+            "TokenMint123",
+            "--limit",
+            "10",
+        ]
+    )
+
+    with patch(
+        "pumpfun_trading.cli.record.RestHistoryExporter.export_token_trades_to_file",
+        new_callable=AsyncMock,
+    ) as mock_exp:
+        mock_exp.return_value = 5
+        run_record_cli(args)
+        assert mock_exp.called
+
+
+def test_record_cli_harvester_geyser(tmp_path: Path):
+    """Test CLI live stream harvester with Yellowstone Geyser."""
+    parser = build_record_parser()
+    out = tmp_path / "geyser_harvest.jsonl"
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--geyser-endpoint",
+            "http://127.0.0.1:10000",
+            "--limit",
+            "3",
+            "--flush-interval",
+            "0.1",
+        ]
+    )
+
+    async def fake_events():
+        yield BondingCurveStateUpdate(
+            mint="GeyserMint1111111111111111111111111111111",
+            bonding_curve_pubkey="Curve1",
+            slot=100,
+            virtual_token_reserves=1000,
+            virtual_sol_reserves=100,
+            real_token_reserves=500,
+            real_sol_reserves=50,
+            token_total_supply=1000,
+            complete=False,
+            price_sol=0.001,
+            market_cap_sol=30.0,
+        )
+        yield TradeEventUpdate(
+            mint="GeyserMint1111111111111111111111111111111",
+            sol_amount_lamports=100_000_000,
+            token_amount=1000,
+            is_buy=True,
+            user="User1",
+            timestamp=1700000000,
+            virtual_sol_reserves=100,
+            virtual_token_reserves=1000,
+            real_sol_reserves=50,
+            real_token_reserves=500,
+        )
+        from pumpfun_trading.streams.geyser import CompleteEventUpdate
+
+        yield CompleteEventUpdate(
+            mint="GeyserMint1111111111111111111111111111111",
+            user="User1",
+            bonding_curve="Curve1",
+            timestamp=1700000001,
+        )
+
+    with patch("pumpfun_trading.cli.record.YellowstoneGeyserClient") as mock_geyser:
+        instance = mock_geyser.return_value
+        instance.start = AsyncMock()
+        instance.stop = AsyncMock()
+        instance.listen = fake_events
+
+        run_record_cli(args)
+
+    assert out.exists()
+
+
+def test_record_cli_harvester_polling(tmp_path: Path):
+    """Test CLI live stream harvester with REST polling."""
+    parser = build_record_parser()
+    out = tmp_path / "polling_harvest.jsonl"
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--limit",
+            "2",
+            "--duration",
+            "1.0",
+            "--flush-interval",
+            "0.1",
+        ]
+    )
+
+    with patch("pumpfun_trading.cli.record.PumpFunApiClient") as mock_client_cls:
+        client = AsyncMock()
+        client.get_latest_coins.return_value = [
+            {
+                "mint": "PollMint1",
+                "name": "PollCoin1",
+                "market_cap": 28.0,
+                "volume": 1.0,
+            },
+            {
+                "mint": "PollMint2",
+                "name": "PollCoin2",
+                "market_cap": 30.0,
+                "volume": 2.0,
+            },
+        ]
+        client.__aenter__.return_value = client
+        mock_client_cls.return_value = client
+
+        run_record_cli(args)
+
+    assert out.exists()
+
+
+def test_record_main_entrypoint(tmp_path: Path):
+    """Test main() CLI entrypoint invocation."""
+    from pumpfun_trading.cli.record import main
+
+    with patch(
+        "sys.argv",
+        [
+            "pumpfun-recorder",
+            "--synthetic",
+            "gradual_grind",
+            "-o",
+            str(tmp_path / "main_synth.jsonl"),
+            "--synthetic-steps",
+            "10",
+        ],
+    ):
+        main()
+    assert (tmp_path / "main_synth.jsonl").exists()
+
+
+def test_record_cli_exceptions_and_polling_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Test record CLI error branches, duration triggers, and signal handlers."""
+    # Poll waits run on a fake clock instead of real seconds; the limit, not
+    # the (fake-time) duration, ends the run.
+    clock = FakeClock()
+    clock.install(monkeypatch, record_module)
+    clock.install_async_sleep(monkeypatch, record_module)
+    out = tmp_path / "poll_branch.jsonl"
+    parser = build_record_parser(parser=argparse.ArgumentParser())
+
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--limit",
+            "1",
+            "--duration",
+            "60.0",
+            "--flush-interval",
+            "0.05",
+        ]
+    )
+
+    with patch("pumpfun_trading.cli.record.PumpFunApiClient") as mock_client_cls:
+        client = AsyncMock()
+        client.get_latest_coins.side_effect = [
+            "not a list",
+            [
+                {"non_dict": 1},
+                {"mint": ""},
+                {"mint": "PollMint1", "market_cap": 28.0, "volume": 1.0},
+            ],
+        ]
+        client.__aenter__.return_value = client
+        mock_client_cls.return_value = client
+
+        run_record_cli(args)
+
+    assert out.exists()
+    assert "PollMint1" in out.read_text()
+
+
+def test_record_cli_keyboard_interrupt(tmp_path: Path):
+    """Test CLI top-level KeyboardInterrupt handling."""
+    parser = build_record_parser()
+    args = parser.parse_args(["-o", str(tmp_path / "ki.jsonl")])
+
+    with patch("pumpfun_trading.cli.record.asyncio.run", side_effect=KeyboardInterrupt):
+        run_record_cli(args)
+
+    # Subparsers build parser check
+    root_parser = argparse.ArgumentParser()
+    subparsers = root_parser.add_subparsers()
+    rec_p = build_record_parser(subparsers=subparsers)
+    assert rec_p is not None
+
+
+def test_record_cli_interrupted_while_streaming(tmp_path: Path):
+    """Test CLI interruption handling during stream loop."""
+    parser = build_record_parser()
+    out = tmp_path / "stream_ki.jsonl"
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--flush-interval",
+            "0.05",
+        ]
+    )
+
+    with patch("pumpfun_trading.cli.record.PumpFunApiClient") as mock_client_cls:
+        client = AsyncMock()
+        client.get_latest_coins.return_value = [{"mint": "M1", "market_cap": 28.0}]
+        client.__aenter__.return_value = client
+        mock_client_cls.return_value = client
+
+        # Simulate sleep raising KeyboardInterrupt in main loop
+        with patch(
+            "pumpfun_trading.cli.record.asyncio.sleep",
+            side_effect=[None, KeyboardInterrupt],
+        ):
+            run_record_cli(args)
+
+
+def test_record_cli_signal_handler_and_geyser_none(tmp_path: Path):
+    """Test signal handler exception and geyser endpoint None check."""
+    out = tmp_path / "sig_handler.jsonl"
+    parser = build_record_parser()
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--limit",
+            "1",
+            "--duration",
+            "1.0",
+            "--flush-interval",
+            "0.01",
+        ]
+    )
+
+    with (
+        patch("asyncio.get_running_loop") as mock_get_loop,
+        patch("pumpfun_trading.cli.record.PumpFunApiClient") as mock_client_cls,
+    ):
+        loop = MagicMock()
+        loop.add_signal_handler.side_effect = RuntimeError("Not main thread")
+        mock_get_loop.return_value = loop
+
+        client = AsyncMock()
+        client.get_latest_coins.return_value = [{"mint": "SigMint", "market_cap": 25.0}]
+        client.__aenter__.return_value = client
+        mock_client_cls.return_value = client
+
+        run_record_cli(args)
+
+    assert out.exists()
+
+
+def test_record_cli_sleep_loop_duration_and_cancel(tmp_path: Path):
+    """Test sleep loop duration exit and cancellation inside harvester."""
+    out = tmp_path / "duration_exit.jsonl"
+    parser = build_record_parser()
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--duration",
+            "0.01",
+            "--flush-interval",
+            "0.01",
+        ]
+    )
+
+    with patch("pumpfun_trading.cli.record.PumpFunApiClient") as mock_client_cls:
+        client = AsyncMock()
+        # Return list with non-dict to exercise line 282
+        client.get_latest_coins.return_value = [
+            "not_a_dict",
+            {"mint": "Coin1", "market_cap": 25.0},
+        ]
+        client.__aenter__.return_value = client
+        mock_client_cls.return_value = client
+
+        run_record_cli(args)
+
+    assert out.exists()
+
+
+def test_record_cli_geyser_none_endpoint_inside_task(tmp_path: Path):
+    """Test _stream_geyser directly when geyser_endpoint is None."""
+    out = tmp_path / "geyser_none.jsonl"
+    parser = build_record_parser()
+    args = parser.parse_args(
+        [
+            "-o",
+            str(out),
+            "--duration",
+            "0.05",
+            "--flush-interval",
+            "0.01",
+        ]
+    )
+
+    # Pass geyser_endpoint as empty string or None to ensure clean return
+    args.geyser_endpoint = None
+    with patch("pumpfun_trading.cli.record.PumpFunApiClient") as mock_client_cls:
+        client = AsyncMock()
+        client.get_latest_coins.return_value = [{"mint": "C1", "market_cap": 20.0}]
+        client.__aenter__.return_value = client
+        mock_client_cls.return_value = client
+
+        run_record_cli(args)
+
+    assert out.exists()

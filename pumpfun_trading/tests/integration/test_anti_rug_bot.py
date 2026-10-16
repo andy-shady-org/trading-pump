@@ -7,9 +7,9 @@ import pytest
 
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.run import TradingBot
-from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.streams.geyser import BondingCurveStateUpdate
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
+from pumpfun_trading.tests.support.factories import make_config
 
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 SAMPLE_MINT_TOXIC = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
@@ -17,7 +17,7 @@ SAMPLE_MINT_TOXIC = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 
 @pytest.fixture
 def bot(tmp_path):
-    config = TradingBotConfig(
+    config = make_config(
         buy_amount_sol=0.01,
         take_profit=1.5,
         stop_loss=0.85,
@@ -124,7 +124,7 @@ async def test_bot_enrich_and_screen_excessive_creator_holding(bot):
 
 
 async def test_bot_enrich_and_screen_disabled_filters(bot):
-    bot.config = TradingBotConfig(enable_anti_rug_filters=False)
+    bot.config = make_config(dry_run=False, enable_anti_rug_filters=False)
 
     verdict = await bot._enrich_and_screen_token(SAMPLE_MINT)
     assert verdict.passed is True

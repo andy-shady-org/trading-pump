@@ -1,8 +1,9 @@
+"""Unit tests for ``strategies/exits.py``."""
+
 from __future__ import annotations
 
 import pytest
 
-from pumpfun_trading.bot.risk import track_position_peak
 from pumpfun_trading.bot.strategy import (
     ExitAction,
     PositionExitState,
@@ -13,6 +14,7 @@ from pumpfun_trading.bot.strategy import (
     should_exit_position,
     update_position_peak,
 )
+from pumpfun_trading.tests.support.factories import make_config
 
 
 def test_position_exit_state_model():
@@ -179,7 +181,8 @@ def test_evaluate_exit_strategy_tiered_take_profit():
 
 def test_evaluate_exit_strategy_trailing_stop():
     # Test trailing stop when tiered take profit is disabled or before tier hits
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_tiered_take_profit=False,
         enable_trailing_stop=True,
         trailing_stop_activation_pct=0.50,  # Activates at +50% (1.5x)
@@ -298,49 +301,6 @@ def test_trading_strategy_exit_and_peak_methods():
     assert summary["tier_1_take_profit"] == 1.8
 
 
-def test_bot_risk_track_position_peak():
-    class DummyBot:
-        def __init__(self):
-            self.active_positions = {
-                "mint_123": {
-                    "entry_market_cap": 10.0,
-                    "current_market_cap": 10.0,
-                }
-            }
-
-    bot = DummyBot()
-    peak = track_position_peak(bot, mint="mint_123", current_market_cap=25.0)
-    assert peak == 25.0
-    assert bot.active_positions["mint_123"]["peak_market_cap"] == 25.0
-    assert bot.active_positions["mint_123"]["current_market_cap"] == 25.0
-
-    # Non-existent mint returns market cap safely
-    peak_missing = track_position_peak(
-        bot, mint="missing_mint", current_market_cap=12.0
-    )
-    assert peak_missing == 12.0
-
-
-def test_strategy_presets_and_custom_overrides():
-    for preset_name in ["conservative", "balanced", "aggressive"]:
-        preset_cfg = resolve_strategy_config(preset_name)
-        assert preset_cfg.enable_trailing_stop is True
-        assert preset_cfg.enable_tiered_take_profit is True
-        assert preset_cfg.tier_1_take_profit > 1.0
-        assert preset_cfg.tier_2_take_profit > preset_cfg.tier_1_take_profit
-
-    # Custom override
-    custom_cfg = resolve_strategy_config(
-        "balanced",
-        overrides={
-            "enable_trailing_stop": False,
-            "tier_1_take_profit": 2.2,
-        },
-    )
-    assert custom_cfg.enable_trailing_stop is False
-    assert custom_cfg.tier_1_take_profit == 2.2
-
-
 def test_exits_and_decision_additional_branches(tmp_path):
     # Test Tier 2 full exit when remaining units <= min_sell_balance
     config = resolve_strategy_config("balanced")
@@ -367,7 +327,8 @@ def test_exits_and_decision_additional_branches(tmp_path):
     assert d_moonbag_hold.action == ExitAction.HOLD
 
     # Standard take profit when tiered take profit is disabled
-    cfg_no_tier = TradingBotConfig(
+    cfg_no_tier = make_config(
+        dry_run=False,
         enable_tiered_take_profit=False,
         enable_trailing_stop=False,
         take_profit=1.5,
@@ -404,113 +365,10 @@ def test_exits_and_decision_additional_branches(tmp_path):
     assert loaded_cfg.strategy_preset == "conservative"
 
 
-async def test_bot_live_partial_sell_and_reconciliation(tmp_path):
-    from unittest.mock import AsyncMock, MagicMock
-    from pumpfun_trading.bot.run import TradingBot
-
-    SAMPLE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
-    MINT = "So11111111111111111111111111111111111111112"
-
-    config = TradingBotConfig(
-        buy_amount_sol=0.01,
-        enable_tiered_take_profit=True,
-        tier_1_take_profit=2.0,
-        tier_1_sell_fraction=0.50,
-        tier_2_take_profit=3.5,
-        tier_2_sell_fraction=0.25,
-        enable_trailing_stop=True,
-        min_sell_balance=10,
-    )
-    bot = TradingBot(
-        private_key_b58=SAMPLE_KEY,
-        rpc_url="https://api.mainnet-beta.solana.com",
-        config=config,
-        dry_run=False,
-        paper_trade=False,
-        bot_status_path=str(tmp_path / "status.json"),
-        audit_log_path=str(tmp_path / "audit.jsonl"),
-    )
-
-    # Mock execution client
-    bot.execution.get_bonding_curve_pda = MagicMock(return_value=("CurvePDA", "bump"))
-    bot.execution.get_bonding_curve_state = AsyncMock(
-        return_value={
-            "virtual_token_reserves": 1_000_000_000_000_000,
-            "virtual_sol_reserves": 30_000_000_000,
-            "market_cap_sol": 30.0,
-        }
-    )
-    bot.execution.calculate_sell_sol_output = MagicMock(return_value=20_000_000)
-    bot.execution.get_token_balance = AsyncMock(return_value=1_000_000)
-    bot.execution.sell = AsyncMock(return_value="tx_sell_partial_sig")
-    bot.execution.confirm_transaction = AsyncMock(return_value=True)
-
-    # Populate active position
-    bot.active_positions[MINT] = {
-        "name": "LiveMoon",
-        "entry_market_cap": 30.0,
-        "current_market_cap": 30.0,
-        "peak_market_cap": 30.0,
-        "initial_token_amount": 1_000_000,
-        "remaining_token_amount": 1_000_000,
-        "token_amount": 1_000_000,
-    }
-
-    # Execute Tier 1 partial sell
-    sold_ok = await bot._sell_token(
-        MINT,
-        sell_fraction=0.50,
-        reason="take_profit_tier_1",
-        target_tier=1,
-    )
-    assert sold_ok is True
-    assert MINT in bot.active_positions
-    assert bot.active_positions[MINT]["remaining_token_amount"] == 500_000
-    assert bot.active_positions[MINT]["tier_1_executed"] is True
-
-    # Reconcile on-chain positions
-    bot.execution.get_token_balance = AsyncMock(return_value=500_000)
-    reconciled = await bot.reconcile_onchain_positions()
-    assert reconciled[MINT]["status"] == "active"
-    assert bot.active_positions[MINT]["remaining_token_amount"] == 500_000
-    assert bot.active_positions[MINT]["tier_1_executed"] is True
-
-    # Execute Tier 2 partial sell with Jito bundle
-    bot.use_jito = True
-    bot.execution.send_jito_bundle_with_fallback = AsyncMock(
-        return_value="jito_bundle_sig"
-    )
-    sold_t2 = await bot._sell_token(
-        MINT,
-        sell_fraction=0.25,
-        reason="take_profit_tier_2",
-        target_tier=2,
-    )
-    assert sold_t2 is True
-    assert bot.active_positions[MINT]["remaining_token_amount"] == 250_000
-    assert bot.active_positions[MINT]["tier_2_executed"] is True
-    assert bot.active_positions[MINT]["moonbag_active"] is True
-
-    # Snapshot and recovery check
-    bot._write_status_snapshot()
-    bot.active_positions.clear()
-    bot.safe_startup()
-    assert MINT in bot.active_positions
-    assert bot.active_positions[MINT]["remaining_token_amount"] == 250_000
-    assert bot.active_positions[MINT]["tier_2_executed"] is True
-    assert bot.active_positions[MINT]["moonbag_active"] is True
-
-    # Full exit remainder
-    sold_full = await bot._sell_token(MINT, reason="trailing_stop_hit")
-    assert sold_full is True
-    assert MINT not in bot.active_positions
-
-    await bot.close()
-
-
 def test_stagnant_curve_timeout_exit():
     """BUG-16: Stagnant bonding curves at 27.96 SOL with no price change must exit after timeout."""
-    cfg = TradingBotConfig(
+    cfg = make_config(
+        dry_run=False,
         enable_stagnant_exit=True,
         stagnant_timeout_seconds=120.0,
         enable_max_hold_timeout=True,
@@ -560,7 +418,8 @@ def test_stagnant_curve_timeout_exit():
 
 def test_stagnant_curve_price_movement_resets_timer():
     """BUG-16: Meaningful price changes reset last_price_change_at and prevent premature stagnation exits."""
-    cfg = TradingBotConfig(
+    cfg = make_config(
+        dry_run=False,
         enable_stagnant_exit=True,
         stagnant_timeout_seconds=120.0,
         stagnant_price_delta_threshold_pct=0.005,  # 0.5%
@@ -598,7 +457,8 @@ def test_stagnant_curve_price_movement_resets_timer():
 
 def test_max_hold_duration_timeout_exit():
     """BUG-16: Positions exceeding max_hold_time_seconds must exit regardless of minor price movement."""
-    cfg = TradingBotConfig(
+    cfg = make_config(
+        dry_run=False,
         enable_stagnant_exit=True,
         stagnant_timeout_seconds=120.0,
         enable_max_hold_timeout=True,
@@ -635,7 +495,8 @@ def test_max_hold_duration_timeout_exit():
 
 def test_timeout_flags_disabled():
     """Disabled stagnant and max hold flags must not trigger timeout exits."""
-    cfg = TradingBotConfig(
+    cfg = make_config(
+        dry_run=False,
         enable_stagnant_exit=False,
         stagnant_timeout_seconds=60.0,
         enable_max_hold_timeout=False,
@@ -656,26 +517,8 @@ def test_timeout_flags_disabled():
     assert d.action == ExitAction.HOLD
 
 
-def test_preset_stagnant_and_max_hold_configs():
-    """Verify preset definitions configure stagnant and max hold limits properly."""
-    cfg_cons = resolve_strategy_config("conservative")
-    assert cfg_cons.enable_stagnant_exit is True
-    assert cfg_cons.stagnant_timeout_seconds == 180.0
-    assert cfg_cons.max_hold_time_seconds == 900.0
-
-    cfg_bal = resolve_strategy_config("balanced")
-    assert cfg_bal.enable_stagnant_exit is True
-    assert cfg_bal.stagnant_timeout_seconds == 120.0
-    assert cfg_bal.max_hold_time_seconds == 600.0
-
-    cfg_agg = resolve_strategy_config("aggressive")
-    assert cfg_agg.enable_stagnant_exit is True
-    assert cfg_agg.stagnant_timeout_seconds == 60.0
-    assert cfg_agg.max_hold_time_seconds == 300.0
-
-
 def _tiered_config() -> TradingBotConfig:
-    return TradingBotConfig(
+    return make_config(
         enable_tiered_take_profit=True,
         enable_trailing_stop=False,
         enable_stagnant_exit=False,
@@ -736,3 +579,125 @@ def test_zero_remaining_is_not_replaced_by_phantom_balance():
     assert restored.remaining_token_amount == 0
     dec = evaluate_exit_strategy(_tiered_config(), restored, current_market_cap=10.0)
     assert dec.action == ExitAction.HOLD and dec.reason == "no_remaining_balance"
+
+
+def test_pre_graduation_staged_take_profit_tranches():
+    config = make_config(
+        dry_run=False,
+        enable_pre_graduation_harvesting=True,
+        enable_tiered_take_profit=False,
+        take_profit=10.0,
+        pre_graduation_tranches=(
+            {"progress_pct": 0.92, "sell_fraction": 0.30},
+            {"progress_pct": 0.97, "sell_fraction": 0.30},
+        ),
+        min_sell_balance=1000,
+    )
+
+    state = PositionExitState(
+        entry_market_cap=30.0,
+        current_market_cap=35.0,
+        peak_market_cap=35.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+    )
+
+    # 1. At 80% progress -> Hold
+    dec_80 = evaluate_exit_strategy(
+        config, state, current_market_cap=35.0, curve_progress_pct=80.0
+    )
+    assert dec_80.action == ExitAction.HOLD
+
+    # 2. At 92.5% progress -> Tranche 1 partial exit (30% of initial = 300,000 tokens)
+    dec_92 = evaluate_exit_strategy(
+        config, state, current_market_cap=75.0, curve_progress_pct=92.5
+    )
+    assert dec_92.action == ExitAction.PARTIAL_EXIT
+    assert dec_92.sell_fraction == 0.30
+    assert dec_92.sell_tokens == 300_000
+    assert dec_92.exit_type == "pre_graduation_tranche"
+    assert dec_92.target_tier == "pre_grad_1"
+
+    # Simulate fill of tranche 1
+    state.record_partial_exit(tier="pre_grad_1", sold_tokens=300_000)
+    assert state.remaining_token_amount == 700_000
+
+    # Repeating at 93% should not re-trigger tranche 1
+    dec_93 = evaluate_exit_strategy(
+        config, state, current_market_cap=76.0, curve_progress_pct=93.0
+    )
+    assert dec_93.action == ExitAction.HOLD
+
+    # 3. At 97.5% progress -> Tranche 2 partial exit (30% of initial = 300,000 tokens)
+    dec_97 = evaluate_exit_strategy(
+        config, state, current_market_cap=82.0, curve_progress_pct=97.5
+    )
+    assert dec_97.action == ExitAction.PARTIAL_EXIT
+    assert dec_97.sell_tokens == 300_000
+    assert dec_97.target_tier == "pre_grad_2"
+
+    # Simulate fill of tranche 2
+    state.record_partial_exit(tier="pre_grad_2", sold_tokens=300_000)
+    assert state.remaining_token_amount == 400_000  # 40% retained
+    # Pre-grad tranches must not consume the 2.0x/3.5x take-profit ladder (BUG-43)
+    assert state.tier_1_executed is False
+    assert state.tier_2_executed is False
+    assert state.moonbag_active is False
+    assert state.executed_pre_grad_tranches == {0, 1}
+
+
+def _harvest_config() -> TradingBotConfig:
+    return make_config(
+        dry_run=False,
+        enable_pre_graduation_harvesting=True,
+        enable_tiered_take_profit=False,
+        enable_stagnant_exit=False,
+        enable_max_hold_timeout=False,
+        take_profit=10.0,
+        pre_graduation_tranches=(
+            {"progress_pct": 0.92, "sell_fraction": 0.30},
+            {"progress_pct": 0.97, "sell_fraction": 0.30},
+        ),
+        min_sell_balance=1000,
+    )
+
+
+def _fresh_state() -> PositionExitState:
+    return PositionExitState(
+        entry_market_cap=30.0,
+        current_market_cap=30.0,
+        peak_market_cap=30.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+    )
+
+
+@pytest.mark.parametrize("progress", [0.92, 0.97, 1.0])
+def test_pre_graduation_low_percent_progress_does_not_fire(progress):
+    # BUG-38: 0.92-1.0 is ~1% curve progress, not 92-100%
+    dec = evaluate_exit_strategy(
+        _harvest_config(),
+        _fresh_state(),
+        current_market_cap=31.0,
+        curve_progress_pct=progress,
+    )
+    assert dec.action == ExitAction.HOLD
+
+
+def test_pre_graduation_tranche_pending_until_fill_then_retries():
+    # BUG-42: a tranche emitted but never filled is not lost forever
+    config = _harvest_config()
+    state = _fresh_state()
+    first = evaluate_exit_strategy(
+        config, state, current_market_cap=31.0, curve_progress_pct=93.0, now=1000.0
+    )
+    assert first.target_tier == "pre_grad_1"
+    assert 0 not in state.executed_pre_grad_tranches
+    again = evaluate_exit_strategy(
+        config, state, current_market_cap=31.0, curve_progress_pct=93.0, now=1001.0
+    )
+    assert again.action == ExitAction.HOLD
+    retry = evaluate_exit_strategy(
+        config, state, current_market_cap=31.0, curve_progress_pct=93.0, now=1100.0
+    )
+    assert retry.target_tier == "pre_grad_1"

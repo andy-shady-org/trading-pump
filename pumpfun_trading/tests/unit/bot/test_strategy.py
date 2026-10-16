@@ -2,13 +2,12 @@ import json
 import time
 from unittest.mock import AsyncMock
 
-
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import (
-    TradingBotConfig,
     TradingStrategy,
     resolve_strategy_config,
 )
+from pumpfun_trading.tests.support.factories import make_config
 
 
 async def test_bot_kill_switches_when_health_stale_or_balance_check_fails():
@@ -143,7 +142,8 @@ def test_strategy_config_includes_risk_fields():
 
 
 def test_trading_strategy_should_buy_respects_risk_bounds():
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         buy_amount_sol=0.01,
         take_profit=1.5,
         stop_loss=0.85,

@@ -7,6 +7,7 @@ import argparse
 import io
 import json
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -25,13 +26,15 @@ from pumpfun_trading.engines.replay import (
 )
 from pumpfun_trading.sdk.costs import TOKEN_ACCOUNT_RENT_LAMPORTS
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.tests.support.factories import make_config
 
 MINT_A = "MintA"
 MINT_B = "MintB"
 
 
 def _config(**overrides: Any) -> TradingBotConfig:
-    base = TradingBotConfig(
+    base = make_config(
+        dry_run=False,
         buy_amount_sol=0.01,
         max_position_size_sol=0.01,
         max_total_exposure_sol=0.03,
@@ -527,9 +530,9 @@ def test_paper_trading_engine_run_and_render(tmp_path):
 
 
 def test_paper_trading_engine_with_order_flow_momentum():
-    from pumpfun_trading.strategies.base import TradingBotConfig
 
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_momentum_signals=True,
         momentum_window_seconds=30,
         momentum_min_buy_ratio=2.0,
@@ -596,9 +599,9 @@ def test_paper_trading_engine_with_order_flow_momentum():
 
 
 def test_paper_trading_engine_with_raydium_graduation():
-    from pumpfun_trading.strategies.base import TradingBotConfig
 
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_raydium_migration_sniping=True,
         take_profit=1.5,
         stop_loss=0.85,
@@ -644,9 +647,9 @@ def test_paper_trading_engine_with_raydium_graduation():
 
 
 def test_paper_trading_engine_with_copy_trading():
-    from pumpfun_trading.strategies.base import TradingBotConfig
 
-    config = TradingBotConfig(
+    config = make_config(
+        dry_run=False,
         enable_copy_trading=True,
         copy_trading_wallets=(
             {
@@ -790,3 +793,64 @@ def test_paper_trading_engine_fee_slippage_and_cash_budget():
     assert sell_trade["return_pct"] == pytest.approx(expected_return_pct, rel=1e-5)
     assert summary["final_equity"] == pytest.approx(expected_exit_value, rel=1e-5)
     assert summary["final_equity"] >= 0.0
+
+
+def test_paper_trading_engine_arbitrage_simulation() -> None:
+    """Verify PaperTradingEngine simulates cross-venue arbitrage profits over multi-venue datasets."""
+    engine = PaperTradingEngine(
+        initial_cash=10.0,
+        enable_cross_venue_arbitrage=True,
+    )
+    snapshots = [
+        {
+            "timestamp": 1700000001,
+            "mint": "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump",
+            "name": "ArbToken",
+            "price": 0.000035,
+            "virtual_sol_reserves": 35_000_000_000,
+            "virtual_token_reserves": 900_000_000_000_000,
+            "raydium_sol_reserve": 85.0,  # 85 SOL
+            "raydium_token_reserve": 180_000_000_000_000,  # 180M tokens
+        }
+    ]
+    summary = engine.run(snapshots)
+    assert summary["total_trades"] >= 1
+    assert summary["final_cash"] > 10.0  # Realized arbitrage profit generated!
+    arb_trade = summary["trades"][0]
+    assert arb_trade["side"] == "ARBITRAGE"
+    assert arb_trade["pnl"] > 0.0
+
+
+def test_replay_load_history_gzip_and_directory(tmp_path: Path):
+    """Test PaperTradingEngine.load_history with .gz and directory datasets."""
+    import gzip
+
+    # File 1: compressed .jsonl.gz
+    f1 = tmp_path / "replay_01.jsonl.gz"
+    with gzip.open(f1, "wt", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "timestamp": 100,
+                    "mint": "M1",
+                    "price": 0.00000001,
+                    "buy_signal": True,
+                }
+            )
+            + "\n"
+        )
+
+    # File 2: active .jsonl
+    f2 = tmp_path / "replay_02.jsonl"
+    f2.write_text(
+        json.dumps(
+            {"timestamp": 200, "mint": "M2", "price": 0.00000002, "sell_signal": True}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    records = PaperTradingEngine.load_history(tmp_path)
+    assert len(records) == 2
+    assert records[0]["mint"] == "M1"
+    assert records[1]["mint"] == "M2"

@@ -8,10 +8,10 @@ import pytest
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import (
     TokenScreeningVerdict,
-    TradingBotConfig,
 )
 from pumpfun_trading.streams.geyser import TradeEventUpdate
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
+from pumpfun_trading.tests.support.factories import make_config
 
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 COPY_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
@@ -21,7 +21,7 @@ SMART_WALLET_2 = "AlphaTrader22222222222222222222222222222222"
 
 @pytest.fixture
 def bot(tmp_path):
-    config = TradingBotConfig(
+    config = make_config(
         buy_amount_sol=0.02,
         take_profit=1.5,
         stop_loss=0.85,
@@ -167,7 +167,7 @@ async def test_websocket_trade_update_copy_trade_buy_and_sell(bot):
 
 async def test_copy_trade_buy_rejected_by_anti_rug_screening(bot):
     """Verify copy-trade buy is blocked when anti-rug screening fails."""
-    bot.config = TradingBotConfig(
+    bot.config = make_config(
         buy_amount_sol=0.02,
         enable_copy_trading=True,
         copy_trading_wallets=(

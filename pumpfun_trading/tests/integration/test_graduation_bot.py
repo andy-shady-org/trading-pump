@@ -3,54 +3,26 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from solders.keypair import Keypair
 
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import (
-    RaydiumPoolKeys,
     TokenScreeningVerdict,
-    TradingBotConfig,
-)
-from pumpfun_trading.sdk.raydium import (
-    RAYDIUM_AUTHORITY_V4,
-    SERUM_PROGRAM_ID_V3,
-    WSOL_MINT,
 )
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
 )
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
+from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.factories import make_pool_keys
 
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 GRAD_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 
 
-def make_pool_keys(mint: str = GRAD_MINT) -> RaydiumPoolKeys:
-    return RaydiumPoolKeys(
-        amm_id=str(Keypair().pubkey()),
-        amm_authority=RAYDIUM_AUTHORITY_V4,
-        amm_open_orders=str(Keypair().pubkey()),
-        amm_target_orders=str(Keypair().pubkey()),
-        pool_coin_token_account=str(Keypair().pubkey()),
-        pool_pc_token_account=str(Keypair().pubkey()),
-        serum_program_id=SERUM_PROGRAM_ID_V3,
-        serum_market=str(Keypair().pubkey()),
-        serum_bids=str(Keypair().pubkey()),
-        serum_asks=str(Keypair().pubkey()),
-        serum_event_queue=str(Keypair().pubkey()),
-        serum_coin_vault=str(Keypair().pubkey()),
-        serum_pc_vault=str(Keypair().pubkey()),
-        serum_vault_signer=str(Keypair().pubkey()),
-        coin_mint=mint,
-        pc_mint=WSOL_MINT,
-        lp_mint=str(Keypair().pubkey()),
-    )
-
-
 @pytest.fixture
 def bot(tmp_path):
-    config = TradingBotConfig(
+    config = make_config(
         buy_amount_sol=0.01,
         take_profit=1.5,
         stop_loss=0.85,
@@ -139,7 +111,7 @@ async def test_raydium_pool_update_snipes_graduation(bot):
 
 
 async def test_raydium_snipe_rejected_by_anti_rug_screening(bot):
-    bot.config = TradingBotConfig(
+    bot.config = make_config(
         enable_raydium_migration_sniping=True,
         enable_anti_rug_filters=True,
         dry_run=True,
@@ -168,7 +140,7 @@ async def test_raydium_snipe_rejected_by_anti_rug_screening(bot):
 
 
 async def test_raydium_snipe_disabled_by_config(bot):
-    bot.config = TradingBotConfig(
+    bot.config = make_config(
         enable_raydium_migration_sniping=False,
         dry_run=True,
     )

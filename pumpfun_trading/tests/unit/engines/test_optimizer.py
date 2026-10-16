@@ -34,6 +34,7 @@ from pumpfun_trading.engines.optimizer import (
     evaluate_fitness,
 )
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.tests.support.factories import make_config
 
 
 def _fitness(value: float) -> FitnessScore:
@@ -306,7 +307,8 @@ def test_trial_fitness_responds_to_live_exit_parameters() -> None:
         {"mint": "A", "price": 1.4, "timestamp": 20.0},
         {"mint": "A", "price": 0.5, "timestamp": 30.0},
     ]
-    base = TradingBotConfig(
+    base = make_config(
+        dry_run=False,
         buy_amount_sol=0.01,
         max_position_size_sol=0.01,
         max_total_exposure_sol=0.03,
@@ -331,8 +333,11 @@ def test_trial_fitness_responds_to_live_exit_parameters() -> None:
 
 
 def test_trial_bankroll_scales_with_live_caps() -> None:
-    cfg = TradingBotConfig(
-        buy_amount_sol=0.01, max_total_exposure_sol=0.03, reserve_balance_sol=0.15
+    cfg = make_config(
+        dry_run=False,
+        buy_amount_sol=0.01,
+        max_total_exposure_sol=0.03,
+        reserve_balance_sol=0.15,
     )
     assert optimizer_module.trial_bankroll_sol(cfg) == pytest.approx(0.21)
 
@@ -472,7 +477,7 @@ def test_parameter_space_operations():
 
 
 def test_build_default_strategy_search_space():
-    cfg = TradingBotConfig(take_profit=1.8, max_active_positions=5)
+    cfg = make_config(dry_run=False, take_profit=1.8, max_active_positions=5)
     space = build_default_strategy_search_space(cfg)
     # Only knobs the live-fidelity replay reads are searched (BUG-61): the live
     # exit stack is back in the space, sizing and risk caps are not.
