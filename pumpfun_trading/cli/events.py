@@ -338,14 +338,19 @@ def run_events_cli(args: argparse.Namespace | None = None) -> None:
     target_path = Path(args.path)
 
     if args.tail:
-        if not target_path.exists():
-            console.print(
-                f"[yellow]Waiting for events file {target_path} to be created...[/yellow]"
-            )
         console.print(f"[cyan]Tailing {target_path}... (Press Ctrl+C to stop)[/cyan]")
         try:
+            # Poll until the file exists instead of failing on open (BUG-89).
+            existed = target_path.exists()
+            if not existed:
+                console.print(
+                    f"[yellow]Waiting for events file {target_path} to be created...[/yellow]"
+                )
+                while not target_path.exists():
+                    time.sleep(0.2)
             with open(target_path, "r", encoding="utf-8", errors="replace") as f:
-                f.seek(0, os.SEEK_END)
+                if existed:
+                    f.seek(0, os.SEEK_END)
                 while True:
                     line = f.readline()
                     if not line:

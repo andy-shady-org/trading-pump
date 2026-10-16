@@ -67,11 +67,11 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-57** | High | Strategy / Anti-Rug | **RESOLVED** | Anti-rug checks pass when holder or dev data is missing |
 | **BUG-58** | High | Bot / Dev Wallet Enrichment | **RESOLVED** | `tokens_launched_24h` of 0 falls back to the creator's lifetime launch count |
 | **BUG-59** | High | Bot / Cross-Venue Arbitrage | **OPEN** | Arbitrage is quoted and executed on made-up pool reserves |
-| **BUG-60** | High | Engines / Optimizer | **OPEN** | Holdout (test) fitness is used to select trials (train/test leakage) |
+| **BUG-60** | High | Engines / Optimizer | **RESOLVED** | Holdout (test) fitness is used to select trials (train/test leakage) |
 | **BUG-61** | High | Engines / Replay | **OPEN** | Paper replay ignores most parameters the optimizer searches |
-| **BUG-62** | High | Engines / Replay Metrics | **OPEN** | Profit factor is computed from return percentages, not SOL PnL |
-| **BUG-63** | High | Engines / Replay Arbitrage | **OPEN** | Replay arbitrage adds profit on every snapshot without committing capital |
-| **BUG-64** | High | Ops / Retention | **OPEN** | `ops prune` can delete any file in the target directory; `--max-files` is ignored |
+| **BUG-62** | High | Engines / Replay Metrics | **RESOLVED** | Profit factor is computed from return percentages, not SOL PnL |
+| **BUG-63** | High | Engines / Replay Arbitrage | **RESOLVED** | Replay arbitrage adds profit on every snapshot without committing capital |
+| **BUG-64** | High | Ops / Retention | **RESOLVED** | `ops prune` can delete any file in the target directory; `--max-files` is ignored |
 | **BUG-65** | Medium | Bot / Token Amount Fallbacks | **RESOLVED** | Remaining balance of `0` is treated as missing and replaced with 100,000,000 raw tokens |
 | **BUG-66** | Medium | SDK / Curve Math | **RESOLVED** | Buy/sell curve quotes ignore Pump.fun protocol and creator fees |
 | **BUG-67** | Medium | Infra / RPC Pool | **RESOLVED** | JSON-RPC error responses are recorded as endpoint successes |
@@ -89,14 +89,14 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-79** | Medium | Strategy / Sybil Detection | **RESOLVED** | When no trades fall inside the wash-trade window, the full trade history is used instead |
 | **BUG-80** | Medium | Services / Market Data | **RESOLVED** | Missing market cap defaults to 30 SOL |
 | **BUG-81** | Medium | SDK / Raydium Parsing | **RESOLVED** | `parse_raydium_initialize2_accounts` never reads `pc_mint` from the account list |
-| **BUG-82** | Medium | Engines / Replay | **OPEN** | Pre-graduation harvesting in replay only runs when cross-venue arbitrage is enabled |
-| **BUG-83** | Medium | Engines / Replay | **OPEN** | Replay can sell and buy again in the same snapshot at an already-known price |
-| **BUG-84** | Medium | Engines / Replay | **OPEN** | ISO-8601 timestamps sort as time 0 |
-| **BUG-85** | Medium | CLI / Replay | **OPEN** | `--replay-mode` is never used, and the unified CLI's `--mode` collides with replay's `--mode` |
-| **BUG-86** | Medium | CLI / Recorder | **OPEN** | `pumpfun-recorder --ws-url` is never used; every API poll is recorded as a buy signal |
+| **BUG-82** | Medium | Engines / Replay | **RESOLVED** | Pre-graduation harvesting in replay only runs when cross-venue arbitrage is enabled |
+| **BUG-83** | Medium | Engines / Replay | **RESOLVED** | Replay can sell and buy again in the same snapshot at an already-known price |
+| **BUG-84** | Medium | Engines / Replay | **RESOLVED** | ISO-8601 timestamps sort as time 0 |
+| **BUG-85** | Medium | CLI / Replay | **RESOLVED** | `--replay-mode` is never used, and the unified CLI's `--mode` collides with replay's `--mode` |
+| **BUG-86** | Medium | CLI / Recorder | **RESOLVED** | `pumpfun-recorder --ws-url` is never used; every API poll is recorded as a buy signal |
 | **BUG-87** | Medium | Config / Env Aliases | **RESOLVED** | Status and audit path env var names differ between `get_runtime_env()`, the bot, and the docs |
-| **BUG-88** | Medium | UI / Dashboard | **OPEN** | Position reason always shows `watch` (reads `reason`, not `entry_reason`) |
-| **BUG-89** | Medium | CLI / Events | **OPEN** | `pumpfun-events --tail` exits instead of waiting for the file to appear |
+| **BUG-88** | Medium | UI / Dashboard | **RESOLVED** | Position reason always shows `watch` (reads `reason`, not `entry_reason`) |
+| **BUG-89** | Medium | CLI / Events | **RESOLVED** | `pumpfun-events --tail` exits instead of waiting for the file to appear |
 | **BUG-90** | Medium | CLI / Arbitrage | **OPEN** | `pumpfun-arb --monitor` / `--live` only evaluate hardcoded sample reserves |
 | **BUG-91** | Low | Bot / Lifecycle | **RESOLVED** | An in-flight buy that finishes after shutdown tries to move SHUTDOWN → MONITORING |
 | **BUG-92** | Low | Bot / Config | **MITIGATED** | `max_positions_per_mint` is stored but never used (values other than 1 are now clamped to 1 with a warning; per-mint pyramiding is a follow-up) |
@@ -513,7 +513,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** With `enable_cross_venue_arbitrage` on, the bot can trade on spreads that don't exist.
 * **Remedy:** Read the real Raydium vault balances and Pump curve reserves before quoting, and never execute on placeholder values.
 
-### BUG-60: Optimizer Selects Trials Using Holdout Fitness [OPEN]
+### BUG-60: Optimizer Selects Trials Using Holdout Fitness [RESOLVED]
 * **Location:** `pumpfun_trading/engines/optimizer.py` (`OptimizationTrial.composite_score` ~L726–732; selection at ~L924, 981, 1023, 1106)
 * **Description:** When `test_fitness` exists, `composite_score` is computed from the test objective minus an overfit penalty. Genetic tournament selection, elitism, and the final `best_trial` all rank by this score.
 * **Impact:** The walk-forward holdout is used during selection, so the reported out-of-sample scores are optimistically biased.
@@ -525,19 +525,19 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Fitness is mostly flat across these parameters, and exported "calibrated" configs don't match what was actually simulated.
 * **Remedy:** Run the live `TradingStrategy` sizing and exit logic in replay, or limit the search space to fields the engine actually uses.
 
-### BUG-62: Profit Factor Computed From Return Percentages [OPEN]
+### BUG-62: Profit Factor Computed From Return Percentages [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L605–617), consumed by `pumpfun_trading/engines/optimizer.py` (~L636–645)
 * **Description:** `gross_profit` / `gross_loss` add up `return_pct` values instead of SOL `pnl`. For example, +100% on 1 SOL and −50% on 50 SOL gives a profit factor of 2.0 instead of 0.04.
 * **Impact:** The `profit_factor` and `composite` optimizer objectives and the CLI summaries are wrong.
 * **Remedy:** Sum winning and losing `pnl` in SOL, and skip zero-PnL buy records.
 
-### BUG-63: Replay Arbitrage Adds Profit Every Snapshot Without Committing Capital [OPEN]
+### BUG-63: Replay Arbitrage Adds Profit Every Snapshot Without Committing Capital [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L396–446)
 * **Description:** On every snapshot with Raydium reserves, a profitable spread does `cash += opp.net_profit_sol` without deducting `optimal_input_sol`, checking that enough cash is available, or applying a per-mint cooldown.
 * **Impact:** Replay equity and trade counts can grow without limit, and with arbitrage enabled (the default) this leaks into optimizer fitness.
 * **Remedy:** Require `cash >= input`, book each opportunity once, and apply a cooldown.
 
-### BUG-64: `ops prune` Can Delete Any File; `--max-files` Is Ignored [OPEN]
+### BUG-64: `ops prune` Can Delete Any File; `--max-files` Is Ignored [RESOLVED]
 * **Location:** `pumpfun_trading/ops/retention.py` (~L257, ~L282–313), `pumpfun_trading/cli/main.py` (~L165–213)
 * **Description:** The age-based pass deletes any `*.log*` / `*.jsonl*` older than `--days` under `--target` (default `.`), including active `events.jsonl` and replay datasets. The size-quota pass then lists `glob("*")` and deletes the oldest files of any type (source code, configs, `.env`) until the directory is under `--max-bytes`. `RetentionPolicy.max_files` is never read.
 * **Impact:** A routine prune run can delete project files or secrets.
@@ -649,31 +649,31 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Pools quoted in something other than SOL (and the 18-account fallback layout) get the wrong `pc_mint` and the wrong ATAs.
 * **Remedy:** Default `pc_mint` to `""`, like `coin_mint`.
 
-### BUG-82: Replay Pre-Graduation Harvesting Only Runs When Arbitrage Is Enabled [OPEN]
+### BUG-82: Replay Pre-Graduation Harvesting Only Runs When Arbitrage Is Enabled [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L396–469)
 * **Description:** The `evaluate_pre_graduation_harvesting_entry` block is indented inside `if self.enable_cross_venue_arbitrage`.
 * **Impact:** Turning arbitrage off silently turns pre-graduation entries off in replay.
 * **Remedy:** Unindent the block so only `enable_pre_graduation_harvesting` controls it.
 
-### BUG-83: Replay Sells and Re-Enters in the Same Snapshot [OPEN]
+### BUG-83: Replay Sells and Re-Enters in the Same Snapshot [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L478–588)
 * **Description:** After a TP, SL, or signal sell, the same loop iteration can buy again at the same snapshot price.
 * **Impact:** Inflated trade counts and drawdowns that look smoother than they really are (look-ahead bias).
 * **Remedy:** Block new entries on a mint until the next snapshot after an exit.
 
-### BUG-84: ISO-8601 Timestamps Sort as Time 0 [OPEN]
+### BUG-84: ISO-8601 Timestamps Sort as Time 0 [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (`_snapshot_float` ~L113–118, sort ~L192–199)
 * **Description:** `_snapshot_float` returns `0.0` on `ValueError`, so ISO `created_at` / `timestamp` strings all sort before epoch timestamps.
 * **Impact:** Replay ordering and walk-forward splits are wrong for typical API exports.
 * **Remedy:** Parse epoch seconds, epoch milliseconds, and ISO datetimes. Keep the original order when parsing fails.
 
-### BUG-85: `--replay-mode` Never Used; Unified CLI `--mode` Collision [OPEN]
+### BUG-85: `--replay-mode` Never Used; Unified CLI `--mode` Collision [RESOLVED]
 * **Location:** `pumpfun_trading/cli/replay.py` (~L36–45, ~L121), `pumpfun_trading/cli/main.py` (~L272–276, ~L343–347)
 * **Description:** The replay CLI uses `args.mode or args.replay_mode`, but `--mode` always has a default, so `--replay-mode summary` is ignored. `pumpfun replay --mode summary` can also fail validation against the parent parser's `--mode` choices.
 * **Impact:** Operators can't select the replay output mode they documented.
 * **Remedy:** Give the replay option its own `dest` and remove `--mode` from the parent parser.
 
-### BUG-86: `pumpfun-recorder --ws-url` Never Used; Polls Recorded as Buys [OPEN]
+### BUG-86: `pumpfun-recorder --ws-url` Never Used; Polls Recorded as Buys [RESOLVED]
 * **Location:** `pumpfun_trading/cli/record.py` (~L101–104, ~L272–277)
 * **Description:** When Geyser isn't used, harvesting always polls `get_latest_coins()` and stamps every coin with `is_buy=True` / `signal="buy"` at the same wall-clock time. `--ws-url` is parsed but never used.
 * **Impact:** Recorded datasets are not trade tapes. In replay, every poll counts as an entry signal.
@@ -685,13 +685,13 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Depending on which name is set, the setting is ignored by one of the two components.
 * **Remedy:** Read primary-or-alias in both places, as the docs describe.
 
-### BUG-88: Dashboard Position Reason Always Shows `watch` [OPEN]
+### BUG-88: Dashboard Position Reason Always Shows `watch` [RESOLVED]
 * **Location:** `pumpfun_trading/ui/dashboard.py` (~L256, ~L286)
 * **Description:** Positions expose `entry_reason`, but the dashboard reads `reason` and falls back to `"watch"`.
 * **Impact:** Operators can't see why a position was opened.
 * **Remedy:** Read `entry_reason` first, then `reason`.
 
-### BUG-89: `pumpfun-events --tail` Does Not Wait for the File [OPEN]
+### BUG-89: `pumpfun-events --tail` Does Not Wait for the File [RESOLVED]
 * **Location:** `pumpfun_trading/cli/events.py` (~L340–377)
 * **Description:** It prints "Waiting for events file … to be created…" and then immediately calls `open()`. If the file doesn't exist yet, the generic error handler runs and the command exits.
 * **Impact:** You can't start `--tail` before the bot.

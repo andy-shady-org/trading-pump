@@ -34,12 +34,15 @@ def build_parser(
     )
     parser.add_argument(
         "--mode",
+        dest="replay_output",
         choices=["summary", "trades", "dashboard"],
-        default="dashboard",
-        help="Historic replay output mode",
+        default=None,
+        help="Historic replay output mode (default: dashboard)",
     )
+    # Distinct dest so the unified CLI's top-level `--mode` cannot collide (BUG-85).
     parser.add_argument(
         "--replay-mode",
+        dest="replay_output",
         choices=["summary", "trades", "dashboard"],
         default=None,
         help="Historic replay output mode (alias for --mode)",
@@ -118,7 +121,10 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
         mint_name=getattr(args, "mint_name", None),
         token_name=getattr(args, "token_name", None),
     )
-    mode = getattr(args, "mode", None) or getattr(args, "replay_mode", "dashboard")
+    mode = getattr(args, "replay_output", None) or getattr(args, "replay_mode", None)
+    if mode is None:
+        legacy = getattr(args, "mode", None)
+        mode = legacy if legacy in {"summary", "trades", "dashboard"} else "dashboard"
     if mode == "summary":
         render_replay_summary(summary, console)
         return

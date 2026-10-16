@@ -274,7 +274,9 @@ def test_optimization_trial_and_result_export(tmp_path: Path):
         overfit_delta=0.5,
         duration_seconds=0.05,
     )
-    assert trial.composite_score == pytest.approx(3.0 - 0.25)
+    # Selection uses train fitness only; holdout is reporting-only (BUG-60).
+    assert trial.composite_score == pytest.approx(3.5)
+    assert trial.validation_score == pytest.approx(3.0 - 0.25)
 
     res = OptimizationResult(
         best_trial=trial,

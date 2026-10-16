@@ -269,38 +269,38 @@ class LogRetentionManager:
         max_age_seconds = self.policy.max_age_days * 86400.0
         pruned_files: list[Path] = []
 
-        all_files: list[Path] = []
-        for pattern in self.file_patterns:
-            all_files.extend(self.target_directory.glob(pattern))
-
-        # Filter out directories and deduplicate
-        unique_files = sorted(
-            {f for f in all_files if f.is_file()},
-            key=lambda p: p.stat().st_mtime,
-        )
+        # Only rotated archives matching the log patterns are ever candidates; live
+        # sinks (`events.jsonl`, `bot.log`) and unrelated files are never touched (BUG-64).
+        unique_files = self._archive_candidates()
 
         for file_path in unique_files:
-            # Do not prune the primary unrotated active files if they are the only ones
             try:
                 stat = file_path.stat()
                 age = current_time - stat.st_mtime
                 if self.policy.max_age_days > 0 and age > max_age_seconds:
-                    # Check if it is a rotated file or unrotated
                     file_path.unlink(missing_ok=True)
                     pruned_files.append(file_path)
             except OSError as exc:
                 logger.warning("Error pruning file %s: %s", file_path, exc)
 
+        # Count-based pruning: keep the newest `max_files` archives per sink.
+        if self.policy.max_files > 0:
+            by_sink: dict[str, list[Path]] = {}
+            for file_path in unique_files:
+                if file_path not in pruned_files:
+                    by_sink.setdefault(self._sink_name(file_path), []).append(file_path)
+            for archives in by_sink.values():
+                excess = len(archives) - self.policy.max_files
+                for file_path in archives[: max(0, excess)]:
+                    try:
+                        file_path.unlink(missing_ok=True)
+                        pruned_files.append(file_path)
+                    except OSError as exc:
+                        logger.warning("Error pruning file %s: %s", file_path, exc)
+
         # Quota-based pruning if total_max_bytes is specified
         if self.policy.total_max_bytes is not None and self.policy.total_max_bytes > 0:
-            remaining_files = sorted(
-                [
-                    f
-                    for f in self.target_directory.glob("*")
-                    if f.is_file() and f not in pruned_files
-                ],
-                key=lambda p: p.stat().st_mtime,
-            )
+            remaining_files = [f for f in unique_files if f not in pruned_files]
             total_size = sum(f.stat().st_size for f in remaining_files)
             while total_size > self.policy.total_max_bytes and remaining_files:
                 oldest = remaining_files.pop(0)
@@ -313,6 +313,34 @@ class LogRetentionManager:
                     pass
 
         return pruned_files
+
+    @staticmethod
+    def _is_rotated_archive(path: Path) -> bool:
+        """True for rotated/compressed archives such as `bot.log.1` or `x.jsonl.2.gz`."""
+        if path.name.endswith(".gz"):
+            return True
+        parts = path.name.split(".")
+        return len(parts) >= 3 and parts[-1].isdigit()
+
+    @staticmethod
+    def _sink_name(path: Path) -> str:
+        parts = path.name.split(".")
+        if parts and parts[-1] == "gz":
+            parts = parts[:-1]
+        if len(parts) >= 3 and parts[-1].isdigit():
+            parts = parts[:-1]
+        return ".".join(parts)
+
+    def _archive_candidates(self) -> list[Path]:
+        """Rotated archives matching `file_patterns`, oldest first."""
+        found: set[Path] = set()
+        for pattern in self.file_patterns:
+            found.update(
+                f
+                for f in self.target_directory.glob(pattern)
+                if f.is_file() and self._is_rotated_archive(f)
+            )
+        return sorted(found, key=lambda p: p.stat().st_mtime)
 
     async def prune_expired_async(self, now: float | None = None) -> list[Path]:
         """Asynchronous wrapper for prune_expired offloading to worker thread."""

@@ -342,7 +342,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--replay-mode",
         choices=["summary", "trades", "dashboard"],
-        default="dashboard",
+        default=None,
         help="Historic replay output mode",
     )
     return parser

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import signal
 import time
 from pathlib import Path
+from typing import Any
 
 from rich.panel import Panel
 from rich.table import Table
@@ -116,6 +118,38 @@ def build_record_parser(
         help="Periodic flush interval in seconds (default: 2.0)",
     )
     return parser
+
+
+def ws_message_to_snapshot(payload: Any, now: float) -> dict[str, Any] | None:
+    """Convert a PumpPortal WS message into a replay snapshot without inventing signals."""
+    if not isinstance(payload, dict):
+        return None
+    mint = payload.get("mint")
+    if not mint:
+        return None
+    snapshot: dict[str, Any] = {
+        "timestamp": payload.get("timestamp") or now,
+        "mint": str(mint),
+        "name": str(payload.get("name") or mint),
+        "source": "websocket",
+    }
+    for src, dst in (
+        ("marketCapSol", "market_cap_sol"),
+        ("vSolInBondingCurve", "virtual_sol_reserves"),
+        ("vTokensInBondingCurve", "virtual_token_reserves"),
+        ("solAmount", "sol_amount"),
+        ("tokenAmount", "token_amount"),
+        ("traderPublicKey", "trader"),
+    ):
+        if payload.get(src) is not None:
+            snapshot[dst] = payload[src]
+    tx_type = str(payload.get("txType") or "").lower()
+    if tx_type:
+        snapshot["txType"] = tx_type
+    if tx_type in {"buy", "sell"}:
+        # Only real trades carry a side; still not a strategy entry signal.
+        snapshot["is_buy"] = tx_type == "buy"
+    return snapshot
 
 
 def run_record_cli(args: argparse.Namespace) -> None:
@@ -302,8 +336,9 @@ def run_record_cli(args: argparse.Namespace) -> None:
                                         "price": price,
                                         "market_cap_sol": mc,
                                         "volume": float(c.get("volume", 0.0) or 0.0),
-                                        "is_buy": True,
-                                        "signal": "buy",
+                                        # A poll is a quote, not a trade: no fabricated
+                                        # buy signal (BUG-86).
+                                        "source": "poll",
                                     }
                                 )
                                 if args.limit and enqueued_count >= args.limit:
@@ -327,10 +362,42 @@ def run_record_cli(args: argparse.Namespace) -> None:
                             break
                         await asyncio.sleep(0.1)
 
-        # Run selected stream task
-        stream_task = asyncio.create_task(
-            _stream_geyser() if geyser_endpoint else _stream_websocket_or_polling()
-        )
+        async def _stream_websocket(ws_url: str) -> None:
+            nonlocal enqueued_count
+            import aiohttp
+
+            timeout = aiohttp.ClientTimeout(total=None, sock_read=60.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.ws_connect(ws_url) as ws:
+                    await ws.send_json({"method": "subscribeNewToken"})
+                    async for msg in ws:
+                        if stop_requested.is_set():
+                            break
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        try:
+                            payload = json.loads(msg.data)
+                        except (TypeError, ValueError):
+                            continue
+                        snapshot = ws_message_to_snapshot(payload, time.time())
+                        if snapshot is None:
+                            continue
+                        unique_mints.add(snapshot["mint"])
+                        enqueued_count += 1
+                        recorder.record_snapshot(snapshot)
+                        if args.limit and enqueued_count >= args.limit:
+                            stop_requested.set()
+                            break
+
+        # Run selected stream task (`--ws-url` selects the WebSocket feed, BUG-86)
+        ws_url = getattr(args, "ws_url", None)
+        if geyser_endpoint:
+            stream_coro = _stream_geyser()
+        elif ws_url:
+            stream_coro = _stream_websocket(ws_url)
+        else:
+            stream_coro = _stream_websocket_or_polling()
+        stream_task = asyncio.create_task(stream_coro)
 
         try:
             while not stop_requested.is_set():

@@ -725,12 +725,19 @@ class OptimizationTrial:
 
     @property
     def composite_score(self) -> float:
-        """Effective score considering both in-sample training and out-of-sample penalty."""
-        if self.test_fitness is not None:
-            return self.test_fitness.objective_value - (
-                0.5 * max(0.0, self.overfit_delta)
-            )
+        """Selection score: in-sample (train) objective only.
+
+        Holdout metrics must never drive selection, otherwise the out-of-sample
+        score is no longer unseen (BUG-60). See `validation_score` for reporting.
+        """
         return self.train_fitness.objective_value
+
+    @property
+    def validation_score(self) -> float | None:
+        """Out-of-sample objective minus overfit penalty; reporting only."""
+        if self.test_fitness is None:
+            return None
+        return self.test_fitness.objective_value - (0.5 * max(0.0, self.overfit_delta))
 
 
 @dataclass

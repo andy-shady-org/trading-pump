@@ -3,6 +3,7 @@ from __future__ import annotations
 import glob
 import gzip
 import json
+from datetime import datetime, timezone
 from math import inf
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -36,6 +37,7 @@ class PaperTradingEngine:
         enable_raydium_graduation: bool = False,
         enable_copy_trading: bool = False,
         enable_cross_venue_arbitrage: bool = False,
+        arb_cooldown_seconds: float = 60.0,
     ) -> None:
         if strategy_config is not None:
             if take_profit == 1.5 and hasattr(strategy_config, "take_profit"):
@@ -73,6 +75,7 @@ class PaperTradingEngine:
         self.graduation_engine = GraduationEngine()
         self.copy_trade_engine = CopyTradeEngine()
         self.arb_monitor = CrossVenueDisparityMonitor()
+        self.arb_cooldown_seconds = float(arb_cooldown_seconds)
         if strategy_config and getattr(strategy_config, "copy_trading_wallets", None):
             self.copy_trade_engine.registry.register_wallets(
                 list(strategy_config.copy_trading_wallets)
@@ -116,6 +119,26 @@ class PaperTradingEngine:
             return float(value)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _parse_timestamp(value: Any) -> float | None:
+        """Parse unix seconds, unix milliseconds or ISO-8601 into seconds (BUG-84)."""
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            text = str(value).strip()
+            if not text:
+                return None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        return seconds / 1000.0 if seconds > 1e11 else seconds
 
     @staticmethod
     def _read_records_from_file(file_path: Path) -> list[dict[str, Any]]:
@@ -189,16 +212,19 @@ class PaperTradingEngine:
             else:
                 return []
 
-        # Sort chronologically by timestamp if available
-        records.sort(
-            key=lambda r: float(
-                PaperTradingEngine._snapshot_float(
-                    r, "timestamp", "time", "event_time", "ts", "created_at"
-                )
-                or 0.0
+        # Sort chronologically; records without a parseable timestamp inherit the
+        # previous record's time so they keep their original position (BUG-84).
+        keys: list[float] = []
+        last_ts = float("-inf")
+        for record in records:
+            parsed = PaperTradingEngine._parse_timestamp(
+                PaperTradingEngine._snapshot_timestamp(record)
             )
-        )
-        return records
+            if parsed is not None:
+                last_ts = parsed
+            keys.append(last_ts)
+        order = sorted(range(len(records)), key=lambda i: keys[i])
+        return [records[i] for i in order]
 
     @staticmethod
     def _snapshot_mint(snapshot: dict[str, Any]) -> str:
@@ -284,6 +310,7 @@ class PaperTradingEngine:
         trades: list[dict[str, Any]] = []
         equity_history: list[dict[str, Any]] = []
         last_prices: dict[str, float] = {}
+        last_arb_at: dict[str, float] = {}
 
         for index, snapshot in enumerate(snapshots):
             mint = self._snapshot_mint(snapshot)
@@ -294,11 +321,8 @@ class PaperTradingEngine:
 
             last_prices[mint] = price
 
-            ts_raw = self._snapshot_timestamp(snapshot)
-            try:
-                ts = float(ts_raw)
-            except (TypeError, ValueError):
-                ts = float(index)
+            parsed_ts = self._parse_timestamp(self._snapshot_timestamp(snapshot))
+            ts = parsed_ts if parsed_ts is not None else float(index)
 
             # Process order flow recording and momentum signal evaluation
             momentum_triggered = False
@@ -418,7 +442,20 @@ class PaperTradingEngine:
                         raydium_sol_reserve=ray_sol,
                         raydium_token_reserve=ray_tok,
                     )
-                    if opp and opp.is_profitable:
+                    # Capital must cover the input leg, and each mint has a cooldown so
+                    # one disparity is not banked on every snapshot (BUG-63).
+                    prev_arb = last_arb_at.get(mint)
+                    if (
+                        opp
+                        and opp.is_profitable
+                        and cash >= opp.optimal_input_sol
+                        and (
+                            prev_arb is None
+                            or ts - prev_arb >= self.arb_cooldown_seconds
+                        )
+                    ):
+                        last_arb_at[mint] = ts
+                        # Atomic bundle: the input leg returns in the same slot.
                         cash += opp.net_profit_sol
                         trades.append(
                             {
@@ -444,29 +481,29 @@ class PaperTradingEngine:
                                 ),
                             }
                         )
-                if self.strategy_config and getattr(
-                    self.strategy_config, "enable_pre_graduation_harvesting", False
-                ):
-                    min_p = (
-                        self.strategy_config.pre_graduation_entry_progress_pct * 100.0
-                        if self.strategy_config.pre_graduation_entry_progress_pct <= 1.0
-                        else self.strategy_config.pre_graduation_entry_progress_pct
-                    )
-                    max_p = (
-                        self.strategy_config.pre_graduation_max_entry_progress_pct
-                        * 100.0
-                        if self.strategy_config.pre_graduation_max_entry_progress_pct
-                        <= 1.0
-                        else self.strategy_config.pre_graduation_max_entry_progress_pct
-                    )
-                    grad_sig = self.graduation_engine.evaluate_pre_graduation_harvesting_entry(
-                        mint=mint,
-                        min_progress_pct=min_p,
-                        max_progress_pct=max_p,
-                        min_acceleration=self.strategy_config.pre_graduation_min_acceleration,
-                        current_time=ts,
-                    )
-                    pre_grad_triggered = grad_sig.triggered
+
+            # Pre-graduation harvesting is independent of the arbitrage flag (BUG-82).
+            if self.strategy_config and getattr(
+                self.strategy_config, "enable_pre_graduation_harvesting", False
+            ):
+                min_p = (
+                    self.strategy_config.pre_graduation_entry_progress_pct * 100.0
+                    if self.strategy_config.pre_graduation_entry_progress_pct <= 1.0
+                    else self.strategy_config.pre_graduation_entry_progress_pct
+                )
+                max_p = (
+                    self.strategy_config.pre_graduation_max_entry_progress_pct * 100.0
+                    if self.strategy_config.pre_graduation_max_entry_progress_pct <= 1.0
+                    else self.strategy_config.pre_graduation_max_entry_progress_pct
+                )
+                grad_sig = self.graduation_engine.evaluate_pre_graduation_harvesting_entry(
+                    mint=mint,
+                    min_progress_pct=min_p,
+                    max_progress_pct=max_p,
+                    min_acceleration=self.strategy_config.pre_graduation_min_acceleration,
+                    current_time=ts,
+                )
+                pre_grad_triggered = grad_sig.triggered
 
             if (
                 snapshot.get("event") == "raydium_pool_created"
@@ -475,6 +512,7 @@ class PaperTradingEngine:
             ):
                 graduation_triggered = self.enable_raydium_graduation
 
+            exited_this_snapshot = False
             if mint in positions:
                 position = positions[mint]
                 price_multiplier = (
@@ -530,9 +568,12 @@ class PaperTradingEngine:
                     trades.append(trade)
                     cash += exit_value
                     del positions[mint]
+                    exited_this_snapshot = True
 
+            # No re-entry on the same snapshot that closed the position (BUG-83).
             if (
                 mint not in positions
+                and not exited_this_snapshot
                 and self._buy_signal(
                     snapshot,
                     momentum_triggered=momentum_triggered,
@@ -607,8 +648,14 @@ class PaperTradingEngine:
             for trade in trades
             if trade.get("action") in {"sell", "arbitrage"}
         ]
-        gross_profit = sum(value for value in sell_returns if value > 0)
-        gross_loss = abs(sum(value for value in sell_returns if value < 0))
+        # Profit factor uses SOL PnL, not return percentages (BUG-62).
+        sell_pnls = [
+            float(trade.get("pnl") or 0.0)
+            for trade in trades
+            if trade.get("action") in {"sell", "arbitrage"}
+        ]
+        gross_profit = sum(value for value in sell_pnls if value > 0)
+        gross_loss = abs(sum(value for value in sell_pnls if value < 0))
         if gross_loss > 0:
             profit_factor = gross_profit / gross_loss
         elif gross_profit > 0:

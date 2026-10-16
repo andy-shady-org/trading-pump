@@ -253,7 +253,9 @@ def build_dashboard(bot: Any) -> Panel:
                     )
                     or 0.0
                 )
-                reason = str(position.get("reason") or "watch")
+                reason = str(
+                    position.get("entry_reason") or position.get("reason") or "watch"
+                )
             else:
                 name = str(getattr(position, "name", mint) or mint)
                 entry = float(getattr(position, "entry_market_cap", 0.0) or 0.0)
@@ -283,7 +285,11 @@ def build_dashboard(bot: Any) -> Panel:
                     )
                     or 0.0
                 )
-                reason = str(getattr(position, "reason", "watch") or "watch")
+                reason = str(
+                    getattr(position, "entry_reason", None)
+                    or getattr(position, "reason", None)
+                    or "watch"
+                )
 
             if unit_price > 0:
                 if unit_price < 0.001:
