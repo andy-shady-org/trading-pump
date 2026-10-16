@@ -20,8 +20,8 @@ from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.sdk.execution import (
     PumpFunExecutionClient,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
 SAMPLE_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 SAMPLE_MINT_2 = "So11111111111111111111111111111111111111112"
 
@@ -50,7 +50,6 @@ def test_audit_module_all_branches(tmp_path):
     assert out_file.exists()
 
 
-@pytest.mark.asyncio
 async def test_api_client_snapshot_fallbacks():
     client = PumpFunApiClient()
 
@@ -135,7 +134,6 @@ def test_sdk_math_and_keypairs():
         PumpFunExecutionClient._decode_keypair("short")
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("offline_trade_rpc")
 async def test_sdk_rpc_retry_recovery_and_tx_assembly():
     client = PumpFunExecutionClient(
@@ -222,7 +220,6 @@ async def test_sdk_rpc_retry_recovery_and_tx_assembly():
     assert await client.get_ata_exists(SAMPLE_MINT) is False
 
 
-@pytest.mark.asyncio
 async def test_bot_startup_schema_and_edge_branches(tmp_path):
     # Status file in local dir with integer arguments
     bot = TradingBot(
@@ -349,7 +346,6 @@ async def test_bot_startup_schema_and_edge_branches(tmp_path):
                 pass
 
 
-@pytest.mark.asyncio
 async def test_bot_start_and_message_loop_heartbeat(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,

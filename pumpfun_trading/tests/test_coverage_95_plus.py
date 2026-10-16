@@ -19,13 +19,12 @@ import pumpfun_trading.cli.main as cli_main_mod
 from pumpfun_trading.sdk.execution import TOKEN_PROGRAM_ID_STR
 from pumpfun_trading.sdk.execution import TokenBalanceUnavailableError
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
 SAMPLE_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 SAMPLE_MINT_2 = "So11111111111111111111111111111111111111112"
 
 
-@pytest.mark.asyncio
 async def test_api_client_missing_branches():
     client = PumpFunApiClient(base_url="https://api.pump.fun")
 
@@ -65,7 +64,6 @@ async def test_api_client_missing_branches():
     await fallback_client.close()
 
 
-@pytest.mark.asyncio
 async def test_execution_sdk_all_branches():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY, "https://api.mainnet-beta.solana.com"
@@ -192,7 +190,6 @@ async def test_execution_sdk_all_branches():
     assert sell_res == "tx_sig_wrapped_123"
 
 
-@pytest.mark.asyncio
 async def test_bot_run_all_missing_branches(tmp_path):
     config = TradingBotConfig(
         buy_amount_sol=0.05,
@@ -357,7 +354,6 @@ async def test_bot_run_all_missing_branches(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_start_circuit_breaker_and_loop():
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -420,7 +416,6 @@ def test_cli_runners_execution():
             cli_bot.main()
 
 
-@pytest.mark.asyncio
 async def test_bot_ws_and_sub_unsub_and_idle_coverage(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -522,7 +517,6 @@ async def test_bot_ws_and_sub_unsub_and_idle_coverage(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_run_additional_coverage_boost(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -731,7 +725,6 @@ async def test_bot_run_additional_coverage_boost(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_deep_coverage_additional(tmp_path):
     # 1. validate_mint_address invalid checks
     with pytest.raises(ValueError):
@@ -840,7 +833,6 @@ async def test_bot_deep_coverage_additional(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_liquidator_and_api_edge_branches():
     from pumpfun_trading.execution.liquidator import OrderLiquidator
     from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
@@ -913,7 +905,6 @@ def test_cli_entrypoints_coverage():
             mock_bot_instance.close.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_api_client_context_manager_and_text_response():
     from pumpfun_trading.api.client import PumpFunApiClient
 

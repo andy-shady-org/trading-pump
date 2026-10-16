@@ -7,7 +7,6 @@ import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from rich.console import Console
 
 from pumpfun_trading.bot.run import TradingBot
@@ -19,8 +18,8 @@ from pumpfun_trading.ops.logging import (
     strip_ansi,
 )
 from pumpfun_trading.storage.status import build_status_snapshot
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-TEST_KEY = "4wT3fE2k8uQe7dY3q1aZ9xL5vNmK8jP2wR1sT4vU7xY8z1aB2c3d4e5f6g7h8j9k"
 TEST_RPC = "https://api.mainnet-beta.solana.com"
 MINT_1 = "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump"
 MINT_2 = "So11111111111111111111111111111111111111112"
@@ -37,7 +36,7 @@ def _make_bot(
         verbose=verbose,
     )
     return TradingBot(
-        private_key_b58=TEST_KEY,
+        private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url=TEST_RPC,
         config=config,
         dry_run=dry_run,
@@ -83,7 +82,6 @@ def test_bug10_ansi_stripping_and_no_color():
     assert isinstance(console, Console)
 
 
-@pytest.mark.asyncio
 async def test_bug07_onchain_startup_reconciliation():
     """Test BUG-07: Startup reconciliation purges stale ghost positions with zero balance."""
     bot = _make_bot(dry_run=False, paper_trade=False)
@@ -122,7 +120,6 @@ async def test_bug07_onchain_startup_reconciliation():
     assert reconciled[MINT_2]["status"] == "active"
 
 
-@pytest.mark.asyncio
 async def test_bug08_exit_retry_queue_and_slippage_escalation():
     """Test BUG-08: Failed sells enqueue with escalating slippage and retry backoff."""
     bot = _make_bot(dry_run=False, paper_trade=False)
@@ -176,7 +173,6 @@ async def test_bug08_exit_retry_queue_and_slippage_escalation():
     assert MINT_1 not in bot._exit_retry_queue
 
 
-@pytest.mark.asyncio
 async def test_bug06_websocket_backoff_and_circuit_breaker():
     """Test BUG-06: WebSocket circuit breaker trips on consecutive reconnect failures."""
     bot = _make_bot()
@@ -236,7 +232,7 @@ def test_request_shutdown_idempotent_and_stops_geyser():
     assert bot.state == TradingBotState.SHUTDOWN
 
 
-def test_bug29_console_stream_suppression_and_headless_mode():
+async def test_bug29_console_stream_suppression_and_headless_mode():
     """Test BUG-29: Suppress console StreamHandler during interactive Live UI rendering."""
     # 1. Interactive terminal mode (verbose=True, headless=False): no StreamHandler
     bot_interactive = _make_bot(verbose=True, headless=False)
@@ -274,11 +270,6 @@ def test_bug29_console_stream_suppression_and_headless_mode():
         ]
         assert len(env_stream_handlers) == 1
 
-    # 4. _render_loop skips execution when headless=True
-    import asyncio
-
-    async def _check_render_loop():
-        # Should return immediately without starting Live context
-        await bot_headless._render_loop()
-
-    asyncio.run(_check_render_loop())
+    # 4. _render_loop skips execution when headless=True: it returns at once
+    # without starting a Live context
+    await bot_headless._render_loop()

@@ -115,15 +115,31 @@ class ReplayRecorder:
         if not batch:
             return
         async with self._flush_lock:
+            lines = [json.dumps(r, default=str) + "\n" for r in batch]
+            payload = "".join(lines)
+            # The batch has already left the queue, so a cancelled write would
+            # lose it (and could leave the thread writing into a closed sink).
+            # Shield the write and let it finish before honouring the cancel
+            # (BUG-103).
+            write = asyncio.ensure_future(asyncio.to_thread(self._sync_append, payload))
             try:
-                lines = [json.dumps(r, default=str) + "\n" for r in batch]
-                payload = "".join(lines)
-                await asyncio.to_thread(self._sync_append, payload)
-                self._records_written += len(batch)
-            except Exception as err:
-                logger.error(
-                    "Failed to write replay batch to %s: %s", self.output_path, err
-                )
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                await asyncio.wait([write])
+                self._finish_write(write, len(batch))
+                raise
+            except Exception:
+                pass  # logged by _finish_write
+            self._finish_write(write, len(batch))
+
+    def _finish_write(self, write: asyncio.Future[None], count: int) -> None:
+        err = write.exception()
+        if err is not None:
+            logger.error(
+                "Failed to write replay batch to %s: %s", self.output_path, err
+            )
+            return
+        self._records_written += count
 
     def _sync_append(self, text: str) -> None:
         """Append raw text for backward compatibility."""

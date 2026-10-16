@@ -7,7 +7,6 @@ import pytest
 from pumpfun_trading.api.client import PumpFunApiClient
 
 
-@pytest.mark.asyncio
 async def test_api_client_lifecycle_and_helpers():
     client = PumpFunApiClient(base_url="https://api.pump.fun", max_retries=2)
     assert client.base_url == "https://api.pump.fun"
@@ -20,7 +19,6 @@ async def test_api_client_lifecycle_and_helpers():
     await client.close()
 
 
-@pytest.mark.asyncio
 async def test_api_client_requests_and_retries():
     client = PumpFunApiClient(base_url="https://api.pump.fun", max_retries=1)
 
@@ -59,7 +57,6 @@ async def test_api_client_requests_and_retries():
     await client.close()
 
 
-@pytest.mark.asyncio
 async def test_api_client_domain_methods():
     client = PumpFunApiClient()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from rich.console import Console
 
+import pumpfun_trading.cli.audit as cli_audit
 from pumpfun_trading.bot.reconcile import ReconciliationReport, TradeCheck
 from pumpfun_trading.cli import audit as audit_cli
 from pumpfun_trading.cli.main import _build_parser
@@ -225,3 +227,60 @@ def test_reconcile_stores_status_for_dashboard(tmp_path: Path, output: Console) 
                 _args("reconcile", "--path", str(path), "--wallet", "W")
             )
     assert "Could not store reconciliation status" in output.export_text()
+
+
+def test_cli_audit_subcommand(tmp_path):
+    audit_file = tmp_path / "audit.jsonl"
+    record = {
+        "timestamp": 1700000000.0,
+        "type": "trade",
+        "mint": "MintAudit111",
+        "action": "buy",
+        "status": "success",
+    }
+    audit_file.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    # Audit summary
+    args = argparse.Namespace(
+        path=str(audit_file),
+        record_type=None,
+        state=None,
+        date_from=None,
+        date_to=None,
+        mint=None,
+        token_name=None,
+        reason=None,
+        status=None,
+        limit=None,
+        summary=True,
+        json=False,
+        export=None,
+    )
+    cli_audit.run_audit_cli(args)
+
+    # Audit export
+    export_out = tmp_path / "exported.json"
+    args.summary = False
+    args.export = str(export_out)
+    cli_audit.run_audit_cli(args)
+    assert export_out.exists()
+
+    # Audit JSON output
+    args.export = None
+    args.json = True
+    cli_audit.run_audit_cli(args)
+
+    # Audit table output
+    args.json = False
+    cli_audit.run_audit_cli(args)
+
+    # Audit empty records
+    args.mint = "NonExistent"
+    cli_audit.run_audit_cli(args)
+
+    # Audit main with parsed args
+    with patch(
+        "sys.argv",
+        ["audit_cli", "--path", str(audit_file), "--summary"],
+    ):
+        cli_audit.main()

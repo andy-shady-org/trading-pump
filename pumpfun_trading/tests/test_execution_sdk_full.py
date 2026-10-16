@@ -13,13 +13,12 @@ from pumpfun_trading.sdk.execution import (
     TOKEN_PROGRAM_ID_STR,
     PumpFunExecutionClient,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
 SAMPLE_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 SAMPLE_BLOCKHASH = str(Hash.default())
 
 
-@pytest.mark.asyncio
 async def test_execution_client_rpc_handling():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY,
@@ -79,7 +78,6 @@ async def test_execution_client_rpc_handling():
                 await client._request_rpc_json({"method": "test"}, max_retries=1)
 
 
-@pytest.mark.asyncio
 async def test_execution_client_account_and_balance_queries():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY, "https://api.mainnet-beta.solana.com"
@@ -141,7 +139,6 @@ async def test_execution_client_account_and_balance_queries():
         await client.get_bonding_curve_state(SAMPLE_MINT)
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("offline_trade_rpc")
 async def test_execution_client_tx_builders():
     client = PumpFunExecutionClient(
@@ -193,7 +190,6 @@ async def test_execution_client_tx_builders():
         )
 
 
-@pytest.mark.asyncio
 async def test_execution_client_send_confirm_and_jito():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY,
@@ -271,7 +267,6 @@ async def test_execution_client_send_confirm_and_jito():
         assert bundle_res == "bundle_id_123"
 
 
-@pytest.mark.asyncio
 async def test_execution_client_v2_instructions_and_creator():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY,

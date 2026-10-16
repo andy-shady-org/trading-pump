@@ -14,8 +14,8 @@ from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.cli import bot as cli_bot
 import pumpfun_trading.cli.main as cli_main_mod
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
 SAMPLE_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 SAMPLE_MINT_2 = "So11111111111111111111111111111111111111112"
 
@@ -61,7 +61,6 @@ def test_cli_all_modes_and_flags(tmp_path):
             cli_bot.main()
 
 
-@pytest.mark.asyncio
 async def test_api_client_all_methods_and_options():
     client = PumpFunApiClient(base_url="https://api.pump.fun")
 
@@ -144,7 +143,6 @@ def test_sdk_instructions_and_decoding():
     assert client._to_pubkey(pk_obj) == pk_obj
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("offline_trade_rpc")
 async def test_sdk_tx_build_and_confirm_variations():
     client = PumpFunExecutionClient(
@@ -181,7 +179,6 @@ async def test_sdk_tx_build_and_confirm_variations():
             await client.send_jito_bundle([])
 
 
-@pytest.mark.asyncio
 async def test_bot_full_websocket_and_lifecycle(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -235,7 +232,6 @@ async def test_bot_full_websocket_and_lifecycle(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_live_error_branches(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,

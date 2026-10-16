@@ -147,7 +147,6 @@ def test_decode_bonding_curve_reads_mayhem_flag():
     assert decode(base + b"\x01")["is_mayhem_mode"] is True
 
 
-@pytest.mark.asyncio
 async def test_build_buy_tx_routes_mayhem_curve_fees(
     client: PumpFunExecutionClient, monkeypatch
 ):
@@ -193,7 +192,6 @@ async def test_build_buy_tx_routes_mayhem_curve_fees(
     assert FEE_RECIPIENT not in keys
 
 
-@pytest.mark.asyncio
 async def test_jito_send_bundle_declares_base64_encoding(monkeypatch):
     captured: dict = {}
 

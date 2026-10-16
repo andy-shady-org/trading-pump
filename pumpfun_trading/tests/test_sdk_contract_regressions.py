@@ -35,7 +35,6 @@ def _client(**kwargs) -> PumpFunExecutionClient:
 # BUG-35 -------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_token_balance_rpc_failure_raises_not_zero():
     client = _client()
     client._request_rpc_json = AsyncMock(side_effect=RuntimeError("timeout"))
@@ -43,7 +42,6 @@ async def test_token_balance_rpc_failure_raises_not_zero():
         await client.get_token_balance(MINT)
 
 
-@pytest.mark.asyncio
 async def test_token_balance_error_payload_raises():
     client = _client()
     client._request_rpc_json = AsyncMock(
@@ -53,7 +51,6 @@ async def test_token_balance_error_payload_raises():
         await client.get_token_balance(MINT)
 
 
-@pytest.mark.asyncio
 async def test_token_balance_confirmed_zero_cases():
     client = _client()
     client._request_rpc_json = AsyncMock(return_value={"result": {"value": []}})
@@ -97,7 +94,6 @@ def test_jito_ok_null_err_counts_as_landed():
     assert status.is_landed and not status.is_failed
 
 
-@pytest.mark.asyncio
 async def test_jito_get_bundle_statuses_parses_ok_and_err():
     from pumpfun_trading.sdk.jito import JitoClient
 
@@ -124,7 +120,6 @@ async def test_jito_get_bundle_statuses_parses_ok_and_err():
     await jito.close()
 
 
-@pytest.mark.asyncio
 async def test_jito_pending_bundle_falls_back_instead_of_reporting_success():
     client = _client(use_jito=True, jito_fallback_to_rpc=True)
     tx = MagicMock()
@@ -142,7 +137,6 @@ async def test_jito_pending_bundle_falls_back_instead_of_reporting_success():
 # BUG-54 -------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("offline_trade_rpc")
 async def test_buy_uses_idempotent_ata_create_when_lookup_fails():
     client = _client()
@@ -175,7 +169,6 @@ def test_curve_quotes_apply_fee_bps():
     )
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("offline_trade_rpc")
 async def test_build_buy_quote_includes_fee():
     client = _client()
@@ -225,7 +218,6 @@ def _pool_with_responses(*bodies):
     return pool
 
 
-@pytest.mark.asyncio
 async def test_rpc_pool_node_error_records_failure_and_fails_over():
     pool = _pool_with_responses(
         {
@@ -240,7 +232,6 @@ async def test_rpc_pool_node_error_records_failure_and_fails_over():
     assert sum(ep.consecutive_failures for ep in pool._endpoints) == 1
 
 
-@pytest.mark.asyncio
 async def test_rpc_pool_deterministic_error_returned_without_failover():
     pool = _pool_with_responses(
         {
@@ -257,7 +248,6 @@ async def test_rpc_pool_deterministic_error_returned_without_failover():
 # BUG-68 / BUG-69 -------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_missing_creator_aborts_trade_build():
     client = _client()
     client.rpc_pool.request = AsyncMock(return_value={"result": {"value": None}})
@@ -265,7 +255,6 @@ async def test_missing_creator_aborts_trade_build():
         await client._fetch_trade_curve_state(MINT)
 
 
-@pytest.mark.asyncio
 async def test_trade_curve_state_returns_decoded_creator():
     client = _client()
     creator = str(Pubkey.new_unique())
@@ -279,7 +268,6 @@ async def test_trade_curve_state_returns_decoded_creator():
     assert state["creator"] == creator
 
 
-@pytest.mark.asyncio
 async def test_token_program_errors_raise_and_success_is_cached():
     client = _client()
     client.rpc_pool.request = AsyncMock(side_effect=RuntimeError("down"))
@@ -298,7 +286,6 @@ async def test_token_program_errors_raise_and_success_is_cached():
 # BUG-74 / BUG-93 -------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_coins_by_mints_reuses_own_session():
     api = PumpFunApiClient()
     api.post = AsyncMock(return_value=[{"mint": MINT}])

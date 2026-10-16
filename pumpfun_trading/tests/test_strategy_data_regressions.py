@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from pumpfun_trading.bot.enrichment import count_launches_last_24h
 from pumpfun_trading.bot.position_manager import Position, PositionManager
@@ -68,7 +67,6 @@ def test_24h_launch_count_keeps_zero_and_handles_seconds():
     assert count_launches_last_24h(recent + old, now=now) == 2
 
 
-@pytest.mark.asyncio
 async def test_missing_market_cap_is_zero_not_thirty():
     # BUG-80
     assert await MarketDataService().get_market_cap_sol({}) == 0.0
@@ -110,7 +108,6 @@ def test_record_sell_pre_grad_tier_does_not_touch_take_profit_ladder():
     manager.clear_pending_exit("missing", 1)
 
 
-@pytest.mark.asyncio
 async def test_liquidator_never_sells_phantom_balance():
     # BUG-65: remaining 0 must not become a 100M-token sell
     manager = PositionManager(TradingBotConfig(dry_run=False))

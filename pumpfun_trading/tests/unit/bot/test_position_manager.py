@@ -4,16 +4,20 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from pumpfun_trading.bot.position_manager import (
     CapitalDisplacementEngine,
+    Position,
     PositionManager,
     _extract_position_fraction,
 )
 from pumpfun_trading.strategies.base import TradingBotConfig
-from pumpfun_trading.strategies.exits import PositionExitState
+from pumpfun_trading.strategies.decision import PositionEvEvaluator
+from pumpfun_trading.strategies.exits import ExitAction, PositionExitState
+from pumpfun_trading.tests.support.factories import make_config
 
 MINT = "MintAAA111"
 CANDIDATE = "MintCandidate999"
@@ -313,9 +317,8 @@ def test_total_cost_sol_uses_entry_sol_then_config_default() -> None:
 
 
 def test_displacement_engine_default_evaluator_is_position_ev() -> None:
-    from pumpfun_trading.strategies.decision import PositionEvEvaluator
 
-    config = TradingBotConfig()
+    config = make_config(dry_run=False)
     engine = CapitalDisplacementEngine(config, PositionManager(config))
 
     assert isinstance(engine.ev_evaluator, PositionEvEvaluator)
@@ -352,7 +355,9 @@ def test_evaluate_displacement_candidate_already_held_declines() -> None:
 
 
 def test_evaluate_displacement_free_capacity_declines() -> None:
-    config = TradingBotConfig(max_active_positions=5, max_total_exposure_sol=10.0)
+    config = make_config(
+        dry_run=False, max_active_positions=5, max_total_exposure_sol=10.0
+    )
     engine = CapitalDisplacementEngine(
         config, PositionManager(config), _FakeEvEvaluator([], 1.0)
     )
@@ -411,3 +416,492 @@ def test_evaluate_displacement_large_ev_delta_displaces_weakest() -> None:
     assert decision.ev_delta == pytest.approx(0.4)
     assert decision.estimated_friction_sol == pytest.approx(0.005)
     assert decision.reason == "positive_ev_displacement"
+
+
+@pytest.fixture
+def base_config() -> TradingBotConfig:
+    return make_config(
+        buy_amount_sol=0.1,
+        take_profit=1.5,
+        stop_loss=0.8,
+        enable_tiered_take_profit=True,
+        tier_1_take_profit=2.0,
+        tier_1_sell_fraction=0.5,
+        tier_2_take_profit=3.5,
+        tier_2_sell_fraction=0.25,
+        enable_trailing_stop=True,
+        trailing_stop_activation_pct=0.5,
+        trailing_stop_drop_pct=0.15,
+        min_sell_balance=1000,
+        dry_run=True,
+    )
+
+
+def test_position_dataclass_properties():
+    pos = Position(
+        mint="Mint111",
+        name="TestToken",
+        entry_market_cap=30.0,
+        current_market_cap=60.0,
+        peak_market_cap=60.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        cost_sol=0.1,
+        buy_price=0.0001,
+    )
+    assert pos.token_amount == 1_000_000
+    assert pos.performance == 2.0
+    assert pos.peak_performance == 2.0
+    assert pos.buy_price == 0.0001
+    assert pos.entry_price == 0.0001
+
+    pos.entry_price = 0.0002
+    assert pos.buy_price == 0.0002
+
+    pos_dict = pos.to_dict()
+    assert pos_dict["name"] == "TestToken"
+    assert pos_dict["entry_market_cap"] == 30.0
+    assert pos_dict["buy_price"] == 0.0002
+    assert pos_dict["entry_price"] == 0.0002
+
+    restored = Position.from_dict("Mint111", pos_dict)
+    assert restored.mint == "Mint111"
+    assert restored.performance == 2.0
+    assert restored.buy_price == 0.0002
+    assert restored.entry_price == 0.0002
+
+
+def test_position_manager_buy_price_recording(base_config: TradingBotConfig):
+    pm = PositionManager(base_config)
+    pos = pm.record_buy(
+        mint="MintBuyP",
+        token_amount=2_000_000,
+        cost_sol=0.2,
+        entry_market_cap=40.0,
+        name="BuyPToken",
+        buy_price=0.0001,
+    )
+    assert pos["buy_price"] == 0.0001
+    assert pos["entry_price"] == 0.0001
+    fetched = pm.get_position("MintBuyP")
+    assert fetched is not None
+    assert fetched["buy_price"] == 0.0001
+
+
+def test_position_manager_buy_and_get(base_config: TradingBotConfig):
+    pm = PositionManager(base_config)
+    assert len(pm) == 0
+    assert not pm.has_position("Mint111")
+
+    pos = pm.record_buy(
+        mint="Mint111",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=30.0,
+        name="SolCat",
+        reason="test_buy",
+        dry_run=True,
+    )
+
+    assert pos["name"] == "SolCat"
+    assert pos["token_amount"] == 1_000_000
+    assert len(pm) == 1
+    assert pm.has_position("Mint111")
+    assert "Mint111" in pm
+    assert pm["Mint111"]["name"] == "SolCat"
+    assert pm.get_mints() == ["Mint111"]
+    assert pm.get_position("Mint111") is not None
+    assert pm.get_position("Unknown") is None
+
+
+def test_position_manager_price_updates_and_peak(base_config: TradingBotConfig):
+    pm = PositionManager(base_config)
+    pm.record_buy(
+        mint="Mint111",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=30.0,
+        name="SolCat",
+    )
+
+    entry_mc, curr_mc, peak_mc = pm.update_price("Mint111", 45.0)
+    assert entry_mc == 30.0
+    assert curr_mc == 45.0
+    assert peak_mc == 45.0
+
+    # Price drops: peak should remain 45.0
+    entry_mc, curr_mc, peak_mc = pm.update_price("Mint111", 40.0)
+    assert curr_mc == 40.0
+    assert peak_mc == 45.0
+
+    # Non-existent mint update price
+    entry_mc, curr_mc, peak_mc = pm.update_price("NonExistent", 50.0)
+    assert entry_mc == 0.0
+    assert curr_mc == 50.0
+
+
+def test_position_manager_evaluate_exit_tiered_take_profit(
+    base_config: TradingBotConfig,
+):
+    pm = PositionManager(base_config)
+    pm.record_buy(
+        mint="Mint111",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=30.0,
+    )
+
+    # 1. Price at 1.5x (45.0): HOLD (Tier 1 is at 2.0x = 60.0)
+    dec = pm.evaluate_exit("Mint111", current_market_cap=45.0)
+    assert dec is not None
+    assert dec.action == ExitAction.HOLD
+
+    # 2. Price at 2.0x (60.0): Trigger Tier 1 Partial Exit (50% = 500,000 tokens)
+    dec = pm.evaluate_exit("Mint111", current_market_cap=60.0)
+    assert dec is not None
+    assert dec.action == ExitAction.PARTIAL_EXIT
+    assert dec.sell_tokens == 500_000
+    assert dec.target_tier == 1
+
+    # Record Tier 1 sell
+    closed, remaining = pm.record_sell(
+        "Mint111", sold_tokens=500_000, target_tier=1, is_partial=True
+    )
+    assert not closed
+    assert remaining == 500_000
+    assert pm["Mint111"]["tier_1_executed"] is True
+
+    # 3. Price at 3.5x (105.0): Trigger Tier 2 Partial Exit (25% of initial = 250,000 tokens)
+    dec = pm.evaluate_exit("Mint111", current_market_cap=105.0)
+    assert dec is not None
+    assert dec.action == ExitAction.PARTIAL_EXIT
+    assert dec.sell_tokens == 250_000
+    assert dec.target_tier == 2
+
+    # Record Tier 2 sell
+    closed, remaining = pm.record_sell(
+        "Mint111", sold_tokens=250_000, target_tier=2, is_partial=True
+    )
+    assert not closed
+    assert remaining == 250_000
+    assert pm["Mint111"]["tier_2_executed"] is True
+    assert pm["Mint111"]["moonbag_active"] is True
+
+
+def test_position_manager_evaluate_exit_stop_loss(base_config: TradingBotConfig):
+    pm = PositionManager(base_config)
+    pm.record_buy(
+        mint="Mint111",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=30.0,
+    )
+
+    # Price drops to 23.0 (23/30 = 76.6% <= 80% stop loss)
+    dec = pm.evaluate_exit("Mint111", current_market_cap=23.0)
+    assert dec is not None
+    assert dec.action == ExitAction.FULL_EXIT
+    assert dec.exit_type == "stop_loss"
+
+
+def test_position_manager_pnl_and_open_valuation(base_config: TradingBotConfig):
+    pm = PositionManager(base_config)
+    pm.record_buy(
+        mint="Mint1",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=30.0,
+    )
+    pm.record_buy(
+        mint="Mint2",
+        token_amount=2_000_000,
+        cost_sol=0.2,
+        entry_market_cap=50.0,
+    )
+
+    pm.update_price("Mint1", 60.0)  # 2x -> 0.2 SOL value -> +0.1 SOL PnL
+    pm.update_price("Mint2", 25.0)  # 0.5x -> 0.1 SOL value -> -0.1 SOL PnL
+
+    assert pytest.approx(pm.calculate_unrealized_pnl("Mint1"), rel=1e-3) == 0.1
+    assert pytest.approx(pm.calculate_unrealized_pnl("Mint2"), rel=1e-3) == -0.1
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.3
+
+
+def test_position_manager_calculate_total_open_value_edge_cases(
+    base_config: TradingBotConfig,
+):
+    pm = PositionManager(base_config)
+    # Zero positions -> 0.0
+    assert pm.calculate_total_open_value() == 0.0
+
+    # 1. Zero market cap (rugged/crashed token) should evaluate to 0.0 value, not full cost
+    pm._positions["MintRugged"] = {
+        "cost_sol": 0.05,
+        "entry_market_cap": 28.0,
+        "current_market_cap": 0.0,
+    }
+    assert pm.calculate_total_open_value() == 0.0
+
+    # 2. Missing current_market_cap defaults to entry_market_cap (1.0x -> cost_sol)
+    pm.clear()
+    pm._positions["MintNew"] = {
+        "cost_sol": 0.02,
+        "entry_market_cap": 28.0,
+    }
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.02
+
+    # 3. Missing cost_sol falls back to entry_sol or buy_amount_sol
+    pm.clear()
+    pm._positions["MintEntrySol"] = {
+        "entry_sol": 0.03,
+        "entry_market_cap": 20.0,
+        "current_market_cap": 40.0,
+    }
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.06
+
+    pm.clear()
+    pm._positions["MintFallbackDefault"] = {
+        "entry_market_cap": 20.0,
+        "current_market_cap": 30.0,
+    }
+    # base_config.buy_amount_sol is 0.1, 1.5x -> 0.15
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-3) == 0.15
+
+
+def test_position_manager_serialization_restoration(base_config: TradingBotConfig):
+    pm = PositionManager(base_config)
+    pm.record_buy(
+        mint="Mint1",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=30.0,
+        name="SolCat",
+    )
+    pm.update_price("Mint1", 45.0)
+
+    serialized = pm.to_dict()
+    assert "Mint1" in serialized
+    assert serialized["Mint1"]["current_market_cap"] == 45.0
+    assert serialized["Mint1"]["peak_market_cap"] == 45.0
+
+    pm2 = PositionManager(base_config)
+    pm2.restore_from_dict(serialized)
+    assert len(pm2) == 1
+    assert pm2.has_position("Mint1")
+    assert pm2["Mint1"]["name"] == "SolCat"
+    assert pm2["Mint1"]["peak_market_cap"] == 45.0
+
+
+def test_position_manager_evaluate_exit_stagnant_timeout(base_config: TradingBotConfig):
+    """BUG-16: PositionManager must trigger stagnant timeout exit when market cap is flat."""
+    pm = PositionManager(base_config)
+    t0 = 1000.0
+    pm.record_buy(
+        mint="MintFlat",
+        token_amount=1_000_000,
+        cost_sol=0.1,
+        entry_market_cap=27.96,
+        name="FlatToken",
+    )
+    pm._positions["MintFlat"]["entry_time"] = t0
+    pm._positions["MintFlat"]["last_price_change_at"] = t0
+    pm._positions["MintFlat"]["last_price"] = 27.96
+
+    # Under timeout (60s < 120s) -> None or HOLD
+    dec_hold = pm.evaluate_exit("MintFlat", current_market_cap=27.96, now=t0 + 60.0)
+    assert dec_hold is not None
+    assert dec_hold.action == ExitAction.HOLD
+
+    # Exceeding timeout (121s >= 120s) -> FULL_EXIT with stagnant_timeout
+    dec_exit = pm.evaluate_exit("MintFlat", current_market_cap=27.96, now=t0 + 121.0)
+    assert dec_exit is not None
+    assert dec_exit.action == ExitAction.FULL_EXIT
+    assert dec_exit.exit_type == "stagnant_timeout"
+
+
+def test_position_dataclass_fraction_and_effective_cost():
+    pos = Position(
+        mint="Mint1",
+        name="TestCoin",
+        entry_market_cap=30.0,
+        current_market_cap=60.0,
+        peak_market_cap=60.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        cost_sol=0.10,
+        entry_sol=0.10,
+    )
+    assert pos.remaining_fraction == 1.0
+    assert pos.effective_cost_sol == 0.10
+
+    # After 50% partial exit
+    pos.remaining_token_amount = 500_000
+    assert pos.remaining_fraction == 0.50
+    assert pytest.approx(pos.effective_cost_sol, rel=1e-5) == 0.05
+
+    # After 75% partial exit (25% remaining)
+    pos.remaining_token_amount = 250_000
+    assert pos.remaining_fraction == 0.25
+    assert pytest.approx(pos.effective_cost_sol, rel=1e-5) == 0.025
+
+    # Zero initial tokens edge case
+    pos_zero = Position(
+        mint="MintZero",
+        name="ZeroInit",
+        entry_market_cap=30.0,
+        current_market_cap=30.0,
+        peak_market_cap=30.0,
+        initial_token_amount=0,
+        remaining_token_amount=0,
+        cost_sol=0.05,
+    )
+    assert pos_zero.remaining_fraction == 1.0
+    assert pos_zero.effective_cost_sol == 0.05
+
+
+def test_position_manager_partial_exit_valuation_and_pnl(
+    base_config: TradingBotConfig,
+):
+    """
+    Regression test for BUG-21:
+    Verifies that after Tier 1 (50% sell) and Tier 2 (25% sell) partial exits,
+    calculate_total_open_value and calculate_unrealized_pnl accurately scale
+    by remaining token fraction rather than remaining at 100% of initial cost.
+    """
+    pm = PositionManager(base_config)
+    pm.record_buy(
+        mint="MintPartial",
+        token_amount=1_000_000,
+        cost_sol=0.10,
+        entry_market_cap=30.0,
+        name="PartialToken",
+    )
+
+    # 1. At 2.0x market cap (60.0 SOL) before any sell:
+    # Open value = 0.10 * (60 / 30) = 0.20 SOL
+    # Unrealized PnL = 0.20 - 0.10 = +0.10 SOL
+    pm.update_price("MintPartial", 60.0)
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.20
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.10
+
+    # 2. Execute Tier 1 partial sell (50% = 500,000 tokens)
+    closed, rem_tokens = pm.record_sell(
+        "MintPartial",
+        sold_tokens=500_000,
+        proceeds_sol=0.10,
+        target_tier=1,
+        is_partial=True,
+    )
+    assert not closed
+    assert rem_tokens == 500_000
+
+    # Remaining position is 50% of initial tokens (effective cost basis = 0.05 SOL)
+    # Open value at 60.0 SOL = 0.05 * (60 / 30) = 0.10 SOL
+    # Unrealized PnL = 0.10 - 0.05 = +0.05 SOL
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.10
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.05
+
+    # 3. Market cap surges to 3.5x (105.0 SOL)
+    pm.update_price("MintPartial", 105.0)
+    # Open value at 105.0 SOL = 0.05 * (105 / 30) = 0.175 SOL
+    # Unrealized PnL = 0.175 - 0.05 = +0.125 SOL
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.175
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.125
+
+    # 4. Execute Tier 2 partial sell (250,000 tokens, leaving 250,000 tokens = 25% moonbag)
+    closed, rem_tokens = pm.record_sell(
+        "MintPartial",
+        sold_tokens=250_000,
+        proceeds_sol=0.0875,
+        target_tier=2,
+        is_partial=True,
+    )
+    assert not closed
+    assert rem_tokens == 250_000
+
+    # Remaining moonbag position is 25% of initial tokens (effective cost basis = 0.025 SOL)
+    # Open value at 105.0 SOL = 0.025 * (105 / 30) = 0.0875 SOL
+    # Unrealized PnL = 0.0875 - 0.025 = +0.0625 SOL
+    assert pytest.approx(pm.calculate_total_open_value(), rel=1e-5) == 0.0875
+    assert pytest.approx(pm.calculate_unrealized_pnl("MintPartial"), rel=1e-5) == 0.0625
+
+
+def test_capital_displacement_engine_rules():
+    config = make_config(
+        dry_run=False,
+        max_active_positions=1,
+        max_total_exposure_sol=0.1,
+        enable_capital_rotation=True,
+        displacement_min_conviction_percentile=0.95,
+        displacement_hurdle_rate_pct=0.03,
+        min_hold_before_displacement_seconds=45.0,
+        buy_amount_sol=0.05,
+        min_slippage_bps=100,
+    )
+    pos_mgr = PositionManager(config)
+    engine = CapitalDisplacementEngine(config, pos_mgr)
+
+    now = 1000.0
+
+    # Case 1: Portfolio has capacity (0 positions held)
+    dec_capacity = engine.evaluate_displacement("Cand1", current_time=now)
+    assert not dec_capacity.displace
+    assert dec_capacity.reason == "portfolio_has_capacity"
+
+    # Add a position to saturate capacity
+    pos_mgr.record_buy(
+        mint="Stagnant1",
+        token_amount=1_000_000,
+        cost_sol=0.05,
+        entry_market_cap=30.0,
+    )
+    pos = pos_mgr.get_position("Stagnant1")
+    pos["entry_time"] = now - 20.0  # held 20s (less than 45s min hold)
+
+    # Case 2: Protected position (cannot displace young holding)
+    dec_protected = engine.evaluate_displacement("Cand1", current_time=now)
+    assert not dec_protected.displace
+    assert dec_protected.reason == "no_displaceable_positions"
+
+    # Age the position past 45s
+    pos["entry_time"] = now - 120.0
+    pos["last_price_change_at"] = now - 120.0
+    pos["z_score"] = 0.0
+    pos["net_inflow_sol"] = 0.0
+
+    # Case 3: Weak candidate with low conviction percentile (below 0.95)
+    weak_signal = MagicMock(
+        triggered=True,
+        z_score=0.5,
+        buy_sell_ratio=1.1,
+        net_sol_inflow=0.05,
+        unique_buyers=2,
+    )
+    dec_low_ev = engine.evaluate_displacement(
+        "WeakCand",
+        candidate_signal=weak_signal,
+        conviction_percentile=0.90,
+        current_time=now,
+    )
+    assert not dec_low_ev.displace
+    assert "conviction_below_min_percentile" in dec_low_ev.reason
+
+    # Case 4: High conviction breakout candidate (exceeds hurdle)
+    strong_signal = MagicMock(
+        triggered=True,
+        z_score=4.5,
+        buy_sell_ratio=6.0,
+        net_sol_inflow=4.0,
+        unique_buyers=12,
+    )
+    dec_displace = engine.evaluate_displacement(
+        "StrongCand",
+        candidate_signal=strong_signal,
+        conviction_percentile=0.98,
+        current_time=now,
+    )
+    assert dec_displace.displace
+    assert dec_displace.displaced_mint == "Stagnant1"
+    assert dec_displace.target_mint == "StrongCand"
+    assert dec_displace.ev_delta > 0.05
+    assert dec_displace.reason == "positive_ev_displacement"

@@ -15,8 +15,8 @@ from pumpfun_trading.bot.risk import (
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 
-SAMPLE_PRIVATE_KEY = "1111111111111111111111111111111111111111111111111111111111111111"
 MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 MINT_2 = "So11111111111111111111111111111111111111112"
 
@@ -38,7 +38,6 @@ def make_pool(mint: str) -> RaydiumPoolKeys:
     return RaydiumPoolKeys(**fields)
 
 
-@pytest.mark.asyncio
 async def test_snapshot_round_trip_keeps_cost_basis_and_pool(tmp_path):
     """BUG-45: cost_sol, position_id and pool keys survive a restart."""
     bot = make_bot(tmp_path)
@@ -78,7 +77,6 @@ async def test_snapshot_round_trip_keeps_cost_basis_and_pool(tmp_path):
     await restored.close()
 
 
-@pytest.mark.asyncio
 async def test_unit_buy_price_never_used_as_cost(tmp_path):
     """BUG-45: a position without cost_sol falls back to buy_amount_sol."""
     bot = make_bot(tmp_path)
@@ -167,7 +165,6 @@ def test_exposure_scaled_by_remaining_fraction():
     )
 
 
-@pytest.mark.asyncio
 async def test_no_buy_sent_after_shutdown(tmp_path):
     """BUG-91: a buy in flight at shutdown never sends or revives the bot."""
     bot = make_bot(tmp_path)
@@ -194,7 +191,6 @@ def test_max_positions_per_mint_is_enforced(tmp_path):
     assert bot._should_buy(MINT, 30.0) is False
 
 
-@pytest.mark.asyncio
 async def test_start_closes_http_clients(tmp_path):
     """BUG-74: start() releases the execution and API sessions on exit."""
     bot = make_bot(tmp_path)

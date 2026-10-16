@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,17 +15,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.lifecycle import TradingBotState
-from pumpfun_trading.bot.strategy import TradingBotConfig
+from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.execution.executor import ExecutionResult
 from pumpfun_trading.sdk.costs import (
     COST_SOURCE_TRANSACTION_META,
     TOKEN_ACCOUNT_RENT_LAMPORTS,
     TransactionCosts,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
+from pumpfun_trading.tests.support.factories import make_bot, make_config
 
-SAMPLE_PRIVATE_KEY = "1111111111111111111111111111111111111111111111111111111111111111"
 MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 TOKENS = 350_000_000_000
 
@@ -42,14 +43,7 @@ def _costs(*, swap: int, rent: int, tip: int = 100_000) -> TransactionCosts:
 
 
 def _live_bot(tmp_path: Path) -> TradingBot:
-    bot = TradingBot(
-        private_key_b58=SAMPLE_PRIVATE_KEY,
-        rpc_url="https://api.mainnet-beta.solana.com",
-        config=TradingBotConfig(buy_amount_sol=0.01, dry_run=False),
-        bot_status_path=str(tmp_path / "status.json"),
-        audit_log_path=str(tmp_path / "audit.jsonl"),
-        verbose=False,
-    )
+    bot = make_bot(tmp_path, dry_run=False)
     bot._should_buy = lambda *_a, **_k: True  # type: ignore[method-assign]
     bot._check_account_equity_guard = AsyncMock(return_value=True)  # type: ignore[method-assign]
     bot._validate_balance = AsyncMock(return_value=True)  # type: ignore[method-assign]
@@ -410,7 +404,7 @@ def _arb_bot(tmp_path: Path, *, dry_run: bool) -> TradingBot:
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
-        config=TradingBotConfig(
+        config=make_config(
             buy_amount_sol=0.01,
             dry_run=dry_run,
             enable_cross_venue_arbitrage=True,
@@ -781,7 +775,7 @@ def test_status_snapshot_and_events_contain_no_url_credentials(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url=f"https://mainnet.helius-rpc.com/?api-key={key}",
         stream_url=f"wss://feed.example.com/data?token={key}",
-        config=TradingBotConfig(buy_amount_sol=0.01),
+        config=make_config(dry_run=False, buy_amount_sol=0.01),
         bot_status_path=str(tmp_path / "status.json"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
         verbose=False,
@@ -799,3 +793,370 @@ def test_status_snapshot_and_events_contain_no_url_credentials(
     assert sent == ["stream connected: wss://feed.example.com/data?token=***"]
     # The raw URLs stay in memory for making requests.
     assert key in bot.stream_url
+
+
+async def test_trading_bot_atomic_displacement(tmp_path):
+    config = make_config(
+        max_active_positions=1,
+        max_total_exposure_sol=0.1,
+        enable_capital_rotation=True,
+        min_hold_before_displacement_seconds=45.0,
+        displacement_min_conviction_percentile=0.95,
+        displacement_hurdle_rate_pct=0.02,
+        dry_run=True,
+        verbose=False,
+    )
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        config=config,
+        dry_run=True,
+        verbose=False,
+    )
+
+    now = time.time()
+    # 1. Establish initial stagnant position
+    stagnant_mint = "StagnantMintAAA111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=stagnant_mint,
+        token_amount=1_000_000,
+        cost_sol=0.05,
+        entry_market_cap=30.0,
+        name="StagnantToken",
+    )
+    pos = bot.position_manager.get_position(stagnant_mint)
+    pos["entry_time"] = now - 180.0
+    pos["last_price_change_at"] = now - 180.0
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    assert len(bot.active_positions) == 1
+
+    # 2. Ingest strong momentum breakout candidate
+    breakout_mint = "BreakoutMintBBB222222222222222222222222222"
+    breakout_signal = MagicMock(
+        triggered=True,
+        z_score=4.8,
+        buy_sell_ratio=8.0,
+        net_sol_inflow=5.0,
+        unique_buyers=15,
+    )
+
+    displaced = await bot._evaluate_and_trigger_displacement(
+        candidate_mint=breakout_mint,
+        market_cap_sol=35.0,
+        candidate_signal=breakout_signal,
+        conviction_percentile=0.98,
+        token_name="BreakoutToken",
+    )
+
+    assert displaced is True
+    # Verify stagnant position was removed and breakout candidate entered
+    assert stagnant_mint not in bot.active_positions
+    assert breakout_mint in bot.active_positions
+
+
+async def test_bot_live_partial_sell_and_reconciliation(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pumpfun_trading.bot.run import TradingBot
+
+    SAMPLE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
+    MINT = "So11111111111111111111111111111111111111112"
+
+    config = make_config(
+        dry_run=False,
+        buy_amount_sol=0.01,
+        enable_tiered_take_profit=True,
+        tier_1_take_profit=2.0,
+        tier_1_sell_fraction=0.50,
+        tier_2_take_profit=3.5,
+        tier_2_sell_fraction=0.25,
+        enable_trailing_stop=True,
+        min_sell_balance=10,
+    )
+    bot = TradingBot(
+        private_key_b58=SAMPLE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        config=config,
+        dry_run=False,
+        paper_trade=False,
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+    )
+
+    # Mock execution client
+    bot.execution.get_bonding_curve_pda = MagicMock(return_value=("CurvePDA", "bump"))
+    bot.execution.get_bonding_curve_state = AsyncMock(
+        return_value={
+            "virtual_token_reserves": 1_000_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+            "market_cap_sol": 30.0,
+        }
+    )
+    bot.execution.calculate_sell_sol_output = MagicMock(return_value=20_000_000)
+    bot.execution.get_token_balance = AsyncMock(return_value=1_000_000)
+    bot.execution.sell = AsyncMock(return_value="tx_sell_partial_sig")
+    bot.execution.confirm_transaction = AsyncMock(return_value=True)
+
+    # Populate active position
+    bot.active_positions[MINT] = {
+        "name": "LiveMoon",
+        "entry_market_cap": 30.0,
+        "current_market_cap": 30.0,
+        "peak_market_cap": 30.0,
+        "initial_token_amount": 1_000_000,
+        "remaining_token_amount": 1_000_000,
+        "token_amount": 1_000_000,
+    }
+
+    # Execute Tier 1 partial sell
+    sold_ok = await bot._sell_token(
+        MINT,
+        sell_fraction=0.50,
+        reason="take_profit_tier_1",
+        target_tier=1,
+    )
+    assert sold_ok is True
+    assert MINT in bot.active_positions
+    assert bot.active_positions[MINT]["remaining_token_amount"] == 500_000
+    assert bot.active_positions[MINT]["tier_1_executed"] is True
+
+    # Reconcile on-chain positions
+    bot.execution.get_token_balance = AsyncMock(return_value=500_000)
+    reconciled = await bot.reconcile_onchain_positions()
+    assert reconciled[MINT]["status"] == "active"
+    assert bot.active_positions[MINT]["remaining_token_amount"] == 500_000
+    assert bot.active_positions[MINT]["tier_1_executed"] is True
+
+    # Execute Tier 2 partial sell with Jito bundle
+    bot.use_jito = True
+    bot.execution.send_jito_bundle_with_fallback = AsyncMock(
+        return_value="jito_bundle_sig"
+    )
+    sold_t2 = await bot._sell_token(
+        MINT,
+        sell_fraction=0.25,
+        reason="take_profit_tier_2",
+        target_tier=2,
+    )
+    assert sold_t2 is True
+    assert bot.active_positions[MINT]["remaining_token_amount"] == 250_000
+    assert bot.active_positions[MINT]["tier_2_executed"] is True
+    assert bot.active_positions[MINT]["moonbag_active"] is True
+
+    # Snapshot and recovery check
+    bot._write_status_snapshot()
+    bot.active_positions.clear()
+    bot.safe_startup()
+    assert MINT in bot.active_positions
+    assert bot.active_positions[MINT]["remaining_token_amount"] == 250_000
+    assert bot.active_positions[MINT]["tier_2_executed"] is True
+    assert bot.active_positions[MINT]["moonbag_active"] is True
+
+    # Full exit remainder
+    sold_full = await bot._sell_token(MINT, reason="trailing_stop_hit")
+    assert sold_full is True
+    assert MINT not in bot.active_positions
+
+    await bot.close()
+
+
+async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
+    """
+    Regression test for BUG-18:
+    Verifies that when _sell_token executes (full or partial), the resulting
+    sell_price and exit proceeds are accurately populated and written to the audit log.
+    """
+    from pumpfun_trading.bot.run import TradingBot
+
+    audit_file = tmp_path / "audit.jsonl"
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        dry_run=True,
+        audit_log_path=str(audit_file),
+    )
+
+    mint = "MintSellTest111111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint,
+        token_amount=1_000_000,
+        cost_sol=0.10,
+        entry_market_cap=30.0,
+        name="SellTestToken",
+    )
+    bot.position_manager.update_price(mint, 60.0)  # 2x price surge
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    # 1. Execute partial sell (50%)
+    success = await bot._sell_token(
+        mint=mint,
+        sell_amount_tokens=500_000,
+        sell_fraction=0.5,
+        reason="tier1_take_profit",
+        target_tier=1,
+    )
+    assert success
+    assert len(bot._trade_ledger) == 1
+    last_trade = bot._trade_ledger[-1]
+    assert last_trade["action"] == "partial_sell"
+    # Cost basis for 50% is 0.05 SOL; exit proceeds at 2x are 0.10 SOL before the
+    # modelled buy and sell protocol fees (FEAT-49).
+    proceeds = 0.10 * bot._paper_round_trip_fee_factor()
+    assert last_trade["exit"] == pytest.approx(proceeds)
+    assert last_trade["sell_price"] == pytest.approx(proceeds)
+    assert last_trade["entry"] == pytest.approx(0.05)
+
+    # 2. Execute full exit on remaining 50%
+    success_full = await bot._sell_token(
+        mint=mint,
+        reason="stop_loss",
+    )
+    assert success_full
+    assert len(bot._trade_ledger) == 2
+    full_trade = bot._trade_ledger[-1]
+    assert full_trade["action"] == "sell"
+    assert full_trade["exit"] == pytest.approx(proceeds)
+    assert full_trade["sell_price"] == pytest.approx(proceeds)
+
+    # Verify audit file lines contain valid sell_price
+    assert audit_file.exists()
+    lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
+    import json
+
+    trade_records = [
+        json.loads(line) for line in lines if json.loads(line).get("type") == "trade"
+    ]
+    assert len(trade_records) == 2
+    assert trade_records[0]["payload"]["sell_price"] == pytest.approx(proceeds)
+    assert trade_records[1]["payload"]["sell_price"] == pytest.approx(proceeds)
+
+    # Both sells are banked: gross = 2 x (proceeds - 0.05); net also pays the
+    # modelled fees and refunds the token-account rent on the full exit.
+    tracker = bot.daily_equity_tracker
+    assert tracker.realized_daily_gross_pnl_sol == pytest.approx(2 * proceeds - 0.10)
+    costs = sum(t["costs_sol"] for t in bot._trade_ledger)
+    assert tracker.realized_daily_pnl_sol == pytest.approx(2 * proceeds - 0.10 - costs)
+    assert full_trade["rent_sol"] < 0
+
+
+async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
+    """
+    Comprehensive regression tests for:
+    - BUG-24: Dry-run token sizing and positive exit proceeds on profitable pump (Torq Rigs scenario)
+    - BUG-25: Internal bot buy and sell executions recorded into replay log (.jsonl)
+    - BUG-26: Position ID correlation preserved across partial and full exits in audit trail
+    - BUG-27: Total SOL capital and token unit prices properly differentiated in audit records
+    - BUG-28: PositionManager effective buy price scaled by UI token units
+    """
+    import json
+
+    from pumpfun_trading.bot.run import TradingBot
+
+    audit_file = tmp_path / "audit_trail.jsonl"
+    replay_file = tmp_path / "replay_log.jsonl"
+
+    bot = TradingBot(
+        "11111111111111111111111111111111111111111111111111111111111111111",
+        "https://example.com",
+        verbose=False,
+        dry_run=True,
+        audit_log_path=str(audit_file),
+        replay_log_path=str(replay_file),
+    )
+    await bot.replay_recorder.start()
+
+    mint = "TorqRigsPump111111111111111111111111111111111"
+
+    # 1. Execute Buy
+    buy_ok = await bot._buy_token(
+        mint=mint,
+        market_cap_sol=27.96,
+        token_name="Torq Rigs",
+        buy_amount_sol=0.01,
+        reason="momentum_breakout",
+    )
+    assert buy_ok
+    assert bot.position_manager.has_position(mint)
+    pos = bot.position_manager.get_position(mint)
+
+    # BUG-24 & BUG-28 checks on entry
+    assert (
+        pos["initial_token_amount"] > 100_000_000
+    )  # Calculated from curve (~357M units)
+    # Unit price is ~2.796e-8 SOL (0.02796 µSOL), not 1e-10 or 1e-14
+    assert 1e-9 < pos["buy_price"] < 1e-6
+
+    # 2. Simulate 2.06x price surge (Take profit tier 1)
+    bot.position_manager.update_price(mint, 57.60)  # ~2.06x
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    partial_ok = await bot._sell_token(
+        mint=mint,
+        sell_fraction=0.5,
+        reason="take_profit_tier_1",
+        target_tier=1,
+    )
+    assert partial_ok
+
+    # 3. Simulate trailing stop exit at 2.71x
+    bot.position_manager.update_price(mint, 75.77)  # ~2.71x
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    full_ok = await bot._sell_token(
+        mint=mint,
+        reason="trailing_stop_hit",
+    )
+    assert full_ok
+    assert not bot.position_manager.has_position(mint)
+
+    # BUG-24 check: Verify bot realized positive cumulative profit (+0.0138 SOL), NOT ~99.9% loss!
+    # Entry cost: 0.01 SOL (0.005 + 0.005). Tier 1 exit (0.005 * 2.06 = 0.0103 SOL), Trailing exit (0.005 * 2.71 = 0.01355 SOL)
+    # Total exit: ~0.02385 SOL -> Net profit: ~+0.01385 SOL
+    realized_pnl = bot.daily_equity_tracker.realized_daily_pnl_sol
+    assert realized_pnl > 0.010
+
+    # Flush replay recorder
+    await bot.replay_recorder.flush()
+    await bot.replay_recorder.close()
+
+    # BUG-25 check: Verify replay log contains BOTH buy and sell snapshots
+    assert replay_file.exists()
+    replay_lines = [
+        json.loads(line)
+        for line in replay_file.read_text(encoding="utf-8").strip().splitlines()
+        if line.strip()
+    ]
+    assert len(replay_lines) == 3
+    assert replay_lines[0]["signal"] == "buy"
+    assert replay_lines[0]["is_buy"] is True
+    assert replay_lines[0]["mint"] == mint
+    assert replay_lines[1]["signal"] == "sell"
+    assert replay_lines[1]["is_buy"] is False
+    assert replay_lines[1]["reason"] == "take_profit_tier_1"
+    assert replay_lines[2]["signal"] == "sell"
+    assert replay_lines[2]["is_buy"] is False
+    assert replay_lines[2]["reason"] == "trailing_stop_hit"
+
+    # BUG-26 & BUG-27 check: Verify audit trail position ID correlation & unit price differentiation
+    assert audit_file.exists()
+    audit_lines = [
+        json.loads(line)
+        for line in audit_file.read_text(encoding="utf-8").strip().splitlines()
+        if json.loads(line).get("type") == "trade"
+    ]
+    assert len(audit_lines) == 3
+    initial_pos_id = audit_lines[0]["payload"]["position_id"]
+    assert initial_pos_id.startswith("trade-")
+    # All exits share the same parent position_id
+    assert audit_lines[1]["payload"]["position_id"] == initial_pos_id
+    assert audit_lines[2]["payload"]["position_id"] == initial_pos_id
+
+    # Verify unit price vs capital differentiation (BUG-27)
+    for rec in audit_lines:
+        payload = rec["payload"]
+        assert "unit_price_sol" in payload
+        assert "cost_sol" in payload
+        assert "proceeds_sol" in payload
+        assert "sol_amount" in payload
