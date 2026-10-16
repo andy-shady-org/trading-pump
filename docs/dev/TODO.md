@@ -787,13 +787,15 @@ The bot is in production. Phase 5 pays down the structural debt that blocks the 
 | R12 | JSON/JSONL-only persistence; ledger inlined in the snapshot | 30 |
 
 ### Sprint 25: Packaging & Repo Hygiene (R8, R9, T8)
-- [ ] `pyproject.toml`: remove unused `requests` dependency; replace the `Framework :: Django` classifier; align `Development Status` with the version
-- [ ] Add optional extras: `[web]` (FastAPI, Uvicorn), `[db]` (SQLAlchemy, Alembic, asyncpg, aiosqlite), `[geyser]` (grpcio, protobuf)
-- [ ] Exclude `pumpfun_trading.tests*` from the wheel (`[tool.setuptools.packages.find] exclude`) (T8)
-- [ ] `noxfile.py`: test matrix for Python 3.11–3.14
-- [ ] `.gitignore` runtime artifacts (`bot.log`, `events.jsonl`, `cov.json`, `coverage.xml`, `*.egg-info`); remove stale root `__pycache__` for retired `audit`/`bot`/`cli`/`replay` modules
+Branch: `sprint-25-packaging-hygiene`. No runtime code changes.
+- [x] `pyproject.toml`: remove unused `requests` dependency; replace the `Framework :: Django` classifier; align `Development Status` with the version. *Done:* `requests` removed (no imports); `Framework :: AsyncIO`; `3 - Alpha` (0.x, live capital gate not passed); `Private :: Do Not Upload` kept
+- [x] Add optional extras: `[web]` (FastAPI, Uvicorn), `[db]` (SQLAlchemy, Alembic, asyncpg, aiosqlite), `[geyser]` (grpcio, protobuf). Declared only; nothing imports them yet
+- [x] Exclude `pumpfun_trading.tests*` from the wheel (`[tool.setuptools.packages.find] exclude`) (T8). *Done:* the exclude alone was not enough, because setuptools still packed the test files as package data; `MANIFEST.in` prunes `pumpfun_trading/tests` too. Guarded by the new `nox -s package` session (builds sdist + wheel, fails on any `pumpfun_trading/tests/` entry or a missing private classifier), run in CI
+- [x] `noxfile.py`: test matrix for Python 3.11–3.14. *Done:* `tests-3.11` … `tests-3.14`; tooling sessions on 3.14; CI runs one test job per interpreter plus `lint mypy audit package`. Ruff `target-version = "py311"` and mypy `python_version = "3.11"` enforce the oldest supported Python. The matrix found one test that only passed on 3.14 (global `Path.stat` mock breaking `Path.glob`), fixed. Local evidence: 3.12, 3.13, 3.14 green; 3.11 runs in CI only (no local interpreter)
+- [x] `.gitignore` runtime artifacts (`bot.log`, `events.jsonl`, `cov.json`, `coverage.xml`, `*.egg-info`); remove stale root `__pycache__` for retired `audit`/`bot`/`cli`/`replay` modules. *Done:* also audit/reconcile/replay files, `data/`, `incidents/`, `test-data/`, `.envrc`; none of these were tracked. Untracked root runtime files (`bot.log`, `events.jsonl`, `cov.json`, `coverage.xml`) left on disk for the operator to delete
+- [ ] Remove the stale `nox.ini` (nox never reads it; it still pins 3.14 only) — left for the owner to confirm
 - [x] Add `CHANGELOG.md` (Keep a Changelog) following the SemVer policy in [`RELEASE-GATE.md` §6](RELEASE-GATE.md#6-versioning-policy): [`CHANGELOG.md`](../../CHANGELOG.md) covers v0.1.0, v0.1.1 and v0.2.0 (Sprint 24B, merged as `754822d`), each with its release record
-- **Acceptance:** `pip install .` wheel contains no `tests/`; nox matrix green on 3.11–3.14; coverage ≥ 95%
+- **Acceptance:** `pip install .` wheel contains no `tests/`; nox matrix green on 3.11–3.14; coverage ≥ 95%. *Status:* wheel verified (`nox -s package`, and `pip wheel .`); 3.12–3.14 green locally at 96.29% (1004 tests); 3.11 pending the first CI run of this branch
 
 ### Sprint 26: Test Foundation (T1, T4, T6, T7) — see [`TESTING.md`](TESTING.md)
 - [ ] Create `pumpfun_trading/tests/support/` (`factories.py`, `payloads.py`, `fakes.py`, `constants.py`) and per-package `conftest.py` files

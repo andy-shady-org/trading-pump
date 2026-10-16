@@ -17,8 +17,12 @@ license = "LicenseRef-Proprietary"
 license-files = ["LICENSE"]
 classifiers = [
     "Private :: Do Not Upload",
-    "Development Status :: 5 - Production/Stable",
-    "Framework :: Django",
+    # 0.x (SemVer pre-1.0) and the money path is still in the staged live capital
+    # gate (docs/dev/RELEASE-GATE.md §3), so Alpha rather than Production/Stable.
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
     "Natural Language :: English",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3 :: Only",
@@ -31,7 +35,6 @@ dependencies = [
   "aiohttp>=3.9.0",
   "base58>=2.1.0",
   "python-dotenv>=1.0.1",
-  "requests>=2.31.0",
   "rich>=13.7.0",
   "solana>=0.36.1",
   "solders>=0.29.0",
@@ -53,8 +56,26 @@ Repository = "https://github.com/andy-shady-org/pumpfun-trading"
 
 [tool.setuptools.packages.find]
 include = ["pumpfun_trading*"]
+# The test suite lives inside the package (AGENTS.md) but never ships in the wheel.
+exclude = ["pumpfun_trading.tests", "pumpfun_trading.tests.*"]
 
 [project.optional-dependencies]
+# Planned platform extras (Phase 5/6, docs/dev/ARCHITECTURE-DECISIONS.md). Nothing
+# imports them yet; the terminal bot (`pumpbot`) needs none of them.
+web = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
+db = [
+    "sqlalchemy[asyncio]>=2.0.30",
+    "alembic>=1.13.0",
+    "asyncpg>=0.29.0",
+    "aiosqlite>=0.20.0",
+]
+geyser = [
+    "grpcio>=1.64.0",
+    "protobuf>=5.27.0",
+]
 dev = [
     "black>=24.2.0",
     "ruff>=0.5.0",
@@ -66,6 +87,11 @@ dev = [
     "pip-audit>=2.7.0",
     "build>=1.2.0",
 ]
+
+[tool.mypy]
+# Type-check against the oldest supported interpreter so 3.12+-only stdlib APIs
+# are caught on the 3.14 tooling session.
+python_version = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

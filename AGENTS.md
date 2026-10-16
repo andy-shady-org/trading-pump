@@ -45,6 +45,8 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[TESTS] No Network In Tests:** Tests that called mainnet passed locally and failed in CI on HTTP 429. `tests/conftest.py` blocks non-local DNS; stub `get_token_program_for_mint` (or use `offline_trade_rpc`) for ATA/builder paths, and give mocked aiohttp sessions `closed = False` and a mocked `request`.
 - **[SECURITY] Redact URLs Before Persisting:** Provider URLs carry API keys (`?api-key=`, `/v2/<key>`). Never write a raw endpoint or stream URL to status files, logs, events or alerts; serialise through `ops/redact.py` (`redact_url` / `redact_text`) and identify endpoints by host label (BUG-102).
 - **[REPLAY] Recorded `signal` Is Not An Order:** `--record-replay` captures tag every market trade and new token with `signal`; only snapshots with `reason` (and no `user`) are the bot's own fills. Live-fidelity replay must never treat `signal` strings as exits, and must say plainly that the screener is not replayed.
+- **[TESTS] Green On 3.14 Is Not Green On 3.11:** A global `Path.stat` mock passed on 3.14 but broke `Path.glob` on 3.12/3.13. Never patch `pathlib` methods globally; wrap the real call and fake only the target file. Supported interpreters are 3.11–3.14 (`nox -s tests-<ver>`, CI matrix).
+- **[PACKAGING] Tests Never Ship:** `packages.find` exclude alone still packed `pumpfun_trading/tests` as package data; keep the `MANIFEST.in` prune and run `nox -s package` after any packaging change. Never add a release/publish workflow (proprietary).
 
 
 ## Project Overview
@@ -181,5 +183,7 @@ pip install -e ".[dev]"
 
 # Run quality checks
 nox -s lint
-nox -s tests
+nox -s mypy
+nox -s tests      # Python 3.11–3.14 (installed interpreters)
+nox -s package    # wheel is private and ships no tests
 ```

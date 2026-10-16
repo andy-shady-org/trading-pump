@@ -148,5 +148,20 @@ cython_debug/
 .idea/*
 
 # repository specific
+# Runtime artifacts: run the bot from a separate runtime directory (RUNBOOK.md §1),
+# never commit what it or the test suite writes here.
 bot_status.json
 events.jsonl
+*.jsonl.gz
+audit_trail.jsonl*
+reconcile_status.json
+replay_capture.jsonl
+bot.log*
+cov.json
+/data/
+/incidents/
+# Local recorded datasets (replay parity input); keep out of git: captures can
+# reveal strategy behaviour.
+/test-data/
+# Local per-operator configs and secrets
+.envrc

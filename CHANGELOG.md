@@ -8,7 +8,7 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Sprint 24C of the Terminal Income Track (branch `sprint-24c-backtest-fidelity`): no more API keys on disk, and backtests that run the live sizing, exits and costs.
+Sprint 24C of the Terminal Income Track (merged as `0ab1ae0`, PR #8): no more API keys on disk, and backtests that run the live sizing, exits and costs. Sprint 25 (branch `sprint-25-packaging-hygiene`): packaging and repository hygiene; no runtime behaviour change.
 
 ### Security
 - BUG-102: new `ops/redact.py` (`redact_url`, `redact_text`) masks credentials in URLs (`?api-key=`, `token`, `user:pass@`, key-like path segments; Solana addresses are kept). Applied to the RPC pool telemetry and config dicts (`bot_status.json`), `TradingBotConfig.to_dict` (`stream_url`, `api_base_url`, `rpc_endpoints`), every `bot.log` line, dashboard events and alerts, and `events.jsonl`. Raw URLs stay in memory for requests.
@@ -24,9 +24,22 @@ Sprint 24C of the Terminal Income Track (branch `sprint-24c-backtest-fidelity`):
 - `pumpfun-optimize`: trials run live-fidelity replay with costs (fitness is net), start with `reserve_balance_sol + 2 × max_total_exposure_sol` of cash instead of 100 SOL, and the search space includes the tier, moonbag, trailing-stop and timeout parameters again.
 - A config exported by `pumpfun-optimize` masks credentials in its URLs.
 
+### Build and packaging (Sprint 25: R8, R9, T8)
+- Removed the unused `requests` runtime dependency.
+- Classifiers: `Framework :: Django` and `Development Status :: 5 - Production/Stable` replaced by `Framework :: AsyncIO` and `Development Status :: 3 - Alpha` (0.x, live capital gate not passed); financial audience/topic classifiers added. `Private :: Do Not Upload` kept.
+- New optional extras for the planned platform work, unused by the terminal bot: `[web]` (FastAPI, Uvicorn), `[db]` (SQLAlchemy async, Alembic, asyncpg, aiosqlite), `[geyser]` (grpcio, protobuf).
+- The wheel and sdist no longer ship `pumpfun_trading/tests/` (`packages.find` exclude plus `MANIFEST.in` prune; setuptools otherwise packed the test files as package data).
+- New `nox -s package` session builds the sdist and wheel and fails if the wheel contains tests or lacks the private classifier.
+- `nox -s tests` runs on Python 3.11, 3.12, 3.13 and 3.14; CI runs one test job per interpreter plus a `lint mypy audit package` job on 3.14. Ruff (`target-version = "py311"`) and mypy (`python_version = "3.11"`) check against the oldest supported Python.
+- `.gitignore` covers runtime artifacts (`bot.log*`, `cov.json`, audit/reconcile/replay files, `data/`, `incidents/`, `test-data/`, `.envrc`); stale bytecode of the retired root `audit`/`bot`/`cli`/`replay` modules removed.
+- `CONTRIBUTING.md`: release section rewritten for private tags only.
+
+### Fixed
+- Test `test_retention_sink_and_manager_edge_branches` failed on Python 3.12/3.13: it mocked `Path.stat` globally, which `Path.glob` uses before 3.14. It now fakes only the measured file's size (found by the new interpreter matrix; test-only change).
+
 ### Release record – Unreleased
-- Commit: – (branch `sprint-24c-backtest-fidelity`, not merged)
-- Release gate: PASS (`nox -s lint mypy tests`)
+- Commit: – (Sprint 24C merged as `0ab1ae0`; Sprint 25 on branch `sprint-25-packaging-hygiene`, not merged)
+- Release gate: PASS (`nox -s lint mypy tests package`; `tests` green on 3.12, 3.13 and 3.14 locally, 3.11 only in CI)
 - Tests: 1004 collected, all passed; coverage 96.29% (statement + branch)
 - Replay parity: tooling added; not yet run on a live capture
 - Capital stage after this release: unchanged (0). BUG-102 touches logging/telemetry only; the trading path is unchanged, so a 24h Stage 0 re-run is enough

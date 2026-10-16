@@ -42,7 +42,7 @@ Run from a clean checkout of the release commit. Commands use the nox sessions s
 - [ ] `nox -s mypy` passes with 0 errors
 
 ### 2.2 Tests and coverage
-- [ ] `nox -s tests` passes with 0 failures, 0 errors and no unexpected skips
+- [ ] `nox -s tests` passes with 0 failures, 0 errors and no unexpected skips on **every supported interpreter** (3.11, 3.12, 3.13, 3.14; one CI job each). Locally nox skips interpreters that aren't installed, so the CI matrix is the evidence
 - [ ] Total coverage (statements + branches, `branch = true`) ≥ **95%** (`fail_under` in `pyproject.toml` is never lowered)
 - [ ] Collected test count is not lower than the previous release, unless the release notes explain the removal
 - [ ] Every bug resolved in this release has a regression test (after Sprint 27: tagged `@pytest.mark.regression("BUG-xx")`, check with `pytest -m regression`)
@@ -56,6 +56,8 @@ Run from a clean checkout of the release commit. Commands use the nox sessions s
 - [ ] No secrets in tracked files: `git grep -nIE "(private_key|secret_key|api_key|webhook|password)\s*[:=]\s*['\"][^'\"]{8,}" -- ':!*.md' ':!pumpfun_trading/tests/*'` returns nothing that is a real credential
 - [ ] Logs, audit trail, events and status snapshot contain no key material (spot-check the files produced by the paper pilot)
 - [ ] Dependency changes reviewed; no new runtime dependency outside an optional extra without a reason in the release notes
+- [ ] `nox -s audit` (pip-audit) reports no known vulnerability in the dev environment
+- [ ] `nox -s package` passes: the wheel ships no `pumpfun_trading/tests/` and carries the `Private :: Do Not Upload` classifier (proprietary: never publish to PyPI)
 
 ### 2.5 Persistence and recovery
 - [ ] Status snapshot is written atomically and restores positions, cost basis, pool keys and the exit retry queue (BUG-39, BUG-45, BUG-72)
