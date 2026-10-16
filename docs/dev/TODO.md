@@ -782,7 +782,7 @@ The bot is in production. Phase 5 pays down the structural debt that blocks the 
 - [ ] Exclude `pumpfun_trading.tests*` from the wheel (`[tool.setuptools.packages.find] exclude`) (T8)
 - [ ] `noxfile.py`: test matrix for Python 3.11–3.14
 - [ ] `.gitignore` runtime artifacts (`bot.log`, `events.jsonl`, `cov.json`, `coverage.xml`, `*.egg-info`); remove stale root `__pycache__` for retired `audit`/`bot`/`cli`/`replay` modules
-- [x] Add `CHANGELOG.md` (Keep a Changelog) following the SemVer policy in [`RELEASE-GATE.md` §6](RELEASE-GATE.md#6-versioning-policy): [`CHANGELOG.md`](../../CHANGELOG.md) covers v0.1.0, v0.1.1 and the untagged 0.2.0 (Sprint 24B), each with its release record; version bumped to `0.2.0` (tag after merge)
+- [x] Add `CHANGELOG.md` (Keep a Changelog) following the SemVer policy in [`RELEASE-GATE.md` §6](RELEASE-GATE.md#6-versioning-policy): [`CHANGELOG.md`](../../CHANGELOG.md) covers v0.1.0, v0.1.1 and v0.2.0 (Sprint 24B, merged as `754822d`), each with its release record
 - **Acceptance:** `pip install .` wheel contains no `tests/`; nox matrix green on 3.11–3.14; coverage ≥ 95%
 
 ### Sprint 26: Test Foundation (T1, T4, T6, T7) — see [`TESTING.md`](TESTING.md)
