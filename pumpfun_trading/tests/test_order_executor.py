@@ -73,13 +73,15 @@ async def test_order_executor_dry_run():
 async def test_order_executor_live_buy(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
-    mock_exec_client.get_token_balance = AsyncMock(return_value=12_345_678)
+    # Pre-trade dust of 100 must not count toward the fill (BUG-49).
+    mock_exec_client.get_token_balance = AsyncMock(side_effect=[100, 12_345_778])
     executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
 
     res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
     assert res.success
     assert res.signature == "BuySignature111"
     assert res.token_amount == 12_345_678
+    assert res.metadata["fill_source"] == "balance_delta"
     mock_exec_client.buy.assert_awaited_once_with(
         "Mint111", "BondingCurvePubkey111", 0.1, slippage_bps=300
     )
@@ -126,7 +128,12 @@ async def test_order_executor_live_sell(
     res = await executor.execute_sell("Mint111", 500_000, slippage_bps=500)
     assert res.success
     assert res.signature == "SellSignature111"
-    assert res.amount_sol == pytest.approx(0.50)  # 500_000_000 lamports
+    # No SOL balance available: proceeds are the fee-adjusted pre-trade quote,
+    # not the slippage floor (BUG-48).
+    expected = (30_000_000_000 * 500_000) // (1_000_000_000 + 500_000)
+    expected = expected * (10_000 - 125) // 10_000
+    assert res.amount_sol == pytest.approx(expected / 1e9)
+    assert res.metadata["proceeds_source"] == "pre_trade_quote"
     mock_exec_client.sell.assert_awaited_once_with(
         "Mint111",
         "BondingCurvePubkey111",
@@ -400,3 +407,112 @@ async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
         assert "cost_sol" in payload
         assert "proceeds_sol" in payload
         assert "sol_amount" in payload
+
+
+@pytest.mark.asyncio
+async def test_buy_confirmation_timeout_with_tokens_received_is_success(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
+    """BUG-73: a confirm timeout is re-checked against balances before failing."""
+    mock_exec_client.confirm_transaction = AsyncMock(return_value=False)
+    mock_exec_client.get_token_balance = AsyncMock(side_effect=[0, 0, 7_000_000])
+    executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
+
+    res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
+    assert res.success
+    assert res.token_amount == 7_000_000
+    assert res.metadata == {"fill_source": "balance_delta", "confirmed": False}
+
+
+@pytest.mark.asyncio
+async def test_buy_unreadable_pre_balance_falls_back_to_pre_trade_quote(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
+    """BUG-49/73: an unreadable balance never counts the whole ATA as the fill."""
+    from pumpfun_trading.sdk.execution import TokenBalanceUnavailableError
+
+    mock_exec_client.get_token_balance = AsyncMock(
+        side_effect=TokenBalanceUnavailableError("rpc down")
+    )
+    executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
+
+    res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
+    assert res.success
+    lamports = 100_000_000 * 10_000 // 10_125
+    expected = (1_000_000_000 * lamports) // (30_000_000_000 + lamports)
+    assert res.token_amount == expected
+    assert res.metadata["fill_source"] == "pre_trade_quote"
+
+
+@pytest.mark.asyncio
+async def test_sell_proceeds_come_from_sol_balance_delta(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
+    """BUG-48: proceeds are the SOL actually received, not min_sol_output."""
+    mock_exec_client.get_balance_sol = AsyncMock(side_effect=[1.0, 1.0, 1.0123])
+    executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
+
+    res = await executor.execute_sell("Mint111", 500_000, slippage_bps=500)
+    assert res.success
+    assert res.amount_sol == pytest.approx(0.0123)
+    assert res.metadata["proceeds_source"] == "sol_balance_delta"
+
+
+@pytest.mark.asyncio
+async def test_sell_confirmation_timeout_rechecks_token_balance(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
+    """BUG-73: a sell that landed after the confirm timeout is reported as filled."""
+    mock_exec_client.confirm_transaction = AsyncMock(return_value=False)
+    mock_exec_client.get_token_balance = AsyncMock(side_effect=[500_000, 0])
+    executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
+
+    res = await executor.execute_sell("Mint111", 500_000, slippage_bps=500)
+    assert res.success
+    assert res.metadata["confirmed"] is False
+
+    mock_exec_client.get_token_balance = AsyncMock(return_value=500_000)
+    res_failed = await executor.execute_sell("Mint111", 500_000, slippage_bps=500)
+    assert not res_failed.success
+    assert res_failed.error == "sell_confirmation_failed"
+
+
+@pytest.mark.asyncio
+async def test_raydium_buy_records_token_balance_delta(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
+    """BUG-50: live Raydium buys record the tokens received, not 0."""
+    mock_exec_client.get_token_balance = AsyncMock(side_effect=[50, 4_000_050])
+    executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
+    pool_keys = MagicMock(spec=RaydiumPoolKeys)
+
+    res = await executor.execute_raydium_buy("Mint111", pool_keys, 0.1)
+    assert res.success
+    assert res.token_amount == 4_000_000
+
+    mock_exec_client.get_balance_sol = AsyncMock(side_effect=[2.0, 2.05])
+    sell = await executor.execute_raydium_sell("Mint111", pool_keys, 4_000_000)
+    assert sell.success
+    assert sell.amount_sol == pytest.approx(0.05)
+
+
+@pytest.mark.asyncio
+async def test_dynamic_slippage_uses_live_reserves_and_real_notional(
+    mock_exec_client: MagicMock, base_config: TradingBotConfig
+):
+    """BUG-52: policy gets live curve reserves, the real SOL size and curve updates."""
+    executor = OrderExecutor(mock_exec_client, config=base_config, dry_run=False)
+    policy = executor.execution_policy
+    policy.resolve_parameters = MagicMock(wraps=policy.resolve_parameters)
+
+    await executor.execute_buy("Mint111", 0.1)
+    buy_kwargs = policy.resolve_parameters.call_args
+    assert buy_kwargs.args[1] == pytest.approx(0.1)
+    assert buy_kwargs.kwargs["virtual_sol_reserves"] == pytest.approx(30.0)
+    assert buy_kwargs.kwargs["virtual_token_reserves"] == 1_000_000_000
+
+    await executor.execute_sell("Mint111", 500_000)
+    sell_kwargs = policy.resolve_parameters.call_args
+    assert sell_kwargs.kwargs["is_buy"] is False
+    assert sell_kwargs.args[1] == pytest.approx(0.0148, rel=0.01)
+    assert len(policy.get_estimator("Mint111").get_observations()) == 2

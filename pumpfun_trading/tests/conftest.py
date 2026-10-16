@@ -16,6 +16,10 @@ def isolate_test_environment(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("PUMPFUN_AUDIT_LOG_PATH", isolated_audit_path)
     monkeypatch.setenv("PUMPFUN_AUDIT_LOG", isolated_audit_path)
 
+    from pumpfun_trading.execution.executor import OrderExecutor
+
+    monkeypatch.setattr(OrderExecutor, "balance_retry_delay_seconds", 0.0)
+
 
 OFFLINE_CREATOR = "7nYabs9dUhvxYwdTnrWVBL9MYviKSfrEbdWCUbcnwkpF"
 

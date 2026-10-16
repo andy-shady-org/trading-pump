@@ -11,7 +11,16 @@ from pumpfun_trading.execution.policy import (
     DynamicSlippageResult,
 )
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool
-from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+from pumpfun_trading.sdk.curve import (
+    INITIAL_VIRTUAL_SOL_LAMPORTS,
+    INITIAL_VIRTUAL_TOKEN_RAW,
+    calculate_buy_tokens_out,
+    calculate_sell_sol_out,
+)
+from pumpfun_trading.sdk.execution import (
+    PUMP_DEFAULT_FEE_BPS,
+    PumpFunExecutionClient,
+)
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.strategies.base import TradingBotConfig
 
@@ -37,6 +46,10 @@ class ExecutionResult:
 class OrderExecutor:
     """Handles low-level order creation, signing, Jito MEV bundling, retry loops, and direct RPC execution."""
 
+    # Post-trade balance reads lag the confirmation; poll a few times (BUG-49/73).
+    balance_retry_attempts: int = 3
+    balance_retry_delay_seconds: float = 0.5
+
     def __init__(
         self,
         execution_client: PumpFunExecutionClient,
@@ -60,6 +73,146 @@ class OrderExecutor:
             self._locks[mint] = asyncio.Lock()
         return self._locks[mint]
 
+    def _fee_bps(self) -> int:
+        fee = getattr(self.execution, "pump_fee_bps", PUMP_DEFAULT_FEE_BPS)
+        return fee if isinstance(fee, int) else PUMP_DEFAULT_FEE_BPS
+
+    async def _fetch_curve_reserves(self, mint: str) -> tuple[int, int] | None:
+        """Returns live ``(virtual_sol_lamports, virtual_token_raw)`` or ``None``."""
+        if self.execution is None:
+            return None
+        try:
+            state = await self.execution.get_bonding_curve_state(mint)
+            v_sol = int(state.get("virtual_sol_reserves", 0))
+            v_token = int(state.get("virtual_token_reserves", 0))
+        except Exception as exc:
+            logger.debug("Curve reserves unavailable for %s: %s", mint, exc)
+            return None
+        if v_sol <= 0 or v_token <= 0:
+            return None
+        return v_sol, v_token
+
+    def _resolve_dynamic_slippage(
+        self,
+        mint: str,
+        notional_sol: float,
+        *,
+        is_buy: bool,
+        urgency: str,
+        reserves: tuple[int, int] | None,
+    ) -> DynamicSlippageResult:
+        """Resolve slippage from live reserves and the real SOL notional (BUG-52)."""
+        v_sol_sol: float | None = None
+        v_token: int | None = None
+        if reserves is not None:
+            v_sol_sol = reserves[0] / 1_000_000_000.0
+            v_token = reserves[1]
+            try:
+                self.execution_policy.record_curve_update(mint, v_sol_sol, v_token)
+            except Exception as exc:
+                logger.debug("Could not record curve update for %s: %s", mint, exc)
+        return self.execution_policy.resolve_parameters(
+            mint,
+            notional_sol,
+            virtual_sol_reserves=v_sol_sol,
+            virtual_token_reserves=v_token,
+            is_buy=is_buy,
+            urgency=urgency,
+        )
+
+    def _estimate_buy_tokens(
+        self, amount_sol: float, reserves: tuple[int, int] | None
+    ) -> int:
+        """Expected fill from the pre-trade curve (fee-adjusted, no slippage haircut)."""
+        v_sol, v_token = reserves or (
+            INITIAL_VIRTUAL_SOL_LAMPORTS,
+            INITIAL_VIRTUAL_TOKEN_RAW,
+        )
+        lamports = int(amount_sol * 1_000_000_000)
+        return calculate_buy_tokens_out(
+            lamports, v_sol, v_token, fee_bps=self._fee_bps()
+        )
+
+    def _estimate_sell_lamports(
+        self, token_amount: int, reserves: tuple[int, int] | None
+    ) -> int:
+        """Expected proceeds from the pre-trade curve (fee-adjusted, no slippage haircut)."""
+        if reserves is None or token_amount <= 0:
+            return 0
+        v_sol, v_token = reserves
+        return calculate_sell_sol_out(
+            token_amount, v_token, v_sol, fee_bps=self._fee_bps()
+        )
+
+    async def _read_token_balance(self, mint: str, attempts: int = 1) -> int | None:
+        """Token balance in raw units, or ``None`` if every read failed (BUG-35/73)."""
+        for attempt in range(max(1, attempts)):
+            try:
+                return int(await self.execution.get_token_balance(mint))
+            except Exception as exc:
+                logger.debug("Token balance read failed for %s: %s", mint, exc)
+            if attempt + 1 < attempts:
+                await asyncio.sleep(self.balance_retry_delay_seconds)
+        return None
+
+    async def _read_sol_lamports(self) -> int | None:
+        try:
+            balance = await self.execution.get_balance_sol()
+            if not isinstance(balance, (int, float)):
+                return None
+            return int(round(float(balance) * 1_000_000_000))
+        except Exception as exc:
+            logger.debug("SOL balance read failed: %s", exc)
+            return None
+
+    async def _detect_token_increase(self, mint: str, pre: int | None) -> int | None:
+        """Poll until the token balance rises above ``pre``; returns the delta."""
+        if pre is None:
+            return None
+        for attempt in range(self.balance_retry_attempts):
+            post = await self._read_token_balance(mint)
+            if post is not None and post > pre:
+                return post - pre
+            if attempt + 1 < self.balance_retry_attempts:
+                await asyncio.sleep(self.balance_retry_delay_seconds)
+        return None
+
+    async def _detect_token_decrease(
+        self, mint: str, pre: int | None, token_amount: int
+    ) -> bool:
+        """True once the token balance dropped by at least ``token_amount``."""
+        if pre is None or token_amount <= 0:
+            return False
+        for attempt in range(self.balance_retry_attempts):
+            post = await self._read_token_balance(mint)
+            if post is not None and pre - post >= token_amount:
+                return True
+            if attempt + 1 < self.balance_retry_attempts:
+                await asyncio.sleep(self.balance_retry_delay_seconds)
+        return False
+
+    async def _measure_sol_proceeds(
+        self, pre_lamports: int | None, expected_lamports: int
+    ) -> int | None:
+        """Net lamports received, from the wallet SOL balance before vs after (BUG-48).
+
+        Deltas above 1.5x the expected curve output are rejected, since another
+        trade may have moved the wallet balance concurrently.
+        """
+        if pre_lamports is None:
+            return None
+        for attempt in range(self.balance_retry_attempts):
+            post = await self._read_sol_lamports()
+            if post is not None:
+                delta = post - pre_lamports
+                if delta > 0 and (
+                    expected_lamports <= 0 or delta <= expected_lamports * 1.5
+                ):
+                    return delta
+            if attempt + 1 < self.balance_retry_attempts:
+                await asyncio.sleep(self.balance_retry_delay_seconds)
+        return None
+
     async def execute_buy(
         self,
         mint: str,
@@ -73,16 +226,18 @@ class OrderExecutor:
     ) -> ExecutionResult:
         is_dry_run = self.dry_run if dry_run is None else dry_run
 
+        reserves = await self._fetch_curve_reserves(mint)
         resolved_slippage = slippage_bps
         dynamic_params: DynamicSlippageResult | None = None
         if resolved_slippage is None and getattr(
             self.config, "enable_dynamic_slippage", True
         ):
-            dynamic_params = self.execution_policy.resolve_parameters(
+            dynamic_params = self._resolve_dynamic_slippage(
                 mint,
                 amount_sol,
                 is_buy=True,
                 urgency=urgency,
+                reserves=reserves,
             )
             resolved_slippage = dynamic_params.slippage_bps
 
@@ -94,44 +249,9 @@ class OrderExecutor:
                 resolved_slippage,
                 urgency,
             )
-            simulated_token_amount = 0
-            if self.execution is not None:
-                try:
-                    curve_state = await self.execution.get_bonding_curve_state(mint)
-                    v_token = int(curve_state.get("virtual_token_reserves", 0))
-                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-                    if v_token > 0 and v_sol > 0:
-                        sol_lamports = int(amount_sol * 1_000_000_000)
-                        eff_slip = (
-                            resolved_slippage
-                            if resolved_slippage is not None
-                            else getattr(self.execution, "default_slippage_bps", 250)
-                        )
-                        calc_fn = getattr(
-                            self.execution, "calculate_buy_tokens_out", None
-                        )
-                        if calc_fn:
-                            simulated_token_amount = int(
-                                calc_fn(
-                                    sol_lamports,
-                                    v_sol,
-                                    v_token,
-                                    slippage_bps=eff_slip,
-                                )
-                            )
-                except Exception:
-                    pass
-
+            simulated_token_amount = self._estimate_buy_tokens(amount_sol, reserves)
             if simulated_token_amount <= 0:
-                sol_lamports = int(amount_sol * 1_000_000_000)
-                v_sol = 30_000_000_000
-                v_token = 1_073_000_000_000_000
-                if sol_lamports > 0:
-                    simulated_token_amount = int(
-                        v_token - (v_token * v_sol) // (v_sol + sol_lamports)
-                    )
-                else:
-                    simulated_token_amount = 100_000_000
+                simulated_token_amount = 100_000_000
 
             return ExecutionResult(
                 success=True,
@@ -166,6 +286,8 @@ class OrderExecutor:
                 amount_sol,
                 resolved_slippage,
             )
+            # Pre-trade snapshot so the fill is post - pre, not the whole ATA (BUG-49).
+            pre_tokens = await self._read_token_balance(mint)
             try:
                 signature = await self.execution.buy(
                     mint,
@@ -195,7 +317,8 @@ class OrderExecutor:
                 )
 
             confirmed = await self.execution.confirm_transaction(signature)
-            if not confirmed:
+            acquired = await self._detect_token_increase(mint, pre_tokens)
+            if not confirmed and acquired is None:
                 logger.warning(
                     "Buy confirmation failed for %s (sig=%s)", mint, signature
                 )
@@ -208,40 +331,17 @@ class OrderExecutor:
                     reason=reason,
                     error="buy_confirmation_failed",
                 )
+            if not confirmed:
+                # Confirmation polling timed out but the tokens arrived (BUG-73).
+                logger.warning(
+                    "Buy %s for %s landed after confirmation timeout", signature, mint
+                )
 
-            acquired_tokens = 0
-            if self.execution is not None:
-                try:
-                    acquired_tokens = await self.execution.get_token_balance(mint)
-                except Exception:
-                    pass
-                if acquired_tokens <= 0:
-                    try:
-                        curve_state = await self.execution.get_bonding_curve_state(mint)
-                        v_token = int(curve_state.get("virtual_token_reserves", 0))
-                        v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-                        if v_token > 0 and v_sol > 0:
-                            lamports = int(amount_sol * 1_000_000_000)
-                            calc_fn = getattr(
-                                self.execution, "calculate_buy_tokens_out", None
-                            )
-                            if calc_fn:
-                                acquired_tokens = int(
-                                    calc_fn(
-                                        lamports,
-                                        v_sol,
-                                        v_token,
-                                        slippage_bps=resolved_slippage or 0,
-                                    )
-                                )
-                    except Exception:
-                        pass
-
-            if acquired_tokens <= 0:
-                lamports = int(amount_sol * 1_000_000_000)
-                v_sol = 30_000_000_000
-                v_token = 1_073_000_000_000_000
-                acquired_tokens = int((v_token * lamports) // (v_sol + lamports))
+            if acquired is not None:
+                acquired_tokens, fill_source = acquired, "balance_delta"
+            else:
+                acquired_tokens = self._estimate_buy_tokens(amount_sol, reserves)
+                fill_source = "pre_trade_quote"
 
             return ExecutionResult(
                 success=True,
@@ -251,6 +351,10 @@ class OrderExecutor:
                 amount_sol=amount_sol,
                 token_amount=acquired_tokens,
                 reason=reason,
+                metadata={
+                    "fill_source": fill_source,
+                    "confirmed": bool(confirmed),
+                },
             )
 
     async def execute_sell(
@@ -274,15 +378,23 @@ class OrderExecutor:
         ):
             effective_urgency = "emergency"
 
+        reserves = await self._fetch_curve_reserves(mint)
+        expected_lamports = self._estimate_sell_lamports(token_amount, reserves)
         resolved_slippage = slippage_bps
         if resolved_slippage is None and getattr(
             self.config, "enable_dynamic_slippage", True
         ):
-            dynamic_params = self.execution_policy.resolve_parameters(
+            notional_lamports = expected_lamports or min_sol_output_lamports
+            dynamic_params = self._resolve_dynamic_slippage(
                 mint,
-                0.01,
+                (
+                    (notional_lamports / 1_000_000_000.0)
+                    if notional_lamports > 0
+                    else 0.01
+                ),
                 is_buy=False,
                 urgency=effective_urgency,
+                reserves=reserves,
             )
             resolved_slippage = dynamic_params.slippage_bps
 
@@ -299,24 +411,20 @@ class OrderExecutor:
                 if min_sol_output_lamports > 0
                 else 0.0
             )
-            if est_sol <= 0.0 and self.execution is not None:
+            if est_sol <= 0.0 and reserves is not None:
                 try:
-                    curve_state = await self.execution.get_bonding_curve_state(mint)
-                    v_token = int(curve_state.get("virtual_token_reserves", 0))
-                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-                    if v_token > 0 and v_sol > 0:
-                        eff_slip = (
-                            resolved_slippage
-                            if resolved_slippage is not None
-                            else getattr(self.execution, "default_slippage_bps", 250)
-                        )
-                        lamports = self.execution.calculate_sell_sol_output(
-                            token_amount,
-                            v_token,
-                            v_sol,
-                            slippage_bps=eff_slip,
-                        )
-                        est_sol = float(lamports) / 1_000_000_000.0
+                    eff_slip = (
+                        resolved_slippage
+                        if resolved_slippage is not None
+                        else getattr(self.execution, "default_slippage_bps", 250)
+                    )
+                    lamports = self.execution.calculate_sell_sol_output(
+                        token_amount,
+                        reserves[1],
+                        reserves[0],
+                        slippage_bps=eff_slip,
+                    )
+                    est_sol = float(lamports) / 1_000_000_000.0
                 except Exception:
                     pass
             return ExecutionResult(
@@ -352,18 +460,14 @@ class OrderExecutor:
                 else self.execution.default_slippage_bps
             )
             min_sol_lamports = min_sol_output_lamports
-            if min_sol_lamports <= 0:
+            if min_sol_lamports <= 0 and reserves is not None:
                 try:
-                    curve_state = await self.execution.get_bonding_curve_state(mint)
-                    v_token = int(curve_state.get("virtual_token_reserves", 0))
-                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-                    if v_token > 0 and v_sol > 0:
-                        min_sol_lamports = self.execution.calculate_sell_sol_output(
-                            token_amount,
-                            v_token,
-                            v_sol,
-                            slippage_bps=effective_slippage_bps,
-                        )
+                    min_sol_lamports = self.execution.calculate_sell_sol_output(
+                        token_amount,
+                        reserves[1],
+                        reserves[0],
+                        slippage_bps=effective_slippage_bps,
+                    )
                 except Exception as exc:
                     logger.debug(
                         "Could not compute curve sell output for %s: %s", mint, exc
@@ -378,6 +482,8 @@ class OrderExecutor:
                 reason,
             )
 
+            pre_sol = await self._read_sol_lamports()
+            pre_tokens = await self._read_token_balance(mint)
             try:
                 signature = await self.execution.sell(
                     mint,
@@ -408,7 +514,9 @@ class OrderExecutor:
                 )
 
             confirmed = await self.execution.confirm_transaction(signature)
-            if not confirmed:
+            if not confirmed and not await self._detect_token_decrease(
+                mint, pre_tokens, token_amount
+            ):
                 logger.warning(
                     "Sell confirmation failed for %s (sig=%s)", mint, signature
                 )
@@ -421,20 +529,31 @@ class OrderExecutor:
                     reason=reason,
                     error="sell_confirmation_failed",
                 )
+            if not confirmed:
+                # Confirmation polling timed out but the tokens left (BUG-73).
+                logger.warning(
+                    "Sell %s for %s landed after confirmation timeout", signature, mint
+                )
 
-            est_sol = (
-                float(min_sol_lamports) / 1_000_000_000.0
-                if min_sol_lamports > 0
-                else 0.0
-            )
+            proceeds = await self._measure_sol_proceeds(pre_sol, expected_lamports)
+            if proceeds is not None:
+                proceeds_source = "sol_balance_delta"
+            elif expected_lamports > 0:
+                proceeds, proceeds_source = expected_lamports, "pre_trade_quote"
+            else:
+                proceeds, proceeds_source = max(0, min_sol_lamports), "min_out"
             return ExecutionResult(
                 success=True,
                 signature=signature,
                 mint=mint,
                 is_buy=False,
-                amount_sol=est_sol,
+                amount_sol=float(proceeds) / 1_000_000_000.0,
                 token_amount=token_amount,
                 reason=reason,
+                metadata={
+                    "proceeds_source": proceeds_source,
+                    "confirmed": bool(confirmed),
+                },
             )
 
     async def execute_raydium_buy(
@@ -466,6 +585,7 @@ class OrderExecutor:
             logger.info(
                 "Executing Raydium snipe for %s with %.4f SOL", mint, amount_sol
             )
+            pre_tokens = await self._read_token_balance(mint)
             try:
                 signature = await self.execution.swap_raydium(
                     pool_keys=pool_keys,
@@ -495,7 +615,8 @@ class OrderExecutor:
                 )
 
             confirmed = await self.execution.confirm_transaction(signature)
-            if not confirmed:
+            acquired = await self._detect_token_increase(mint, pre_tokens)
+            if not confirmed and acquired is None:
                 logger.warning(
                     "Raydium buy confirmation failed for %s (sig=%s)", mint, signature
                 )
@@ -509,14 +630,23 @@ class OrderExecutor:
                     error="raydium_buy_confirmation_failed",
                 )
 
+            # Record the token balance delta, not 0 (BUG-50). Without a pre-trade
+            # snapshot the full post-trade balance is the best available figure.
+            fill_source = "balance_delta"
+            if acquired is None:
+                acquired = await self._read_token_balance(
+                    mint, attempts=self.balance_retry_attempts
+                )
+                fill_source = "post_trade_balance"
             return ExecutionResult(
                 success=True,
                 signature=signature,
                 mint=mint,
                 is_buy=True,
                 amount_sol=amount_sol,
-                token_amount=0,
+                token_amount=max(0, acquired or 0),
                 reason=reason,
+                metadata={"fill_source": fill_source, "confirmed": bool(confirmed)},
             )
 
     async def execute_raydium_sell(
@@ -545,6 +675,8 @@ class OrderExecutor:
 
         async with self.get_lock(mint):
             logger.info("Executing Raydium sell for %s (%d tokens)", mint, token_amount)
+            pre_sol = await self._read_sol_lamports()
+            pre_tokens = await self._read_token_balance(mint)
             try:
                 signature = await self.execution.swap_raydium(
                     pool_keys=pool_keys,
@@ -574,7 +706,9 @@ class OrderExecutor:
                 )
 
             confirmed = await self.execution.confirm_transaction(signature)
-            if not confirmed:
+            if not confirmed and not await self._detect_token_decrease(
+                mint, pre_tokens, token_amount
+            ):
                 logger.warning(
                     "Raydium sell confirmation failed for %s (sig=%s)", mint, signature
                 )
@@ -588,11 +722,19 @@ class OrderExecutor:
                     error="raydium_sell_confirmation_failed",
                 )
 
+            proceeds = await self._measure_sol_proceeds(pre_sol, 0)
             return ExecutionResult(
                 success=True,
                 signature=signature,
                 mint=mint,
                 is_buy=False,
+                amount_sol=float(proceeds or 0) / 1_000_000_000.0,
                 token_amount=token_amount,
                 reason=reason,
+                metadata={
+                    "proceeds_source": (
+                        "sol_balance_delta" if proceeds is not None else "unknown"
+                    ),
+                    "confirmed": bool(confirmed),
+                },
             )

@@ -55,11 +55,11 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-45** | High | Bot / Persistence | **OPEN** | Status snapshot drops `cost_sol` and `pool_keys`; after restart, unit `buy_price` is used as position cost |
 | **BUG-46** | High | Bot / Health | **OPEN** | `_risk_killed` stays set after transient stream or RPC problems; only a restart clears it |
 | **BUG-47** | High | Bot / Daily Circuit Breaker | **OPEN** | Daily equity tracker does not roll over at UTC midnight while the breaker is latched |
-| **BUG-48** | High | Execution / Sell Proceeds | **OPEN** | Live sell proceeds are the slippage floor (`min_sol_lamports`), not actual SOL received |
-| **BUG-49** | High | Execution / Buy Fill Size | **OPEN** | Buy fill size is the whole ATA balance; fallback estimate uses the post-trade curve |
-| **BUG-50** | High | Execution / Raydium Buy | **OPEN** | Live Raydium buys record `token_amount=0` |
+| **BUG-48** | High | Execution / Sell Proceeds | **RESOLVED** | Live sell proceeds are the slippage floor (`min_sol_lamports`), not actual SOL received |
+| **BUG-49** | High | Execution / Buy Fill Size | **RESOLVED** | Buy fill size is the whole ATA balance; fallback estimate uses the post-trade curve |
+| **BUG-50** | High | Execution / Raydium Buy | **RESOLVED** | Live Raydium buys record `token_amount=0` |
 | **BUG-51** | High | SDK / Raydium Buy | **RESOLVED** | Raydium buy never wraps SOL into WSOL and ignores `slippage_bps` |
-| **BUG-52** | High | Execution / Slippage Policy | **OPEN** | Dynamic slippage never gets live curve reserves; sells are sized as 0.01 SOL |
+| **BUG-52** | High | Execution / Slippage Policy | **RESOLVED** | Dynamic slippage never gets live curve reserves; sells are sized as 0.01 SOL |
 | **BUG-53** | High | SDK / Jito Confirmation | **RESOLVED** | Bundles that landed with an on-chain error are reported as successful |
 | **BUG-54** | High | SDK / ATA Creation | **RESOLVED** | An ATA lookup error adds a non-idempotent `create_associated_token_account` |
 | **BUG-55** | High | Streams / Geyser | **OPEN** | Yellowstone client never opens a gRPC stream and subscribes to mint keys instead of curve PDAs |
@@ -80,7 +80,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-70** | Medium | Bot / Risk Limits | **OPEN** | `check_loss_per_trade` never fires with defaults and can divide by zero |
 | **BUG-71** | Medium | Bot / Risk Limits | **OPEN** | Exposure cap uses full `cost_sol` after partial exits |
 | **BUG-72** | Medium | Storage / Status Snapshot | **OPEN** | `storage.write_status_snapshot` is non-atomic and persists a monotonic clock value |
-| **BUG-73** | Medium | Execution / Confirmation | **OPEN** | Confirmation timeouts are treated as definite failures (untracked fills, possible double sells) |
+| **BUG-73** | Medium | Execution / Confirmation | **RESOLVED** | Confirmation timeouts are treated as definite failures (untracked fills, possible double sells) |
 | **BUG-74** | Medium | Bot / Resource Lifecycle | **OPEN** | `start()`/`run()` and `get_coins_by_mints` leave aiohttp sessions open (`get_coins_by_mints` fixed; bot lifecycle pending) |
 | **BUG-75** | Medium | Bot / WebSocket Market Cap | **OPEN** | WebSocket market-cap unit check can inflate market cap by ~1e6 |
 | **BUG-76** | Medium | Strategy / Exit Engine | **RESOLVED** | Stop-loss and take-profit cannot fire when `entry_market_cap <= 0` |
@@ -441,19 +441,19 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** A lock at 23:00 UTC with `emergency_hard_lock_hours=24` carries into the next trading day, and the new day's baseline and PnL never start.
 * **Remedy:** Always roll over on a UTC date change, and reset the lock state and daily PnL together.
 
-### BUG-48: Live Sell Proceeds Are the Slippage Floor, Not Actual SOL Received [OPEN]
+### BUG-48: Live Sell Proceeds Are the Slippage Floor, Not Actual SOL Received [RESOLVED]
 * **Location:** `pumpfun_trading/execution/executor.py` (`execute_sell` ~L425–436), `pumpfun_trading/bot/run.py` (`_sell_token` ~L2087–2103)
 * **Description:** After a confirmed live sell, `amount_sol` is set to `min_sol_lamports / 1e9`, which already has the slippage haircut applied (up to 50% on emergency exits). `_sell_token` uses this as `sell_p`. If it is 0, it falls back to `cost * frac * (curr_mc / entry_mc)`, which is also an estimate.
 * **Impact:** Realized PnL, wallet cash, drawdown, and audit records are all systematically understated or modeled rather than based on what actually happened on-chain.
 * **Remedy:** Read the actual lamports received (pre/post SOL balance from `getTransaction` meta) and record that as the proceeds.
 
-### BUG-49: Buy Fill Size Is the Whole ATA Balance; Fallback Uses the Post-Trade Curve [OPEN]
+### BUG-49: Buy Fill Size Is the Whole ATA Balance; Fallback Uses the Post-Trade Curve [RESOLVED]
 * **Location:** `pumpfun_trading/execution/executor.py` (`execute_buy` ~L212–244)
 * **Description:** On success, `acquired_tokens = get_token_balance(mint)` is read without a balance snapshot from before the trade, so dust from earlier positions or airdrops counts as part of this fill. If the balance reads 0 (RPC lag), the fallback calls `calculate_buy_tokens_out` on the current, already-moved reserves with the slippage haircut.
 * **Impact:** `initial_token_amount` and cost basis are wrong. Sells can be oversized and fail, or leave tokens untracked.
 * **Remedy:** Snapshot the balance before the trade and record `post - pre`, or decode the fill from the transaction meta. Retry the balance read before estimating.
 
-### BUG-50: Live Raydium Buys Record `token_amount=0` [OPEN]
+### BUG-50: Live Raydium Buys Record `token_amount=0` [RESOLVED]
 * **Location:** `pumpfun_trading/execution/executor.py` (`execute_raydium_buy` ~L460, ~L512–519)
 * **Description:** A confirmed live Raydium buy returns `ExecutionResult(token_amount=0)`. There is no balance query like the one in `execute_buy`. The dry-run path hardcodes 100,000,000.
 * **Impact:** `record_buy(token_amount=0)` creates positions that later exits skip or size with the 100M fallback (BUG-65).
@@ -465,7 +465,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Raydium buys fail unless a pre-funded WSOL ATA already exists. When they do go through, they have no slippage protection and can be sandwiched for almost the whole input.
 * **Remedy:** Add create-ATA → transfer → `SyncNative` → swap → close-account instructions. Compute `min_out` from the pool reserves and `slippage_bps`.
 
-### BUG-52: Dynamic Slippage Never Gets Live Curve Reserves; Sells Sized as 0.01 SOL [OPEN]
+### BUG-52: Dynamic Slippage Never Gets Live Curve Reserves; Sells Sized as 0.01 SOL [RESOLVED]
 * **Location:** `pumpfun_trading/execution/executor.py` (~L76–87, ~L277–287), `pumpfun_trading/execution/policy.py` (`resolve_parameters` ~L110–184)
 * **Description:** `execute_buy` / `execute_sell` call `resolve_parameters` without `virtual_sol_reserves` / `virtual_token_reserves`, so the policy always falls back to the initial 30 SOL curve. Sells also pass a hardcoded `0.01` SOL notional, and `record_curve_update` is never called.
 * **Impact:** Price-impact-based slippage is effectively disabled. Late-curve or large trades get slippage that is too tight (exits fail) or too loose.
@@ -595,7 +595,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** A crash during the write leaves truncated JSON, and crash recovery is lost (`safe_read_status_snapshot` returns `None`).
 * **Remedy:** Reuse the atomic write in `StatusPersistenceManager`, and store wall-clock times only.
 
-### BUG-73: Confirmation Timeouts Treated as Definite Failures [OPEN]
+### BUG-73: Confirmation Timeouts Treated as Definite Failures [RESOLVED]
 * **Location:** `pumpfun_trading/execution/executor.py` (~L197–210, ~L410–423, ~L497–510, ~L576–589), `pumpfun_trading/sdk/execution.py` (RPC fallback with `skipPreflight=True`)
 * **Description:** When `confirm_transaction` returns `False`, the executor returns `success=False` with a signature. Callers then skip `record_buy` or queue a sell retry, even though the transaction may still land. Because the RPC fallback sends with `skipPreflight=True`, an invalid transaction also waits silently for about 20s before failing.
 * **Impact:** A buy that lands late leaves tokens untracked, and a sell that lands late can be sold again.
