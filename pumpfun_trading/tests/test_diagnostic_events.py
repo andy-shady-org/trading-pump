@@ -7,7 +7,6 @@ import tempfile
 import time
 from pathlib import Path
 
-import pytest
 
 from pumpfun_trading.ops.events import (
     DiagnosticEvent,
@@ -45,7 +44,6 @@ def test_diagnostic_event_model() -> None:
     assert restored.data["gini_score"] == 0.89
 
 
-@pytest.mark.asyncio
 async def test_diagnostic_event_logger_lifecycle() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         log_file = Path(tmp_dir) / "events.jsonl"
@@ -106,7 +104,6 @@ async def test_diagnostic_event_logger_lifecycle() -> None:
         assert record2["event_name"] == "trailing_stop_ratchet"
 
 
-@pytest.mark.asyncio
 async def test_diagnostic_event_logger_high_throughput_burst() -> None:
     """Stress tests high-throughput burst emission (2,000 events) without blocking."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -145,7 +142,6 @@ async def test_diagnostic_event_logger_high_throughput_burst() -> None:
         assert len(lines) == total_burst
 
 
-@pytest.mark.asyncio
 async def test_diagnostic_event_logger_backpressure_drop() -> None:
     """Tests bounded queue backpressure when queue overflows."""
     with tempfile.TemporaryDirectory() as tmp_dir:

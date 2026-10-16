@@ -23,6 +23,13 @@ def tests(session):
     )
 
 
+@nox.session(name="tests-fast", python=[TOOLING_PYTHON], default=False)
+def tests_fast(session):
+    """Quick feedback loop: unit tests only, no coverage gate (Sprint 26)."""
+    session.install("-e", ".[dev]")
+    session.run("pytest", "-q", "-m", "not slow and not integration", *session.posargs)
+
+
 @nox.session(python=[TOOLING_PYTHON])
 def lint(session):
     session.install("-e", ".[dev]")

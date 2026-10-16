@@ -1,5 +1,3 @@
-import pytest
-
 from pumpfun_trading.services.market_data import MarketDataService
 
 
@@ -17,7 +15,6 @@ class _FailingClient:
         return {"name": "RecoveredToken", "marketCapSol": 12.5}
 
 
-@pytest.mark.asyncio
 async def test_market_data_service_falls_back_after_failure():
     client = _FailingClient()
     service = MarketDataService(client)
@@ -35,7 +32,6 @@ async def test_market_data_service_falls_back_after_failure():
     assert service.resilience.consecutive_failures == 0
 
 
-@pytest.mark.asyncio
 async def test_market_data_service_detects_stale_data():
     service = MarketDataService()
     assert not service.is_data_fresh(last_seen_at=None, max_age_seconds=30)

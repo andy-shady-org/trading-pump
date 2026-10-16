@@ -27,7 +27,7 @@ Snapshot at planning time: **65 files** (64 `test_*.py` + `conftest.py`), **~25,
 | T3 | Modules split across duplicate base / `_full` / `_regressions` files | `test_api_client.py` + `test_api_client_full.py`; `test_audit_tool.py` + `test_audit_full.py`; `test_execution_sdk.py` + `test_execution_sdk_full.py`; `test_bot_runtime_full.py` + `test_bot_runtime_regressions.py` |
 | T4 | Almost no shared fixtures; setup copied everywhere | 15 fixtures, one 58-line root `conftest.py`; `TradingBotConfig(` built inline **136** times; private-key constants redefined in **13** files; `make_bot` / `_make_bot`; three `make_*pool_keys` variants (`make_pool_keys`, `make_sample_pool_keys`, `make_test_pool_keys`) |
 | T5 | Tests coupled to the runtime monolith | **24** files import `pumpfun_trading.bot.run.TradingBot` and reach into private attributes |
-| T6 | Marker noise, no taxonomy | **216** redundant `@pytest.mark.asyncio` although `asyncio_mode = "auto"`; no `unit` / `integration` / `regression` / `slow` markers; no `--strict-markers`; `parametrize` used only twice |
+| T6 | Marker noise, no taxonomy | **216** redundant `@pytest.mark.asyncio` although `asyncio_mode = "auto"`; no `unit` / `integration` / `regression` / `slow` markers; no `--strict-markers`; `parametrize` used only twice. **Markers resolved in Sprint 26 Phase 1:** asyncio marks removed, taxonomy registered with `--strict-markers` and applied by directory (§4), `nox -s tests-fast` added. `parametrize` adoption stays with Sprint 27 |
 | T7 | Non-deterministic / slow tests | `time.sleep` in `test_anti_rug_filters.py`, `test_logging_rotation.py`, `test_ops_retention.py`; `asyncio.run` inside async-mode tests in `test_bugfixes_lifecycle_resilience.py`, `test_cross_venue_arbitrage.py`, `test_market_data_resilience.py`, `test_runtime_coverage_boost.py`; no fake clock |
 | T8 | Tests ship in the wheel | `[tool.setuptools.packages.find] include = ["pumpfun_trading*"]` matches `pumpfun_trading.tests`. **Resolved in Sprint 25:** `packages.find` exclude plus `MANIFEST.in` `prune pumpfun_trading/tests` (the exclude alone still packed tests as package data); checked by `nox -s package` |
 | T9 | Regressions scattered by theme, not BUG ID | `test_*_regressions.py`, `test_bugfixes_*`; no way to check that every resolved bug has a test |
@@ -68,25 +68,26 @@ A **layout guard test** (Sprint 27, `tests/unit/test_layout.py`) asserts that ev
 
 ## 4. Markers & Configuration
 
-Planned for Sprint 26 in `pyproject.toml`:
+In place since Sprint 26 Phase 1 (`pyproject.toml`):
 
 ```toml
 [tool.pytest.ini_options]
-testpaths = ["pumpfun_trading/tests"]
 asyncio_mode = "auto"
+testpaths = ["pumpfun_trading/tests"]
 addopts = "-q --strict-markers"
 markers = [
-  "unit: fast, isolated test of one module",
-  "integration: cross-component flow",
-  "regression(bug_id): guards a resolved bug in docs/dev/BUGS.md",
-  "slow: takes more than ~1s",
-  "property: Hypothesis property-based test",
-  "postgres: requires a PostgreSQL database (opt-in, Sprint 30)",
+    "unit: fast, isolated test of one module (applied by directory)",
+    "integration: cross-component flow, e.g. a TradingBot driven end to end (applied by directory)",
+    "property: Hypothesis property test (applied by directory)",
+    "regression(bug_id): guards a resolved bug from docs/dev/BUGS.md, e.g. regression(\"BUG-96\")",
+    "slow: needs real waiting or heavy computation; excluded from `nox -s tests-fast`",
 ]
 ```
 
-* `unit` / `integration` / `property` are applied automatically by directory in the package `conftest.py` files.
-* Do **not** add `@pytest.mark.asyncio`; `asyncio_mode = "auto"` handles it.
+* `--strict-markers` makes a misspelt or unregistered marker a collection error. Register a new marker here before using it (Sprint 30 adds `postgres: requires a PostgreSQL database (opt-in)`).
+* `unit` / `integration` / `property` are applied automatically by location in the root `conftest.py` (`pytest_collection_modifyitems`): `integration/` and `property/` get their own marker, legacy flat files named `*_integration.py` count as `integration` until Phase 5 moves them, and everything else is `unit`. Never add these three by hand.
+* `regression("BUG-xx")` and `slow` are added by hand on the test.
+* Do **not** add `@pytest.mark.asyncio`; `asyncio_mode = "auto"` handles it (the 216 old marks were removed in Sprint 26 Phase 1).
 
 ---
 

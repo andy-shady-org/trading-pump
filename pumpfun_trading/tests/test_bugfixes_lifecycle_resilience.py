@@ -7,7 +7,6 @@ import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from rich.console import Console
 
 from pumpfun_trading.bot.run import TradingBot
@@ -83,7 +82,6 @@ def test_bug10_ansi_stripping_and_no_color():
     assert isinstance(console, Console)
 
 
-@pytest.mark.asyncio
 async def test_bug07_onchain_startup_reconciliation():
     """Test BUG-07: Startup reconciliation purges stale ghost positions with zero balance."""
     bot = _make_bot(dry_run=False, paper_trade=False)
@@ -122,7 +120,6 @@ async def test_bug07_onchain_startup_reconciliation():
     assert reconciled[MINT_2]["status"] == "active"
 
 
-@pytest.mark.asyncio
 async def test_bug08_exit_retry_queue_and_slippage_escalation():
     """Test BUG-08: Failed sells enqueue with escalating slippage and retry backoff."""
     bot = _make_bot(dry_run=False, paper_trade=False)
@@ -176,7 +173,6 @@ async def test_bug08_exit_retry_queue_and_slippage_escalation():
     assert MINT_1 not in bot._exit_retry_queue
 
 
-@pytest.mark.asyncio
 async def test_bug06_websocket_backoff_and_circuit_breaker():
     """Test BUG-06: WebSocket circuit breaker trips on consecutive reconnect failures."""
     bot = _make_bot()

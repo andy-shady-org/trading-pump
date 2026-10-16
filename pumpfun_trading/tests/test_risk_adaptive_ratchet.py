@@ -248,7 +248,6 @@ def test_evaluate_portfolio_circuit_breaker_integration() -> None:
     assert check_daily_drawdown(bot) is False
 
 
-@pytest.mark.asyncio
 async def test_bot_circuit_breaker_two_tier_actions() -> None:
     from pumpfun_trading.bot.run import TradingBot
 
@@ -303,7 +302,6 @@ async def test_bot_circuit_breaker_two_tier_actions() -> None:
     assert bot._risk_killed is True
 
 
-@pytest.mark.asyncio
 async def test_dry_run_simulated_cash_flow_and_circuit_breaker_resilience() -> None:
     """
     Validates BUG-30 fix:

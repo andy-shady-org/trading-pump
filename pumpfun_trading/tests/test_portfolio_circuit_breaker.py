@@ -406,7 +406,6 @@ def test_strategy_presets_circuit_breaker_config():
     assert agg.auto_liquidate_on_circuit_breaker is True
 
 
-@pytest.mark.asyncio
 async def test_trading_bot_circuit_breaker_liquidates_and_locks(tmp_path):
     from unittest.mock import MagicMock
     from pumpfun_trading.bot.run import TradingBot
@@ -518,7 +517,6 @@ async def test_trading_bot_circuit_breaker_liquidates_and_locks(tmp_path):
     assert not bot.daily_equity_tracker.circuit_breaker_engaged
 
 
-@pytest.mark.asyncio
 async def test_trading_bot_circuit_breaker_snapshot_persistence_and_restore(tmp_path):
     from pumpfun_trading.bot.run import TradingBot
 
@@ -563,7 +561,6 @@ async def test_trading_bot_circuit_breaker_snapshot_persistence_and_restore(tmp_
     assert bot2.daily_equity_tracker.peak_daily_equity_sol == 22.0
 
 
-@pytest.mark.asyncio
 async def test_trading_bot_trade_event_triggers_circuit_breaker():
     from unittest.mock import MagicMock
     from pumpfun_trading.bot.run import TradingBot
@@ -611,7 +608,6 @@ async def test_trading_bot_trade_event_triggers_circuit_breaker():
     assert bot.daily_equity_tracker.circuit_breaker_engaged
 
 
-@pytest.mark.asyncio
 async def test_circuit_breaker_edge_cases_and_liquidation_branches():
     from unittest.mock import AsyncMock, MagicMock
     from pumpfun_trading.bot.run import TradingBot

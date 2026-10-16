@@ -117,7 +117,6 @@ def test_runtime_env_and_logging_helpers(monkeypatch, tmp_path):
     assert (tmp_path / "audit.log").exists()
 
 
-@pytest.mark.asyncio
 async def test_market_data_service_handles_failures_and_fallbacks():
     class FakeClient:
         async def get_coin(self, mint: str):

@@ -361,7 +361,6 @@ def test_presets_and_environment_variable_loading(monkeypatch):
     assert env["PUMPFUN_CLUSTER_TRACE_DEPTH"] == "4"
 
 
-@pytest.mark.asyncio
 async def test_token_enricher_enrich_and_screen_with_cluster_analysis():
     from pumpfun_trading.bot.enrichment import TokenEnricher
 

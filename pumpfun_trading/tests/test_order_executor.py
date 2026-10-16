@@ -41,7 +41,6 @@ def base_config() -> TradingBotConfig:
     )
 
 
-@pytest.mark.asyncio
 async def test_order_executor_dry_run():
     exec_client = MagicMock()
     executor = OrderExecutor(exec_client, dry_run=True)
@@ -69,7 +68,6 @@ async def test_order_executor_dry_run():
     assert sell_res_lamports.amount_sol == pytest.approx(0.05)
 
 
-@pytest.mark.asyncio
 async def test_order_executor_live_buy(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -88,7 +86,6 @@ async def test_order_executor_live_buy(
     mock_exec_client.confirm_transaction.assert_awaited_once_with("BuySignature111")
 
 
-@pytest.mark.asyncio
 async def test_order_executor_live_buy_curve_fallback(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -107,7 +104,6 @@ async def test_order_executor_live_buy_curve_fallback(
     assert res.token_amount > 0
 
 
-@pytest.mark.asyncio
 async def test_order_executor_buy_confirmation_failed(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -119,7 +115,6 @@ async def test_order_executor_buy_confirmation_failed(
     assert res.error == "buy_confirmation_failed"
 
 
-@pytest.mark.asyncio
 async def test_order_executor_live_sell(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -143,7 +138,6 @@ async def test_order_executor_live_sell(
     )
 
 
-@pytest.mark.asyncio
 async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
     """
     Regression test for BUG-18:
@@ -224,7 +218,6 @@ async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
     assert full_trade["rent_sol"] < 0
 
 
-@pytest.mark.asyncio
 async def test_order_executor_raydium(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -258,7 +251,6 @@ async def test_order_executor_raydium(
     assert sell_res.signature == "RaydiumSignature111"
 
 
-@pytest.mark.asyncio
 async def test_order_liquidator(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -292,7 +284,6 @@ async def test_order_liquidator(
     assert len(pm) == 0
 
 
-@pytest.mark.asyncio
 async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
     """
     Comprehensive regression tests for:
@@ -413,7 +404,6 @@ async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
         assert "sol_amount" in payload
 
 
-@pytest.mark.asyncio
 async def test_buy_confirmation_timeout_with_tokens_received_is_success(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -432,7 +422,6 @@ async def test_buy_confirmation_timeout_with_tokens_received_is_success(
     }
 
 
-@pytest.mark.asyncio
 async def test_buy_unreadable_pre_balance_falls_back_to_pre_trade_quote(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -452,7 +441,6 @@ async def test_buy_unreadable_pre_balance_falls_back_to_pre_trade_quote(
     assert res.metadata["fill_source"] == "pre_trade_quote"
 
 
-@pytest.mark.asyncio
 async def test_sell_proceeds_come_from_sol_balance_delta(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -466,7 +454,6 @@ async def test_sell_proceeds_come_from_sol_balance_delta(
     assert res.metadata["proceeds_source"] == "sol_balance_delta"
 
 
-@pytest.mark.asyncio
 async def test_sell_confirmation_timeout_rechecks_token_balance(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -485,7 +472,6 @@ async def test_sell_confirmation_timeout_rechecks_token_balance(
     assert res_failed.error == "sell_confirmation_failed"
 
 
-@pytest.mark.asyncio
 async def test_raydium_buy_records_token_balance_delta(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -504,7 +490,6 @@ async def test_raydium_buy_records_token_balance_delta(
     assert sell.amount_sol == pytest.approx(0.05)
 
 
-@pytest.mark.asyncio
 async def test_dynamic_slippage_uses_live_reserves_and_real_notional(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):

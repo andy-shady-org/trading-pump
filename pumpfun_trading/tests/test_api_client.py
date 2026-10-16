@@ -38,7 +38,6 @@ class _FailingSession:
         return _FakeResponse(500, '{"error": "down"}')
 
 
-@pytest.mark.asyncio
 async def test_build_url_and_headers():
     client = PumpFunApiClient(base_url="https://frontend-api-v3.pump.fun")
     assert client._build_url("/coins/latest").startswith(
@@ -48,14 +47,12 @@ async def test_build_url_and_headers():
     await client.close()
 
 
-@pytest.mark.asyncio
 async def test_market_overview_wrapper():
     client = PumpFunApiClient()
     assert callable(client.get_market_overview)
     await client.close()
 
 
-@pytest.mark.asyncio
 async def test_request_retries_and_recovers():
     session = _RetrySession()
     client = PumpFunApiClient(
@@ -71,7 +68,6 @@ async def test_request_retries_and_recovers():
     await client.close()
 
 
-@pytest.mark.asyncio
 async def test_request_opens_circuit_after_failures():
     session = _FailingSession()
     client = PumpFunApiClient(

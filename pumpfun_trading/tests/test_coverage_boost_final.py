@@ -61,7 +61,6 @@ def test_cli_all_modes_and_flags(tmp_path):
             cli_bot.main()
 
 
-@pytest.mark.asyncio
 async def test_api_client_all_methods_and_options():
     client = PumpFunApiClient(base_url="https://api.pump.fun")
 
@@ -144,7 +143,6 @@ def test_sdk_instructions_and_decoding():
     assert client._to_pubkey(pk_obj) == pk_obj
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("offline_trade_rpc")
 async def test_sdk_tx_build_and_confirm_variations():
     client = PumpFunExecutionClient(
@@ -181,7 +179,6 @@ async def test_sdk_tx_build_and_confirm_variations():
             await client.send_jito_bundle([])
 
 
-@pytest.mark.asyncio
 async def test_bot_full_websocket_and_lifecycle(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -235,7 +232,6 @@ async def test_bot_full_websocket_and_lifecycle(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_live_error_branches(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,

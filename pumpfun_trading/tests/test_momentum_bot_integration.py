@@ -43,7 +43,6 @@ def bot(tmp_path):
     )
 
 
-@pytest.mark.asyncio
 async def test_geyser_trade_event_momentum_buy_trigger(bot):
     base_time = 1000.0
 
@@ -87,7 +86,6 @@ async def test_geyser_trade_event_momentum_buy_trigger(bot):
     assert snapshot["order_flow_tracked_tokens"] >= 1
 
 
-@pytest.mark.asyncio
 async def test_momentum_buy_suppressed_when_active_positions_full(bot):
     bot.config = TradingBotConfig(
         max_active_positions=1,
@@ -136,7 +134,6 @@ async def test_momentum_buy_suppressed_when_active_positions_full(bot):
     assert MOMENTUM_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_momentum_buy_screen_rejected_when_anti_rug_fails(bot):
     # Enable anti-rug filters
     bot.config = TradingBotConfig(
@@ -192,7 +189,6 @@ async def test_momentum_buy_screen_rejected_when_anti_rug_fails(bot):
     assert "screen_rejected" in bot._last_event
 
 
-@pytest.mark.asyncio
 async def test_active_position_exits_on_trade_event_update(bot):
     # Setup holding position with non-tiered exit
     bot.config = TradingBotConfig(
@@ -230,7 +226,6 @@ async def test_active_position_exits_on_trade_event_update(bot):
     assert SAMPLE_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_websocket_trade_update_records_in_engine(bot):
     trade_data = {
         "mint": SAMPLE_MINT,

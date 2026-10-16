@@ -96,7 +96,16 @@ python_version = "3.11"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["pumpfun_trading/tests"]
-addopts = "-q"
+addopts = "-q --strict-markers"
+# `unit` / `integration` / `property` are applied by directory in
+# tests/conftest.py; see docs/dev/TESTING.md for the taxonomy.
+markers = [
+    "unit: fast, isolated test of one module (applied by directory)",
+    "integration: cross-component flow, e.g. a TradingBot driven end to end (applied by directory)",
+    "property: Hypothesis property test (applied by directory)",
+    "regression(bug_id): guards a resolved bug from docs/dev/BUGS.md, e.g. regression(\"BUG-96\")",
+    "slow: needs real waiting or heavy computation; excluded from `nox -s tests-fast`",
+]
 
 [tool.coverage.run]
 source = ["pumpfun_trading"]

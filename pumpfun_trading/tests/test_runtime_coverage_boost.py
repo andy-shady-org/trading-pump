@@ -80,7 +80,6 @@ def test_setup_structured_logging_can_write_to_console_and_file(tmp_path):
     assert "caplog_check" in log_path.read_text(encoding="utf-8")
 
 
-@pytest.mark.asyncio
 async def test_market_data_service_fallback_and_resilience_paths():
     class AsyncClient:
         def __init__(self):

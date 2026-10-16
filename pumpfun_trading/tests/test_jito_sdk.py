@@ -116,7 +116,6 @@ def test_jito_client_tip_account_rotation():
     assert random_account in JITO_TIP_ACCOUNTS
 
 
-@pytest.mark.asyncio
 async def test_jito_client_refresh_tip_accounts():
     client = JitoClient()
 
@@ -136,7 +135,6 @@ async def test_jito_client_refresh_tip_accounts():
         assert refreshed_err == custom_tips
 
 
-@pytest.mark.asyncio
 async def test_jito_client_fetch_tip_floor_success_and_cache():
     client = JitoClient()
 
@@ -173,7 +171,6 @@ async def test_jito_client_fetch_tip_floor_success_and_cache():
         mock_session.get.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_jito_client_fetch_tip_floor_failure_fallback():
     client = JitoClient()
 
@@ -260,7 +257,6 @@ def test_jito_client_build_tip_instruction():
         client.build_tip_instruction(SAMPLE_PAYER_PUBKEY, 0)
 
 
-@pytest.mark.asyncio
 async def test_jito_client_send_bundle_validation():
     client = JitoClient()
 
@@ -278,7 +274,6 @@ async def test_jito_client_send_bundle_validation():
         await client.send_bundle([12345])  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_jito_client_send_bundle_success():
     client = JitoClient()
     tx = create_dummy_versioned_transaction()
@@ -298,7 +293,6 @@ async def test_jito_client_send_bundle_success():
         assert bundle_id == "bundle_id_12345"
 
 
-@pytest.mark.asyncio
 async def test_jito_client_send_bundle_error_responses():
     client = JitoClient()
     tx = create_dummy_versioned_transaction()
@@ -329,7 +323,6 @@ async def test_jito_client_send_bundle_error_responses():
             await client.send_bundle([tx])
 
 
-@pytest.mark.asyncio
 async def test_jito_client_get_bundle_statuses():
     client = JitoClient()
 
@@ -371,7 +364,6 @@ async def test_jito_client_get_bundle_statuses():
         assert statuses[1].is_failed is True
 
 
-@pytest.mark.asyncio
 async def test_jito_client_get_inflight_bundle_statuses():
     client = JitoClient()
 
@@ -397,7 +389,6 @@ async def test_jito_client_get_inflight_bundle_statuses():
         assert statuses[0].slot == 300
 
 
-@pytest.mark.asyncio
 async def test_jito_client_wait_for_bundle_confirmation():
     client = JitoClient()
 
@@ -430,7 +421,6 @@ async def test_jito_client_wait_for_bundle_confirmation():
             )
 
 
-@pytest.mark.asyncio
 async def test_jito_client_context_manager_and_close():
     client = JitoClient()
     session = await client._get_session()
@@ -445,7 +435,6 @@ async def test_jito_client_context_manager_and_close():
     assert s.closed
 
 
-@pytest.mark.asyncio
 async def test_jito_client_additional_edge_cases():
     client = JitoClient()
     client.tip_accounts = []

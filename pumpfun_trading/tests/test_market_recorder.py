@@ -25,7 +25,6 @@ from pumpfun_trading.streams.geyser import (
 )
 
 
-@pytest.mark.asyncio
 async def test_replay_recorder_lifecycle(tmp_path: Path):
     """Test ReplayRecorder buffering, background batching, and graceful closing."""
     log_file = tmp_path / "test_nested" / "market.jsonl"
@@ -86,7 +85,6 @@ async def test_replay_recorder_lifecycle(tmp_path: Path):
     assert first_record["price"] == pytest.approx(0.000000028)
 
 
-@pytest.mark.asyncio
 async def test_trading_bot_replay_recording_hook(tmp_path: Path):
     """Test TradingBot integration with ReplayRecorder during market events."""
     replay_file = tmp_path / "bot_replay.jsonl"
@@ -216,7 +214,6 @@ def test_synthetic_generator_invalid_scenario():
         SyntheticReplayGenerator.generate(scenario="invalid_curve")
 
 
-@pytest.mark.asyncio
 async def test_rest_history_exporter(tmp_path: Path):
     """Test RestHistoryExporter fetching and serializing historical trades."""
     mock_client = AsyncMock(spec=PumpFunApiClient)
@@ -441,7 +438,6 @@ def test_record_main_entrypoint(tmp_path: Path):
     assert (tmp_path / "main_synth.jsonl").exists()
 
 
-@pytest.mark.asyncio
 async def test_replay_recorder_edge_cases(tmp_path: Path):
     """Test ReplayRecorder edge cases like write errors and closed state."""
     log_file = tmp_path / "edge_market.jsonl"
@@ -479,7 +475,6 @@ async def test_replay_recorder_edge_cases(tmp_path: Path):
     await recorder.close()
 
 
-@pytest.mark.asyncio
 async def test_rest_history_exporter_branches(tmp_path: Path):
     """Test RestHistoryExporter branch conditions (non-dict payloads, empty lists)."""
     mock_client = AsyncMock(spec=PumpFunApiClient)
@@ -555,7 +550,6 @@ def test_record_cli_keyboard_interrupt(tmp_path: Path):
     assert rec_p is not None
 
 
-@pytest.mark.asyncio
 async def test_replay_recorder_drain_and_worker_branches(tmp_path: Path):
     """Test ReplayRecorder queue draining when multiple items are available."""
     log_file = tmp_path / "drain_market.jsonl"
@@ -606,7 +600,6 @@ def test_record_cli_interrupted_while_streaming(tmp_path: Path):
             run_record_cli(args)
 
 
-@pytest.mark.asyncio
 async def test_replay_recorder_worker_inner_drain(tmp_path: Path):
     """Test ReplayRecorder worker inner draining loop."""
     log_file = tmp_path / "inner_drain.jsonl"
@@ -622,7 +615,6 @@ async def test_replay_recorder_worker_inner_drain(tmp_path: Path):
     assert recorder.records_written == 3
 
 
-@pytest.mark.asyncio
 async def test_replay_recorder_flush_and_close_branches(tmp_path: Path):
     """Test ReplayRecorder flush QueueEmpty branch and close without start."""
     log_file = tmp_path / "flush_empty.jsonl"
@@ -731,7 +723,6 @@ def test_record_cli_geyser_none_endpoint_inside_task(tmp_path: Path):
     assert out.exists()
 
 
-@pytest.mark.asyncio
 async def test_replay_recorder_worker_error(tmp_path: Path):
     """Test ReplayRecorder worker exception resiliency."""
     log_file = tmp_path / "worker_err.jsonl"

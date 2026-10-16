@@ -311,7 +311,6 @@ async def _idle_transport(client_ref):
         await asyncio.sleep(0.02)
 
 
-@pytest.mark.asyncio
 async def test_geyser_client_lifecycle_and_dispatch():
     client = YellowstoneGeyserClient(
         endpoint="mock.geyser.rpc:443",
@@ -400,7 +399,6 @@ async def test_geyser_client_lifecycle_and_dispatch():
     assert client.state == GeyserConnectionState.CLOSED
 
 
-@pytest.mark.asyncio
 async def test_geyser_client_queue_overflow_and_async_callback_error():
     client = YellowstoneGeyserClient(
         endpoint="mock.geyser.rpc:443",
@@ -422,7 +420,6 @@ async def test_geyser_client_queue_overflow_and_async_callback_error():
     assert client.metrics.dropped_messages >= 1
 
 
-@pytest.mark.asyncio
 async def test_geyser_client_custom_transport_and_reconnection():
     reconnect_attempts = 0
 
@@ -448,7 +445,6 @@ async def test_geyser_client_custom_transport_and_reconnection():
     assert client.metrics.reconnect_count >= 1
 
 
-@pytest.mark.asyncio
 async def test_geyser_client_listen_generator_and_idempotent_start():
     client = YellowstoneGeyserClient(
         endpoint="mock.geyser.rpc:443",
@@ -502,7 +498,6 @@ def test_trade_event_zero_reserves_pricing():
     assert event.price_sol == 0.0
 
 
-@pytest.mark.asyncio
 async def test_geyser_client_duplicate_subscriptions_and_malformed_curve():
     client = YellowstoneGeyserClient(
         endpoint="mock.geyser.rpc:443",

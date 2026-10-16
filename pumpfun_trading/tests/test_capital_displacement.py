@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-import pytest
 from unittest.mock import MagicMock
 
 from pumpfun_trading.bot.position_manager import (
@@ -181,7 +180,6 @@ def test_capital_displacement_engine_rules():
     assert dec_displace.reason == "positive_ev_displacement"
 
 
-@pytest.mark.asyncio
 async def test_trading_bot_atomic_displacement(tmp_path):
     config = TradingBotConfig(
         max_active_positions=1,

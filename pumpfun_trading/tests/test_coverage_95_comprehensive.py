@@ -164,7 +164,6 @@ def test_arbitrage_cli_main_wrapper():
         assert exc_info.value.code == 0
 
 
-@pytest.mark.asyncio
 async def test_atomic_arbitrage_builder_and_executor():
     kp = Keypair()
     mock_client = MagicMock(spec=PumpFunExecutionClient)
@@ -374,7 +373,6 @@ def test_events_cli_deserialization_and_filtering():
     assert d["severity"] == "warning"
 
 
-@pytest.mark.asyncio
 async def test_diagnostic_event_logger_lifecycle_and_edge_cases(tmp_path: Path):
     log_file = tmp_path / "events_test.jsonl"
     logger = DiagnosticEventLogger(
@@ -481,7 +479,6 @@ def test_events_cli_main_wrapper(tmp_path: Path):
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_rotated_file_sink_and_manager_deep_coverage(tmp_path: Path):
     log_path = tmp_path / "test_rotated.jsonl"
     policy = RetentionPolicy(
@@ -848,7 +845,6 @@ def test_dashboard_and_uptime_branches():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_ws_message_handling_and_pruning():
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")
@@ -1104,7 +1100,6 @@ def test_replay_engine_multi_file_and_gzip_loading(tmp_path: Path):
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_order_executor_retry_and_liquidator():
     mock_client = MagicMock(spec=PumpFunExecutionClient)
     mock_client.wallet = Keypair().pubkey()
@@ -1162,7 +1157,6 @@ async def test_order_executor_retry_and_liquidator():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_runtime_exits_and_displacement():
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")
@@ -1269,7 +1263,6 @@ async def test_bot_runtime_exits_and_displacement():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_circuit_breaker_enforcement():
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")
@@ -1307,7 +1300,6 @@ async def test_bot_circuit_breaker_enforcement():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_ops_events_and_retention_deep_branches(tmp_path: Path):
     # 1. Disabled logger and disabled categories
     disabled_logger = DiagnosticEventLogger(enabled=False)
@@ -1487,7 +1479,6 @@ def test_daily_equity_tracker_midnight_and_profit_run_zone():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_reconciliation_and_stream_handlers():
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")
@@ -1708,7 +1699,6 @@ def test_risk_helpers_and_limits():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_multi_rpc_pool_branches():
     from pumpfun_trading.infra.rpc_pool import (
         CircuitState,
@@ -1847,7 +1837,6 @@ def test_optimizer_algorithms_and_validation(tmp_path: Path):
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_stream_ingestion_and_trade_events():
     from pumpfun_trading.streams.geyser import BondingCurveStateUpdate, TradeEventUpdate
 
@@ -1918,7 +1907,6 @@ async def test_bot_stream_ingestion_and_trade_events():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_raydium_swaps_and_complete_events():
 
     kp = Keypair()
@@ -2262,7 +2250,6 @@ def test_dashboard_full_rendering_and_panels():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_run_loops_and_ws_handlers():
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")
@@ -2605,7 +2592,6 @@ def test_graduation_trajectory_and_signals():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_all_event_handlers_exhaustive(tmp_path: Path):
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")
@@ -2828,7 +2814,6 @@ async def test_bot_all_event_handlers_exhaustive(tmp_path: Path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_more_branches_push(tmp_path: Path):
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")
@@ -3006,7 +2991,6 @@ def test_retention_sink_and_manager_edge_branches(tmp_path: Path):
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_ops_events_logger_and_properties_deep(tmp_path: Path):
     evt = DiagnosticEvent(
         category=EventCategory.RISK,
@@ -3055,7 +3039,6 @@ async def test_ops_events_logger_and_properties_deep(tmp_path: Path):
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_rpc_pool_request_and_broadcast_errors():
     from pumpfun_trading.infra.rpc_pool import (
         RpcConnectionPool,
@@ -3124,7 +3107,6 @@ async def test_rpc_pool_request_and_broadcast_errors():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bot_start_lifecycle_and_geyser_stream():
     from pumpfun_trading.streams.geyser import (
         BondingCurveStateUpdate,
@@ -3210,7 +3192,6 @@ async def test_bot_start_lifecycle_and_geyser_stream():
     assert bot.state == TradingBotState.SHUTDOWN
 
 
-@pytest.mark.asyncio
 async def test_bot_start_idle():
     kp = Keypair()
     key_b58 = base58.b58encode(bytes(kp)).decode("utf-8")

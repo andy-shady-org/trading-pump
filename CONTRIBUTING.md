@@ -70,6 +70,7 @@ This project uses `nox` to manage the standard development tasks. The repository
 ```bash
 $ nox -s tests          # every installed interpreter of 3.11–3.14 (missing ones are skipped locally)
 $ nox -s tests-3.14     # a single interpreter
+$ nox -s tests-fast     # unit tests only (-m "not slow and not integration"), no coverage gate
 $ nox -s lint
 $ nox -s audit
 $ nox -s mypy

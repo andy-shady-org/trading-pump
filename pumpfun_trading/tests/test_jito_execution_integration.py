@@ -33,7 +33,6 @@ def execution_client(mock_keypair):
     )
 
 
-@pytest.mark.asyncio
 async def test_execution_client_jito_initialization(execution_client):
     assert execution_client.use_jito is True
     assert execution_client.jito_fallback_to_rpc is True
@@ -41,7 +40,6 @@ async def test_execution_client_jito_initialization(execution_client):
     assert isinstance(execution_client.jito_client, JitoClient)
 
 
-@pytest.mark.asyncio
 async def test_calculate_dynamic_jito_tip(execution_client, monkeypatch):
     async def mock_fetch_tip_floor(self, max_age_seconds=10.0):
         return JitoTipFloor(
@@ -69,7 +67,6 @@ async def test_calculate_dynamic_jito_tip(execution_client, monkeypatch):
     assert tip_large_trade == 50_000_000
 
 
-@pytest.mark.asyncio
 async def test_calculate_dynamic_jito_tip_fallback_when_error(
     execution_client, monkeypatch
 ):
@@ -81,7 +78,6 @@ async def test_calculate_dynamic_jito_tip_fallback_when_error(
     assert tip >= 10_000
 
 
-@pytest.mark.asyncio
 async def test_build_buy_and_sell_tx_with_jito_tip(execution_client, monkeypatch):
     mint = "3JfNw9xJUP9VYdB4KJdQ69yX4dE3Ws5YQm1Yw7Gv2fM9"
     curve, _ = execution_client.get_bonding_curve_pda(mint)
@@ -108,7 +104,6 @@ async def test_build_buy_and_sell_tx_with_jito_tip(execution_client, monkeypatch
     assert len(sell_tx.signatures) > 0
 
 
-@pytest.mark.asyncio
 async def test_send_jito_bundle_with_fallback_success(execution_client, monkeypatch):
     mint = "3JfNw9xJUP9VYdB4KJdQ69yX4dE3Ws5YQm1Yw7Gv2fM9"
     curve, _ = execution_client.get_bonding_curve_pda(mint)
@@ -147,7 +142,6 @@ async def test_send_jito_bundle_with_fallback_success(execution_client, monkeypa
     assert execution_client.execution_health_score >= 100.0
 
 
-@pytest.mark.asyncio
 async def test_send_jito_bundle_fallback_to_rpc_on_timeout(
     execution_client, monkeypatch
 ):
@@ -185,7 +179,6 @@ async def test_send_jito_bundle_fallback_to_rpc_on_timeout(
     assert execution_client.failed_execution_attempts >= 1
 
 
-@pytest.mark.asyncio
 async def test_send_jito_bundle_with_fallback_without_jito_client(
     execution_client, monkeypatch
 ):
@@ -217,13 +210,11 @@ async def test_send_jito_bundle_with_fallback_without_jito_client(
     assert sig == str(tx.signatures[0])
 
 
-@pytest.mark.asyncio
 async def test_send_jito_bundle_with_fallback_empty_tx_list(execution_client):
     with pytest.raises(ValueError, match="Cannot submit empty"):
         await execution_client.send_jito_bundle_with_fallback([])
 
 
-@pytest.mark.asyncio
 async def test_send_jito_bundle_fallback_disabled_raises(execution_client, monkeypatch):
     execution_client.jito_fallback_to_rpc = False
     mint = "3JfNw9xJUP9VYdB4KJdQ69yX4dE3Ws5YQm1Yw7Gv2fM9"
@@ -249,7 +240,6 @@ async def test_send_jito_bundle_fallback_disabled_raises(execution_client, monke
         await execution_client.send_jito_bundle_with_fallback([tx])
 
 
-@pytest.mark.asyncio
 async def test_buy_and_sell_high_level_with_jito(execution_client, monkeypatch):
     mint = "3JfNw9xJUP9VYdB4KJdQ69yX4dE3Ws5YQm1Yw7Gv2fM9"
     curve, _ = execution_client.get_bonding_curve_pda(mint)
@@ -277,7 +267,6 @@ async def test_buy_and_sell_high_level_with_jito(execution_client, monkeypatch):
     assert sell_sig == "mock_sig_1"
 
 
-@pytest.mark.asyncio
 async def test_buy_and_sell_without_jito(execution_client, monkeypatch):
     execution_client.use_jito = False
     mint = "3JfNw9xJUP9VYdB4KJdQ69yX4dE3Ws5YQm1Yw7Gv2fM9"
@@ -304,13 +293,11 @@ async def test_buy_and_sell_without_jito(execution_client, monkeypatch):
     assert sell_sig == "direct_sig_tx"
 
 
-@pytest.mark.asyncio
 async def test_execution_client_close(execution_client):
     assert execution_client.jito_client is not None
     await execution_client.close()
 
 
-@pytest.mark.asyncio
 async def test_execution_builder_with_jito():
     keypair = Keypair.from_seed(b"01234567890123456789012345678901")
     b58_key = base58.b58encode(keypair.to_bytes()).decode()
@@ -335,7 +322,6 @@ async def test_execution_builder_with_jito():
     await direct_client.close()
 
 
-@pytest.mark.asyncio
 async def test_trading_bot_jito_env_configuration(monkeypatch):
     monkeypatch.setenv("PUMPFUN_USE_JITO", "true")
     monkeypatch.setenv("PUMPFUN_JITO_TIP_LAMPORTS", "25000")

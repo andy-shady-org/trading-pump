@@ -24,7 +24,6 @@ from pumpfun_trading.streams.geyser import (
 MINT = "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump"
 
 
-@pytest.mark.asyncio
 async def test_geyser_without_transport_fails_fast():
     """BUG-55: no transport means a clear error, never a fake CONNECTED state."""
     client = YellowstoneGeyserClient(endpoint="grpc.example:443")

@@ -1,7 +1,6 @@
 """Unit tests for Raydium instruction serialization, pool decoders, and execution client."""
 
 import base58
-import pytest
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from spl.token.constants import TOKEN_PROGRAM_ID
@@ -144,7 +143,6 @@ def test_parse_raydium_initialize2_accounts():
     assert parsed_tx.amm_id == keys.amm_id
 
 
-@pytest.mark.asyncio
 async def test_execution_client_raydium_buy_tx():
     kp = Keypair()
     b58_key = base58.b58encode(kp.to_bytes()).decode()

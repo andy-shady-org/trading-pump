@@ -124,7 +124,6 @@ def test_bot_safe_startup_recovery(tmp_path):
     assert bot._seen_mints.get("MintA") == 12345.0
 
 
-@pytest.mark.asyncio
 async def test_bot_buy_and_sell_flows(base_bot):
     mint = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 
@@ -144,7 +143,6 @@ async def test_bot_buy_and_sell_flows(base_bot):
     assert await base_bot._sell_token("NonExistentMint") is False
 
 
-@pytest.mark.asyncio
 async def test_bot_live_buy_and_sell_branches(tmp_path):
     config = TradingBotConfig(buy_amount_sol=0.05)
     bot = TradingBot(
@@ -216,7 +214,6 @@ async def test_bot_live_buy_and_sell_branches(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_message_handlers_and_events(base_bot):
     mint = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 
@@ -255,7 +252,6 @@ async def test_bot_message_handlers_and_events(base_bot):
     await base_bot._handle_message({"unknown": True}, mock_ws)
 
 
-@pytest.mark.asyncio
 async def test_bot_reconciliation_and_retries(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -303,7 +299,6 @@ async def test_bot_reconciliation_and_retries(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_buy_metric_and_reserve_price_refresh(tmp_path):
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,

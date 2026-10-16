@@ -404,7 +404,6 @@ def test_exits_and_decision_additional_branches(tmp_path):
     assert loaded_cfg.strategy_preset == "conservative"
 
 
-@pytest.mark.asyncio
 async def test_bot_live_partial_sell_and_reconciliation(tmp_path):
     from unittest.mock import AsyncMock, MagicMock
     from pumpfun_trading.bot.run import TradingBot

@@ -40,7 +40,6 @@ def bot(tmp_path):
     )
 
 
-@pytest.mark.asyncio
 async def test_bot_enrich_and_screen_clean_token(bot):
     # Mock API coin data and creator coins
     clean_coin_data = {
@@ -82,7 +81,6 @@ async def test_bot_enrich_and_screen_clean_token(bot):
     assert cached.passed is True
 
 
-@pytest.mark.asyncio
 async def test_bot_enrich_and_screen_serial_rugger(bot):
     toxic_coin_data = {
         "mint": SAMPLE_MINT_TOXIC,
@@ -108,7 +106,6 @@ async def test_bot_enrich_and_screen_serial_rugger(bot):
     assert verdict.flags.get("dev_serial_launcher") is True
 
 
-@pytest.mark.asyncio
 async def test_bot_enrich_and_screen_excessive_creator_holding(bot):
     excessive_holding_data = {
         "mint": SAMPLE_MINT_TOXIC,
@@ -126,7 +123,6 @@ async def test_bot_enrich_and_screen_excessive_creator_holding(bot):
     assert verdict.flags.get("creator_excess_holding") is True
 
 
-@pytest.mark.asyncio
 async def test_bot_enrich_and_screen_disabled_filters(bot):
     bot.config = TradingBotConfig(enable_anti_rug_filters=False)
 
@@ -136,7 +132,6 @@ async def test_bot_enrich_and_screen_disabled_filters(bot):
     assert "disabled" in verdict.reasons[0].lower()
 
 
-@pytest.mark.asyncio
 async def test_geyser_bonding_curve_update_blocks_scam_and_buys_clean(bot):
     clean_coin_data = {
         "mint": SAMPLE_MINT,
@@ -199,7 +194,6 @@ async def test_geyser_bonding_curve_update_blocks_scam_and_buys_clean(bot):
     assert SAMPLE_MINT in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_new_token_event_blocks_scam_and_buys_clean(bot):
     toxic_event_payload = {
         "mint": SAMPLE_MINT_TOXIC,
@@ -228,7 +222,6 @@ async def test_new_token_event_blocks_scam_and_buys_clean(bot):
     assert SAMPLE_MINT in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_bot_status_snapshot_screening_telemetry(bot):
     bot.screening_cache.set(
         SAMPLE_MINT,
@@ -239,7 +232,6 @@ async def test_bot_status_snapshot_screening_telemetry(bot):
     assert snapshot["screening_cache_size"] == 1
 
 
-@pytest.mark.asyncio
 async def test_api_client_get_creator_coins():
     client = PumpFunApiClient(base_url="https://frontend-api-v3.pump.fun")
 
@@ -263,7 +255,6 @@ async def test_api_client_get_creator_coins():
         assert mock_get.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_bot_enrich_and_screen_api_error_branches(bot):
     # 1. API get_coin failure
     bot.api.get_coin = AsyncMock(side_effect=RuntimeError("Network error"))
@@ -299,7 +290,6 @@ async def test_bot_enrich_and_screen_api_error_branches(bot):
     assert verdict_pda_fail is True or verdict_pda_fail.passed is True
 
 
-@pytest.mark.asyncio
 async def test_should_buy_screening_verdict_rejection(bot):
     from pumpfun_trading.bot.strategy import TokenScreeningVerdict
 

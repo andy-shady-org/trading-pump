@@ -5,7 +5,6 @@ import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.alerts import AlertDispatcher
 from pumpfun_trading.bot.enrichment import TokenEnricher
@@ -14,7 +13,6 @@ from pumpfun_trading.bot.strategy import ScreeningCache, TokenScreeningVerdict
 from pumpfun_trading.strategies.base import TradingBotConfig
 
 
-@pytest.mark.asyncio
 async def test_token_enricher_disabled():
     config = TradingBotConfig(enable_anti_rug_filters=False)
     enricher = TokenEnricher(config=config)
@@ -23,7 +21,6 @@ async def test_token_enricher_disabled():
     assert verdict.risk_score == 0.0
 
 
-@pytest.mark.asyncio
 async def test_token_enricher_cache_hit():
     cache = ScreeningCache(default_ttl=60)
     cached = TokenScreeningVerdict(mint="Mint111", passed=True, risk_score=10.0)
@@ -35,7 +32,6 @@ async def test_token_enricher_cache_hit():
     assert verdict is cached
 
 
-@pytest.mark.asyncio
 async def test_token_enricher_with_mock_api():
     mock_api = MagicMock(spec=PumpFunApiClient)
     mock_api.get_coin = AsyncMock(

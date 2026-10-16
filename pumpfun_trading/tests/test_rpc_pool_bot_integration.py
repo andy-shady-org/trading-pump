@@ -4,7 +4,6 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.infra.rpc_pool import CircuitState
@@ -13,7 +12,6 @@ from pumpfun_trading.strategies.base import TradingBotConfig
 SAMPLE_PRIVATE_KEY = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4JjaxnjfCebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
 
 
-@pytest.mark.asyncio
 async def test_bot_rpc_pool_initialization_and_status_snapshot() -> None:
     config = TradingBotConfig(
         strategy_preset="balanced",
@@ -49,7 +47,6 @@ async def test_bot_rpc_pool_initialization_and_status_snapshot() -> None:
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_rpc_pool_transparent_query_failover() -> None:
     config = TradingBotConfig(
         enable_rpc_pool=True,
@@ -120,7 +117,6 @@ async def test_bot_rpc_pool_transparent_query_failover() -> None:
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_rpc_pool_lifecycle_and_health_loop() -> None:
     config = TradingBotConfig(
         enable_rpc_pool=True,

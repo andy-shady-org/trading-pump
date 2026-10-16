@@ -64,7 +64,6 @@ def bot(tmp_path):
     )
 
 
-@pytest.mark.asyncio
 async def test_geyser_trade_event_copy_trade_buy_trigger(bot):
     """Verify smart money buy event in Geyser stream triggers copy-trade buy."""
     now = time.time()
@@ -98,7 +97,6 @@ async def test_geyser_trade_event_copy_trade_buy_trigger(bot):
     assert snapshot["copy_trading_tracked_wallets"] == 2
 
 
-@pytest.mark.asyncio
 async def test_geyser_trade_event_smart_money_sell_mirror(bot):
     """Verify smart money sell event on held position triggers mirrored sell exit."""
     # Setup open position
@@ -134,7 +132,6 @@ async def test_geyser_trade_event_smart_money_sell_mirror(bot):
     assert COPY_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_websocket_trade_update_copy_trade_buy_and_sell(bot):
     """Verify WebSocket _handle_trade_update triggers copy buy and mirrored sell."""
     now = time.time()
@@ -168,7 +165,6 @@ async def test_websocket_trade_update_copy_trade_buy_and_sell(bot):
     assert COPY_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_copy_trade_buy_rejected_by_anti_rug_screening(bot):
     """Verify copy-trade buy is blocked when anti-rug screening fails."""
     bot.config = TradingBotConfig(
@@ -224,7 +220,6 @@ async def test_copy_trade_buy_rejected_by_anti_rug_screening(bot):
     assert COPY_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_untracked_wallet_does_not_trigger_copy_trade(bot):
     """Verify regular non-tracked user trades do not trigger copy trading."""
     now = time.time()

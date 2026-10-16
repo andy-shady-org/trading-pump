@@ -42,7 +42,6 @@ def bot(tmp_path):
     )
 
 
-@pytest.mark.asyncio
 async def test_bonding_curve_state_update_active_position_tp_and_sl(bot):
     # Setup active position
     bot.active_positions[SAMPLE_MINT] = {
@@ -113,7 +112,6 @@ async def test_bonding_curve_state_update_active_position_tp_and_sl(bot):
     assert SAMPLE_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_bonding_curve_state_update_new_token_branches(bot):
     # Screening is covered in unit/bot/test_enrichment.py; keep this test off the
     # live Pump.fun API and RPC (it used to pass only when mainnet answered).
@@ -169,7 +167,6 @@ async def test_bonding_curve_state_update_new_token_branches(bot):
     screen.stop()
 
 
-@pytest.mark.asyncio
 async def test_trade_event_update_branches(bot):
     # 1. Non-active position ignored
     trade_ignored = TradeEventUpdate(
@@ -272,7 +269,6 @@ async def test_trade_event_update_branches(bot):
     bot._stop_requested = False
 
 
-@pytest.mark.asyncio
 async def test_complete_event_update_branches(bot):
     # 1. Non-active token complete event ignored
     complete_update = CompleteEventUpdate(
@@ -329,7 +325,6 @@ async def test_complete_event_update_branches(bot):
     bot._stop_requested = False
 
 
-@pytest.mark.asyncio
 async def test_bot_full_geyser_streaming_lifecycle(bot):
     update_new = BondingCurveStateUpdate(
         mint=SAMPLE_MINT,
@@ -386,7 +381,6 @@ async def test_bot_full_geyser_streaming_lifecycle(bot):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_geyser_tiered_and_trailing_exits(tmp_path):
     config = TradingBotConfig(
         buy_amount_sol=0.01,
@@ -501,7 +495,6 @@ async def test_geyser_tiered_and_trailing_exits(tmp_path):
     assert SAMPLE_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_websocket_stream_dispatch_when_stream_url_configured(tmp_path):
     config = TradingBotConfig(
         stream_url="wss://pumpportal.fun/api/data",
@@ -531,7 +524,6 @@ async def test_websocket_stream_dispatch_when_stream_url_configured(tmp_path):
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_concurrent_sells_same_mint_send_one_order(bot):
     """BUG-41: overlapping exits for one mint are serialized; only one sell is sent."""
     bot.active_positions[SAMPLE_MINT] = {
@@ -560,7 +552,6 @@ async def test_concurrent_sells_same_mint_send_one_order(bot):
     assert SAMPLE_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_health_loop_drains_exit_retry_queue(bot, monkeypatch):
     """BUG-39: the runtime health loop processes the exit retry queue."""
     drained = asyncio.Event()
@@ -586,7 +577,6 @@ def test_exit_retry_queue_persisted_without_monotonic_times(bot):
     assert "next_retry_at" not in entry
 
 
-@pytest.mark.asyncio
 async def test_geyser_events_routed_once(bot):
     """BUG-40: start() consumes listen() only and does not also register callbacks."""
     bot.geyser_client.on_bonding_curve = AsyncMock()

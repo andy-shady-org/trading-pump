@@ -3,7 +3,6 @@ import tempfile
 import time
 from pathlib import Path
 
-import pytest
 
 from pumpfun_trading.ops.retention import (
     LogRetentionManager,
@@ -49,7 +48,6 @@ def test_rotated_file_sink_size_rotation_and_compression():
         assert len(files) >= 2
 
 
-@pytest.mark.asyncio
 async def test_rotated_file_sink_async_write_batch():
     with tempfile.TemporaryDirectory() as tmpdir:
         base_file = Path(tmpdir) / "replay.jsonl"
@@ -117,7 +115,6 @@ def test_log_retention_manager_compress_uncompressed():
         assert not f1.exists()
 
 
-@pytest.mark.asyncio
 async def test_log_retention_manager_async_pruning():
     with tempfile.TemporaryDirectory() as tmpdir:
         td = Path(tmpdir)

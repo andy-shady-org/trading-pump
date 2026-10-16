@@ -71,7 +71,6 @@ def bot(tmp_path):
     )
 
 
-@pytest.mark.asyncio
 async def test_bonding_curve_reserve_tracking_and_complete_exit(bot):
     # Receive bonding curve reserve updates
     update_1 = BondingCurveStateUpdate(
@@ -121,7 +120,6 @@ async def test_bonding_curve_reserve_tracking_and_complete_exit(bot):
     assert GRAD_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_raydium_pool_update_snipes_graduation(bot):
     pool_keys = make_pool_keys(GRAD_MINT)
 
@@ -140,7 +138,6 @@ async def test_raydium_pool_update_snipes_graduation(bot):
     assert snapshot["graduation_tracked_candidates"] >= 1
 
 
-@pytest.mark.asyncio
 async def test_raydium_snipe_rejected_by_anti_rug_screening(bot):
     bot.config = TradingBotConfig(
         enable_raydium_migration_sniping=True,
@@ -170,7 +167,6 @@ async def test_raydium_snipe_rejected_by_anti_rug_screening(bot):
     assert bot._last_event == f"screen_rejected {GRAD_MINT[:8]}"
 
 
-@pytest.mark.asyncio
 async def test_raydium_snipe_disabled_by_config(bot):
     bot.config = TradingBotConfig(
         enable_raydium_migration_sniping=False,
@@ -184,7 +180,6 @@ async def test_raydium_snipe_disabled_by_config(bot):
     assert GRAD_MINT not in bot.active_positions
 
 
-@pytest.mark.asyncio
 async def test_handle_message_with_raydium_pool_payload(bot):
     pool_keys = make_pool_keys(GRAD_MINT)
     msg = {

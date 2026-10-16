@@ -3,7 +3,6 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from pumpfun_trading.infra.rpc_pool import (
     CircuitState,
@@ -188,7 +187,6 @@ def test_rpc_connection_pool_scoring_and_selection() -> None:
     assert best_ep.url == ep_fast.url
 
 
-@pytest.mark.asyncio
 async def test_rpc_connection_pool_query_success_and_failover() -> None:
     ep1 = RpcEndpoint(url="https://primary.rpc.com", label="primary")
     ep2 = RpcEndpoint(url="https://secondary.rpc.com", label="secondary")
@@ -234,7 +232,6 @@ async def test_rpc_connection_pool_query_success_and_failover() -> None:
     assert ep2.total_requests >= 1
 
 
-@pytest.mark.asyncio
 async def test_rpc_connection_pool_broadcast_transaction() -> None:
     ep1 = RpcEndpoint(url="https://rpc1.com", label="rpc1")
     ep2 = RpcEndpoint(url="https://rpc2.com", label="rpc2")
@@ -278,7 +275,6 @@ async def test_rpc_connection_pool_broadcast_transaction() -> None:
     assert ep2.state == CircuitState.OPEN
 
 
-@pytest.mark.asyncio
 async def test_rpc_connection_pool_telemetry_and_health_probes() -> None:
     ep1 = RpcEndpoint(url="https://rpc1.com")
     ep2 = RpcEndpoint(url="https://rpc2.com")
@@ -316,7 +312,6 @@ async def test_rpc_connection_pool_telemetry_and_health_probes() -> None:
     await pool.close()
 
 
-@pytest.mark.asyncio
 async def test_execution_client_with_rpc_pool_and_builder() -> None:
     from pumpfun_trading.execution.builder import (
         ExecutionBuilder,

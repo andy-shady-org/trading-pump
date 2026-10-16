@@ -170,7 +170,6 @@ def test_adaptive_execution_policy_urgency_tiers():
     assert res_emerg.slippage_bps <= 5000
 
 
-@pytest.mark.asyncio
 async def test_order_executor_dynamic_slippage():
     config = TradingBotConfig(
         dry_run=True,
@@ -202,7 +201,6 @@ async def test_order_executor_dynamic_slippage():
     assert sell_res.dry_run
 
 
-@pytest.mark.asyncio
 async def test_order_liquidator_emergency_urgency():
     config = TradingBotConfig(
         dry_run=True,

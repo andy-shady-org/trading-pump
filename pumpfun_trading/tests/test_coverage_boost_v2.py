@@ -216,7 +216,6 @@ def test_alert_dispatcher_auto_detection_and_providers():
         assert mock_url.called
 
 
-@pytest.mark.asyncio
 async def test_alert_dispatcher_async_send():
     disp = AlertDispatcher(discord_webhook_url="https://discord.com/hook")
     with patch("urllib.request.urlopen") as mock_url:
@@ -251,7 +250,6 @@ def make_test_pool_keys() -> RaydiumPoolKeys:
     )
 
 
-@pytest.mark.asyncio
 async def test_event_router_all_routes():
     curve_mock = AsyncMock()
     trade_mock = AsyncMock()
@@ -322,7 +320,6 @@ async def test_event_router_all_routes():
     assert ws_trade_mock.called
 
 
-@pytest.mark.asyncio
 async def test_order_executor_raydium_and_exceptions():
     exec_client = MagicMock(spec=PumpFunExecutionClient)
     executor = OrderExecutor(execution_client=exec_client, dry_run=False)
@@ -381,7 +378,6 @@ async def test_order_executor_raydium_and_exceptions():
     assert res_sell_no_sig.error == "raydium_sell_signature_missing"
 
 
-@pytest.mark.asyncio
 async def test_order_liquidator_branches():
     executor = MagicMock(spec=OrderExecutor)
     pm = PositionManager(TradingBotConfig())
@@ -521,7 +517,6 @@ def test_strategy_signal_generation_all_branches():
     )
 
 
-@pytest.mark.asyncio
 async def test_rpc_pool_broadcast_and_health_branches():
     ep1 = RpcEndpoint(url="https://rpc1.solana.com", label="RPC 1")
     ep2 = RpcEndpoint(url="https://rpc2.solana.com", label="RPC 2")
@@ -734,7 +729,6 @@ def test_trading_bot_validation_errors():
         )
 
 
-@pytest.mark.asyncio
 async def test_trading_bot_facade_and_lifecycle(tmp_path):
     status_file = tmp_path / "bot_status.json"
     audit_file = tmp_path / "audit.jsonl"
@@ -860,7 +854,6 @@ async def test_trading_bot_facade_and_lifecycle(tmp_path):
         assert bot._stop_requested is True
 
 
-@pytest.mark.asyncio
 async def test_bot_safe_startup_and_edge_branches(tmp_path):
     status_file = tmp_path / "bot_status.json"
     audit_file = tmp_path / "audit.jsonl"
@@ -1007,7 +1000,6 @@ def test_raydium_sdk_extended_branches():
     assert parsed_accs.amm_id == "acc_4"
 
 
-@pytest.mark.asyncio
 async def test_rpc_pool_extended_coverage():
     # RpcEndpoint metrics & score
     ep = RpcEndpoint(url="http://solana.node.internal:8899/rpc")
@@ -1094,7 +1086,6 @@ async def test_rpc_pool_extended_coverage():
     await pool.close()
 
 
-@pytest.mark.asyncio
 async def test_sdk_execution_extended_coverage():
     from solders.hash import Hash
     from solders.instruction import Instruction
@@ -1205,7 +1196,6 @@ async def test_sdk_execution_extended_coverage():
     await pool.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_raydium_and_trade_updates_deep():
     cfg = TradingBotConfig(
         dry_run=True,
@@ -1317,7 +1307,6 @@ async def test_bot_raydium_and_trade_updates_deep():
     await bot.close()
 
 
-@pytest.mark.asyncio
 async def test_bot_stream_and_execution_deep_branches():
     cfg = TradingBotConfig(
         dry_run=False,
@@ -1472,7 +1461,6 @@ def test_graduation_and_api_client_deep():
     assert api is not None
 
 
-@pytest.mark.asyncio
 async def test_api_client_and_replay_and_main_branches():
     from pumpfun_trading.api.client import PumpFunApiClient
     from pumpfun_trading.cli.main import main
@@ -1599,7 +1587,6 @@ async def test_api_client_and_replay_and_main_branches():
         main()
 
 
-@pytest.mark.asyncio
 async def test_rpc_pool_factories_and_error_edges():
     # Health loop lifecycle
     ep = RpcEndpoint(url="https://rpc.err.solana.com")
@@ -1643,7 +1630,6 @@ async def test_rpc_pool_factories_and_error_edges():
     await pool.close()
 
 
-@pytest.mark.asyncio
 async def test_final_coverage_push():
     from pumpfun_trading.bot.run import main as bot_main
 
