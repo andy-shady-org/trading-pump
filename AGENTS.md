@@ -50,6 +50,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[ASYNC] Never Cancel A Dequeued Write:** Cancelling a task awaiting `asyncio.to_thread` also cancels a not-yet-started executor job, so data already taken off a queue is lost on shutdown (BUG-103). Shield in-flight writes and finish them before re-raising `CancelledError`; test shutdown races deterministically (busy one-thread executor), not with wall-clock durations.
 - **[TESTS] Slow Tests Mean Unmocked Retries:** Most of the suite's 136 s was real retry backoff on blocked-network API/RPC lookups, not the bot. Profile with `--durations` before tuning; never add real sleeps or rely on backoff in tests (`instant_retry_backoff` in `tests/conftest.py` skips it; `USES_REAL_RETRY_BACKOFF = True` to opt out), and keep a new retry loop's sleep inline in a `request` method or extend that fixture.
 - **[TESTS] `make_config` Is Dry-Run:** `make_config()` defaults to `dry_run=True` but `TradingBotConfig()` to `False`. When converting an inline config, pass `dry_run=False` unless the call already set it; scope `ruff --select I --fix` to the files you touched, never the whole tests tree.
+- **[TESTS] Resolving A Bug Means Tagging A Test:** Marking a bug RESOLVED in `BUGS.md` fails `unit/test_suite_layout.py` until a test carries `@pytest.mark.regression("BUG-xx")`; never add the ID to `KNOWN_UNTAGGED` instead. A golden-replay diff is a behaviour change: explain it before regenerating.
 
 
 ## Project Overview
@@ -87,7 +88,7 @@ pumpfun-trading/
 │       └── property/     # Hypothesis property tests (curve math, parsers)
 ```
 
-> Sprint 26 moved every single-module, integration and mixed test file into this layout. The 21 legacy flat `test_*.py` files still in the tests root (coverage padding, `_full` / `_regressions` pairs, themed regressions) are dissolved in Sprint 27; don't add tests to them.
+> The migration finished in Sprint 27: the tests root holds only `conftest.py`, and `tests/unit/test_suite_layout.py` fails on a source module without a mirrored test, a coverage-named file, or a RESOLVED bug in `docs/dev/BUGS.md` without a `@pytest.mark.regression("BUG-xx")` test. `integration/test_golden_replay.py` pins bot decisions (regenerate with `PUMPFUN_UPDATE_GOLDEN=1` only for an intended change).
 
 ---
 

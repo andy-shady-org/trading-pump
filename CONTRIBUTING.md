@@ -80,6 +80,8 @@ $ nox -s package        # builds the wheel and checks it is private and ships no
 
 Ruff (`target-version = "py311"`) and mypy (`python_version = "3.11"`) check against the oldest supported Python, so 3.12+-only syntax or stdlib APIs fail lint/typing even on 3.14.
 
+Tests follow [`docs/dev/TESTING.md`](docs/dev/TESTING.md): one mirrored `tests/unit/<pkg>/test_<module>.py` per source module, and a `@pytest.mark.regression("BUG-xx")` test for every bug marked RESOLVED in `docs/dev/BUGS.md` (`tests/unit/test_suite_layout.py` enforces both). If a change alters bot decisions on purpose, regenerate the golden files with `PUMPFUN_UPDATE_GOLDEN=1 pytest pumpfun_trading/tests/integration/test_golden_replay.py` and explain the JSON diff in the PR.
+
 Useful one-off checks:
 
 ```bash

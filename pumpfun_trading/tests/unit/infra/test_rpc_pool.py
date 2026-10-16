@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,7 @@ from pumpfun_trading.infra.rpc_pool import (
     RpcEndpoint,
     RpcPoolConfig,
 )
+from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 
 KEY = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
 HELIUS = f"https://mainnet.helius-rpc.com/?api-key={KEY}"
@@ -364,7 +366,6 @@ async def test_execution_client_with_rpc_pool_and_builder() -> None:
         ExecutionBuilder,
         build_execution_client,
     )
-    from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 
     dummy_key = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4JjaxnjfCebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
 
@@ -400,3 +401,390 @@ async def test_execution_client_with_rpc_pool_and_builder() -> None:
     )
     assert c4.rpc_pool.endpoint_count == 1
     await c4.close()
+
+
+def _pool_with_responses(*bodies):
+    pool = RpcConnectionPool(endpoints=["https://a.invalid", "https://b.invalid"])
+    responses = []
+    for body in bodies:
+        resp = MagicMock()
+        resp.status = 200
+        resp.text = AsyncMock(return_value=json.dumps(body))
+        responses.append(resp)
+
+    class Ctx:
+        def __init__(self, resp):
+            self.resp = resp
+
+        async def __aenter__(self):
+            return self.resp
+
+        async def __aexit__(self, *exc):
+            return None
+
+    session = MagicMock()
+    session.closed = False
+    session.close = AsyncMock()
+    session.post = MagicMock(side_effect=[Ctx(r) for r in responses])
+    pool._session = session
+    return pool
+
+
+@pytest.mark.regression("BUG-67")
+async def test_rpc_pool_node_error_records_failure_and_fails_over():
+    pool = _pool_with_responses(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32005, "message": "Node is behind"},
+        },
+        {"jsonrpc": "2.0", "id": 1, "result": 42},
+    )
+    parsed = await pool.request({"method": "getSlot"}, max_retries=2)
+    assert parsed["result"] == 42
+    assert sum(ep.consecutive_failures for ep in pool._endpoints) == 1
+
+
+@pytest.mark.regression("BUG-67")
+async def test_rpc_pool_deterministic_error_returned_without_failover():
+    pool = _pool_with_responses(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32002, "message": "compute unit limit exceeded"},
+        },
+    )
+    parsed = await pool.request({"method": "sendTransaction"}, max_retries=2)
+    assert parsed["error"]["code"] == -32002
+    assert all(ep.consecutive_failures == 0 for ep in pool._endpoints)
+
+
+async def test_rpc_pool_broadcast_and_health_branches():
+    ep1 = RpcEndpoint(url="https://rpc1.solana.com", label="RPC 1")
+    ep2 = RpcEndpoint(url="https://rpc2.solana.com", label="RPC 2")
+    cfg = RpcPoolConfig(
+        endpoints=[ep1, ep2],
+        broadcast_concurrency=2,
+        circuit_breaker_threshold=2,
+    )
+    pool = RpcConnectionPool(endpoints=[ep1, ep2], config=cfg)
+
+    # Mock session post responses for broadcast errors
+    mock_session = MagicMock()
+
+    # Case 1: HTTP 429
+    resp_429 = AsyncMock()
+    resp_429.status = 429
+    resp_429.text = AsyncMock(return_value="Rate limited")
+
+    mock_session.post.return_value.__aenter__.return_value = resp_429
+    pool._session = mock_session
+
+    with pytest.raises(RuntimeError, match="Multi-RPC transaction broadcast failed"):
+        await pool.broadcast_transaction("base64_tx_payload")
+
+    assert ep1.state in {CircuitState.DEGRADED, CircuitState.OPEN}
+
+    # Case 2: HTTP 500
+    resp_500 = AsyncMock()
+    resp_500.status = 500
+    resp_500.text = AsyncMock(return_value="Internal Server Error")
+    mock_session.post.return_value.__aenter__.return_value = resp_500
+
+    with pytest.raises(RuntimeError):
+        await pool.broadcast_transaction("base64_tx_payload")
+
+    # Case 3: Invalid JSON type (returns string instead of dict)
+    resp_str = AsyncMock()
+    resp_str.status = 200
+    resp_str.text = AsyncMock(return_value="not_a_json_dict")
+    resp_str.json = AsyncMock(side_effect=ValueError("json err"))
+    mock_session.post.return_value.__aenter__.return_value = resp_str
+
+    with pytest.raises(RuntimeError):
+        await pool.broadcast_transaction("base64_tx_payload")
+
+    # Case 4: JSON contains "error"
+    resp_err = AsyncMock()
+    resp_err.status = 200
+    resp_err.text = AsyncMock(return_value=json.dumps({"error": "Blockhash expired"}))
+    resp_err.json = AsyncMock(return_value={"error": "Blockhash expired"})
+    mock_session.post.return_value.__aenter__.return_value = resp_err
+
+    with pytest.raises(RuntimeError):
+        await pool.broadcast_transaction("base64_tx_payload")
+
+    # Case 5: Invalid signature (short string)
+    resp_bad_sig = AsyncMock()
+    resp_bad_sig.status = 200
+    resp_bad_sig.text = AsyncMock(return_value=json.dumps({"result": "too_short"}))
+    resp_bad_sig.json = AsyncMock(return_value={"result": "too_short"})
+    mock_session.post.return_value.__aenter__.return_value = resp_bad_sig
+
+    with pytest.raises(RuntimeError):
+        await pool.broadcast_transaction("base64_tx_payload")
+
+    # Check health probes
+    resp_health_ok = AsyncMock()
+    resp_health_ok.status = 200
+    mock_session.post.return_value.__aenter__.return_value = resp_health_ok
+    assert await pool.check_endpoint_health(ep1) is True
+
+    resp_health_429 = AsyncMock()
+    resp_health_429.status = 429
+    mock_session.post.return_value.__aenter__.return_value = resp_health_429
+    assert await pool.check_endpoint_health(ep1) is False
+
+    resp_health_500 = AsyncMock()
+    resp_health_500.status = 500
+    mock_session.post.return_value.__aenter__.return_value = resp_health_500
+    assert await pool.check_endpoint_health(ep1) is False
+
+    await pool.close()
+
+
+async def test_rpc_pool_extended_coverage():
+    # RpcEndpoint metrics & score
+    ep = RpcEndpoint(url="http://solana.node.internal:8899/rpc")
+    assert ep.label == "solana.node.internal:8899"
+    assert ep.p50_latency_ms == 0.0
+    assert ep.mean_latency_ms == 0.0
+
+    # Add single sample
+    ep.record_success(0.05)
+    assert ep.p50_latency_ms == 50.0
+    assert ep.p95_latency_ms == 50.0
+    assert ep.p99_latency_ms == 50.0
+    assert ep.mean_latency_ms == 50.0
+
+    # Multiple samples
+    for lat in [0.01, 0.02, 0.03, 0.04, 0.10]:
+        ep.record_success(lat)
+    assert ep.p50_latency_ms > 0.0
+
+    # Score penalties
+    ep.state = CircuitState.DEGRADED
+    assert ep.get_score() > ep.p50_latency_ms
+
+    ep.state = CircuitState.HALF_OPEN
+    assert ep.get_score() > ep.p50_latency_ms
+
+    # Empty URL validation
+    pool = RpcConnectionPool()
+    with pytest.raises(ValueError, match="Endpoint URL cannot be empty"):
+        pool.add_endpoint("")
+
+    # Add duplicate endpoint
+    ep_dup = pool.add_endpoint(ep.url, label="Dup")
+    assert pool.endpoint_count == 1
+    assert pool.add_endpoint(ep) == ep_dup
+
+    # Remove endpoint
+    assert pool.remove_endpoint(ep.url) is True
+    assert pool.remove_endpoint("non_existent") is False
+    assert pool.endpoint_count == 0
+
+    # Requests on empty pool
+    with pytest.raises(
+        RuntimeError, match="No RPC endpoints configured in connection pool"
+    ):
+        await pool.request({"jsonrpc": "2.0", "method": "getVersion"})
+
+    with pytest.raises(RuntimeError, match="No RPC endpoints configured for broadcast"):
+        await pool.broadcast_transaction("tx_bytes")
+
+    # Request with JSON-RPC error containing 429
+    ep_active = pool.add_endpoint("https://rpc.active.solana.com", label="Active")
+    mock_session = MagicMock()
+    resp_rate_limit = AsyncMock()
+    resp_rate_limit.status = 200
+    resp_rate_limit.text = AsyncMock(
+        return_value=json.dumps(
+            {"error": {"code": 429, "message": "Too many requests"}}
+        )
+    )
+    resp_rate_limit.json = AsyncMock(
+        return_value={"error": {"code": 429, "message": "Too many requests"}}
+    )
+    mock_session.post.return_value.__aenter__.return_value = resp_rate_limit
+    pool._session = mock_session
+
+    with pytest.raises(RuntimeError, match="All RPC pool query attempts failed"):
+        await pool.request({"method": "getBalance"}, max_retries=1)
+
+    assert ep_active.state == CircuitState.OPEN
+
+    # Health check cycle
+    resp_ok = AsyncMock()
+    resp_ok.status = 200
+    mock_session.post.return_value.__aenter__.return_value = resp_ok
+    results = await pool.check_all_health()
+    assert results.get("https://rpc.active.solana.com") is True
+    assert ep_active.state == CircuitState.HEALTHY
+
+    telemetry = pool.get_telemetry()
+    assert telemetry["total_endpoints"] == 1
+    assert telemetry["healthy_endpoints"] == 1
+
+    await pool.close()
+
+
+async def test_rpc_pool_factories_and_error_edges():
+    # Health loop lifecycle
+    ep = RpcEndpoint(url="https://rpc.err.solana.com")
+    pool = RpcConnectionPool(
+        endpoints=[ep], config=RpcPoolConfig(health_check_interval_seconds=0.01)
+    )
+    await pool.start_health_loop()
+    await pool.start_health_loop()  # idempotent
+    await asyncio.sleep(0.05)
+    await pool.stop_health_loop()
+
+    # request() with status != 200 and text() exception
+    mock_session = MagicMock()
+    resp_err = AsyncMock()
+    resp_err.status = 502
+    resp_err.text = AsyncMock(side_effect=RuntimeError("Text read error"))
+    mock_session.post.return_value.__aenter__.return_value = resp_err
+    pool._session = mock_session
+
+    with pytest.raises(RuntimeError):
+        await pool.request({"method": "getVersion"}, max_retries=1)
+
+    assert ep.state in {CircuitState.DEGRADED, CircuitState.OPEN}
+
+    # broadcast_transaction with status 500 and text() exception
+    with pytest.raises(RuntimeError):
+        await pool.broadcast_transaction("tx_data")
+
+    # broadcast_transaction with status 200 but non-dict json
+    resp_200_non_dict = AsyncMock()
+    resp_200_non_dict.status = 200
+    resp_200_non_dict.json = AsyncMock(return_value="not_a_dict")
+    mock_session.post.return_value.__aenter__.return_value = resp_200_non_dict
+    with pytest.raises(RuntimeError):
+        await pool.broadcast_transaction("tx_data")
+
+    # check_endpoint_health with exception
+    mock_session.post.side_effect = RuntimeError("Socket dropped")
+    assert await pool.check_endpoint_health(ep) is False
+
+    await pool.close()
+
+
+async def test_multi_rpc_pool_branches():
+    from pumpfun_trading.infra.rpc_pool import (
+        CircuitState,
+        RpcConnectionPool,
+        RpcEndpoint,
+    )
+
+    ep = RpcEndpoint("https://mainnet.helius-rpc.com/?api-key=test")
+    assert ep.label == "mainnet.helius-rpc.com"
+
+    # Empty latency percentile
+    assert ep.p50_latency_ms == 0.0
+
+    # Record successes and compute percentiles
+    for val in [0.05, 0.08, 0.12, 0.15, 0.20]:
+        ep.record_success(val)
+    assert ep.p50_latency_ms > 0.0
+    assert ep.p95_latency_ms > 0.0
+    assert ep.p99_latency_ms > 0.0
+    assert ep.mean_latency_ms > 0.0
+    assert ep.get_score() > 0.0
+
+    # Record 429 rate limit error
+    ep.record_failure("429 Too Many Requests", cooldown_seconds=0.1)
+    assert ep.state == CircuitState.OPEN
+    assert ep.rate_limited_count == 1
+    assert ep.is_available() is False
+
+    # Half open probe transition
+    await asyncio.sleep(0.12)
+    assert ep.check_health_and_cooldown() == CircuitState.HALF_OPEN
+    assert ep.is_available() is True
+
+    # Failed probe in half open restores to open
+    ep.record_failure("timeout", cooldown_seconds=10.0)
+    assert ep.state == CircuitState.OPEN
+
+    # Pool initialization with endpoints
+    pool = RpcConnectionPool(
+        [
+            "https://rpc1.solana.com",
+            "https://rpc2.solana.com",
+        ]
+    )
+    assert pool.endpoint_count == 2
+    fastest = pool.get_best_endpoint()
+    assert fastest is not None
+
+    # Pool endpoints and healthy
+    assert len(pool.endpoints) == 2
+    assert len(pool.get_healthy_endpoints()) == 2
+
+    await pool.close()
+
+
+async def test_rpc_pool_request_and_broadcast_errors():
+    from pumpfun_trading.infra.rpc_pool import (
+        RpcConnectionPool,
+        RpcPoolConfig,
+    )
+
+    cfg = RpcPoolConfig(
+        circuit_breaker_threshold=1, circuit_breaker_cooldown_seconds=1.0
+    )
+    pool = RpcConnectionPool(
+        endpoints=["https://rpc1.solana.com", "https://rpc2.solana.com"],
+        config=cfg,
+    )
+
+    mock_resp_429 = AsyncMock()
+    mock_resp_429.status = 429
+    mock_resp_ok = AsyncMock()
+    mock_resp_ok.status = 200
+    mock_resp_ok.text = AsyncMock(return_value=json.dumps({"result": {"value": 12345}}))
+
+    mock_session = MagicMock()
+    mock_session.post.return_value.__aenter__.side_effect = [
+        mock_resp_429,
+        mock_resp_ok,
+    ]
+    pool._session = mock_session
+
+    res = await pool.request(
+        payload={"jsonrpc": "2.0", "id": 1, "method": "getSlot", "params": []},
+        max_retries=2,
+        timeout_seconds=1.0,
+    )
+    assert res == {"result": {"value": 12345}}
+
+    empty_pool = RpcConnectionPool([])
+    with pytest.raises(RuntimeError, match="No RPC endpoints configured"):
+        await empty_pool.broadcast_transaction("base64_tx")
+
+    valid_sig = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"
+    mock_broadcast_session = MagicMock()
+    mock_broadcast_resp = AsyncMock()
+    mock_broadcast_resp.status = 200
+    mock_broadcast_resp.text = AsyncMock(return_value=json.dumps({"result": valid_sig}))
+    mock_broadcast_session.post.return_value.__aenter__.return_value = (
+        mock_broadcast_resp
+    )
+    pool._session = mock_broadcast_session
+
+    sig = await pool.broadcast_transaction("base64_tx", max_concurrency=2)
+    assert sig == valid_sig
+
+    mock_health_resp = AsyncMock()
+    mock_health_resp.status = 200
+    mock_health_resp.text = AsyncMock(
+        return_value=json.dumps({"result": {"value": 10000}})
+    )
+    mock_broadcast_session.post.return_value.__aenter__.return_value = mock_health_resp
+    is_healthy = await pool.check_endpoint_health(pool.endpoints[0])
+    assert is_healthy is True
+
+    await pool.close()

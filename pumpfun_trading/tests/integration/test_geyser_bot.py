@@ -270,6 +270,7 @@ async def test_trade_event_update_branches(bot):
     bot._stop_requested = False
 
 
+@pytest.mark.regression("BUG-44")
 async def test_complete_event_update_branches(bot):
     # 1. Non-active token complete event ignored
     complete_update = CompleteEventUpdate(
@@ -326,6 +327,7 @@ async def test_complete_event_update_branches(bot):
     bot._stop_requested = False
 
 
+@pytest.mark.regression("BUG-44")
 async def test_bot_full_geyser_streaming_lifecycle(bot):
     update_new = BondingCurveStateUpdate(
         mint=SAMPLE_MINT,
@@ -526,6 +528,7 @@ async def test_websocket_stream_dispatch_when_stream_url_configured(tmp_path):
     await bot.close()
 
 
+@pytest.mark.regression("BUG-41")
 async def test_concurrent_sells_same_mint_send_one_order(bot):
     """BUG-41: overlapping exits for one mint are serialized; only one sell is sent."""
     bot.active_positions[SAMPLE_MINT] = {
@@ -554,6 +557,7 @@ async def test_concurrent_sells_same_mint_send_one_order(bot):
     assert SAMPLE_MINT not in bot.active_positions
 
 
+@pytest.mark.regression("BUG-39")
 async def test_health_loop_drains_exit_retry_queue(bot, monkeypatch):
     """BUG-39: the runtime health loop processes the exit retry queue."""
     drained = asyncio.Event()
@@ -571,6 +575,7 @@ async def test_health_loop_drains_exit_retry_queue(bot, monkeypatch):
     assert drained.is_set()
 
 
+@pytest.mark.regression("BUG-39")
 def test_exit_retry_queue_persisted_without_monotonic_times(bot):
     """BUG-39: the snapshot keeps the queue, minus process-local clock values."""
     bot._enqueue_exit_retry(SAMPLE_MINT, reason="sell_exec_failed")
@@ -579,6 +584,7 @@ def test_exit_retry_queue_persisted_without_monotonic_times(bot):
     assert "next_retry_at" not in entry
 
 
+@pytest.mark.regression("BUG-40")
 async def test_geyser_events_routed_once(bot):
     """BUG-40: start() consumes listen() only and does not also register callbacks."""
     bot.geyser_client.on_bonding_curve = AsyncMock()

@@ -24,7 +24,11 @@ from rich.console import Console
 from pumpfun_trading.cli import record as record_cli
 from pumpfun_trading.cli import record as record_module
 from pumpfun_trading.cli.bot import build_parser as build_bot_parser
-from pumpfun_trading.cli.record import build_record_parser, run_record_cli
+from pumpfun_trading.cli.record import (
+    build_record_parser,
+    run_record_cli,
+    ws_message_to_snapshot,
+)
 from pumpfun_trading.streams.geyser import BondingCurveStateUpdate, TradeEventUpdate
 from pumpfun_trading.tests.support.fakes import FakeClock
 
@@ -763,3 +767,18 @@ def test_record_cli_geyser_none_endpoint_inside_task(tmp_path: Path):
         run_record_cli(args)
 
     assert out.exists()
+
+
+@pytest.mark.regression("BUG-86")
+def test_ws_message_snapshot_has_no_fabricated_signal():
+    """BUG-86: recorded WS messages never invent buy signals."""
+    created = ws_message_to_snapshot(
+        {"mint": "M", "txType": "create", "marketCapSol": 30.0}, 5.0
+    )
+    assert created is not None
+    assert "signal" not in created and "is_buy" not in created
+    assert created["market_cap_sol"] == 30.0 and created["timestamp"] == 5.0
+    sell = ws_message_to_snapshot({"mint": "M", "txType": "sell"}, 5.0)
+    assert sell is not None and sell["is_buy"] is False
+    assert ws_message_to_snapshot({"txType": "buy"}, 5.0) is None
+    assert ws_message_to_snapshot("bad", 5.0) is None

@@ -19,8 +19,10 @@ from rich.console import Console
 
 import pumpfun_trading.cli as cli_init
 import pumpfun_trading.cli.main as cli_main_mod
+from pumpfun_trading.cli import bot as cli_bot
 from pumpfun_trading.cli import main as main_cli
 from pumpfun_trading.cli.main import _build_parser, main, run_ops_cli
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT
 
 
 @pytest.fixture
@@ -322,3 +324,172 @@ def test_cli_main_entrypoint(tmp_path):
         with patch("asyncio.run", side_effect=lambda coro: coro.close()):
             with patch("sys.argv", ["pumpfun", "--mode", "bot", "--dry-run"]):
                 cli_main_mod.main()
+
+
+def test_cli_all_modes_and_flags(tmp_path):
+    cfg_file = tmp_path / "bot_conf.json"
+    cfg_file.write_text(json.dumps({"buy_amount_sol": 0.05}), encoding="utf-8")
+
+    mock_client = MagicMock()
+    mock_client.get_latest_coins = AsyncMock(return_value=[{"name": "Coin1"}])
+    mock_client.get_coin = AsyncMock(
+        return_value={"name": "Coin1", "mint": SAMPLE_MINT}
+    )
+    mock_client.close = AsyncMock()
+
+    # 1. main mode == latest-coins with --raw
+    with patch("pumpfun_trading.cli.main.PumpFunApiClient", return_value=mock_client):
+        with patch("sys.argv", ["pumpfun", "--mode", "latest-coins", "--raw"]):
+            cli_main_mod.main()
+
+    # 2. main mode == market-info with --raw
+    with patch("pumpfun_trading.cli.main.PumpFunApiClient", return_value=mock_client):
+        with patch(
+            "sys.argv",
+            ["pumpfun", "--mode", "market-info", "--mint", SAMPLE_MINT, "--raw"],
+        ):
+            cli_main_mod.main()
+
+    # 3. main mode == bot with --config and --raw
+    mock_bot = MagicMock()
+    mock_bot.start = AsyncMock()
+    mock_bot.close = AsyncMock()
+    with patch("pumpfun_trading.cli.main.TradingBot.from_env", return_value=mock_bot):
+        with patch(
+            "sys.argv",
+            ["pumpfun", "--mode", "bot", "--config", str(cfg_file), "--dry-run"],
+        ):
+            cli_main_mod.main()
+
+    # 4. cli_bot main with --config
+    with patch("pumpfun_trading.cli.bot.TradingBot.from_env", return_value=mock_bot):
+        with patch("sys.argv", ["pumpfun-bot", "--config", str(cfg_file), "--dry-run"]):
+            cli_bot.main()
+
+
+def test_cli_runners_execution():
+    mock_client = MagicMock()
+    mock_client.get_latest_coins = AsyncMock(return_value=[{"name": "Coin1"}])
+    mock_client.get_coin = AsyncMock(
+        return_value={"name": "Coin1", "mint": SAMPLE_MINT}
+    )
+    mock_client.close = AsyncMock()
+
+    # 1. main mode == latest-coins
+    with patch("pumpfun_trading.cli.main.PumpFunApiClient", return_value=mock_client):
+        with patch("sys.argv", ["pumpfun", "--mode", "latest-coins"]):
+            cli_main_mod.main()
+
+    # 2. main mode == market-info
+    with patch("pumpfun_trading.cli.main.PumpFunApiClient", return_value=mock_client):
+        with patch(
+            "sys.argv", ["pumpfun", "--mode", "market-info", "--mint", SAMPLE_MINT]
+        ):
+            cli_main_mod.main()
+
+    # 3. cli_bot main
+    mock_bot = MagicMock()
+    mock_bot.start = AsyncMock()
+    mock_bot.close = AsyncMock()
+    with patch("pumpfun_trading.cli.bot.TradingBot.from_env", return_value=mock_bot):
+        with patch("sys.argv", ["pumpfun-bot", "--dry-run"]):
+            cli_bot.main()
+
+
+def test_cli_entrypoints_coverage():
+    from pumpfun_trading.cli.bot import main as bot_main_func
+    from pumpfun_trading.cli.main import main as cli_main_func
+
+    # Test main CLI with mode=bot catching KeyboardInterrupt
+    with (
+        patch(
+            "sys.argv",
+            ["pumpfun-cli", "--mode", "bot", "--dry-run", "--preset", "balanced"],
+        ),
+        patch("pumpfun_trading.bot.run.TradingBot.from_env") as mock_bot_factory,
+    ):
+        mock_bot_instance = MagicMock()
+        mock_bot_instance.start = AsyncMock(side_effect=KeyboardInterrupt)
+        mock_bot_instance.close = AsyncMock()
+        mock_bot_factory.return_value = mock_bot_instance
+
+        cli_main_func()
+        mock_bot_instance.close.assert_called_once()
+
+    # Test bot CLI main catching KeyboardInterrupt
+    with patch("pumpfun_trading.cli.bot.build_parser") as mock_parser_builder:
+        parser = MagicMock()
+        parser.parse_args.return_value = MagicMock(
+            config=None,
+            preset="balanced",
+            dry_run=True,
+            paper_trade=True,
+            headless=False,
+            buy_amount_sol=None,
+            take_profit=None,
+            stop_loss=None,
+            min_market_cap_sol=None,
+            min_balance_sol=None,
+        )
+        mock_parser_builder.return_value = parser
+        with patch("pumpfun_trading.bot.run.TradingBot.from_env") as mock_bot_factory:
+            mock_bot_instance = MagicMock()
+            mock_bot_instance.start = AsyncMock(side_effect=KeyboardInterrupt)
+            mock_bot_instance.close = AsyncMock()
+            mock_bot_factory.return_value = mock_bot_instance
+
+            bot_main_func()
+            mock_bot_instance.close.assert_called_once()
+
+
+def test_cli_dispatchers_and_subcommands(tmp_path: Path):
+    from pumpfun_trading.cli.bot import build_parser as build_bot_parser
+    from pumpfun_trading.cli.main import _build_parser as build_main_parser
+    from pumpfun_trading.cli.optimize import build_optimize_parser, run_optimize_cli
+    from pumpfun_trading.cli.record import build_record_parser, run_record_cli
+    from pumpfun_trading.cli.replay import build_replay_parser, run_replay_cli
+
+    # Bot parser
+    bot_p = build_bot_parser()
+    bot_args = bot_p.parse_args(["--dry-run", "--headless", "--preset", "aggressive"])
+    assert bot_args.preset == "aggressive"
+
+    # Main parser subcommands
+    main_p = build_main_parser()
+    assert main_p.parse_args(["--mode", "bot", "--dry-run"]).mode == "bot"
+    assert main_p.parse_args(["replay", "--path", "dummy.jsonl"]).command == "replay"
+    assert main_p.parse_args(["record", "--duration", "5"]).command == "record"
+    assert main_p.parse_args(["audit", "--path", "audit.jsonl"]).command == "audit"
+    assert main_p.parse_args(["events"]).command == "events"
+    assert main_p.parse_args(["optimize"]).command == "optimize"
+    assert main_p.parse_args(["arb"]).command == "arb"
+
+    # Optimize CLI run
+    replay_file = tmp_path / "opt_rep.jsonl"
+    event = {
+        "timestamp": 1000.0,
+        "mint": "m1",
+        "market_cap_sol": 30.0,
+        "is_buy": True,
+        "sol_amount": 0.1,
+    }
+    replay_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    opt_p = build_optimize_parser()
+    opt_args = opt_p.parse_args(
+        ["--dataset", str(replay_file), "--method", "random", "--iterations", "1"]
+    )
+    run_optimize_cli(opt_args)
+
+    # Replay CLI run
+    rep_p = build_replay_parser()
+    rep_args = rep_p.parse_args(["--path", str(replay_file), "--initial-cash", "50.0"])
+    run_replay_cli(rep_args)
+
+    # Record CLI synthetic generation
+    rec_out = tmp_path / "rec_out.jsonl"
+    rec_p = build_record_parser()
+    rec_args = rec_p.parse_args(
+        ["--synthetic", "multi_tier_take_profit", "--output", str(rec_out)]
+    )
+    run_record_cli(rec_args)
+    assert rec_out.exists()

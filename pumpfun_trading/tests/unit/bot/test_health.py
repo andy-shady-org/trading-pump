@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
+import pytest
+
 from pumpfun_trading.bot.health import (
     health_ok_for_trading,
     mark_health_check,
@@ -12,6 +14,7 @@ from pumpfun_trading.bot.health import (
 )
 
 
+@pytest.mark.regression("BUG-46")
 def test_health_checks():
     bot = MagicMock()
     bot._stop_requested = False

@@ -1,10 +1,17 @@
 """Unit tests for CopyTradeEngine, WalletRegistry, TrackedWallet, and sizing models."""
 
+import os
+
+import pytest
+
+from pumpfun_trading.config.env import get_env_list
 from pumpfun_trading.strategies.copy_trading import (
     CopyTradeEngine,
+    CopyTradeSignal,
     TrackedWallet,
     WalletRegistry,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT
 
 
 def test_tracked_wallet_creation_and_dict():
@@ -369,5 +376,110 @@ def test_copy_trade_strategy_presets_and_config():
             buy_attempts=0,
             mint_seen_recently=False,
         )
+        is False
+    )
+
+
+def test_copy_trading_and_env_missing_branches():
+    # Env list helper
+    os.environ["PUMPFUN_TEST_LIST"] = " mint1, mint2 , mint3 "
+
+    assert get_env_list("PUMPFUN_TEST_LIST") == ("mint1", "mint2", "mint3")
+    assert get_env_list("PUMPFUN_NONEXISTENT_ENV", default=("def",)) == ("def",)
+
+    # CopyTradeSignal to_dict
+    sig = CopyTradeSignal(
+        triggered=True,
+        mint=SAMPLE_MINT,
+        wallet_address="Wallet111",
+        wallet_label="Whale1",
+        is_buy=True,
+        sol_amount=1.5,
+        computed_copy_size_sol=0.05,
+        reason="whale_buy",
+    )
+    d = sig.to_dict()
+    assert d["triggered"] is True
+    assert d["wallet_label"] == "Whale1"
+
+    # WalletRegistry tests
+    reg = WalletRegistry()
+    with pytest.raises(ValueError, match="Wallet address cannot be empty"):
+        reg.register_wallet(TrackedWallet(address=""))
+
+    w1 = TrackedWallet(
+        address="W1", label="One", enabled=True, win_rate=0.75, risk_score=20.0
+    )
+    w2 = TrackedWallet(
+        address="W2", label="Two", enabled=False, win_rate=0.40, risk_score=50.0
+    )
+    reg.register_wallets([w1, w2])
+    assert reg.wallet_count == 2
+    assert len(reg.list_wallets(only_enabled=True)) == 1
+    assert len(reg.list_wallets(only_enabled=False)) == 2
+    assert reg.remove_wallet("W1") is True
+    assert reg.remove_wallet("W_NON") is False
+    assert reg.wallet_count == 1
+    reg.clear()
+    assert reg.wallet_count == 0
+
+    # CopyTradeEngine evaluations
+    engine = CopyTradeEngine(
+        base_buy_amount_sol=0.02,
+        max_position_size_sol=0.05,
+        sizing_mode="scaled",
+        min_wallet_win_rate=0.60,
+        max_wallet_risk_score=40.0,
+        mirror_sells=True,
+        enabled=True,
+    )
+    # Disabled wallet
+    w_dis = TrackedWallet(address="W_DIS", label="Dis", enabled=False)
+    assert (
+        engine.evaluate_copy_signal(w_dis, SAMPLE_MINT, 1.0, True).reason
+        == "wallet_disabled"
+    )
+
+    # Low win rate
+    w_low_wr = TrackedWallet(address="W_LOW", label="Low", enabled=True, win_rate=0.30)
+    assert (
+        "below_min"
+        in engine.evaluate_copy_signal(w_low_wr, SAMPLE_MINT, 1.0, True).reason
+    )
+
+    # High risk score
+    w_high_risk = TrackedWallet(
+        address="W_RISK", label="Risk", enabled=True, win_rate=0.80, risk_score=80.0
+    )
+    assert (
+        "exceeds_max"
+        in engine.evaluate_copy_signal(w_high_risk, SAMPLE_MINT, 1.0, True).reason
+    )
+
+    # Mirror sells disabled
+    engine_no_mirror = CopyTradeEngine(mirror_sells=False, enabled=True)
+    w_good = TrackedWallet(
+        address="W_GOOD", label="Good", enabled=True, win_rate=0.80, risk_score=20.0
+    )
+    assert (
+        engine_no_mirror.evaluate_copy_signal(w_good, SAMPLE_MINT, 1.0, False).reason
+        == "mirror_sells_disabled"
+    )
+
+    # Engine disabled
+    engine_dis = CopyTradeEngine(enabled=False)
+    assert (
+        engine_dis.evaluate_copy_signal(w_good, SAMPLE_MINT, 1.0, True).reason
+        == "copy_trading_disabled"
+    )
+
+    # calculate_copy_size with max_allocation <= 0
+    w_good.max_allocation_sol = 0.0
+    size = engine.calculate_copy_size(w_good, 1.0)
+    assert size <= 0.05
+
+    # record_and_evaluate on unregistered wallet
+    assert (
+        engine.record_and_evaluate("UNREGISTERED", SAMPLE_MINT, 1.0, True).triggered
         is False
     )

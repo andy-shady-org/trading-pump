@@ -299,6 +299,7 @@ def test_grid_search_empty_grid_raises(
         GridSearchOptimizer(space, seed=0).optimize([{}])
 
 
+@pytest.mark.regression("BUG-61")
 def test_trial_fitness_responds_to_live_exit_parameters() -> None:
     """BUG-61: exit-stack parameters change the simulated result."""
     snapshots = [
@@ -476,6 +477,7 @@ def test_parameter_space_operations():
     assert 1 <= mutated["i1"] <= 5
 
 
+@pytest.mark.regression("BUG-61")
 def test_build_default_strategy_search_space():
     cfg = make_config(dry_run=False, take_profit=1.8, max_active_positions=5)
     space = build_default_strategy_search_space(cfg)
@@ -577,6 +579,7 @@ def test_evaluate_fitness_function():
     assert fit_zero.objective_value < 0.0
 
 
+@pytest.mark.regression("BUG-60")
 def test_optimization_trial_and_result_export(tmp_path: Path):
     score = FitnessScore(
         objective_value=3.5,
@@ -774,134 +777,126 @@ def test_genetic_optimizer_elitism_and_selection():
     assert res.top_trials[0].composite_score >= res.top_trials[-1].composite_score
 
 
-def test_optimize_cli_execution(tmp_path: Path, capsys):
-    from rich.console import Console
+@pytest.mark.regression("BUG-61")
+def test_optimizer_parameter_space_and_params():
+    import random
 
-    from pumpfun_trading.cli.main import main as main_cli
-    from pumpfun_trading.cli.optimize import (
-        build_parser,
-        render_optimization_results,
-        run_optimize_cli,
+    rng = random.Random(42)
+    space = build_default_strategy_search_space()
+    assert len(space) > 0
+    # Only parameters replay simulates are searched (BUG-61).
+    assert "buy_amount_sol" not in space.names
+    assert "take_profit" in space.names
+
+    sampled = space.sample_configuration(rng)
+    assert isinstance(sampled, dict)
+    assert "take_profit" in sampled
+
+    # Parameter types
+    fp = FloatParam(name="float_p", min_val=0.1, max_val=1.0, step=0.1, default=0.5)
+    assert fp.clamp(1.5) == 1.0
+    assert fp.clamp(0.05) == 0.1
+    assert fp.sample(rng) >= 0.1
+    assert fp.perturb(0.5, rng) >= 0.1
+    assert len(fp.grid_values(5)) == 5
+
+    ip = IntParam(name="int_p", min_val=1, max_val=10, default=5)
+    assert ip.clamp(15) == 10
+    assert ip.sample(rng) >= 1
+    assert ip.perturb(5, rng) >= 1
+    assert len(ip.grid_values(5)) == 5
+
+    cp = CategoricalParam(name="cat_p", choices=("a", "b", "c"), default="a")
+    assert cp.sample(rng) in ("a", "b", "c")
+    assert cp.perturb("a", rng) in ("a", "b", "c")
+    assert len(cp.grid_values(2)) == 2
+
+    bp = BoolParam(name="bool_p", default=True)
+    assert bp.sample(rng) in (True, False)
+    assert bp.perturb(True, rng) in (True, False)
+    assert bp.clamp(1) is True
+    assert bp.grid_values() == [True, False]
+
+    # Space grid, mutate, crossover
+    custom_space = ParameterSpace([fp, ip, cp, bp])
+    grid = custom_space.generate_grid(max_combinations=5, steps_per_param=2)
+    assert len(grid) <= 5
+
+    mut = custom_space.mutate(sampled, mutation_rate=0.5, rng=rng)
+    assert isinstance(mut, dict)
+
+    child = custom_space.crossover(sampled, mut, rng=rng)
+    assert isinstance(child, dict)
+
+
+def test_optimizer_algorithms_and_validation(tmp_path: Path):
+    from pumpfun_trading.engines.optimizer import (
+        GeneticOptimizer,
+        GridSearchOptimizer,
+        OptimizationResult,
+        RandomSearchOptimizer,
+        WalkForwardValidator,
     )
 
-    # 1. Parser construction
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--dataset", "test.jsonl", "--method", "random", "--iterations", "10"]
-    )
-    assert args.dataset == "test.jsonl"
-    assert args.method == "random"
-    assert args.iterations == 10
-
-    # 2. Prepare sample dataset file
-    dataset_file = tmp_path / "replay_sample.jsonl"
-    records = [
+    snapshots = [
         {
-            "mint": "MINT1",
-            "price": 10.0,
             "timestamp": 1000.0,
-            "txType": "buy",
+            "mint": "m1",
+            "market_cap_sol": 30.0,
+            "is_buy": True,
+            "sol_amount": 0.1,
+        },
+        {
+            "timestamp": 1005.0,
+            "mint": "m1",
+            "market_cap_sol": 45.0,
+            "is_buy": True,
             "sol_amount": 0.5,
         },
         {
-            "mint": "MINT1",
-            "price": 18.0,
             "timestamp": 1010.0,
-            "txType": "buy",
-            "sol_amount": 0.5,
-        },
-        {
-            "mint": "MINT1",
-            "price": 25.0,
-            "timestamp": 1020.0,
-            "txType": "sell",
-            "sol_amount": 0.5,
+            "mint": "m1",
+            "market_cap_sol": 60.0,
+            "is_buy": False,
+            "sol_amount": 0.2,
         },
     ]
-    with open(dataset_file, "w", encoding="utf-8") as f:
-        for r in records:
-            f.write(json.dumps(r) + "\n")
 
-    export_file = tmp_path / "tuned_bot.json"
+    validator = WalkForwardValidator(train_split=0.66)
+    train, test = validator.split_snapshots(snapshots)
+    assert len(train) >= 1
+    assert len(test) >= 1
 
-    # 3. Run CLI with export and json flag
-    cli_args = parser.parse_args(
-        [
-            "--dataset",
-            str(dataset_file),
-            "--method",
-            "random",
-            "--iterations",
-            "3",
-            "--export-config",
-            str(export_file),
-            "--seed",
-            "42",
-            "--json",
-        ]
+    space = build_default_strategy_search_space()
+
+    # 1. Random search optimizer
+    rand_opt = RandomSearchOptimizer(
+        space, iterations=2, objective="composite", seed=42
     )
-    run_optimize_cli(cli_args)
-    assert export_file.exists()
+    rand_res = rand_opt.optimize(train, test)
+    assert isinstance(rand_res, OptimizationResult)
+    assert len(rand_res.all_trials) == 2
 
-    # 4. Run CLI table rendering mode
-    cli_table_args = parser.parse_args(
-        [
-            "--dataset",
-            str(dataset_file),
-            "--method",
-            "genetic",
-            "--population-size",
-            "4",
-            "--generations",
-            "2",
-            "--preset",
-            "balanced",
-            "--top-k",
-            "3",
-            "--seed",
-            "42",
-        ]
+    # 2. Grid search optimizer
+    grid_opt = GridSearchOptimizer(space, max_combinations=2, objective="sharpe")
+    grid_res = grid_opt.optimize(train)
+    assert isinstance(grid_res, OptimizationResult)
+
+    # 3. Genetic optimizer
+    gen_opt = GeneticOptimizer(
+        space,
+        population_size=4,
+        generations=1,
+        mutation_rate=0.2,
+        crossover_rate=0.8,
+        elite_count=1,
+        objective="composite",
+        seed=42,
     )
-    run_optimize_cli(cli_table_args)
+    gen_res = gen_opt.optimize(train)
+    assert isinstance(gen_res, OptimizationResult)
 
-    # 5. Missing dataset error handling
-    with pytest.raises(SystemExit):
-        run_optimize_cli(parser.parse_args([]))
-
-    with pytest.raises(SystemExit):
-        run_optimize_cli(
-            parser.parse_args(["--dataset", str(tmp_path / "nonexistent.jsonl")])
-        )
-
-    # 6. Render optimization results helper
-    mock_score = FitnessScore(1.0, 1.0, 1.0, 1.0, 0.1, 0.05, 0.5, 2.0, 2)
-    mock_trial = OptimizationTrial(
-        1, {"buy_amount_sol": 0.01}, mock_score, mock_score, 0.0, 0.1
-    )
-    mock_res = OptimizationResult(
-        mock_trial, [mock_trial], "composite", "random", 0.5, 1
-    )
-    test_console = Console(record=True, width=120)
-    render_optimization_results(mock_res, top_k=2, target_console=test_console)
-    output = test_console.export_text()
-    assert "Hyperparameter Optimization Summary" in output
-    assert "Top 1 Strategy Configurations" in output
-
-    # 7. Main CLI integration with subcommand
-    import sys
-
-    orig_argv = sys.argv
-    try:
-        sys.argv = [
-            "pumpfun",
-            "optimize",
-            "--dataset",
-            str(dataset_file),
-            "--method",
-            "random",
-            "--iterations",
-            "2",
-        ]
-        main_cli()
-    finally:
-        sys.argv = orig_argv
+    # Export to json
+    out_file = tmp_path / "opt_out.json"
+    gen_res.export_config_json(out_file)
+    assert out_file.exists()

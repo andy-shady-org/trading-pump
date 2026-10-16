@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -24,8 +26,10 @@ from pumpfun_trading.engines.replay import (
     render_replay_trades,
     run_replay,
 )
+from pumpfun_trading.ops.retention import compress_file_to_gzip
 from pumpfun_trading.sdk.costs import TOKEN_ACCOUNT_RENT_LAMPORTS
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.strategies.copy_trading import TrackedWallet
 from pumpfun_trading.tests.support.factories import make_config
 
 MINT_A = "MintA"
@@ -854,3 +858,206 @@ def test_replay_load_history_gzip_and_directory(tmp_path: Path):
     assert len(records) == 2
     assert records[0]["mint"] == "M1"
     assert records[1]["mint"] == "M2"
+
+
+@pytest.mark.regression("BUG-62")
+def test_profit_factor_uses_sol_pnl():
+    """BUG-62: a small high-% winner must not outweigh a large low-% loser."""
+    engine = PaperTradingEngine(initial_cash=100.0, max_positions=2, buy_fraction=0.5)
+    snaps = [
+        {"mint": "big", "price": 1.0, "buy_signal": True, "timestamp": 1},
+        {"mint": "big", "price": 0.8, "sell_signal": True, "timestamp": 2},
+        {"mint": "tiny", "price": 1.0, "buy_signal": True, "timestamp": 3},
+        {"mint": "tiny", "price": 1.0, "sell_signal": False, "timestamp": 4},
+    ]
+    summary = engine.run(snaps)
+    sells = [t for t in summary["trades"] if t["action"] == "sell"]
+    assert len(sells) == 1 and sells[0]["pnl"] < 0
+    assert summary["profit_factor"] == 0.0
+
+
+@pytest.mark.regression("BUG-83")
+def test_no_reentry_on_exit_snapshot():
+    """BUG-83: a snapshot that closes a position cannot reopen it."""
+    engine = PaperTradingEngine(initial_cash=10.0, take_profit=1.5)
+    snaps = [
+        {"mint": "m", "price": 1.0, "should_buy": True, "timestamp": 1},
+        {"mint": "m", "price": 2.0, "should_buy": True, "timestamp": 2},
+    ]
+    actions = [t["action"] for t in engine.run(snaps)["trades"]]
+    assert actions == ["buy", "sell"]
+
+
+@pytest.mark.regression("BUG-84")
+def test_timestamp_parsing_and_sorting(tmp_path):
+    """BUG-84: ISO, seconds and milliseconds sort on one clock."""
+    parse = PaperTradingEngine._parse_timestamp
+    assert parse("1970-01-01T00:00:10Z") == pytest.approx(10.0)
+    assert parse(1_700_000_000_000) == pytest.approx(1_700_000_000.0)
+    assert parse("1700000000") == pytest.approx(1_700_000_000.0)
+    assert parse("nonsense") is None and parse(None) is None and parse(True) is None
+    assert parse("") is None
+    assert parse("2024-01-01T00:00:00") == pytest.approx(1_704_067_200.0)
+
+    path = tmp_path / "replay.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                '{"mint": "c", "timestamp": "2024-01-01T00:00:30Z"}',
+                '{"mint": "a", "timestamp": 1704067200000}',
+                '{"mint": "b", "timestamp": 1704067210}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    records = PaperTradingEngine.load_history(path)
+    assert [r["mint"] for r in records] == ["a", "b", "c"]
+
+
+@pytest.mark.regression("BUG-63")
+def test_arbitrage_requires_capital_and_cooldown():
+    """BUG-63: arbitrage is cooled down per mint and needs input capital."""
+    engine = PaperTradingEngine(initial_cash=100.0, enable_cross_venue_arbitrage=True)
+    opp = SimpleNamespace(
+        is_profitable=True,
+        optimal_input_sol=1.0,
+        net_profit_sol=0.1,
+        direction="pump_to_raydium",
+        pump_spot_price=1.0,
+        raydium_spot_price=1.2,
+        spread_pct=0.2,
+        leg1_min_amount_out=1,
+        expected_output_sol=1.1,
+        estimated_fees_sol=0.0,
+        estimated_jito_tip_sol=0.0,
+    )
+    snaps = [
+        {"mint": "m", "price": 1.0, "raydium_sol_reserve": 50.0, "timestamp": t}
+        for t in (0, 10, 20, 61)
+    ]
+    with patch.object(engine.arb_monitor, "evaluate_spread", return_value=opp):
+        trades = engine.run(snaps)["trades"]
+    assert len([t for t in trades if t["action"] == "arbitrage"]) == 2
+
+    poor = PaperTradingEngine(initial_cash=0.5, enable_cross_venue_arbitrage=True)
+    with patch.object(poor.arb_monitor, "evaluate_spread", return_value=opp):
+        assert poor.run(snaps[:1])["trades"] == []
+
+
+@pytest.mark.regression("BUG-82")
+def test_pre_graduation_runs_without_arbitrage_flag():
+    """BUG-82: pre-grad harvesting is gated only by its own flag."""
+    config = SimpleNamespace(
+        enable_pre_graduation_harvesting=True,
+        pre_graduation_entry_progress_pct=0.5,
+        pre_graduation_max_entry_progress_pct=0.9,
+        pre_graduation_min_acceleration=0.0,
+        enable_momentum_signals=False,
+        enable_raydium_migration_sniping=False,
+        enable_copy_trading=False,
+        enable_cross_venue_arbitrage=False,
+        copy_trading_wallets=[],
+    )
+    engine = PaperTradingEngine(strategy_config=config)  # type: ignore[arg-type]
+    signal = SimpleNamespace(triggered=True)
+    with patch.object(
+        engine.graduation_engine,
+        "evaluate_pre_graduation_harvesting_entry",
+        return_value=signal,
+    ) as evaluate:
+        trades = engine.run([{"mint": "m", "price": 1.0, "timestamp": 1}])["trades"]
+    assert evaluate.called
+    assert trades[0]["reason"] == "pre_graduation_harvesting_entry"
+
+
+def test_replay_engine_multi_file_and_gzip_loading(tmp_path: Path):
+    # Create single jsonl, gzip jsonl, and directory with both
+    replay_dir = tmp_path / "replay_data"
+    replay_dir.mkdir()
+
+    f1 = replay_dir / "replay_1.jsonl"
+    f2 = replay_dir / "replay_2.jsonl"
+    event1 = {
+        "timestamp": 1000.0,
+        "mint": "m1",
+        "market_cap_sol": 30.0,
+        "is_buy": True,
+        "sol_amount": 0.1,
+    }
+    event2 = {
+        "timestamp": 1005.0,
+        "mint": "m1",
+        "market_cap_sol": 35.0,
+        "is_buy": True,
+        "sol_amount": 0.2,
+    }
+    f1.write_text(json.dumps(event1) + "\n", encoding="utf-8")
+    f2.write_text(json.dumps(event2) + "\n", encoding="utf-8")
+
+    # Compress f2 to f2.jsonl.gz
+    gz_f2 = compress_file_to_gzip(f2)
+    assert gz_f2.exists()
+
+    engine = PaperTradingEngine()
+    history = engine.load_history(replay_dir)
+    assert len(history) >= 2
+
+
+def test_paper_trading_all_features_simulation():
+
+    cfg = make_config(
+        dry_run=False,
+        enable_momentum_signals=True,
+        enable_copy_trading=True,
+        copy_trading_mirror_sells=True,
+        enable_raydium_migration_sniping=True,
+        enable_pre_graduation_harvesting=True,
+        enable_cross_venue_arbitrage=True,
+        enable_capital_rotation=True,
+        max_active_positions=1,
+    )
+    engine = PaperTradingEngine(strategy_config=cfg, initial_cash=10.0)
+
+    user_smart = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"
+    engine.copy_trade_engine.registry.register_wallet(
+        TrackedWallet(address=user_smart, label="Whale1")
+    )
+
+    now = time.time()
+    snapshots = [
+        {
+            "timestamp": now + 1,
+            "mint": "m_copy",
+            "market_cap_sol": 30.0,
+            "txType": "buy",
+            "sol_amount": 1.0,
+            "user": user_smart,
+        },
+        {
+            "timestamp": now + 2,
+            "mint": "m_copy",
+            "market_cap_sol": 32.0,
+            "txType": "sell",
+            "sol_amount": 1.0,
+            "user": user_smart,
+        },
+        {
+            "timestamp": now + 3,
+            "mint": "m_arb",
+            "market_cap_sol": 30.0,
+            "virtual_sol_reserves": 30.0,
+            "virtual_token_reserves": 1_000_000_000_000_000,
+            "raydium_sol_reserve": 80.0,
+            "raydium_token_reserve": 150_000_000_000_000,
+        },
+        {
+            "timestamp": now + 4,
+            "mint": "m_grad",
+            "market_cap_sol": 85.0,
+            "real_sol_reserves": 85.0,
+            "complete": True,
+        },
+    ]
+
+    res = engine.run(snapshots)
+    assert res is not None

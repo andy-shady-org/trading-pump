@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -335,6 +336,7 @@ class _PendingThread:
         self.joined = True
 
 
+@pytest.mark.regression("BUG-97")
 def test_sink_rotate_now_uncompressed_backup_keeps_plain_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -354,6 +356,7 @@ def test_sink_rotate_now_uncompressed_backup_keeps_plain_name(
     assert (tmp_path / "b.log.1").read_text() == "current\n"
 
 
+@pytest.mark.regression("BUG-97")
 def test_sink_rotate_now_waits_for_previous_compression(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -746,3 +749,124 @@ async def test_log_retention_manager_async_pruning():
         pruned = await manager.prune_expired_async(now=now)
         assert len(pruned) == 1
         assert not f1.exists()
+
+
+@pytest.mark.regression("BUG-64")
+def test_prune_only_touches_rotated_logs_and_enforces_max_files(tmp_path):
+    """BUG-64: never delete live sinks or non-log files; honor max_files."""
+    old = time.time() - 100 * 86400
+    keep = ["events.jsonl", "bot.log", ".env", "config.json", "main.py"]
+    for name in keep:
+        (tmp_path / name).write_text("x" * 100)
+        os.utime(tmp_path / name, (old, old))
+    for i in range(1, 5):
+        archive = tmp_path / f"bot.log.{i}"
+        archive.write_text("y")
+        os.utime(archive, (time.time() - i * 10, time.time() - i * 10))
+
+    manager = LogRetentionManager(
+        tmp_path,
+        policy=RetentionPolicy(max_age_days=30, max_files=2, total_max_bytes=1),
+    )
+    manager.prune_expired()
+    remaining = set(os.listdir(tmp_path))
+    assert set(keep) <= remaining
+    # max_files keeps the newest 2 archives, then the byte quota drops the older one.
+    assert sorted(n for n in remaining if n.startswith("bot.log.")) == ["bot.log.1"]
+
+    for i in range(1, 5):
+        (tmp_path / f"events.jsonl.{i}.gz").write_text("z")
+        stamp = time.time() - i * 10
+        os.utime(tmp_path / f"events.jsonl.{i}.gz", (stamp, stamp))
+    LogRetentionManager(tmp_path, policy=RetentionPolicy(max_files=2)).prune_expired()
+    assert sorted(n for n in os.listdir(tmp_path) if n.endswith(".gz")) == [
+        "events.jsonl.1.gz",
+        "events.jsonl.2.gz",
+    ]
+
+
+async def test_rotated_file_sink_and_manager_deep_coverage(tmp_path: Path):
+    log_path = tmp_path / "test_rotated.jsonl"
+    policy = RetentionPolicy(
+        max_bytes=100,
+        max_files=3,
+        max_age_days=1,
+        total_max_bytes=300,
+        compress_archives=False,
+    )
+    sink = RotatedFileSink(log_path, policy=policy)
+
+    # Write multiple lines to trigger rotation and file shifts
+    for i in range(15):
+        await sink.write_batch_async([f"line_{i}_" + "x" * 25 + "\n"])
+
+    sink.flush()
+    sink.close()
+
+    # Manager pruning by age and quota
+    mgr = LogRetentionManager(tmp_path, policy=policy)
+    stats = mgr.get_storage_stats()
+    assert stats["file_count"] > 0
+
+    # Prune expired with future timestamp
+    pruned = await mgr.prune_expired_async(now=time.time() + 200_000)
+    assert len(pruned) >= 0
+
+    # Non-existent directory stats
+    mgr_empty = LogRetentionManager(tmp_path / "non_existent", policy=policy)
+    assert mgr_empty.get_storage_stats()["file_count"] == 0
+    assert mgr_empty.compress_uncompressed_archives() == []
+    assert mgr_empty.prune_expired() == []
+
+
+def test_retention_sink_and_manager_edge_branches(tmp_path: Path):
+    policy = RetentionPolicy(max_bytes=50, max_files=2, compress_archives=False)
+    base_file = tmp_path / "edge_ret.log"
+    sink = RotatedFileSink(base_file, policy=policy)
+
+    dest1 = tmp_path / "edge_ret.log.1"
+    dest1.write_text("old dest1", encoding="utf-8")
+    dest1_gz = tmp_path / "edge_ret.log.1.gz"
+    dest1_gz.write_text("old dest1 gz", encoding="utf-8")
+
+    sink.write_batch(["line 1\n", "line 2\n" * 10])
+    sink.rotate_now()
+
+    with patch.object(Path, "replace", side_effect=OSError("replace fail")):
+        sink.rotate_now()
+
+    sink._file = MagicMock()
+    sink._file.flush.side_effect = OSError("flush error")
+    sink._file.close.side_effect = OSError("close error")
+    sink.flush()
+    sink.close()
+
+    mgr = LogRetentionManager(
+        tmp_path, policy=RetentionPolicy(max_age_days=1, total_max_bytes=10)
+    )
+    f_prune = tmp_path / "prune_me.log"
+    f_prune.write_text("content", encoding="utf-8")
+    with patch.object(Path, "unlink", side_effect=OSError("unlink error")):
+        mgr.prune_expired()
+
+    stats_dir = tmp_path / "stats_dir"
+    stats_dir.mkdir()
+    (stats_dir / "test.log").write_text("hello", encoding="utf-8")
+    mgr_stats = LogRetentionManager(stats_dir, policy=policy, file_patterns=("*.log",))
+    # Only fake the size of the log file: on Python < 3.14 ``Path.glob`` itself
+    # calls ``stat()`` on the directory, so a blanket mock breaks the glob.
+    real_stat = Path.stat
+    huge = 5 * 1024 * 1024 * 1024 * 1024
+
+    def _fake_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        st = real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
+        if self.name != "test.log":
+            return st
+        fields = list(st[:10])
+        fields[6] = huge  # st_size
+        return os.stat_result(fields)
+
+    with patch.object(Path, "stat", _fake_stat):
+        stats = mgr_stats.get_storage_stats()
+    assert stats["total_bytes"] == huge
+    assert stats["total_human"] == "5.00 TB"

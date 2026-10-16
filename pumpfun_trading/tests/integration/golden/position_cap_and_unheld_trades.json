@@ -1,0 +1,53 @@
+{
+  "ledger": [
+    {
+      "action": "buy",
+      "cash_flow_sol": -0.01162384,
+      "cost_sol": 0.01,
+      "costs_sol": 0.00162384,
+      "gross_pnl_sol": 0.0,
+      "mint": "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump",
+      "net_pnl_sol": -0.00162384,
+      "proceeds_sol": 0.0,
+      "reason": "entry",
+      "rent_sol": 0.00151384,
+      "strategy": "balanced"
+    },
+    {
+      "action": "buy",
+      "cash_flow_sol": -0.01162384,
+      "cost_sol": 0.01,
+      "costs_sol": 0.00162384,
+      "gross_pnl_sol": 0.0,
+      "mint": "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump",
+      "net_pnl_sol": -0.00162384,
+      "proceeds_sol": 0.0,
+      "reason": "entry",
+      "rent_sol": 0.00151384,
+      "strategy": "balanced"
+    },
+    {
+      "action": "sell",
+      "cash_flow_sol": 0.008108039219,
+      "cost_sol": 0.01,
+      "costs_sol": -0.00140384,
+      "gross_pnl_sol": -0.003295800781,
+      "mint": "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump",
+      "net_pnl_sol": -0.001891960781,
+      "proceeds_sol": 0.006704199219,
+      "reason": "stop_loss_hit (68.75% <= 85.00%)",
+      "rent_sol": -0.00151384,
+      "strategy": "balanced"
+    }
+  ],
+  "positions": {
+    "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump": {
+      "cost_sol": 0.01,
+      "entry_market_cap": 30.0,
+      "remaining_token_amount": 353134762944,
+      "tier_1_executed": false
+    }
+  },
+  "state": "monitoring",
+  "wallet_balance_sol": 0.184860359219
+}

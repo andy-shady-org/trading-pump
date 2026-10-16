@@ -365,6 +365,7 @@ def test_exits_and_decision_additional_branches(tmp_path):
     assert loaded_cfg.strategy_preset == "conservative"
 
 
+@pytest.mark.regression("BUG-16")
 def test_stagnant_curve_timeout_exit():
     """BUG-16: Stagnant bonding curves at 27.96 SOL with no price change must exit after timeout."""
     cfg = make_config(
@@ -416,6 +417,7 @@ def test_stagnant_curve_timeout_exit():
     )
 
 
+@pytest.mark.regression("BUG-16")
 def test_stagnant_curve_price_movement_resets_timer():
     """BUG-16: Meaningful price changes reset last_price_change_at and prevent premature stagnation exits."""
     cfg = make_config(
@@ -455,6 +457,7 @@ def test_stagnant_curve_price_movement_resets_timer():
     assert d_stagnant.exit_type == "stagnant_timeout"
 
 
+@pytest.mark.regression("BUG-16")
 def test_max_hold_duration_timeout_exit():
     """BUG-16: Positions exceeding max_hold_time_seconds must exit regardless of minor price movement."""
     cfg = make_config(
@@ -527,6 +530,7 @@ def _tiered_config() -> TradingBotConfig:
     )
 
 
+@pytest.mark.regression("BUG-42")
 def test_tier_1_latched_pending_until_fill():
     # BUG-42: a second evaluation before the fill must not re-issue tier 1
     config = _tiered_config()
@@ -556,6 +560,7 @@ def test_tier_pending_survives_dict_roundtrip_and_strategy_writes_back():
     )
 
 
+@pytest.mark.regression("BUG-76")
 def test_zero_entry_market_cap_adopts_current_as_baseline():
     # BUG-76: stop-loss must be able to fire even if entry MC was unknown
     config = _tiered_config()
@@ -567,6 +572,7 @@ def test_zero_entry_market_cap_adopts_current_as_baseline():
     assert stop.exit_type == "stop_loss"
 
 
+@pytest.mark.regression("BUG-65")
 def test_zero_remaining_is_not_replaced_by_phantom_balance():
     # BUG-65: remaining 0 stays 0 and produces no sell
     restored = PositionExitState.from_dict(
@@ -581,6 +587,7 @@ def test_zero_remaining_is_not_replaced_by_phantom_balance():
     assert dec.action == ExitAction.HOLD and dec.reason == "no_remaining_balance"
 
 
+@pytest.mark.regression("BUG-43")
 def test_pre_graduation_staged_take_profit_tranches():
     config = make_config(
         dry_run=False,
@@ -672,6 +679,7 @@ def _fresh_state() -> PositionExitState:
     )
 
 
+@pytest.mark.regression("BUG-38")
 @pytest.mark.parametrize("progress", [0.92, 0.97, 1.0])
 def test_pre_graduation_low_percent_progress_does_not_fire(progress):
     # BUG-38: 0.92-1.0 is ~1% curve progress, not 92-100%
@@ -684,6 +692,7 @@ def test_pre_graduation_low_percent_progress_does_not_fire(progress):
     assert dec.action == ExitAction.HOLD
 
 
+@pytest.mark.regression("BUG-42")
 def test_pre_graduation_tranche_pending_until_fill_then_retries():
     # BUG-42: a tranche emitted but never filled is not lost forever
     config = _harvest_config()

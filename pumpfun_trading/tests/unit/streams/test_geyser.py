@@ -22,6 +22,7 @@ from pumpfun_trading.streams.geyser import (
     GeyserStreamMetrics,
     GeyserSubscriptionFilter,
     GeyserTransactionUpdate,
+    GeyserTransportUnavailableError,
     TradeEventUpdate,
     TradeInstructionBinaryParser,
     YellowstoneGeyserClient,
@@ -312,6 +313,7 @@ async def _idle_transport(client_ref):
         await asyncio.sleep(0.02)
 
 
+@pytest.mark.regression("BUG-55")
 async def test_geyser_client_lifecycle_and_dispatch():
     client = YellowstoneGeyserClient(
         endpoint="mock.geyser.rpc:443",
@@ -528,3 +530,21 @@ async def test_geyser_client_duplicate_subscriptions_and_malformed_curve():
         slot=500,
     )
     assert result is None
+
+
+MINT = "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump"
+
+
+@pytest.mark.regression("BUG-55")
+async def test_geyser_without_transport_fails_fast():
+    """BUG-55: no transport means a clear error, never a fake CONNECTED state."""
+    client = YellowstoneGeyserClient(endpoint="grpc.example:443")
+    assert client.has_transport is False
+    with pytest.raises(GeyserTransportUnavailableError):
+        await client.start()
+    assert client.state == GeyserConnectionState.DISCONNECTED
+
+    client.subscribe_bonding_curves([MINT])
+    curve = client.bonding_curve_address(MINT)
+    assert curve != MINT
+    assert client._curve_to_mint[curve] == MINT

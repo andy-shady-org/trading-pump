@@ -64,6 +64,7 @@ def test_parse_buy_splits_swap_fee_tip_and_rent() -> None:
     assert costs.wallet_delta_lamports == -(swap + fee + tip + rent)
 
 
+@pytest.mark.regression("BUG-96")
 def test_parse_closing_sell_refunds_rent() -> None:
     """BUG-96: closing the token account returns its rent to the wallet."""
     fee, tip, proceeds = 5_000, 50_000, 12_000_000

@@ -104,6 +104,7 @@ def test_sell_sol_out_and_constant_product_invariant():
     assert calculate_sell_sol_out(dy, y, 0) == 0
 
 
+@pytest.mark.regression("BUG-13")
 def test_buy_price_impact_positive():
     """BUG-13: Buying tokens must yield positive price impact (P_1 > P_0)."""
     x = 30.0  # 30 SOL
@@ -134,6 +135,7 @@ def test_buy_price_impact_positive():
     assert calculate_buy_price_impact(0.3, x, 0) == 0.0
 
 
+@pytest.mark.regression("BUG-13")
 def test_sell_price_impact_negative():
     """BUG-13: Selling tokens must yield negative price impact (P_1 < P_0)."""
     x = 30.0  # 30 SOL
@@ -213,3 +215,16 @@ def test_execution_client_static_method_bindings():
         10_000_000_000_000, 1_073_000_000_000_000, 30_000_000_000
     )
     assert sol_out > 0
+
+
+@pytest.mark.regression("BUG-66")
+def test_curve_quotes_apply_fee_bps():
+    v_sol, v_tok = 30_000_000_000, 1_073_000_000_000_000
+    assert calculate_buy_tokens_out(
+        10_000_000, v_sol, v_tok, fee_bps=125
+    ) < calculate_buy_tokens_out(10_000_000, v_sol, v_tok)
+    gross = calculate_sell_sol_out(1_000_000_000, v_tok, v_sol)
+    assert (
+        calculate_sell_sol_out(1_000_000_000, v_tok, v_sol, fee_bps=125)
+        == (gross * 9_875) // 10_000
+    )

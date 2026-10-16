@@ -13,8 +13,7 @@ from pumpfun_trading.streams.geyser import (
     CompleteEventUpdate,
 )
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
-from pumpfun_trading.tests.support.factories import make_config
-from pumpfun_trading.tests.support.factories import make_pool_keys
+from pumpfun_trading.tests.support.factories import make_config, make_pool_keys
 
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 GRAD_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
@@ -43,6 +42,7 @@ def bot(tmp_path):
     )
 
 
+@pytest.mark.regression("BUG-44")
 async def test_bonding_curve_reserve_tracking_and_complete_exit(bot):
     # Receive bonding curve reserve updates
     update_1 = BondingCurveStateUpdate(

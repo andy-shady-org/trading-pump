@@ -9,6 +9,8 @@ from unittest.mock import patch
 import pytest
 
 import pumpfun_trading.cli.replay as cli_replay
+from pumpfun_trading.cli.main import _build_parser
+from pumpfun_trading.cli.replay import build_replay_parser, run_replay_cli
 
 
 def test_cli_replay_subcommand(tmp_path):
@@ -92,3 +94,31 @@ def test_cli_replay_subcommand(tmp_path):
         ],
     ):
         cli_replay.main()
+
+
+@pytest.mark.regression("BUG-85")
+def test_replay_mode_flags_resolve(tmp_path):
+    """BUG-85: `--replay-mode` works and does not collide with the parent `--mode`."""
+    assert (
+        build_replay_parser()
+        .parse_args(["--path", "x", "--replay-mode", "summary"])
+        .replay_output
+        == "summary"
+    )
+    args = _build_parser().parse_args(["replay", "--path", "x", "--mode", "trades"])
+    assert args.replay_output == "trades"
+
+    dataset = tmp_path / "d.json"
+    dataset.write_text("[]", encoding="utf-8")
+    with patch("pumpfun_trading.cli.replay.render_replay_summary") as summary:
+        run_replay_cli(
+            argparse.Namespace(
+                path=str(dataset),
+                replay_path=None,
+                mode="replay",
+                replay_mode="summary",
+                config=None,
+                preset=None,
+            )
+        )
+    assert summary.called

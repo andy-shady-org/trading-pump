@@ -6,16 +6,19 @@ import argparse
 import io
 import json
 import tempfile
+import time
 import types
 from io import StringIO
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from rich.console import Console
 
 from pumpfun_trading.cli import events as events_cli
 from pumpfun_trading.cli.events import (
+    build_events_parser,
     calculate_latency_stats,
     filter_diagnostic_events,
     load_diagnostic_events,
@@ -23,6 +26,7 @@ from pumpfun_trading.cli.events import (
     render_latency_table,
     run_events_cli,
 )
+from pumpfun_trading.cli.events import main as events_main
 from pumpfun_trading.ops.events import DiagnosticEvent, EventCategory, EventSeverity
 
 
@@ -325,3 +329,107 @@ def test_cli_execution_modes() -> None:
             tail=False,
         )
         run_events_cli(args_stats)
+
+
+@pytest.mark.regression("BUG-89")
+def test_events_tail_waits_for_file(tmp_path):
+    """BUG-89: tail polls for the file instead of failing on open."""
+    from pumpfun_trading.cli import events as events_cli
+
+    target = tmp_path / "events.jsonl"
+    calls = {"n": 0}
+
+    def fake_sleep(_):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            target.write_text("")
+        if calls["n"] > 3:
+            raise KeyboardInterrupt
+
+    args = events_cli.build_events_parser().parse_args(
+        ["--path", str(target), "--tail"]
+    )
+    with patch.object(events_cli.time, "sleep", side_effect=fake_sleep):
+        events_cli.run_events_cli(args)
+    assert target.exists() and calls["n"] > 3
+
+
+def test_events_cli_table_render_and_stats(tmp_path: Path):
+    log_file = tmp_path / "cli_events.jsonl"
+    events = [
+        DiagnosticEvent(
+            timestamp_ns=time.time_ns(),
+            category=EventCategory.SCREENING,
+            severity=EventSeverity.INFO,
+            event_name="token_screened",
+            mint="mint123",
+            mint_name="Token1",
+            latency_ms=0.5,
+        ),
+        DiagnosticEvent(
+            timestamp_ns=time.time_ns(),
+            category=EventCategory.RISK,
+            severity=EventSeverity.ERROR,
+            event_name="circuit_breaker",
+            error_message="drawdown exceeded",
+            latency_ms=1.2,
+        ),
+    ]
+    log_file.write_text(
+        "\n".join(json.dumps(e.to_dict()) for e in events) + "\n",
+        encoding="utf-8",
+    )
+
+    render_events_table(events)
+    stats = calculate_latency_stats(events)
+    assert stats["overall"]["count"] == 2
+    render_latency_table(stats)
+
+    # Run CLI with stats and export
+    parser = build_events_parser()
+    args_stats = parser.parse_args(
+        ["--path", str(log_file), "--latency-stats", "--json"]
+    )
+    run_events_cli(args_stats)
+
+    export_path = tmp_path / "exported_events.json"
+    args_export = parser.parse_args(
+        ["--path", str(log_file), "--export", str(export_path)]
+    )
+    run_events_cli(args_export)
+    assert export_path.exists()
+
+    args_json = parser.parse_args(["--path", str(log_file), "--json"])
+    run_events_cli(args_json)
+
+    args_table = parser.parse_args(["--path", str(log_file)])
+    run_events_cli(args_table)
+
+
+def test_events_cli_main_wrapper(tmp_path: Path):
+    log_file = tmp_path / "main_events.jsonl"
+    log_file.write_text(json.dumps(DiagnosticEvent(event_name="test").to_dict()) + "\n")
+    with patch("sys.argv", ["pumpfun-events", "--path", str(log_file), "--json"]):
+        events_main()
+
+
+def test_events_cli_tail_and_empty_views(tmp_path: Path):
+    empty_file = tmp_path / "empty_events.jsonl"
+    empty_file.write_text("", encoding="utf-8")
+
+    # Render empty events table
+    render_events_table([])
+
+    # Render empty latency table
+    render_latency_table({})
+    render_latency_table({"overall": {}})
+
+    # Test tail with KeyboardInterrupt
+    parser = build_events_parser()
+    args_tail = parser.parse_args(["--path", str(empty_file), "--tail"])
+    with patch("time.sleep", side_effect=KeyboardInterrupt):
+        run_events_cli(args_tail)
+
+    # Test tail with exception in open
+    with patch("builtins.open", side_effect=OSError("Read error")):
+        run_events_cli(args_tail)

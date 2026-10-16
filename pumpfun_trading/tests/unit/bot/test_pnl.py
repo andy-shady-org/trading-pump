@@ -81,6 +81,7 @@ def test_build_pnl_fields_for_buy_and_sell() -> None:
     assert cost_fields(None)["costs_sol"] == 0.0
 
 
+@pytest.mark.regression("BUG-99")
 def test_build_pnl_fields_arbitrage_is_a_net_round_trip() -> None:
     """BUG-99: an arbitrage bundle books gross spread minus fees and tip."""
     costs = model_transaction_costs(

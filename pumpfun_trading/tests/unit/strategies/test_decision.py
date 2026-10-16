@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 from pumpfun_trading.strategies import TradingStrategy
 from pumpfun_trading.strategies.decision import PositionEvEvaluator
+from pumpfun_trading.strategies.momentum import MomentumSignal
 from pumpfun_trading.strategies.presets import resolve_strategy_config
 from pumpfun_trading.tests.support.factories import make_config
 
@@ -221,3 +223,70 @@ def test_strategy_momentum_decision_pipeline():
     summary = strategy.summary()
     assert summary["enable_momentum_signals"] is True
     assert summary["momentum_min_z_score"] == 2.5
+
+
+def test_position_ev_evaluator_and_candidate_ranking():
+    cfg = make_config(
+        dry_run=False,
+        stagnant_timeout_seconds=45.0,
+        min_hold_before_displacement_seconds=30.0,
+    )
+    evaluator = PositionEvEvaluator(config=cfg, min_hold_seconds=30.0)
+
+    # Position evaluation with fallback metrics
+    pos1 = {
+        "mint": "mint_a",
+        "entry_time": time.time() - 40.0,
+        "entry_market_cap": 30.0,
+        "current_market_cap": 30.0,
+        "last_price_change_at": time.time() - 35.0,
+    }
+    score1 = evaluator.evaluate_position(pos1)
+    assert score1.is_displaceable is True
+    assert score1.stagnation_factor > 0.5
+
+    # Position with momentum signal
+    from pumpfun_trading.strategies.momentum import WindowMetrics
+
+    metrics = WindowMetrics(
+        window_seconds=30,
+        trade_count=10,
+        buy_count=8,
+        sell_count=2,
+        buy_volume_sol=5.0,
+        sell_volume_sol=1.0,
+        buy_sell_ratio=5.0,
+        net_sol_inflow=4.0,
+        unique_buyers=5,
+        unique_sellers=2,
+        trade_velocity=0.33,
+    )
+    sig = MomentumSignal(
+        triggered=True,
+        mint="mint_b",
+        z_score=3.5,
+        buy_sell_ratio=5.0,
+        net_sol_inflow=4.0,
+        unique_buyers=5,
+        trade_velocity=0.33,
+        metrics=metrics,
+    )
+    pos2 = {
+        "mint": "mint_b",
+        "entry_timestamp": time.time() - 10.0,
+        "entry_market_cap": 30.0,
+        "current_market_cap": 45.0,
+    }
+    score2 = evaluator.evaluate_position(pos2, momentum_signal=sig)
+    assert score2.is_displaceable is False
+
+    # Candidate evaluation with and without momentum signal
+    cand_ev_with_sig = evaluator.evaluate_candidate("mint_cand", momentum_signal=sig)
+    cand_ev_no_sig = evaluator.evaluate_candidate("mint_cand", momentum_signal=None)
+    assert cand_ev_with_sig > 0.0
+    assert cand_ev_no_sig > 0.0
+
+    # Rank positions
+    ranked = evaluator.rank_positions_by_ev({"mint_a": pos1, "mint_b": pos2})
+    assert len(ranked) == 2
+    assert ranked[0].mint == "mint_a"  # Lower EV first

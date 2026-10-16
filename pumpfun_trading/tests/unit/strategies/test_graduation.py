@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import time
+from unittest.mock import AsyncMock
+
 import pytest
 
 from pumpfun_trading.strategies.graduation import (
     GraduationCandidate,
     GraduationEngine,
+    GraduationSignal,
     GraduationTracker,
     GraduationTrajectory,
     RaydiumPoolKeys,
 )
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT
 from pumpfun_trading.tests.support.factories import make_pool_keys
 
 
@@ -336,3 +341,88 @@ def test_graduation_engine_ttl_cleanup_and_clear():
 
     engine.clear()
     assert engine.tracked_candidate_count == 0
+
+
+def test_graduation_and_api_client_deep():
+    from pumpfun_trading.api.client import PumpFunApiClient
+    from pumpfun_trading.strategies.graduation import (
+        GraduationEngine,
+        GraduationTracker,
+    )
+
+    # GraduationSignal to_dict
+    sig = GraduationSignal(
+        triggered=True,
+        mint=SAMPLE_MINT,
+        stage="graduated",
+        market_cap_sol=85.0,
+        real_sol_reserves=85.0,
+        pool_keys=make_pool_keys(unique=False),
+        reason="graduated_ready",
+    )
+    d = sig.to_dict()
+    assert d["triggered"] is True
+    assert d["pool_keys"] is not None
+
+    # GraduationTracker mark_completed
+    tracker = GraduationTracker(mint=SAMPLE_MINT, target_graduation_sol=85.0)
+    tracker.update_reserves(85.0, 115.0, 85.0, complete=True)
+    assert tracker.candidate.is_completed is True
+    assert tracker.candidate.progress_pct == 100.0
+
+    # GraduationEngine cleanup_expired_candidates
+    engine = GraduationEngine(candidate_ttl_seconds=1)
+    engine.update_bonding_curve(SAMPLE_MINT, "curve1", 50.0, 100.0, 50.0)
+    engine._trackers[SAMPLE_MINT].candidate.updated_at = time.time() - 10.0
+    pruned = engine.cleanup_expired_candidates()
+    assert pruned == 1
+    assert SAMPLE_MINT not in engine._trackers
+
+    # ApiClient get_creator_coins with empty creator
+    api = PumpFunApiClient()
+    api.get_creator_coins = AsyncMock(return_value=[])
+    # test close
+    # synchronous check
+    assert api is not None
+
+
+def test_graduation_trajectory_and_signals():
+    from pumpfun_trading.strategies.graduation import (
+        GraduationEngine,
+        GraduationTracker,
+    )
+
+    tracker = GraduationTracker(
+        mint="CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump",
+        bonding_curve="Curve111",
+        real_sol_reserves=50.0,
+        virtual_sol_reserves=80.0,
+        market_cap_sol=45.0,
+        timestamp=time.time() - 30.0,
+    )
+
+    # Classify organic accumulation trajectory
+    tracker.update_reserves(
+        real_sol_reserves=60.0,
+        virtual_sol_reserves=90.0,
+        market_cap_sol=55.0,
+        timestamp=time.time() - 15.0,
+    )
+    tracker.update_reserves(
+        real_sol_reserves=72.0,
+        virtual_sol_reserves=102.0,
+        market_cap_sol=65.0,
+        timestamp=time.time(),
+    )
+
+    traj = tracker.classify_trajectory(unique_buyers=3)
+    assert traj.mint == "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump"
+    assert traj.progress_pct > 0.0
+
+    # Signal evaluation without tracker in engine
+    engine = GraduationEngine()
+    sig = engine.evaluate_graduation_signal("non_existent_mint")
+    assert sig.triggered is False
+
+    traj_none = engine.evaluate_graduation_trajectory("non_existent_mint")
+    assert traj_none is None

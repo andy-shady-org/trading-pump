@@ -2,6 +2,8 @@ import json
 import time
 from unittest.mock import AsyncMock
 
+import pytest
+
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import (
     TradingStrategy,
@@ -10,6 +12,7 @@ from pumpfun_trading.bot.strategy import (
 from pumpfun_trading.tests.support.factories import make_config
 
 
+@pytest.mark.regression("BUG-46")
 async def test_bot_kill_switches_when_health_stale_or_balance_check_fails():
     bot = TradingBot(
         "11111111111111111111111111111111111111111111111111111111111111111",
@@ -298,6 +301,7 @@ def test_bot_restores_persisted_state(tmp_path):
     assert "restored" in list(bot._recent_events)
 
 
+@pytest.mark.regression("BUG-04")
 async def test_concurrent_mint_events_do_not_exceed_max_positions():
     import asyncio
 

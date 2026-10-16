@@ -13,17 +13,20 @@ import pytest
 from rich.console import Console
 
 from pumpfun_trading.bot.lifecycle import TradingBotState
+from pumpfun_trading.bot.risk import DailyEquityTracker
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
-from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.factories import make_bot, make_config, make_position
 from pumpfun_trading.ui.dashboard import (
     _reconciliation_text,
     build_dashboard,
     format_sol_amount,
+    format_uptime,
 )
 
 
+@pytest.mark.regression("BUG-17")
 def test_format_sol_amount_switches_to_micro_sol() -> None:
     assert format_sol_amount(0.0) == "+0.0000 SOL"
     assert format_sol_amount(-0.00023) == "-230.0000 µSOL"
@@ -363,6 +366,7 @@ def test_bot_event_recording_and_dashboard_display(tmp_path):
     assert "•" in output
 
 
+@pytest.mark.regression("BUG-23")
 def test_dashboard_partial_exit_remaining_tokens_display():
     """
     Regression test for BUG-23:
@@ -446,6 +450,7 @@ def test_dashboard_partial_exit_remaining_tokens_display():
     assert "ObjPartial" in output
 
 
+@pytest.mark.regression("BUG-19")
 def test_dashboard_daily_pnl_microsol_and_standard_display():
     """
     Regression test for BUG-19:
@@ -538,21 +543,27 @@ def test_dashboard_daily_pnl_microsol_and_standard_display():
     assert "-0.0250 SOL" in out_std_neg
 
 
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (None, "0s"),
+        (-10, "0s"),
+        (0, "0s"),
+        (45, "45s"),
+        (125, "02m 05s"),
+        (3600, "01h 00m 00s"),
+        (15150, "04h 12m 30s"),
+        (90061, "1d 01h 01m 01s"),
+    ],
+)
+def test_format_uptime_renders_compact_duration(
+    seconds: float | None, expected: str
+) -> None:
+    assert format_uptime(seconds) == expected
+
+
 def test_format_uptime_and_dashboard_uptime_field():
-    """Verify format_uptime helper and Uptime field rendering in the Bot Status dashboard panel."""
-    from pumpfun_trading.ui.dashboard import format_uptime
-
-    # 1. Test format_uptime edge cases
-    assert format_uptime(None) == "0s"
-    assert format_uptime(-10) == "0s"
-    assert format_uptime(0) == "0s"
-    assert format_uptime(45) == "45s"
-    assert format_uptime(125) == "02m 05s"
-    assert format_uptime(3600) == "01h 00m 00s"
-    assert format_uptime(15150) == "04h 12m 30s"
-    assert format_uptime(90061) == "1d 01h 01m 01s"
-
-    # 2. Test dashboard rendering with uptime
+    """Verify the Uptime field rendering in the Bot Status dashboard panel."""
     bot = MagicMock()
     bot.config = make_config(dry_run=False)
     bot.max_active_positions = 2
@@ -777,3 +788,132 @@ def test_trading_bot_preserves_stagnant_timeout_config_and_ui(tmp_path):
     output_file = console.export_text()
     assert "Stagnant timeout" in output_file
     assert "45.0s" in output_file
+
+
+def test_dashboard_and_uptime_branches():
+    mock_bot = MagicMock()
+    mock_bot.config = make_config(dry_run=False)
+    mock_bot.max_active_positions = 4
+    mock_bot.min_market_cap_sol = 25.0
+    mock_bot.dry_run = True
+    mock_bot.paper_trade = False
+    mock_bot.wallet_balance_sol = "invalid_float_str"
+    mock_bot._risk_killed = False
+    mock_bot.daily_equity_tracker = DailyEquityTracker(starting_equity_sol=0.2)
+    mock_bot.daily_equity_tracker.record_realized_trade(0.0000001)
+    mock_bot.state = TradingBotState.MONITORING
+    mock_bot._health_ok = True
+    mock_bot.active_positions = {}
+    mock_bot._last_event = "test"
+    mock_bot._last_status = "idle"
+    mock_bot._last_message_at = time.monotonic() - 5.0
+    mock_bot.stream_url = "wss://test.stream"
+    mock_bot.geyser_endpoint = "http://custom.geyser:10000"
+    mock_bot.audit_log_path = Path("audit.jsonl")
+    mock_bot._last_new_token_name = "NewCoin"
+    mock_bot._last_health_check = time.monotonic() - 2.0
+    mock_bot._last_rpc_reconciliation = time.monotonic() - 10.0
+    mock_bot._recent_tokens = []
+    mock_bot._event_history = []
+    mock_bot._trades_history = []
+    mock_bot._last_buy_at = None
+    mock_bot._last_sell_at = None
+    mock_bot.uptime_seconds = 120.0
+
+    # Render dashboard table
+    dash = build_dashboard(mock_bot)
+    assert dash is not None
+
+    # Render dashboard table with fallback uptime paths
+    del mock_bot.uptime_seconds
+    mock_bot._start_time = time.monotonic() - 50.0
+    dash2 = build_dashboard(mock_bot)
+    assert dash2 is not None
+
+    # Test format uptime helper
+    assert format_uptime(45) == "45s"
+    assert format_uptime(125) == "02m 05s"
+    assert format_uptime(3665) == "01h 01m 05s"
+    assert format_uptime(90000) == "1d 01h 00m 00s"
+    assert format_uptime(-5) == "0s"
+
+
+def test_dashboard_full_rendering_and_panels():
+    from pumpfun_trading.ui.dashboard import (
+        build_dashboard,
+        format_compact_tokens,
+    )
+
+    assert format_compact_tokens(0) == "0"
+    assert format_compact_tokens(500) == "500"
+    assert format_compact_tokens(5000) == "5.00K"
+    assert format_compact_tokens(5_000_000) == "5.00M"
+    assert format_compact_tokens(5_000_000_000) == "5.00B"
+
+    # Dashboard tables with positions
+    mock_bot = MagicMock()
+    mock_bot.config = make_config(dry_run=False)
+    mock_bot.max_active_positions = 4
+    mock_bot.min_market_cap_sol = 25.0
+    mock_bot.dry_run = True
+    mock_bot.paper_trade = False
+    mock_bot._risk_killed = False
+    mock_bot._last_message_at = time.monotonic()
+    mock_bot.stream_url = "wss://test"
+    mock_bot.geyser_endpoint = "http://localhost:10000"
+    mock_bot.audit_log_path = Path("audit.jsonl")
+    mock_bot._last_status = "ok"
+    mock_bot._last_event = "e1"
+    mock_bot._last_new_token_name = "coin"
+    mock_bot._last_health_check = time.monotonic()
+    mock_bot._last_rpc_reconciliation = time.monotonic()
+    mock_bot._last_buy_at = None
+    mock_bot._last_sell_at = None
+    mock_bot.active_positions = {
+        "m_active": {
+            "name": "ActiveToken",
+            "mint": "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump",
+            "cost_sol": 0.01,
+            "token_amount": 100_000_000,
+            "remaining_token_amount": 100_000_000,
+            "entry_market_cap": 30.0,
+            "current_market_cap": 45.0,
+            "peak_market_cap": 50.0,
+            "entry_time": time.time() - 60.0,
+        }
+    }
+    mock_bot.daily_equity_tracker = DailyEquityTracker(starting_equity_sol=1.0)
+    mock_bot.state = TradingBotState.HOLDING
+    mock_bot._health_ok = True
+    mock_bot.wallet_balance_sol = 1.05
+    mock_bot._recent_tokens = [
+        {"mint": "m_rec", "name": "Recent", "market_cap_sol": 30.0}
+    ]
+    mock_bot._event_history = [{"time": time.time(), "message": "event1"}]
+    mock_bot._trades_history = [
+        {
+            "time": time.time(),
+            "action": "BUY",
+            "mint": "m1",
+            "sol": 0.01,
+            "price": 0.00003,
+        }
+    ]
+    mock_bot.uptime_seconds = 3600.0
+
+    dash = build_dashboard(mock_bot)
+    assert dash is not None
+
+
+@pytest.mark.regression("BUG-88")
+def test_build_dashboard_position_shows_entry_reason_not_watch(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    make_position(bot, name="ReasonToken", reason="momentum_spike")
+    console = Console(record=True, width=240)
+    console.print(build_dashboard(bot))
+    text = console.export_text()
+
+    assert "momentum_spike" in text
+    assert "watch" not in text

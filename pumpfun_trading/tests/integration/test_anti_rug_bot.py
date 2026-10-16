@@ -255,6 +255,7 @@ async def test_api_client_get_creator_coins():
         assert mock_get.call_count == 2
 
 
+@pytest.mark.regression("BUG-57")
 async def test_bot_enrich_and_screen_api_error_branches(bot):
     # 1. API get_coin failure
     bot.api.get_coin = AsyncMock(side_effect=RuntimeError("Network error"))
