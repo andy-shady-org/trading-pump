@@ -26,6 +26,7 @@ from pumpfun_trading.infra.rpc_pool import (
     RpcEndpoint,
     RpcPoolConfig,
 )
+from pumpfun_trading.sdk.execution import TOKEN_PROGRAM_ID_STR
 from pumpfun_trading.sdk.execution import TokenBalanceUnavailableError
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
@@ -1485,14 +1486,19 @@ async def test_api_client_and_replay_and_main_branches():
     # 1. ApiClient retries and error branches
     api = PumpFunApiClient(max_retries=2, retry_backoff_seconds=0.01)
     mock_session = MagicMock()
+    # A MagicMock ``closed`` is truthy, which made the client open a real
+    # session and call the live API; the client also uses ``request``, not ``get``.
+    mock_session.closed = False
     mock_resp = AsyncMock()
     mock_resp.status = 500
     mock_resp.text = AsyncMock(return_value="Server error")
-    mock_session.get.return_value.__aenter__.return_value = mock_resp
+    mock_session.request.return_value.__aenter__.return_value = mock_resp
     api._session = mock_session
 
-    with pytest.raises(RuntimeError):
-        await api.get(f"/coins/{SAMPLE_MINT}")
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            await api.get(f"/coins/{SAMPLE_MINT}")
+    assert mock_session.request.call_count == 3
 
     # get_coin fallback parsing branches
     api.get = AsyncMock(side_effect=RuntimeError("HTTP 404 Not Found"))
@@ -1775,6 +1781,11 @@ async def test_final_coverage_push():
     exec_client_fresh = PumpFunExecutionClient(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
+    )
+    # The Raydium sell builder resolves the token program over the RPC pool;
+    # stub it so the test never reaches mainnet.
+    exec_client_fresh.get_token_program_for_mint = AsyncMock(
+        return_value=Pubkey.from_string(TOKEN_PROGRAM_ID_STR)
     )
     with patch.object(
         exec_client_fresh, "_build_tx_with_instructions", new_callable=AsyncMock

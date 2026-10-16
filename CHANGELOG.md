@@ -37,7 +37,8 @@ Sprint 24B of the Terminal Income Track: the bot now measures profit **after** c
 
 ### Testing
 - `tests/conftest.py` stubs `PumpFunExecutionClient.get_transaction_costs`, so tests never call mainnet; only modules setting `USES_REAL_TRANSACTION_COSTS = True` may use the real one.
-- New behaviour tests in the mirrored `tests/unit/<pkg>/` layout (with `__init__.py` per package): 922 tests, coverage 96.3% (gate 95%).
+- New behaviour tests in the mirrored `tests/unit/<pkg>/` layout (with `__init__.py` per package): 922 tests, coverage 96.2% (gate 95%).
+- `tests/conftest.py` blocks DNS lookups of any non-local host, so a test that reaches the network fails at once instead of depending on the public RPC. Four legacy tests had been calling mainnet / the Pump.fun API (token-program lookup, an API client mock that opened a real session) and failed in CI on HTTP 429; they are now fully mocked.
 
 ### Known limitations
 - Positions removed as dust and exits on Raydium after graduation still leave the token account open (BUG-96 scope).
@@ -45,9 +46,9 @@ Sprint 24B of the Terminal Income Track: the bot now measures profit **after** c
 - Arbitrage, pre-graduation harvesting, Raydium sniping and pyramiding stay off for the canary ([`RELEASE-GATE.md` §3.5](docs/dev/RELEASE-GATE.md)).
 
 ### Release record – v0.2.0 (2026-10-16)
-- Commit: `754822d` (merge of PR #6, `sprint-24b-net-pnl` → `main`; feature commit `99314ab`). The `v0.2.0` tag goes on the release commit that adds this record on top of it; it changes only `CHANGELOG.md`.
-- Release gate: PASS (`nox -s lint mypy tests`)
-- Tests: 922 collected, 922 passed; coverage 96.31% (statement + branch)
+- Commit: `754822d` (merge of PR #6, `sprint-24b-net-pnl` → `main`; feature commit `99314ab`), plus the `release/v0.2.0` commits that add this record and make the tests network-free. The `v0.2.0` tag goes on the last of those once CI is green.
+- Release gate: PASS (`nox -s lint mypy tests`), with the network blocked in tests; CI on `754822d` failed 3 tests that called mainnet and got HTTP 429
+- Tests: 922 collected, 922 passed; coverage 96.22% (statement + branch)
 - Replay parity: not checked (replay alignment is Sprint 24C)
 - Mainnet simulation: cost parser checked read-only on 3 third-party Pump.fun sells
 - Capital stage after this release: 0 (official Stage 0 paper pilot to start on this tag)

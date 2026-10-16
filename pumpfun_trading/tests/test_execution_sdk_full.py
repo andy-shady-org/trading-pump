@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from solders.hash import Hash
+from solders.pubkey import Pubkey
 
 from pumpfun_trading.sdk.execution import (
+    TOKEN_PROGRAM_ID_STR,
     PumpFunExecutionClient,
 )
 
@@ -81,6 +83,11 @@ async def test_execution_client_rpc_handling():
 async def test_execution_client_account_and_balance_queries():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY, "https://api.mainnet-beta.solana.com"
+    )
+    # ATA derivation resolves the mint's token program over the RPC pool;
+    # stub it so the test never reaches mainnet.
+    client.get_token_program_for_mint = AsyncMock(
+        return_value=Pubkey.from_string(TOKEN_PROGRAM_ID_STR)
     )
 
     # get_wallet_pubkey

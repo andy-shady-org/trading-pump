@@ -16,6 +16,7 @@ from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.cli import bot as cli_bot
 import pumpfun_trading.cli.main as cli_main_mod
+from pumpfun_trading.sdk.execution import TOKEN_PROGRAM_ID_STR
 from pumpfun_trading.sdk.execution import TokenBalanceUnavailableError
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 
@@ -68,6 +69,11 @@ async def test_api_client_missing_branches():
 async def test_execution_sdk_all_branches():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY, "https://api.mainnet-beta.solana.com"
+    )
+    # The token-balance ATA fallback resolves the token program over the RPC
+    # pool; stub it so the test never reaches mainnet.
+    client.get_token_program_for_mint = AsyncMock(
+        return_value=Pubkey.from_string(TOKEN_PROGRAM_ID_STR)
     )
 
     # _to_pubkey invalid
