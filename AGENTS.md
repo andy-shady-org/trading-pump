@@ -42,6 +42,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[EXECUTION] Don't Hard-Code Rent:** Mainnet rent was lowered (Token-2022 ATA 1,513,840 lamports, not 2,039,280). Live costs must come from the transaction meta; modelled values are estimates, so re-check them with `getMinimumBalanceForRentExemption` before relying on them.
 - **[TESTS] Mirrored Test Packages:** Every `tests/unit/<pkg>/` directory needs an `__init__.py`; without it, same-named modules (`unit/cli/test_events.py`, `unit/ops/test_events.py`) collide in pytest and mypy.
 - **[OPS] Rotate By On-Disk Name:** Background gzip means `X.1` may still be plain. Shift archives by the name actually on disk (never re-derive `.gz`), and join the pending compression before the next rotation (BUG-97).
+- **[TESTS] No Network In Tests:** Tests that called mainnet passed locally and failed in CI on HTTP 429. `tests/conftest.py` blocks non-local DNS; stub `get_token_program_for_mint` (or use `offline_trade_rpc`) for ATA/builder paths, and give mocked aiohttp sessions `closed = False` and a mocked `request`.
 
 
 ## Project Overview

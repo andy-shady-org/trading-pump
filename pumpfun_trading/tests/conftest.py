@@ -2,7 +2,29 @@
 
 from __future__ import annotations
 
+import socket
+
 import pytest
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})
+
+
+@pytest.fixture(autouse=True)
+def block_external_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail fast on any DNS lookup of a non-local host.
+
+    Tests that quietly reached mainnet passed locally and failed in CI when the
+    public RPC answered HTTP 429. Mock the client instead of opening a socket.
+    """
+    real_getaddrinfo = socket.getaddrinfo
+
+    def guarded_getaddrinfo(host, *args, **kwargs):
+        name = host.decode() if isinstance(host, bytes) else str(host or "")
+        if name not in _LOCAL_HOSTS:
+            raise socket.gaierror(f"external network disabled in tests: {name}")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
 
 
 @pytest.fixture(autouse=True)
