@@ -13,6 +13,8 @@ from pumpfun_trading.sdk.jito import (
     JitoTipFloor,
 )
 
+pytestmark = pytest.mark.usefixtures("offline_trade_rpc")
+
 
 @pytest.fixture
 def mock_keypair():

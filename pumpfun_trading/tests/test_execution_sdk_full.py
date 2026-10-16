@@ -135,6 +135,7 @@ async def test_execution_client_account_and_balance_queries():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("offline_trade_rpc")
 async def test_execution_client_tx_builders():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY,

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from solders.hash import Hash
+from solders.pubkey import Pubkey
 
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.lifecycle import TradingBotState
@@ -15,6 +16,7 @@ from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
 from pumpfun_trading.cli import bot as cli_bot
 import pumpfun_trading.cli.main as cli_main_mod
+from pumpfun_trading.sdk.execution import TokenBalanceUnavailableError
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 
 SAMPLE_PRIVATE_KEY = "5Mii42MBXa3reT732kLq8yW6FfE3d4D6aQoM2M3w5e9f8v7u6t5r4e3w2q1z9y8x"
@@ -85,9 +87,10 @@ async def test_execution_sdk_all_branches():
     )
     assert await client.get_token_balance(SAMPLE_MINT) == 50000000
 
-    # get_token_balance when no accounts found
+    # get_token_balance when no accounts found: unreadable balance raises instead of reading as 0 (BUG-35)
     client._request_rpc_json = AsyncMock(return_value={"result": {"value": None}})
-    assert await client.get_token_balance(SAMPLE_MINT) == 0
+    with pytest.raises(TokenBalanceUnavailableError):
+        await client.get_token_balance(SAMPLE_MINT)
 
     # get_ata_exists
     client._request_rpc_json = AsyncMock(
@@ -170,6 +173,9 @@ async def test_execution_sdk_all_branches():
     client.get_latest_blockhash = AsyncMock(return_value=str(Hash.default()))
     client.get_ata_exists = AsyncMock(return_value=True)
     client.send_transaction = AsyncMock(return_value="tx_sig_wrapped_123")
+    client._fetch_trade_curve_state = AsyncMock(
+        return_value={"creator": str(Pubkey.new_unique()), "is_mayhem_mode": False}
+    )
 
     buy_res = await client.buy(
         SAMPLE_MINT, pda, 0.05, token_amount=1000000, slippage_bps=200

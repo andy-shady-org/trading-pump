@@ -145,6 +145,7 @@ def test_sdk_instructions_and_decoding():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("offline_trade_rpc")
 async def test_sdk_tx_build_and_confirm_variations():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY,

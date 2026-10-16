@@ -83,8 +83,12 @@ def calculate_buy_tokens_out(
     virtual_token_reserves: Number,
     *,
     slippage_bps: int = 0,
+    fee_bps: int = 0,
 ) -> int:
     """Calculate output token amount for a given SOL (or Lamport) input.
+
+    ``fee_bps`` is the total Pump.fun fee (protocol + creator) charged on top of
+    the curve input; it is removed from ``sol_amount`` before pricing (BUG-66).
 
     Formula:
         Delta_y = (virtual_token_reserves * sol_amount) / (virtual_sol_reserves + sol_amount)
@@ -101,6 +105,8 @@ def calculate_buy_tokens_out(
     if sol_amount <= 0 or virtual_sol_reserves <= 0 or virtual_token_reserves <= 0:
         return 0
 
+    if fee_bps > 0:
+        sol_amount = (sol_amount * 10_000) // (10_000 + fee_bps)
     tokens_out = int(
         (virtual_token_reserves * sol_amount) // (virtual_sol_reserves + sol_amount)
     )
@@ -115,8 +121,11 @@ def calculate_sell_sol_out(
     virtual_sol_reserves: Number,
     *,
     slippage_bps: int = 0,
+    fee_bps: int = 0,
 ) -> int:
     """Calculate output SOL (or Lamport) amount for a given token input.
+
+    ``fee_bps`` is the total Pump.fun fee deducted from the curve output (BUG-66).
 
     Formula:
         Delta_x = (virtual_sol_reserves * token_amount) / (virtual_token_reserves + token_amount)
@@ -136,6 +145,8 @@ def calculate_sell_sol_out(
     sol_out = int(
         (virtual_sol_reserves * token_amount) // (virtual_token_reserves + token_amount)
     )
+    if fee_bps > 0:
+        sol_out = int((sol_out * (10_000 - fee_bps)) // 10_000)
     if slippage_bps > 0:
         sol_out = max(0, int((sol_out * (10_000 - slippage_bps)) // 10_000))
     return sol_out

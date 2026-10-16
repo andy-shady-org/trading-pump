@@ -18,6 +18,13 @@ from typing import Any, Optional, Sequence
 
 import aiohttp
 
+# JSON-RPC errors caused by the request itself (bad params, missing account,
+# preflight/simulation or signature failure). Every other error code is treated
+# as an endpoint problem and triggers failover.
+DETERMINISTIC_JSONRPC_ERROR_CODES = frozenset(
+    {-32600, -32601, -32602, -32002, -32003, -32006, -32013, -32015}
+)
+
 
 class CircuitState(str, Enum):
     """Circuit breaker states for an RPC endpoint."""
@@ -446,21 +453,24 @@ class RpcConnectionPool:
                         )
 
                     # Check for JSON-RPC level rate limits or server errors
+                    # Node-side errors fail over; deterministic request errors are
+                    # returned to the caller with the endpoint still healthy (BUG-67).
                     if "error" in parsed and isinstance(parsed["error"], dict):
                         err_code = parsed["error"].get("code", 0)
                         err_msg = str(parsed["error"].get("message", ""))
-                        if (
-                            err_code == 429
-                            or "rate" in err_msg.lower()
-                            or "limit" in err_msg.lower()
-                        ):
+                        if err_code not in DETERMINISTIC_JSONRPC_ERROR_CODES:
+                            is_rate_limit = err_code == 429
                             chosen_ep.record_failure(
-                                error_type="429_jsonrpc",
+                                error_type=(
+                                    "429_jsonrpc" if is_rate_limit else "jsonrpc_error"
+                                ),
                                 cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
                                 circuit_breaker_threshold=self.config.circuit_breaker_threshold,
                             )
+                            label = "rate limit" if is_rate_limit else "error"
                             raise RuntimeError(
-                                f"JSON-RPC rate limit on {chosen_ep.label}: {err_msg}"
+                                f"JSON-RPC {label} on {chosen_ep.label}: "
+                                f"[{err_code}] {err_msg}"
                             )
 
                     # Success!

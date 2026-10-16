@@ -3,8 +3,16 @@
 import base58
 import pytest
 from solders.keypair import Keypair
+from solders.pubkey import Pubkey
+from spl.token.constants import TOKEN_PROGRAM_ID
+from spl.token.instructions import get_associated_token_address
 
-from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+from pumpfun_trading.sdk.execution import (
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+    SYSTEM_PROGRAM_ID,
+    WSOL_MINT_STR,
+    PumpFunExecutionClient,
+)
 from pumpfun_trading.sdk.raydium import (
     RAYDIUM_AMM_PROGRAM_ID,
     RAYDIUM_AUTHORITY_V4,
@@ -158,6 +166,15 @@ async def test_execution_client_raydium_buy_tx():
     client.get_latest_blockhash = mock_blockhash  # type: ignore
     client.get_ata_exists = mock_ata_exists  # type: ignore
 
+    async def mock_reserves(pool_keys):
+        return 1_000_000_000_000, 100_000_000_000  # coin, pc (WSOL)
+
+    async def mock_token_program(mint):
+        return TOKEN_PROGRAM_ID
+
+    client._raydium_reserves = mock_reserves  # type: ignore
+    client.get_token_program_for_mint = mock_token_program  # type: ignore
+
     pool_keys = make_test_pool_keys()
     tx = await client.build_raydium_buy_tx(
         pool_keys=pool_keys,
@@ -168,6 +185,52 @@ async def test_execution_client_raydium_buy_tx():
 
     assert tx is not None
     assert len(tx.signatures) == 1
+
+    # BUG-51: WSOL create -> transfer -> SyncNative -> token ATA -> swap -> close
+    instructions = await _raydium_instructions(client, "buy", pool_keys)
+    programs = [str(ix.program_id) for ix in instructions]
+    assert programs[0] == ASSOCIATED_TOKEN_PROGRAM_ID
+    assert programs[1] == SYSTEM_PROGRAM_ID
+    assert programs[2] == str(TOKEN_PROGRAM_ID)
+    assert instructions[2].data == bytes([17])  # SyncNative
+    assert programs[3] == ASSOCIATED_TOKEN_PROGRAM_ID
+    assert instructions[-1].data == bytes([9])  # CloseAccount
+    swap = instructions[-2]
+    expected_out, expected_min = calculate_raydium_swap_out(
+        20_000_000, 100_000_000_000, 1_000_000_000_000, slippage_bps=500
+    )
+    assert int.from_bytes(swap.data[9:17], "little") == expected_min > 500_000
+    wsol_ata = get_associated_token_address(
+        client.wallet, Pubkey.from_string(WSOL_MINT_STR), TOKEN_PROGRAM_ID
+    )
+    token_ata = get_associated_token_address(
+        client.wallet, Pubkey.from_string(pool_keys.coin_mint), TOKEN_PROGRAM_ID
+    )
+    metas = [m.pubkey for m in swap.accounts]
+    assert metas.index(wsol_ata) < metas.index(token_ata)
+
+    # BUG-36: sell swaps token ATA -> WSOL ATA and unwraps
+    sell_ixs = await _raydium_instructions(client, "sell", pool_keys)
+    sell_swap = sell_ixs[-2]
+    sell_metas = [m.pubkey for m in sell_swap.accounts]
+    assert sell_metas.index(token_ata) < sell_metas.index(wsol_ata)
+    assert sell_ixs[-1].data == bytes([9])
+    assert all(str(ix.program_id) != SYSTEM_PROGRAM_ID for ix in sell_ixs)
+
+
+async def _raydium_instructions(client, side, pool_keys):
+    captured = {}
+
+    async def capture(instructions, *, tip_lamports=None):
+        captured["ixs"] = list(instructions)
+        return None
+
+    client._build_tx_with_instructions = capture  # type: ignore
+    if side == "buy":
+        await client.build_raydium_buy_tx(pool_keys, 0.02, slippage_bps=500)
+    else:
+        await client.build_raydium_sell_tx(pool_keys, 1_000_000, slippage_bps=500)
+    return captured["ixs"]
 
 
 def test_graduation_presets_and_config():

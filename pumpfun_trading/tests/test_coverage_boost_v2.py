@@ -26,6 +26,7 @@ from pumpfun_trading.infra.rpc_pool import (
     RpcEndpoint,
     RpcPoolConfig,
 )
+from pumpfun_trading.sdk.execution import TokenBalanceUnavailableError
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.strategies.base import TradingBotConfig
@@ -1145,9 +1146,10 @@ async def test_sdk_execution_extended_coverage():
     )
     assert await client.get_ata_exists(SAMPLE_MINT) is True
 
-    # getTokenAccountBalance with missing amount
+    # getTokenAccountBalance with missing amount: unreadable balance raises instead of reading as 0 (BUG-35)
     client._request_rpc_json = AsyncMock(return_value={"result": {"value": {}}})
-    assert await client.get_token_balance(SAMPLE_MINT) == 0
+    with pytest.raises(TokenBalanceUnavailableError):
+        await client.get_token_balance(SAMPLE_MINT)
 
     # send_transaction with rpc_pool (endpoint_count > 1)
     ep1 = RpcEndpoint(url="https://rpc1.solana.com")

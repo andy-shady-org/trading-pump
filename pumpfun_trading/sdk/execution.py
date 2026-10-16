@@ -8,11 +8,15 @@ from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
 from solders.message import MessageV0
 from solders.pubkey import Pubkey
+from solders.system_program import TransferParams, transfer
 from solders.transaction import VersionedTransaction
 from spl.token.constants import TOKEN_PROGRAM_ID
+from spl.token.models import CloseAccountParams, SyncNativeParams
 from spl.token.instructions import (
-    create_associated_token_account,
+    close_account,
+    create_idempotent_associated_token_account,
     get_associated_token_address,
+    sync_native,
 )
 
 from pumpfun_trading.infra.rpc_pool import (
@@ -37,6 +41,7 @@ from .jito import (
 from .raydium import (
     RaydiumPoolKeys,
     build_raydium_swap_instruction,
+    calculate_raydium_swap_out,
 )
 
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
@@ -98,8 +103,26 @@ FEE_CONFIG_KEY = bytes(
 )
 
 
+# Pump.fun bonding-curve fees (protocol 0.95% + creator 0.30%) applied to quotes.
+PUMP_DEFAULT_FEE_BPS = 125
+
+
+class TokenBalanceUnavailableError(RuntimeError):
+    """The token balance could not be read; distinct from a real zero (BUG-35)."""
+
+
+class TokenProgramUnavailableError(RuntimeError):
+    """The mint's token program (SPL Token vs Token-2022) could not be resolved."""
+
+
+class CurveStateUnavailableError(RuntimeError):
+    """The bonding curve (and its creator) could not be fetched for a trade."""
+
+
 class PumpFunExecutionClient:
     """Build and broadcast real Pump.fun transactions using the program instruction pattern."""
+
+    pump_fee_bps: int = PUMP_DEFAULT_FEE_BPS
 
     @staticmethod
     def normalize_slippage_bps(value: int | None, default: int = 500) -> int:
@@ -450,23 +473,38 @@ class PumpFunExecutionClient:
         return await self.get_balance_sol()
 
     async def get_token_program_for_mint(self, mint: str) -> Pubkey:
-        """Query mint account to determine if it uses Token-2022 or legacy SPL Token program."""
-        try:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getAccountInfo",
-                "params": [mint, {"encoding": "jsonParsed"}],
-            }
-            parsed = await self.rpc_pool.request(
-                payload, max_retries=1, timeout_seconds=3.0
-            )
-            value = (parsed.get("result") or {}).get("value")
-            if value and "owner" in value:
-                return Pubkey.from_string(value["owner"])
-        except Exception:
-            pass
-        return Pubkey.from_string(TOKEN_PROGRAM_ID_STR)
+        """Query mint account to determine if it uses Token-2022 or legacy SPL Token program.
+
+        Results are cached per mint. Raises if the owner cannot be read, because
+        guessing SPL Token for a Token-2022 mint builds a failing trade (BUG-69).
+        """
+        cache: dict[str, Pubkey] = self.__dict__.setdefault("_token_program_cache", {})
+        cached = cache.get(mint)
+        if cached is not None:
+            return cached
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [mint, {"encoding": "jsonParsed"}],
+        }
+        last_error: Exception | None = None
+        for _ in range(2):
+            try:
+                parsed = await self.rpc_pool.request(
+                    payload, max_retries=1, timeout_seconds=3.0
+                )
+                value = (parsed.get("result") or {}).get("value")
+                if value and "owner" in value:
+                    program = Pubkey.from_string(value["owner"])
+                    cache[mint] = program
+                    return program
+                last_error = RuntimeError("mint account not found")
+            except Exception as exc:
+                last_error = exc
+        raise TokenProgramUnavailableError(
+            f"Token program could not be resolved for {mint}: {last_error}"
+        )
 
     async def get_ata_address(
         self,
@@ -525,17 +563,21 @@ class PumpFunExecutionClient:
 
         return False
 
-    def get_bonding_curve_pda(self, mint: str) -> tuple[str, str]:
+    def get_bonding_curve_pda(
+        self, mint: str, token_program: Pubkey | str | None = None
+    ) -> tuple[str, str]:
         self.is_valid_mint(mint)
         mint_pubkey = self._to_pubkey(mint)
         program_id = self._to_pubkey(PUMP_PROGRAM_ID)
         bonding_curve_pda, _ = Pubkey.find_program_address(
             [b"bonding-curve", bytes(mint_pubkey)], program_id
         )
-        fee_recipient = self._to_pubkey(FEE_RECIPIENT)
-        associated_curve_pda, _ = Pubkey.find_program_address(
-            [bytes(bonding_curve_pda), bytes(fee_recipient), bytes(mint_pubkey)],
-            self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID),
+        # The associated bonding curve is the curve's ATA: [owner, token_program, mint]
+        # (BUG-93). Pass the mint's token program for Token-2022 mints.
+        associated_curve_pda = get_associated_token_address(
+            bonding_curve_pda,
+            mint_pubkey,
+            self._to_pubkey(token_program or TOKEN_PROGRAM_ID_STR),
         )
         return str(bonding_curve_pda), str(associated_curve_pda)
 
@@ -836,6 +878,46 @@ class PumpFunExecutionClient:
         raw_bytes = base64.b64decode(raw_data_b64)
         return self.decode_bonding_curve_data(raw_bytes)
 
+    async def _fetch_trade_curve_state(self, mint: str) -> dict[str, Any]:
+        """Fetches the bonding curve needed to build a trade.
+
+        Raises instead of guessing: without the real creator the creator-vault PDA
+        is wrong and the instruction fails on-chain with a seeds error (BUG-68).
+        """
+        bonding_curve_pda, _ = self.get_bonding_curve_pda(mint)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [
+                bonding_curve_pda,
+                {"encoding": "base64", "commitment": "confirmed"},
+            ],
+        }
+        try:
+            parsed = await self.rpc_pool.request(
+                payload, max_retries=2, timeout_seconds=3.0
+            )
+            value = (parsed.get("result") or {}).get("value")
+            curve_state = (
+                self.decode_bonding_curve_data(
+                    base64.b64decode(value.get("data", [""])[0])
+                )
+                if value
+                else {}
+            )
+        except Exception as exc:
+            raise CurveStateUnavailableError(
+                f"Bonding curve fetch failed for {mint}: {exc}"
+            ) from exc
+        creator = str(curve_state.get("creator") or "")
+        if not creator or creator == SYSTEM_PROGRAM_ID:
+            raise CurveStateUnavailableError(
+                f"Bonding curve creator could not be resolved for {mint}"
+            )
+        curve_state["creator"] = creator
+        return curve_state
+
     async def build_buy_tx(
         self,
         mint: str,
@@ -855,49 +937,23 @@ class PumpFunExecutionClient:
         max_sol_cost = int((lamports * (10_000 + slippage_bps)) / 10_000)
 
         base_token_prog = await self.get_token_program_for_mint(mint)
-        creator = None
-        is_mayhem_mode = False
+        curve_state = await self._fetch_trade_curve_state(mint)
+        creator = curve_state["creator"]
+        is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
 
-        if token_amount is None or token_amount <= 0 or creator is None:
-            try:
-                bonding_curve_pda, _ = self.get_bonding_curve_pda(mint)
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getAccountInfo",
-                    "params": [
-                        bonding_curve_pda,
-                        {"encoding": "base64", "commitment": "confirmed"},
-                    ],
-                }
-                parsed = await self.rpc_pool.request(
-                    payload, max_retries=1, timeout_seconds=3.0
-                )
-                value = (parsed.get("result") or {}).get("value")
-                if value:
-                    raw_data_b64 = value.get("data", [""])[0]
-                    raw_bytes = base64.b64decode(raw_data_b64)
-                    curve_state = self.decode_bonding_curve_data(raw_bytes)
-                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-                    v_token = int(curve_state.get("virtual_token_reserves", 0))
-                    creator = str(curve_state.get("creator") or "") or None
-                    is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
-                    if (
-                        (token_amount is None or token_amount <= 0)
-                        and v_sol > 0
-                        and v_token > 0
-                    ):
-                        token_amount = self.calculate_buy_tokens_out(
-                            lamports, v_sol, v_token, slippage_bps=slippage_bps
-                        )
-            except Exception:
-                pass
-            if token_amount is None or token_amount <= 0:
+        if token_amount is None or token_amount <= 0:
+            v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+            v_token = int(curve_state.get("virtual_token_reserves", 0))
+            if v_sol <= 0 or v_token <= 0:
                 v_sol = 30_000_000_000
                 v_token = 1_073_000_000_000_000
-                token_amount = self.calculate_buy_tokens_out(
-                    lamports, v_sol, v_token, slippage_bps=slippage_bps
-                )
+            token_amount = self.calculate_buy_tokens_out(
+                lamports,
+                v_sol,
+                v_token,
+                slippage_bps=slippage_bps,
+                fee_bps=self.pump_fee_bps,
+            )
 
         instructions = []
         ata_exists = False
@@ -912,8 +968,9 @@ class PumpFunExecutionClient:
             ata_exists = False
 
         if not ata_exists:
+            # Idempotent create: a failed/stale lookup never breaks the buy (BUG-54).
             instructions.append(
-                create_associated_token_account(
+                create_idempotent_associated_token_account(
                     payer=self.wallet,
                     owner=self.wallet,
                     mint=self._to_pubkey(mint),
@@ -957,45 +1014,23 @@ class PumpFunExecutionClient:
             raise ValueError("Minimum SOL output cannot be negative")
 
         base_token_prog = await self.get_token_program_for_mint(mint)
-        creator = None
-        is_mayhem_mode = False
+        curve_state = await self._fetch_trade_curve_state(mint)
+        creator = curve_state["creator"]
+        is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
 
-        if min_sol_lamports <= 0 or creator is None:
-            try:
-                bonding_curve_pda, _ = self.get_bonding_curve_pda(mint)
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getAccountInfo",
-                    "params": [
-                        bonding_curve_pda,
-                        {"encoding": "base64", "commitment": "confirmed"},
-                    ],
-                }
-                parsed = await self.rpc_pool.request(
-                    payload, max_retries=1, timeout_seconds=3.0
-                )
-                value = (parsed.get("result") or {}).get("value")
-                if value:
-                    raw_data_b64 = value.get("data", [""])[0]
-                    raw_bytes = base64.b64decode(raw_data_b64)
-                    curve_state = self.decode_bonding_curve_data(raw_bytes)
-                    v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-                    v_token = int(curve_state.get("virtual_token_reserves", 0))
-                    creator = str(curve_state.get("creator") or "") or None
-                    is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
-                    if min_sol_lamports <= 0 and v_sol > 0 and v_token > 0:
-                        min_sol_lamports = self.calculate_sell_sol_out(
-                            token_amount, v_token, v_sol, slippage_bps=slippage_bps
-                        )
-            except Exception:
-                pass
-            if min_sol_lamports <= 0:
+        if min_sol_lamports <= 0:
+            v_sol = int(curve_state.get("virtual_sol_reserves", 0))
+            v_token = int(curve_state.get("virtual_token_reserves", 0))
+            if v_sol <= 0 or v_token <= 0:
                 v_sol = 30_000_000_000
                 v_token = 1_073_000_000_000_000
-                min_sol_lamports = self.calculate_sell_sol_out(
-                    token_amount, v_token, v_sol, slippage_bps=slippage_bps
-                )
+            min_sol_lamports = self.calculate_sell_sol_out(
+                token_amount,
+                v_token,
+                v_sol,
+                slippage_bps=slippage_bps,
+                fee_bps=self.pump_fee_bps,
+            )
         else:
             min_sol_lamports = max(
                 0, int((min_sol_lamports * (10_000 - slippage_bps)) / 10_000)
@@ -1023,34 +1058,95 @@ class PumpFunExecutionClient:
         min_amount_out: int = 1,
         user_source_token_account: Optional[str] = None,
         user_destination_token_account: Optional[str] = None,
+        *,
+        is_buy: bool = True,
+        coin_token_program: Pubkey | str | None = None,
     ) -> Instruction:
-        """Construct Raydium AMM v4 swap instruction for this client wallet."""
-        source_account = (
-            user_source_token_account
-            if user_source_token_account is not None
-            else str(
-                get_associated_token_address(
-                    self.wallet, self._to_pubkey(pool_keys.pc_mint), TOKEN_PROGRAM_ID
-                )
+        """Construct Raydium AMM v4 swap instruction for this client wallet.
+
+        Buys swap WSOL (pc) ATA -> token (coin) ATA; sells swap token ATA -> WSOL
+        ATA (BUG-36).
+        """
+        pc_ata = str(
+            get_associated_token_address(
+                self.wallet, self._to_pubkey(pool_keys.pc_mint), TOKEN_PROGRAM_ID
             )
         )
-        dest_account = (
-            user_destination_token_account
-            if user_destination_token_account is not None
-            else str(
-                get_associated_token_address(
-                    self.wallet, self._to_pubkey(pool_keys.coin_mint), TOKEN_PROGRAM_ID
-                )
+        coin_ata = str(
+            get_associated_token_address(
+                self.wallet,
+                self._to_pubkey(pool_keys.coin_mint),
+                self._to_pubkey(coin_token_program or TOKEN_PROGRAM_ID_STR),
             )
+        )
+        default_source, default_dest = (
+            (pc_ata, coin_ata) if is_buy else (coin_ata, pc_ata)
         )
         return build_raydium_swap_instruction(
             pool_keys=pool_keys,
             user_wallet=self.wallet,
-            user_source_token_account=source_account,
-            user_destination_token_account=dest_account,
+            user_source_token_account=user_source_token_account or default_source,
+            user_destination_token_account=(
+                user_destination_token_account or default_dest
+            ),
             amount_in_lamports=amount_in_lamports,
             min_amount_out=min_amount_out,
         )
+
+    def _wsol_open_instructions(self, wsol_ata: Pubkey, lamports: int) -> list:
+        """Create (idempotently) the WSOL ATA and optionally wrap ``lamports`` into it."""
+        wsol_mint = self._to_pubkey(WSOL_MINT_STR)
+        instructions: list = [
+            create_idempotent_associated_token_account(
+                payer=self.wallet, owner=self.wallet, mint=wsol_mint
+            )
+        ]
+        if lamports > 0:
+            instructions.append(
+                transfer(
+                    TransferParams(
+                        from_pubkey=self.wallet, to_pubkey=wsol_ata, lamports=lamports
+                    )
+                )
+            )
+            instructions.append(
+                sync_native(
+                    SyncNativeParams(program_id=TOKEN_PROGRAM_ID, account=wsol_ata)
+                )
+            )
+        return instructions
+
+    def _wsol_close_instruction(self, wsol_ata: Pubkey) -> Instruction:
+        """Close the WSOL ATA, unwrapping its lamports back to the wallet."""
+        return close_account(
+            CloseAccountParams(
+                program_id=TOKEN_PROGRAM_ID,
+                account=wsol_ata,
+                dest=self.wallet,
+                owner=self.wallet,
+            )
+        )
+
+    async def _raydium_reserves(self, pool_keys: RaydiumPoolKeys) -> tuple[int, int]:
+        """Returns (coin_reserve, pc_reserve) in raw units from the pool vaults."""
+        reserves = []
+        for vault in (
+            pool_keys.pool_coin_token_account,
+            pool_keys.pool_pc_token_account,
+        ):
+            parsed = await self._request_rpc_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTokenAccountBalance",
+                    "params": [str(vault), {"commitment": "confirmed"}],
+                }
+            )
+            value = (parsed.get("result") or {}).get("value") or {}
+            if "amount" not in value:
+                raise RuntimeError(f"Raydium vault balance unavailable: {vault}")
+            reserves.append(int(value["amount"]))
+        return reserves[0], reserves[1]
 
     async def build_raydium_buy_tx(
         self,
@@ -1061,27 +1157,44 @@ class PumpFunExecutionClient:
         min_amount_out: int = 1,
         tip_lamports: Optional[int] = None,
     ) -> VersionedTransaction:
-        """Construct a versioned Raydium AMM swap transaction with priority fees and ATA creation."""
+        """Construct a Raydium AMM buy: wrap SOL -> swap -> unwrap (BUG-51).
+
+        ``min_amount_out`` is derived from live pool reserves and ``slippage_bps``
+        unless the caller passes a stricter value.
+        """
         lamports = self.sol_to_lamports(sol_amount)
-        instructions = []
+        slippage = self.normalize_slippage_bps(slippage_bps, self.default_slippage_bps)
+        coin_reserve, pc_reserve = await self._raydium_reserves(pool_keys)
+        _, quoted_min_out = calculate_raydium_swap_out(
+            lamports, pc_reserve, coin_reserve, slippage_bps=slippage
+        )
+        if quoted_min_out <= 0:
+            raise RuntimeError("Raydium quote returned zero output")
+        min_out = max(int(min_amount_out), quoted_min_out)
 
-        # Ensure destination ATA exists
-        if not await self.get_ata_exists(pool_keys.coin_mint):
-            instructions.append(
-                create_associated_token_account(
-                    payer=self.wallet,
-                    owner=self.wallet,
-                    mint=self._to_pubkey(pool_keys.coin_mint),
-                )
+        coin_program = await self.get_token_program_for_mint(pool_keys.coin_mint)
+        wsol_ata = get_associated_token_address(
+            self.wallet, self._to_pubkey(WSOL_MINT_STR), TOKEN_PROGRAM_ID
+        )
+        instructions = self._wsol_open_instructions(wsol_ata, lamports)
+        instructions.append(
+            create_idempotent_associated_token_account(
+                payer=self.wallet,
+                owner=self.wallet,
+                mint=self._to_pubkey(pool_keys.coin_mint),
+                token_program_id=coin_program,
             )
-
+        )
         instructions.append(
             self.build_raydium_swap_instruction(
                 pool_keys=pool_keys,
                 amount_in_lamports=lamports,
-                min_amount_out=min_amount_out,
+                min_amount_out=min_out,
+                is_buy=True,
+                coin_token_program=coin_program,
             )
         )
+        instructions.append(self._wsol_close_instruction(wsol_ata))
         return await self._build_tx_with_instructions(
             instructions, tip_lamports=tip_lamports
         )
@@ -1095,16 +1208,35 @@ class PumpFunExecutionClient:
         min_sol_output: int | float = 1,
         tip_lamports: Optional[int] = None,
     ) -> VersionedTransaction:
-        """Construct a versioned Raydium AMM swap sell transaction."""
-        instructions = [
+        """Construct a Raydium AMM sell: token ATA -> WSOL ATA, then unwrap (BUG-36)."""
+        if isinstance(min_sol_output, float):
+            min_out = self.sol_to_lamports(min_sol_output)
+        else:
+            min_out = int(min_sol_output)
+        if slippage_bps is not None:
+            coin_reserve, pc_reserve = await self._raydium_reserves(pool_keys)
+            _, quoted_min_out = calculate_raydium_swap_out(
+                int(token_amount),
+                coin_reserve,
+                pc_reserve,
+                slippage_bps=self.normalize_slippage_bps(slippage_bps),
+            )
+            min_out = max(min_out, quoted_min_out)
+        coin_program = await self.get_token_program_for_mint(pool_keys.coin_mint)
+        wsol_ata = get_associated_token_address(
+            self.wallet, self._to_pubkey(WSOL_MINT_STR), TOKEN_PROGRAM_ID
+        )
+        instructions = self._wsol_open_instructions(wsol_ata, 0)
+        instructions.append(
             self.build_raydium_swap_instruction(
                 pool_keys=pool_keys,
-                amount_in_lamports=token_amount,
-                min_amount_out=int(min_sol_output),
-                user_source_token_account=None,
-                user_destination_token_account=None,
+                amount_in_lamports=int(token_amount),
+                min_amount_out=max(1, min_out),
+                is_buy=False,
+                coin_token_program=coin_program,
             )
-        ]
+        )
+        instructions.append(self._wsol_close_instruction(wsol_ata))
         return await self._build_tx_with_instructions(
             instructions, tip_lamports=tip_lamports
         )
@@ -1229,7 +1361,9 @@ class PumpFunExecutionClient:
                     return tx_sig
                 if status.is_failed:
                     raise RuntimeError(f"Jito bundle {bundle_id} failed: {status.err}")
-                return tx_sig
+                # Unknown/pending is not a fill: fall through to the RPC fallback,
+                # which re-sends the same signed tx (deduplicated by signature).
+                raise TimeoutError(f"Jito bundle {bundle_id} not landed within timeout")
             else:
                 bundle_id = await self.send_jito_bundle(transactions)
                 confirmed = await self.confirm_transaction(
@@ -1452,8 +1586,14 @@ class PumpFunExecutionClient:
             await self.rpc_pool.close()
 
     async def get_token_balance(self, mint: str, owner: Optional[str] = None) -> int:
-        """Return the token balance for the wallet ATA for a given mint, in raw token units."""
+        """Return the token balance for the wallet ATA for a given mint, in raw token units.
+
+        ``0`` is returned only when the RPC confirms there is no balance. Any RPC or
+        parse failure raises :class:`TokenBalanceUnavailableError` so callers can
+        retry instead of treating the position as dust (BUG-35).
+        """
         owner_pubkey = owner or str(self.wallet)
+        errors: list[str] = []
         try:
             payload = {
                 "jsonrpc": "2.0",
@@ -1466,19 +1606,27 @@ class PumpFunExecutionClient:
                 ],
             }
             parsed = await self._request_rpc_json(payload)
-            accounts = (parsed.get("result") or {}).get("value", [])
-            if accounts and isinstance(accounts, list):
-                for acc in accounts:
-                    info = (
-                        ((acc.get("account") or {}).get("data") or {})
-                        .get("parsed", {})
-                        .get("info", {})
-                    )
-                    token_amount_obj = info.get("tokenAmount", {})
-                    if "amount" in token_amount_obj:
-                        return int(token_amount_obj["amount"])
-        except Exception:
-            pass
+            if "error" in parsed or not isinstance(parsed.get("result"), dict):
+                raise RuntimeError(f"getTokenAccountsByOwner error: {parsed}")
+            accounts = parsed["result"].get("value")
+            if not isinstance(accounts, list):
+                raise RuntimeError(
+                    f"Unexpected getTokenAccountsByOwner value: {parsed}"
+                )
+            if not accounts:
+                return 0
+            for acc in accounts:
+                info = (
+                    ((acc.get("account") or {}).get("data") or {})
+                    .get("parsed", {})
+                    .get("info", {})
+                )
+                token_amount_obj = info.get("tokenAmount", {})
+                if "amount" in token_amount_obj:
+                    return int(token_amount_obj["amount"])
+            raise RuntimeError("Token account has no parsed amount")
+        except Exception as exc:
+            errors.append(str(exc))
 
         try:
             ata = await self.get_ata_address(mint, owner_pubkey)
@@ -1489,10 +1637,17 @@ class PumpFunExecutionClient:
                 "params": [ata, {"commitment": "confirmed"}],
             }
             parsed = await self._request_rpc_json(payload)
-            result = parsed.get("result") or {}
-            value = result.get("value")
+            error = parsed.get("error")
+            if isinstance(error, dict) and "could not find account" in str(
+                error.get("message", "")
+            ):
+                return 0
+            value = (parsed.get("result") or {}).get("value")
             if isinstance(value, dict) and "amount" in value:
                 return int(value["amount"])
-        except Exception:
-            pass
-        return 0
+            errors.append(f"getTokenAccountBalance returned no amount: {parsed}")
+        except Exception as exc:
+            errors.append(str(exc))
+        raise TokenBalanceUnavailableError(
+            f"Token balance unavailable for {mint}: {'; '.join(errors)}"
+        )

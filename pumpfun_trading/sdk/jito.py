@@ -113,7 +113,9 @@ class JitoBundleStatus:
 
     @property
     def is_landed(self) -> bool:
-        """Check if bundle landed on-chain."""
+        """Check if bundle landed on-chain without an execution error (BUG-53)."""
+        if self.is_failed:
+            return False
         return self.status.lower() == "landed" or self.confirmation_status in {
             "confirmed",
             "finalized",
@@ -122,7 +124,16 @@ class JitoBundleStatus:
     @property
     def is_failed(self) -> bool:
         """Check if bundle submission failed or encountered execution errors."""
-        return self.status.lower() in {"failed", "invalid"} or self.err is not None
+        return self.status.lower() in {"failed", "invalid"} or not bundle_err_is_ok(
+            self.err
+        )
+
+
+def bundle_err_is_ok(err: Any) -> bool:
+    """Jito reports success as ``null`` or ``{"Ok": null}``; anything else is an error."""
+    if err is None:
+        return True
+    return isinstance(err, dict) and set(err.keys()) == {"Ok"} and err["Ok"] is None
 
 
 @dataclass
@@ -453,7 +464,7 @@ class JitoClient:
                         if conf_status in {"confirmed", "finalized"}
                         else "Pending"
                     )
-                    if err is not None:
+                    if not bundle_err_is_ok(err):
                         status_str = "Failed"
                     statuses.append(
                         JitoBundleStatus(

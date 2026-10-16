@@ -263,8 +263,10 @@ class PumpFunApiClient:
     async def get_coins_by_mints(
         self, mints: list[str], *, base_url: str = "https://frontend-api-v3.pump.fun"
     ) -> Any:
-        client = PumpFunApiClient(base_url=base_url)
-        return await client.post("/coins-v2/mints", json={"mints": mints})
+        # Reuse this client's session instead of leaking a new one per call (BUG-74).
+        return await self.post(
+            f"{base_url.rstrip('/')}/coins-v2/mints", json={"mints": mints}
+        )
 
     async def get_coin(self, mint: str) -> Any:
         try:

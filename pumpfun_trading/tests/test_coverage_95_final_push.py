@@ -136,6 +136,7 @@ def test_sdk_math_and_keypairs():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("offline_trade_rpc")
 async def test_sdk_rpc_retry_recovery_and_tx_assembly():
     client = PumpFunExecutionClient(
         SAMPLE_PRIVATE_KEY,
