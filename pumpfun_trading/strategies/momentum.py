@@ -333,9 +333,11 @@ class OrderFlowEngine:
         self,
         max_retention_seconds: int = 600,
         recent_token_ttl_seconds: int = 600,
+        max_tracked_tokens: int = 5000,
     ) -> None:
         self.max_retention_seconds = max_retention_seconds
         self.recent_token_ttl_seconds = recent_token_ttl_seconds
+        self.max_tracked_tokens = max(1, int(max_tracked_tokens))
         self._trackers: dict[str, TokenOrderFlowTracker] = {}
 
     @property
@@ -347,6 +349,13 @@ class OrderFlowEngine:
         """Get or initialize tracker for a token mint."""
         tracker = self._trackers.get(mint)
         if tracker is None:
+            if len(self._trackers) >= self.max_tracked_tokens:
+                # Bound memory: drop the least recently traded tracker (BUG-77).
+                while len(self._trackers) >= self.max_tracked_tokens:
+                    oldest = min(
+                        self._trackers, key=lambda m: self._trackers[m].last_trade_time
+                    )
+                    del self._trackers[oldest]
             tracker = TokenOrderFlowTracker(
                 mint=mint, max_retention_seconds=self.max_retention_seconds
             )

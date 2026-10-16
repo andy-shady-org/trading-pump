@@ -79,13 +79,13 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-69** | Medium | SDK / Token Program | **RESOLVED** | Token-2022 detection errors silently fall back to SPL Token |
 | **BUG-70** | Medium | Bot / Risk Limits | **RESOLVED** | `check_loss_per_trade` never fires with defaults and can divide by zero |
 | **BUG-71** | Medium | Bot / Risk Limits | **RESOLVED** | Exposure cap uses full `cost_sol` after partial exits |
-| **BUG-72** | Medium | Storage / Status Snapshot | **OPEN** | `storage.write_status_snapshot` is non-atomic and persists a monotonic clock value |
+| **BUG-72** | Medium | Storage / Status Snapshot | **RESOLVED** | `storage.write_status_snapshot` is non-atomic and persists a monotonic clock value |
 | **BUG-73** | Medium | Execution / Confirmation | **RESOLVED** | Confirmation timeouts are treated as definite failures (untracked fills, possible double sells) |
 | **BUG-74** | Medium | Bot / Resource Lifecycle | **RESOLVED** | `start()`/`run()` and `get_coins_by_mints` leave aiohttp sessions open (both fixed) |
 | **BUG-75** | Medium | Bot / WebSocket Market Cap | **RESOLVED** | WebSocket market-cap unit check can inflate market cap by ~1e6 |
 | **BUG-76** | Medium | Strategy / Exit Engine | **RESOLVED** | Stop-loss and take-profit cannot fire when `entry_market_cap <= 0` |
-| **BUG-77** | Medium | Strategy / Memory | **OPEN** | Per-mint screening, order-flow, and graduation caches grow without limit |
-| **BUG-78** | Medium | Strategy / Risk Validation | **OPEN** | `validate_risk_limits` ignores exposure, position size, and concentration caps |
+| **BUG-77** | Medium | Strategy / Memory | **RESOLVED** | Per-mint screening, order-flow, and graduation caches grow without limit |
+| **BUG-78** | Medium | Strategy / Risk Validation | **RESOLVED** | `validate_risk_limits` ignores exposure, position size, and concentration caps |
 | **BUG-79** | Medium | Strategy / Sybil Detection | **RESOLVED** | When no trades fall inside the wash-trade window, the full trade history is used instead |
 | **BUG-80** | Medium | Services / Market Data | **RESOLVED** | Missing market cap defaults to 30 SOL |
 | **BUG-81** | Medium | SDK / Raydium Parsing | **RESOLVED** | `parse_raydium_initialize2_accounts` never reads `pc_mint` from the account list |
@@ -94,14 +94,14 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-84** | Medium | Engines / Replay | **OPEN** | ISO-8601 timestamps sort as time 0 |
 | **BUG-85** | Medium | CLI / Replay | **OPEN** | `--replay-mode` is never used, and the unified CLI's `--mode` collides with replay's `--mode` |
 | **BUG-86** | Medium | CLI / Recorder | **OPEN** | `pumpfun-recorder --ws-url` is never used; every API poll is recorded as a buy signal |
-| **BUG-87** | Medium | Config / Env Aliases | **OPEN** | Status and audit path env var names differ between `get_runtime_env()`, the bot, and the docs |
+| **BUG-87** | Medium | Config / Env Aliases | **RESOLVED** | Status and audit path env var names differ between `get_runtime_env()`, the bot, and the docs |
 | **BUG-88** | Medium | UI / Dashboard | **OPEN** | Position reason always shows `watch` (reads `reason`, not `entry_reason`) |
 | **BUG-89** | Medium | CLI / Events | **OPEN** | `pumpfun-events --tail` exits instead of waiting for the file to appear |
 | **BUG-90** | Medium | CLI / Arbitrage | **OPEN** | `pumpfun-arb --monitor` / `--live` only evaluate hardcoded sample reserves |
 | **BUG-91** | Low | Bot / Lifecycle | **RESOLVED** | An in-flight buy that finishes after shutdown tries to move SHUTDOWN → MONITORING |
 | **BUG-92** | Low | Bot / Config | **MITIGATED** | `max_positions_per_mint` is stored but never used (values other than 1 are now clamped to 1 with a warning; per-mint pyramiding is a follow-up) |
 | **BUG-93** | Low | SDK / PDA Helpers | **RESOLVED** | Associated bonding-curve helper uses `FEE_RECIPIENT` as the token-program seed |
-| **BUG-94** | Low | Bot / Persistence | **OPEN** | Failed atomic status writes leave stray `.tmp.<pid>` files |
+| **BUG-94** | Low | Bot / Persistence | **RESOLVED** | Failed atomic status writes leave stray `.tmp.<pid>` files |
 
 ---
 
@@ -589,7 +589,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** After take-profit partial sells, `max_total_exposure_sol` and the concentration checks block new entries that should be allowed.
 * **Remedy:** Scale cost by `remaining / initial` using the same helper as the valuation code.
 
-### BUG-72: `storage.write_status_snapshot` Is Non-Atomic and Persists a Monotonic Clock [OPEN]
+### BUG-72: `storage.write_status_snapshot` Is Non-Atomic and Persists a Monotonic Clock [RESOLVED]
 * **Location:** `pumpfun_trading/storage/status.py` (~L11–21)
 * **Description:** The file is truncated in place with `open(path, "w")`, with no temp file, `fsync`, or `os.replace` (unlike `bot/persistence.py`). It also stores `_last_message_at`, a `time.monotonic()` value that has no meaning after a restart.
 * **Impact:** A crash during the write leaves truncated JSON, and crash recovery is lost (`safe_read_status_snapshot` returns `None`).
@@ -619,13 +619,13 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Positions with no stop-loss.
 * **Remedy:** Fall back to unit price, or force an exit when there is no valid entry MC, and use the same clock for `entry_time` and `now`.
 
-### BUG-77: Per-Mint Caches Grow Without Limit [OPEN]
+### BUG-77: Per-Mint Caches Grow Without Limit [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/filters.py` (`ScreeningCache` ~L248–299), `pumpfun_trading/strategies/momentum.py` (`OrderFlowEngine` ~L339–354, ~L469–487), `pumpfun_trading/strategies/graduation.py` (~L411–440, ~L652–670)
 * **Description:** `evict_expired()`, `cleanup_inactive_tokens()`, and `cleanup_expired_candidates()` are only called from tests. Every mint seen gets a permanent entry.
 * **Impact:** Memory keeps growing over long Geyser or WebSocket sessions.
 * **Remedy:** Evict on insert (size cap and TTL), and run the cleanups from the health loop.
 
-### BUG-78: `validate_risk_limits` Ignores Exposure Caps [OPEN]
+### BUG-78: `validate_risk_limits` Ignores Exposure Caps [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/risk_validation.py` (~L8–27)
 * **Description:** It only checks `max_active_positions` and the wallet reserve. `max_total_exposure_sol`, `max_position_size_sol`, `max_token_concentration_pct`, and `max_loss_per_trade_sol` are not checked.
 * **Impact:** Anything that relies on `TradingStrategy.validate_risk` (replay, optimizer, external callers) has much weaker protection than the live bot.
@@ -679,7 +679,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Recorded datasets are not trade tapes. In replay, every poll counts as an entry signal.
 * **Remedy:** Use `--ws-url` for the PumpPortal subscription, and record quotes without made-up signals.
 
-### BUG-87: Status and Audit Path Env Var Names Inconsistent [OPEN]
+### BUG-87: Status and Audit Path Env Var Names Inconsistent [RESOLVED]
 * **Location:** `pumpfun_trading/config/env.py` (~L103–104), `pumpfun_trading/bot/run.py` (~L378–379), `docs/ENVIRONMENTAL-VARIABLES.md`
 * **Description:** The docs list `PUMPFUN_STATUS_PATH` / `PUMPFUN_AUDIT_LOG_PATH` as primary names, with `PUMPFUN_BOT_STATUS_PATH` / `PUMPFUN_AUDIT_LOG` as aliases. `get_runtime_env()` reads only the aliases, and the bot reads only the primary names.
 * **Impact:** Depending on which name is set, the setting is ignored by one of the two components.
@@ -725,7 +725,7 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** A latent bug: any future caller would get the wrong account.
 * **Remedy:** Use `get_associated_token_address(bonding_curve, mint, token_program)`.
 
-### BUG-94: Failed Atomic Status Writes Leave Stray Temp Files [OPEN]
+### BUG-94: Failed Atomic Status Writes Leave Stray Temp Files [RESOLVED]
 * **Location:** `pumpfun_trading/bot/persistence.py` (~L61–76)
 * **Description:** The `.tmp.<pid>` file is not deleted when the dump or `os.replace` fails.
 * **Impact:** Leftover files pile up next to `bot_status.json`. The status file itself is not corrupted.

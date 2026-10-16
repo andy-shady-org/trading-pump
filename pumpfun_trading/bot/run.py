@@ -384,8 +384,17 @@ class TradingBot:
         )
         self.alert_enabled = self.alerts.enabled
 
-        self.bot_status_path = bot_status_path or os.getenv("PUMPFUN_STATUS_PATH")
-        self.audit_log_path = audit_log_path or os.getenv("PUMPFUN_AUDIT_LOG_PATH")
+        # Primary env names with documented aliases (BUG-87).
+        self.bot_status_path = (
+            bot_status_path
+            or os.getenv("PUMPFUN_STATUS_PATH")
+            or os.getenv("PUMPFUN_BOT_STATUS_PATH")
+        )
+        self.audit_log_path = (
+            audit_log_path
+            or os.getenv("PUMPFUN_AUDIT_LOG_PATH")
+            or os.getenv("PUMPFUN_AUDIT_LOG")
+        )
         audit_max_bytes = get_env_int(
             "PUMPFUN_AUDIT_MAX_BYTES", self.config.audit_max_bytes
         )
@@ -665,7 +674,6 @@ class TradingBot:
                 "timestamp": time.time(),
                 "last_event": self._last_event,
                 "last_status": self._last_status,
-                "last_message_at": self._last_message_at,
                 "last_new_token": self._last_new_token,
                 "last_new_token_name": self._last_new_token_name,
                 "observed_tokens": self._observed_tokens_count,
@@ -766,9 +774,7 @@ class TradingBot:
         self._health_ok = bool(snapshot.get("health_ok", self._health_ok))
         self._risk_killed = bool(snapshot.get("risk_killed", self._risk_killed))
         self._stop_requested = False
-        self._last_message_at = float(
-            snapshot.get("last_message_at", self._last_message_at)
-        )
+        # `_last_message_at` is a monotonic clock; a persisted value is meaningless (BUG-72).
         self._last_event = str(snapshot.get("last_event", self._last_event))
         self._last_status = str(snapshot.get("last_status", self._last_status))
         self._last_new_token = str(snapshot.get("last_new_token", self._last_new_token))
@@ -971,6 +977,14 @@ class TradingBot:
                 signal.signal(sig, lambda *_: self.request_shutdown())
             except (ValueError, OSError):
                 pass
+
+    def _prune_strategy_caches(self) -> None:
+        """Evict stale per-mint screening, order-flow and graduation state (BUG-77)."""
+        from pumpfun_trading.strategies.filters import _GLOBAL_SCREENING_CACHE
+
+        _GLOBAL_SCREENING_CACHE.evict_expired()
+        self.order_flow_engine.cleanup_inactive_tokens()
+        self.graduation_engine.cleanup_expired_candidates()
 
     def _prune_seen_mints(self) -> None:
         cutoff = time.monotonic() - self.recent_token_ttl_seconds
@@ -3538,6 +3552,7 @@ class TradingBot:
                 await self._process_exit_retry_queue()
                 await self._check_and_enforce_circuit_breaker()
                 self._prune_seen_mints()
+                self._prune_strategy_caches()
                 self._write_status_snapshot()
                 await self._run_retention_prune()
             except asyncio.CancelledError:

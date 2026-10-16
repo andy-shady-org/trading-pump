@@ -396,9 +396,13 @@ def test_execution_builder():
 
 
 def test_strategy_risk_validation():
+    # Capital caps are wide enough here; BUG-78 caps are covered elsewhere.
     config = TradingBotConfig(
         max_active_positions=2,
         reserve_balance_sol=0.1,
+        max_position_size_sol=1.0,
+        max_total_exposure_sol=2.0,
+        max_token_concentration_pct=1.0,
     )
 
     # Valid

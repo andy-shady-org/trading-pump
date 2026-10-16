@@ -404,8 +404,10 @@ class GraduationEngine:
         target_graduation_sol: float = 85.0,
         candidate_ttl_seconds: int = 1800,
         pre_migration_threshold_sol: float = 80.0,
+        max_tracked_candidates: int = 5000,
     ) -> None:
         self.target_graduation_sol = target_graduation_sol
+        self.max_tracked_candidates = max(1, int(max_tracked_candidates))
         self.candidate_ttl_seconds = candidate_ttl_seconds
         self.pre_migration_threshold_sol = pre_migration_threshold_sol
         self._trackers: dict[str, GraduationTracker] = {}
@@ -427,6 +429,13 @@ class GraduationEngine:
         """Retrieve existing tracker or initialize a new one for token mint."""
         tracker = self._trackers.get(mint)
         if tracker is None:
+            # Bound memory: drop the least recently updated candidate (BUG-77).
+            while len(self._trackers) >= self.max_tracked_candidates:
+                oldest = min(
+                    self._trackers,
+                    key=lambda m: self._trackers[m].candidate.updated_at,
+                )
+                del self._trackers[oldest]
             tracker = GraduationTracker(
                 mint=mint,
                 bonding_curve=bonding_curve,

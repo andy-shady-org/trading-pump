@@ -11,6 +11,28 @@ from pumpfun_trading.ops.retention import RetentionPolicy, RotatedFileSink
 logger = logging.getLogger(__name__)
 
 
+def atomic_write_json(path: str, payload: dict[str, Any]) -> None:
+    """Write JSON via temp file + fsync + os.replace; never leaves a temp file behind."""
+    parent_dir = os.path.dirname(path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    temp_path = f"{path}.tmp.{os.getpid()}"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        # A failed dump or replace must not leave stray temp files (BUG-94).
+        if os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
 class StatusPersistenceManager:
     """Handles snapshot persistence (bot_status.json), crash recovery, and append-only audit logging."""
 
@@ -54,18 +76,8 @@ class StatusPersistenceManager:
         if not self.bot_status_path:
             return False
 
-        parent_dir = os.path.dirname(self.bot_status_path)
-        if parent_dir:
-            os.makedirs(parent_dir, exist_ok=True)
-
         try:
-            # Atomic write via temp file rename
-            temp_path = f"{self.bot_status_path}.tmp.{os.getpid()}"
-            with open(temp_path, "w", encoding="utf-8") as handle:
-                json.dump(snapshot, handle, indent=2, sort_keys=True)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_path, self.bot_status_path)
+            atomic_write_json(self.bot_status_path, snapshot)
             return True
         except Exception as exc:
             logger.warning(

@@ -248,8 +248,9 @@ ScreeningVerdict = TokenScreeningVerdict
 class ScreeningCache:
     """Thread-safe in-memory TTL cache for token heuristic screening results."""
 
-    def __init__(self, default_ttl: float = 60.0):
+    def __init__(self, default_ttl: float = 60.0, max_entries: int = 5000):
         self._default_ttl = float(default_ttl)
+        self._max_entries = max(1, int(max_entries))
         self._cache: dict[str, tuple[TokenScreeningVerdict, float]] = {}
         self._lock = threading.Lock()
 
@@ -274,6 +275,14 @@ class ScreeningCache:
         effective_ttl = self._default_ttl if ttl is None else float(ttl)
         expires_at = time.monotonic() + effective_ttl
         with self._lock:
+            self._cache.pop(mint, None)
+            # Bound memory: drop expired entries, then the oldest (BUG-77).
+            if len(self._cache) >= self._max_entries:
+                now = time.monotonic()
+                for key in [k for k, (_, exp) in self._cache.items() if now > exp]:
+                    self._cache.pop(key, None)
+            while len(self._cache) >= self._max_entries:
+                self._cache.pop(next(iter(self._cache)))
             self._cache[mint] = (verdict, expires_at)
 
     def clear(self) -> None:

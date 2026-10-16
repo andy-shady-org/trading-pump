@@ -100,8 +100,11 @@ def get_runtime_env(**overrides: Any) -> dict[str, Any]:
         "PUMPFUN_GEYSER_X_TOKEN": os.getenv("PUMPFUN_GEYSER_X_TOKEN")
         or os.getenv("PUMPFUN_GEYSER_TOKEN"),
         "PUMPFUN_ALERT_PROVIDER": os.getenv("PUMPFUN_ALERT_PROVIDER"),
-        "PUMPFUN_AUDIT_LOG": os.getenv("PUMPFUN_AUDIT_LOG"),
-        "PUMPFUN_BOT_STATUS_PATH": os.getenv("PUMPFUN_BOT_STATUS_PATH"),
+        # Primary names per docs, with legacy aliases (BUG-87).
+        "PUMPFUN_AUDIT_LOG_PATH": os.getenv("PUMPFUN_AUDIT_LOG_PATH")
+        or os.getenv("PUMPFUN_AUDIT_LOG"),
+        "PUMPFUN_STATUS_PATH": os.getenv("PUMPFUN_STATUS_PATH")
+        or os.getenv("PUMPFUN_BOT_STATUS_PATH"),
         "PUMPFUN_REPLAY_LOG_PATH": os.getenv("PUMPFUN_REPLAY_LOG_PATH"),
         "PUMPFUN_RECORD_REPLAY": os.getenv("PUMPFUN_RECORD_REPLAY"),
         "PUMPFUN_DRAWDOWN_MODE": os.getenv("PUMPFUN_DRAWDOWN_MODE"),

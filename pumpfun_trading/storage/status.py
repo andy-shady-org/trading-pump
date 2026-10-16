@@ -7,17 +7,15 @@ import os
 import time
 from typing import Any
 
+from pumpfun_trading.bot.persistence import atomic_write_json
+
 
 def write_status_snapshot(path: str | None, payload: dict[str, Any]) -> None:
     """Write a JSON snapshot for bot state recovery."""
     if not path:
         return
-    directory = os.path.dirname(path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, sort_keys=True, indent=2)
-        handle.write("\n")
+    # Atomic temp-file write so a crash never leaves truncated JSON (BUG-72).
+    atomic_write_json(path, payload)
 
 
 def safe_read_status_snapshot(path: str | None) -> dict[str, Any] | None:
@@ -48,7 +46,6 @@ def build_status_snapshot(bot: Any) -> dict[str, Any]:
         "risk_killed": getattr(bot, "_risk_killed", False),
         "last_event": getattr(bot, "_last_event", ""),
         "last_status": getattr(bot, "_last_status", ""),
-        "last_message_at": getattr(bot, "_last_message_at", 0.0),
         "last_new_token": getattr(bot, "_last_new_token", "-"),
         "last_new_token_name": getattr(bot, "_last_new_token_name", "-"),
         "stop_requested": getattr(bot, "_stop_requested", False),
