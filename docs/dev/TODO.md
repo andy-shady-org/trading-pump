@@ -721,15 +721,22 @@ The bot can trade live, but there is no evidence yet that it is profitable after
 - **Acceptance:** Stage 1 exit criteria met — ≥ 100 closed trades, net PnL after fees and tips positive, reconciliation gap within tolerance every day, 0 lost or double-sold positions. Only then increase capital (Stage 2) or plan Phase 5–6 spending around bot income.
 - **Dependency:** the canary's net-PnL criterion needs Sprint 24B. Start Stage 0 straight away; do not start Stage 1 live trading until 24B has landed (or reconcile fees and tips by hand from the transaction signatures each day).
 
-### Sprint 24B: Net PnL Accounting & Reconciliation (FEAT-49)
-- [ ] Capture per-transaction costs at confirmation in `sdk/execution.py` / `execution/executor.py`: signature, network fee, priority fee (compute-unit price × units consumed), Jito tip, ATA rent paid/refunded, actual SOL delta from `getTransaction` pre/post balances
-- [ ] Extend the trade record (`TradingBot._record_trade`) and the audit trail with `signature`, `fee_sol`, `tip_sol`, `rent_sol`, `gross_pnl_sol`, `net_pnl_sol`; existing fields keep their meaning
-- [ ] Feed **net** realized PnL to `DailyEquityTracker` so the daily circuit breaker trips on real losses
-- [ ] `pumpfun-audit pnl` — daily / per-strategy / per-exit-reason net PnL, win rate, expectancy, fees and tips as a share of gross
-- [ ] `pumpfun-audit reconcile --wallet <pubkey>` — on-chain SOL and token balances vs. audit realized PnL and open positions, within the `RELEASE-GATE.md` §3.4 tolerance; non-zero exit code on a gap
-- [ ] Terminal dashboard (`ui/dashboard.py`): show net vs. gross PnL today and since start, fees + tips today, and the reconciliation status in the Risk panel
-- [ ] Persist the full trade history to the audit trail (the 50-entry snapshot ledger stays a display buffer only)
-- [ ] Tests in the mirrored layout ([`TESTING.md`](TESTING.md)); `RUNBOOK.md` §5.3 switched to the new commands
+### Sprint 24B: Net PnL Accounting & Reconciliation (FEAT-49, BUG-96)
+Branch `sprint-24b-net-pnl`.
+- [x] **BUG-96:** close the token account on every full exit (`CloseAccount` in the sell transaction, only when the sell empties the account; retry without the close if a closing sell fails), recovering ~0.002 SOL rent per trade (`sdk/execution.py`, `execution/executor.py`, `bot/run.py`; `close_token_account_on_full_exit`, default on)
+- [x] Capture per-transaction costs at confirmation: signature, network fee, priority fee (fee − 5,000 lamports per signature), Jito tip (transfer to a tip account), token-account rent paid/refunded, and the exact swap amount from the `getTransaction` pre/post balances (`sdk/costs.py`, `PumpFunExecutionClient.get_transaction_costs`, `OrderExecutor._capture_costs`). Live buys use the SOL actually paid as cost basis; live sells use the exact swap output as proceeds (BUG-48)
+- [x] Paper mode models the same costs (base + priority fee, static Jito tip, rent) and the Pump.fun fee on both legs, so paper PnL is comparable with live
+- [x] Extend the trade record (`TradingBot._record_trade`) and the audit trail with `signature`, `fee_sol`, `priority_fee_sol`, `tip_sol`, `rent_sol`, `costs_sol`, `cost_source`, `gross_pnl_sol`, `net_pnl_sol`, `cash_flow_sol`, `dry_run`, `strategy`; existing fields keep their meaning (`bot/pnl.py`)
+- [x] Feed **net** realized PnL to `DailyEquityTracker` (buys book their costs as a realized loss, sells book gross minus costs); `realized_daily_costs_sol` / `realized_daily_gross_pnl_sol` added and reset with the day
+- [x] `pumpfun-audit pnl [--group-by day|reason|strategy|mint] [--json]` — gross, fees, tips, rent, net, win rate, expectancy, costs as a share of gross; per exit reason with `--group-by reason`
+- [x] `pumpfun-audit reconcile --wallet <pubkey> [--start-balance SOL]` — per-signature wallet SOL change vs. audit `cash_flow_sol`, closed positions still holding tokens (lost), open positions holding none (phantom), optional whole-wallet check; exit code 1 above the `RELEASE-GATE.md` §3.4 tolerance (`bot/reconcile.py`)
+- [x] Terminal dashboard Risk panel: net and gross PnL today, costs today, session net PnL (`ui/dashboard.py`); session totals persist in `bot_status.json` (`pnl_totals`)
+- [x] Reconciliation status on the dashboard: `pumpfun-audit reconcile` stores its result in `reconcile_status.json` next to the audit trail (`--status-file`, `--no-status-file`, `PUMPFUN_RECONCILE_STATUS_PATH`); the Risk panel shows `Reconciliation: OK / GAP / STALE (> 36 h) / not run` and `bot_status.json` carries it as `reconciliation` (`bot/reconcile.py`, `ui/dashboard.py`). Running reconcile on a schedule and alerting on a gap stays with the Sprint 24D daily summary alert
+- [x] Persist the full trade history to the audit trail — already the case: every trade is appended to `audit_trail.jsonl`; the 50-entry snapshot ledger stays a display buffer only
+- [x] Tests in the mirrored layout ([`TESTING.md`](TESTING.md)): `unit/sdk/test_costs.py`, `unit/sdk/test_execution.py`, `unit/execution/test_executor.py`, `unit/bot/test_pnl.py`, `unit/bot/test_reconcile.py`, `unit/bot/test_risk.py`, `unit/bot/test_run.py`, `unit/cli/test_audit.py`, `unit/ui/test_dashboard.py`; `tests/conftest.py` blocks the cost RPC so partly mocked clients never reach mainnet; `RUNBOOK.md` §5.3 switched to the new commands
+- [x] Coverage back to ≥ 95%: **96.3%** (911 tests; `nox -s lint mypy tests` green). New mirrored tests: `unit/bot/test_run.py`, `unit/bot/test_position_manager.py`, `unit/cli/test_record.py`, `unit/cli/test_events.py`, `unit/cli/test_main.py`, `unit/ops/test_events.py`, `unit/ops/test_retention.py`, `unit/engines/test_optimizer.py`, `unit/sdk/test_execution.py`; `tests/unit/**/__init__.py` added so same-named modules in different packages don't collide. The pass found BUG-97…101 (`BUGS.md` §8)
+- [x] Fix the test-pass findings BUG-97…101 (`BUGS.md` §8): log rotation keeps plain archives plain and waits for the previous gzip (`ops/retention.py`); `emit` never raises on unknown categories (`ops/events.py`); landed arbitrage is booked net of fee, priority fee and tip (`bot/run.py`, `bot/pnl.py`); an explicit `stream_url=` wins (`bot/run.py`); Pump.fun builders refuse to quote on zero curve reserves (`sdk/execution.py`). Gate still green: 922 tests, coverage 96.3%
+- [ ] Verify on mainnet with the first canary trades: `pumpfun-audit reconcile` passes and every full exit shows a negative `rent_sol`. *Partly done (read-only):* the cost parser was run on real third-party Pump.fun sells that close the token account and reads the rent refund, fee and priority fee correctly; this also showed mainnet rent is now ~0.0015 SOL, so the modelled paper rent was corrected. Only the bot's own canary trades can close this item
 - **Acceptance:** for a paper/devnet session, `pumpfun-audit reconcile` reproduces the wallet delta within tolerance; net PnL on the dashboard equals the audit `pnl` total; coverage ≥ 95%
 
 ### Sprint 24C: Backtest Fidelity & Strategy Tuning (BUG-61)
@@ -775,7 +782,7 @@ The bot is in production. Phase 5 pays down the structural debt that blocks the 
 - [ ] Exclude `pumpfun_trading.tests*` from the wheel (`[tool.setuptools.packages.find] exclude`) (T8)
 - [ ] `noxfile.py`: test matrix for Python 3.11–3.14
 - [ ] `.gitignore` runtime artifacts (`bot.log`, `events.jsonl`, `cov.json`, `coverage.xml`, `*.egg-info`); remove stale root `__pycache__` for retired `audit`/`bot`/`cli`/`replay` modules
-- [ ] Add `CHANGELOG.md` (Keep a Changelog) following the SemVer policy in [`RELEASE-GATE.md` §6](RELEASE-GATE.md#6-versioning-policy); bump the version and tag the first release
+- [x] Add `CHANGELOG.md` (Keep a Changelog) following the SemVer policy in [`RELEASE-GATE.md` §6](RELEASE-GATE.md#6-versioning-policy): [`CHANGELOG.md`](../../CHANGELOG.md) covers v0.1.0, v0.1.1 and the untagged 0.2.0 (Sprint 24B), each with its release record; version bumped to `0.2.0` (tag after merge)
 - **Acceptance:** `pip install .` wheel contains no `tests/`; nox matrix green on 3.11–3.14; coverage ≥ 95%
 
 ### Sprint 26: Test Foundation (T1, T4, T6, T7) — see [`TESTING.md`](TESTING.md)

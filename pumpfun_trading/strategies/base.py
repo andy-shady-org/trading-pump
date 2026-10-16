@@ -118,6 +118,8 @@ class TradingBotConfig:
     min_slippage_bps: int = 100
     max_slippage_bps: int = 500
     max_exit_slippage_bps: int = 5000
+    # Close the token account on a full exit to recover its rent (BUG-96).
+    close_token_account_on_full_exit: bool = True
     priority_fee_mode: str = "adaptive"
     volatility_slippage_multiplier: float = 1.0
     price_impact_slippage_multiplier: float = 1.0
@@ -249,6 +251,7 @@ class TradingBotConfig:
             "replay_compress": self.replay_compress,
             "retention_check_interval_seconds": self.retention_check_interval_seconds,
             "enable_dynamic_slippage": self.enable_dynamic_slippage,
+            "close_token_account_on_full_exit": self.close_token_account_on_full_exit,
             "min_slippage_bps": self.min_slippage_bps,
             "max_slippage_bps": self.max_slippage_bps,
             "max_exit_slippage_bps": self.max_exit_slippage_bps,

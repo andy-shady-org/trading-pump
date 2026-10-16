@@ -51,7 +51,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 ## 2. Terminal Income Track (Income)
 
 ### FEAT-49: Net PnL Accounting & Wallet Reconciliation
-* **Class / Priority:** Income · P1 (Sprint 24B)
+* **Class / Priority:** Income · P1 (Sprint 24B) — **implemented** on branch `sprint-24b-net-pnl` together with BUG-96 (token-account rent recovery); see `docs/dev/TODO.md` Sprint 24B for what remains
 * **Goal:** Know, every day, whether the bot made money after every cost, and prove it against the wallet.
 * **Evidence:** `TradingBot._record_trade` (`bot/run.py`) stores `cost_sol` / `proceeds_sol` only; realized PnL sent to `DailyEquityTracker` (`bot/risk.py`) is `sell_p - entry`, so the daily circuit breaker and the dashboard see **gross** PnL. Network fees, priority fees, Jito tips and ATA rent are not recorded, and there is no transaction signature on the trade record. The snapshot ledger keeps only the last 50 trades. `pumpfun-audit` can filter and summarise records but has no PnL or reconciliation command.
 * **Design:**

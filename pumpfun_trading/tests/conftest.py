@@ -6,8 +6,10 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolate_test_environment(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    """Isolate tests from ambient persistence and audit environment variables."""
+def isolate_test_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, request: pytest.FixtureRequest
+) -> None:
+    """Isolate tests from ambient persistence, audit env vars and live RPC."""
     isolated_status_path = str(tmp_path / "bot_status.json")
     isolated_audit_path = str(tmp_path / "audit_trail.jsonl")
 
@@ -19,6 +21,19 @@ def isolate_test_environment(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     from pumpfun_trading.execution.executor import OrderExecutor
 
     monkeypatch.setattr(OrderExecutor, "balance_retry_delay_seconds", 0.0)
+
+    # Fee/tip capture after a fill calls getTransaction (FEAT-49). Tests with a
+    # partly mocked client must not reach mainnet, so it fails fast unless the
+    # module opts in with ``USES_REAL_TRANSACTION_COSTS = True``.
+    if not getattr(request.module, "USES_REAL_TRANSACTION_COSTS", False):
+        from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+
+        async def no_cost_rpc(self, signature, mint, **_kwargs):
+            raise RuntimeError("transaction cost RPC disabled in tests")
+
+        monkeypatch.setattr(
+            PumpFunExecutionClient, "get_transaction_costs", no_cost_rpc
+        )
 
 
 OFFLINE_CREATOR = "7nYabs9dUhvxYwdTnrWVBL9MYviKSfrEbdWCUbcnwkpF"

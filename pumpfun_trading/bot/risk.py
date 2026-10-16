@@ -36,6 +36,13 @@ class DailyEquityTracker:
     locked_at_timestamp: float | None = None
     lock_reason: str = ""
     total_lock_count: int = 0
+    # Fees, tips and net rent paid today; realized PnL above is net of these.
+    realized_daily_costs_sol: float = 0.0
+
+    @property
+    def realized_daily_gross_pnl_sol(self) -> float:
+        """Today's realized PnL before transaction costs (FEAT-49)."""
+        return self.realized_daily_pnl_sol + self.realized_daily_costs_sol
 
     @property
     def effective_baseline_sol(self) -> float:
@@ -86,6 +93,7 @@ class DailyEquityTracker:
             self.starting_equity_sol = current_equity
             self.peak_daily_equity_sol = current_equity
             self.realized_daily_pnl_sol = 0.0
+            self.realized_daily_costs_sol = 0.0
             # A new UTC trading day also releases any daily lock (BUG-47).
             self.circuit_breaker_engaged = False
             self.circuit_breaker_action = CircuitBreakerAction.NONE
@@ -115,9 +123,14 @@ class DailyEquityTracker:
         )
         return current_equity, drawdown_pct
 
-    def record_realized_trade(self, pnl_sol: float) -> float:
-        """Records realized profit or loss from a closed trade."""
+    def record_realized_trade(self, pnl_sol: float, costs_sol: float = 0.0) -> float:
+        """Records realized PnL of a trade.
+
+        ``pnl_sol`` must be **net** of ``costs_sol`` (fees, tips, net rent) so the
+        circuit breaker sees real losses (FEAT-49).
+        """
         self.realized_daily_pnl_sol += float(pnl_sol)
+        self.realized_daily_costs_sol += float(costs_sol)
         return self.realized_daily_pnl_sol
 
     def calculate_drawdown(
@@ -195,6 +208,7 @@ class DailyEquityTracker:
                 )
                 self.peak_daily_equity_sol = self.starting_equity_sol
                 self.realized_daily_pnl_sol = 0.0
+                self.realized_daily_costs_sol = 0.0
             else:
                 return True, self.lock_reason or "portfolio circuit breaker active"
 
@@ -303,6 +317,8 @@ class DailyEquityTracker:
             "starting_equity_sol": self.starting_equity_sol,
             "peak_daily_equity_sol": self.peak_daily_equity_sol,
             "realized_daily_pnl_sol": self.realized_daily_pnl_sol,
+            "realized_daily_costs_sol": self.realized_daily_costs_sol,
+            "realized_daily_gross_pnl_sol": self.realized_daily_gross_pnl_sol,
             "effective_baseline_sol": self.effective_baseline_sol,
             "drawdown_reference_mode": self.drawdown_reference_mode,
             "profit_ratchet_ratio": self.profit_ratchet_ratio,
@@ -347,6 +363,9 @@ class DailyEquityTracker:
             locked_at_timestamp=data.get("locked_at_timestamp"),
             lock_reason=str(data.get("lock_reason", "") or ""),
             total_lock_count=int(data.get("total_lock_count", 0) or 0),
+            realized_daily_costs_sol=float(
+                data.get("realized_daily_costs_sol", 0.0) or 0.0
+            ),
         )
 
 

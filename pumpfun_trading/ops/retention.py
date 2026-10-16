@@ -52,6 +52,18 @@ def compress_file_to_gzip(source: Path | str, dest: Path | str | None = None) ->
     return dst_path
 
 
+# Upper bound on how long a rotation waits for the previous archive's gzip.
+COMPRESSION_JOIN_TIMEOUT_SECONDS = 60.0
+
+
+def _compress_quietly(source: Path, dest: Path) -> None:
+    """Background gzip; on failure the archive simply stays uncompressed."""
+    try:
+        compress_file_to_gzip(source, dest)
+    except Exception as exc:
+        logger.warning("Failed to compress %s: %s", source, exc)
+
+
 class RotatedFileSink:
     """Thread-safe, high-throughput rotating file sink with background gzip compression."""
 
@@ -67,6 +79,7 @@ class RotatedFileSink:
         self._lock = threading.Lock()
         self._file: Any | None = None
         self._current_size = 0
+        self._compress_thread: Any | None = None
 
         self._ensure_dir()
         self._open_file()
@@ -143,24 +156,37 @@ class RotatedFileSink:
 
         max_files = max(1, self.policy.max_files)
 
-        # Shift existing backup files
+        # The previous archive may still be gzipping in the background; shifting it
+        # mid-compression would race the thread (BUG-97).
+        self._wait_for_compression()
+
+        # Shift existing backups by their on-disk name: `.N` stays plain and `.N.gz`
+        # stays compressed, so a not-yet-compressed archive never gets a `.gz`
+        # name (BUG-97).
         for i in range(max_files - 1, 0, -1):
-            sfn = self._get_rotated_filename(i)
-            dfn = self._get_rotated_filename(i + 1)
-            if sfn.exists():
-                if dfn.exists():
+            sources = [p for p in (self._plain_name(i), self._gz_name(i)) if p.exists()]
+            if not sources:
+                continue
+            for stale in (self._plain_name(i + 1), self._gz_name(i + 1)):
+                if stale.exists():
                     try:
-                        dfn.unlink()
+                        stale.unlink()
                     except OSError:
                         pass
+            for sfn in sources:
+                dfn = (
+                    self._gz_name(i + 1)
+                    if sfn.name.endswith(".gz")
+                    else self._plain_name(i + 1)
+                )
                 try:
                     sfn.rename(dfn)
                 except OSError:
                     pass
 
         # Target file 1
-        target_dest = self._get_rotated_filename(1, compressed=False)
-        target_gz = self._get_rotated_filename(1, compressed=True)
+        target_dest = self._plain_name(1)
+        target_gz = self._gz_name(1)
 
         if target_dest.exists():
             try:
@@ -183,34 +209,49 @@ class RotatedFileSink:
                 exc,
             )
 
-        # Prune any files beyond max_files
-        oldest_candidate = self._get_rotated_filename(max_files + 1)
-        if oldest_candidate.exists():
-            try:
-                oldest_candidate.unlink()
-            except OSError:
-                pass
-        oldest_uncompressed = self._get_rotated_filename(
-            max_files + 1, compressed=False
-        )
-        if oldest_uncompressed.exists():
-            try:
-                oldest_uncompressed.unlink()
-            except OSError:
-                pass
+        # Prune any files beyond max_files (both forms)
+        for overflow in (self._plain_name(max_files + 1), self._gz_name(max_files + 1)):
+            if overflow.exists():
+                try:
+                    overflow.unlink()
+                except OSError:
+                    pass
 
         # Reopen main file
         self._open_file()
 
         # Compress target_dest in background thread if configured
         if self.policy.compress_archives and target_dest.exists():
-            threading.Thread(
-                target=compress_file_to_gzip,
+            thread = threading.Thread(
+                target=_compress_quietly,
                 args=(target_dest, target_gz),
                 daemon=True,
-            ).start()
+            )
+            self._compress_thread = thread
+            thread.start()
 
         return True
+
+    def _wait_for_compression(self) -> None:
+        thread = self._compress_thread
+        if thread is None:
+            return
+        if thread.is_alive():
+            thread.join(timeout=COMPRESSION_JOIN_TIMEOUT_SECONDS)
+            if thread.is_alive():
+                logger.warning(
+                    "Archive compression for %s still running after %.0fs",
+                    self.base_path,
+                    COMPRESSION_JOIN_TIMEOUT_SECONDS,
+                )
+                return
+        self._compress_thread = None
+
+    def _plain_name(self, index: int) -> Path:
+        return Path(f"{self.base_path}.{index}")
+
+    def _gz_name(self, index: int) -> Path:
+        return Path(f"{self.base_path}.{index}.gz")
 
     def _get_rotated_filename(self, index: int, compressed: bool | None = None) -> Path:
         is_comp = self.policy.compress_archives if compressed is None else compressed

@@ -271,11 +271,13 @@ The `pumpfun-audit` CLI provides forensic trade accounting and incident analysis
 ### Command Syntax
 ```bash
 # Standalone binary
-pumpfun-audit --path <AUDIT_PATH> [OPTIONS]
+pumpfun-audit [pnl | reconcile] --path <AUDIT_PATH> [OPTIONS]
 
 # Unified CLI subcommand
-pumpfun audit --path <AUDIT_PATH> [OPTIONS]
+pumpfun audit [pnl | reconcile] --path <AUDIT_PATH> [OPTIONS]
 ```
+
+Without a command the audit records are listed (or summarised with `--summary`). `pnl` prints the net PnL report and `reconcile` checks the audit trail against the wallet on-chain (Sprint 24B, FEAT-49).
 
 ### Options & Parameter Reference
 
@@ -297,6 +299,15 @@ pumpfun audit --path <AUDIT_PATH> [OPTIONS]
 | `--limit` | Integer | `None` | Limits the number of records displayed. |
 | `--json` | Flag | `false` | Emits filtered records as raw JSON to stdout. |
 | `--export` | File Path | `None` | Exports filtered audit records to a target JSON file. |
+| `--group-by` | `day` / `reason` / `strategy` / `mint` | `None` | `pnl`: break the totals down (with `reason`, buys group under their entry reason and sells under their exit reason). |
+| `--wallet` | Base58 | `None` | `reconcile`: wallet public key (required). |
+| `--rpc-url` | URL | `PUMPFUN_RPC_URL` / `SOLANA_RPC_URL` | `reconcile`: RPC used for `getTransaction`, token accounts and balance. |
+| `--start-balance` | Float | `None` | `reconcile`: wallet SOL at the start of the period; enables the whole-wallet check. |
+| `--tolerance-sol` | Float | `0.002` | `reconcile`: absolute tolerance. |
+| `--tolerance-pct` | Float | `0.05` | `reconcile`: relative tolerance; the larger of the two applies. |
+| `--no-token-check` | Flag | `false` | `reconcile`: skip the lost/phantom position check. |
+ `--status-file` | File Path | `reconcile_status.json` next to `--path` | `reconcile`: where the result is stored for the dashboard Risk panel and `bot_status.json` (`PUMPFUN_RECONCILE_STATUS_PATH` overrides the default). |
+ `--no-status-file` | Flag | `false` | `reconcile`: don't store the result (ad-hoc checks of other periods). |
 
 ### Execution Examples & Recipes
 
@@ -328,6 +339,20 @@ pumpfun-audit \
   --path runtime/audit_trail.jsonl \
   --mint 7EYnhcWvdqPB2DdJ6DXZsMvT8GqgE4F8V9m1pump \
   --export reports/solcat_audit.json
+```
+
+#### Recipe 5: Net PnL After Fees, Tips and Rent
+Gross PnL, network and priority fees, Jito tips, token-account rent, net PnL, net win rate and expectancy, broken down by exit reason (add `--json` for machine-readable output):
+```bash
+pumpfun-audit pnl --path data/audit_trail.jsonl --date-from 2026-10-16 --group-by reason
+```
+Records written before Sprint 24B have no cost fields (`cost_source: none`); the report flags how many.
+
+#### Recipe 6: Reconcile the Wallet Against the Audit Trail
+Compares every live trade signature's on-chain SOL change with the recorded `cash_flow_sol`, lists closed positions that still hold tokens and open positions that hold none, and (with `--start-balance`) the whole-wallet change. Exits with code 1 when a gap exceeds max(0.002 SOL, 5%). The result is also stored in `reconcile_status.json` next to the audit trail, which the running bot's dashboard shows as `Reconciliation`:
+```bash
+pumpfun-audit reconcile --path data/audit_trail.jsonl --wallet <wallet-pubkey> \
+  --date-from 2026-10-16 --start-balance 0.30
 ```
 
 ---

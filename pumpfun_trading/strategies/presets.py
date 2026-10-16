@@ -578,6 +578,9 @@ def resolve_strategy_config(
         min_slippage_bps=int(base.get("min_slippage_bps", 100)),
         max_slippage_bps=int(base.get("max_slippage_bps", 500)),
         max_exit_slippage_bps=int(base.get("max_exit_slippage_bps", 5000)),
+        close_token_account_on_full_exit=bool(
+            base.get("close_token_account_on_full_exit", True)
+        ),
         priority_fee_mode=str(base.get("priority_fee_mode", "adaptive")),
         volatility_slippage_multiplier=float(
             base.get("volatility_slippage_multiplier", 1.0)

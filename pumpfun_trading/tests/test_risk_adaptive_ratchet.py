@@ -332,8 +332,12 @@ async def test_dry_run_simulated_cash_flow_and_circuit_breaker_resilience() -> N
     mint1 = "Stockguy1111111111111111111111111111111111"
     buy_ok = await bot._buy_token(mint1, market_cap_sol=30.0, token_name="Stockguy")
     assert buy_ok is True
-    assert bot.wallet_balance_sol == pytest.approx(0.19)
+    # Paper wallets also pay the modelled fee, tip and token-account rent (FEAT-49).
+    buy_costs = bot._trade_ledger[-1]["costs_sol"]
+    assert buy_costs > 0
+    assert bot.wallet_balance_sol == pytest.approx(0.19 - buy_costs)
     assert mint1 in bot.active_positions
+    fee_factor = bot._paper_round_trip_fee_factor()
 
     # 2. Simulate explosive 22.3x price surge (market cap 30.0 -> 669.0 SOL)
     bot.position_manager.update_price(mint1, 669.0)
@@ -347,24 +351,33 @@ async def test_dry_run_simulated_cash_flow_and_circuit_breaker_resilience() -> N
         mint1, sell_fraction=0.50, reason="take_profit_tier1", target_tier=1
     )
     assert sold_tp1 is True
-    # Proceeds: (0.01 * 0.5) * (669.0 / 30.0) = 0.1115 SOL
-    # New wallet balance: 0.19 + 0.1115 = 0.3015 SOL
-    assert bot.wallet_balance_sol == pytest.approx(0.3015)
+    # Proceeds: (0.01 * 0.5) * (669.0 / 30.0) = 0.1115 SOL before protocol fees
+    half_proceeds = 0.1115 * fee_factor
+    tp1_costs = bot._trade_ledger[-1]["costs_sol"]
+    expected_wallet = 0.19 - buy_costs + half_proceeds - tp1_costs
+    assert bot.wallet_balance_sol == pytest.approx(expected_wallet)
 
     # 4. Sell full remaining exit (Moonbag)
     sold_full = await bot._sell_token(mint1, sell_fraction=1.0, reason="timeout_exit")
     assert sold_full is True
     assert mint1 not in bot.active_positions
-    # Remaining 50% proceeds = 0.1115 SOL
-    # Total wallet balance: 0.3015 + 0.1115 = 0.4130 SOL
-    assert bot.wallet_balance_sol == pytest.approx(0.4130)
-    assert bot.daily_equity_tracker.realized_daily_pnl_sol == pytest.approx(0.2130)
+    # Remaining 50% proceeds; the full exit refunds the token-account rent.
+    exit_costs = bot._trade_ledger[-1]["costs_sol"]
+    assert exit_costs < 0
+    expected_wallet += half_proceeds - exit_costs
+    assert bot.wallet_balance_sol == pytest.approx(expected_wallet)
+    total_costs = buy_costs + tp1_costs + exit_costs
+    assert bot.daily_equity_tracker.realized_daily_pnl_sol == pytest.approx(
+        2 * half_proceeds - 0.01 - total_costs
+    )
 
     # 5. Open new position (cost 0.01 SOL)
     mint2 = "NextToken2222222222222222222222222222222222"
     buy_ok2 = await bot._buy_token(mint2, market_cap_sol=30.0, token_name="NextToken")
     assert buy_ok2 is True
-    assert bot.wallet_balance_sol == pytest.approx(0.4030)
+    assert bot.wallet_balance_sol == pytest.approx(
+        expected_wallet - 0.01 - bot._trade_ledger[-1]["costs_sol"]
+    )
 
     # 6. Evaluate circuit breaker
     tripped = await bot._check_and_enforce_circuit_breaker()

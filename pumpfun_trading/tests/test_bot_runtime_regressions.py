@@ -67,10 +67,13 @@ async def test_snapshot_round_trip_keeps_cost_basis_and_pool(tmp_path):
     assert MINT_2 in restored._migrating_mints
     assert isinstance(restored._exit_pool_keys(MINT_2, pool_pos), RaydiumPoolKeys)
 
-    # Realized PnL uses the SOL cost, not the per-token unit price.
+    # Realized PnL uses the SOL cost, not the per-token unit price: at an
+    # unchanged price only the modelled protocol fees are lost (FEAT-49).
     assert await restored._sell_token(MINT, reason="test") is True
-    assert restored.daily_equity_tracker.realized_daily_pnl_sol == pytest.approx(
-        0.0, abs=1e-9
+    fee_loss = 0.01 * (restored._paper_round_trip_fee_factor() - 1.0)
+    assert restored._trade_ledger[-1]["gross_pnl_sol"] == pytest.approx(fee_loss)
+    assert restored.daily_equity_tracker.realized_daily_gross_pnl_sol == (
+        pytest.approx(fee_loss)
     )
     await restored.close()
 
@@ -88,7 +91,10 @@ async def test_unit_buy_price_never_used_as_cost(tmp_path):
         "buy_price": 2.8e-8,
     }
     assert await bot._sell_token(MINT, reason="test") is True
-    assert abs(bot.daily_equity_tracker.realized_daily_pnl_sol) < 1e-9
+    fee_loss = 0.01 * (bot._paper_round_trip_fee_factor() - 1.0)
+    assert bot.daily_equity_tracker.realized_daily_gross_pnl_sol == pytest.approx(
+        fee_loss
+    )
     await bot.close()
 
 

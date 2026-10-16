@@ -65,6 +65,7 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_EVENT_SUBSYSTEMS`](#pumpfun_event_subsystems) | — | String (CSV) | Optional | `stream,screening,strategy,execution,risk,lifecycle` | Telemetry |
 | [`PUMPFUN_STATUS_PATH`](#pumpfun_status_path) | `PUMPFUN_BOT_STATUS_PATH` | String (Path) | Optional | `runtime/bot_status.json` | Persistence |
 | [`PUMPFUN_AUDIT_LOG_PATH`](#pumpfun_audit_log_path) | `PUMPFUN_AUDIT_LOG` | String (Path) | Optional | `runtime/audit_trail.jsonl` | Persistence / Forensic |
+| [`PUMPFUN_RECONCILE_STATUS_PATH`](#pumpfun_reconcile_status_path) | — | String (Path) | Optional | `reconcile_status.json` next to the audit trail | Persistence / Forensic |
 | [`PUMPFUN_RECORD_REPLAY`](#pumpfun_record_replay) | — | Boolean / Path | Optional | `false` | Replay Simulation |
 | [`PUMPFUN_REPLAY_LOG_PATH`](#pumpfun_replay_log_path) | — | String (Path) | Optional | `None` | Replay Simulation |
 | [`PUMPFUN_LOG_MAX_BYTES`](#pumpfun_log_max_bytes) | — | Integer (Bytes) | Optional | `10485760` (10 MB) | Log Retention |
@@ -359,6 +360,14 @@ The table below summarizes every supported environment variable, its recognized 
 * **Default:** `runtime/audit_trail.jsonl`
 * **Description:** Append-only JSONL destination path for the forensic audit trail, logging completed trades, exit reasons, slippage data, and risk interventions.
 * **Example:** `PUMPFUN_AUDIT_LOG_PATH="runtime/audit_trail.jsonl"`
+
+#### `PUMPFUN_RECONCILE_STATUS_PATH`
+* **Fallback Alias:** None
+* **Type:** String (File Path)
+* **Required:** Optional
+* **Default:** `reconcile_status.json` in the same directory as the audit trail
+* **Description:** Where `pumpfun-audit reconcile` stores its last result and where the bot reads it for the dashboard `Reconciliation` row and the `reconciliation` field of `bot_status.json`. Set it in both the bot's and the reconcile job's environment, or leave it unset so both use the audit-trail directory.
+* **Example:** `PUMPFUN_RECONCILE_STATUS_PATH="data/reconcile_status.json"`
 
 #### `PUMPFUN_RECORD_REPLAY`
 * **Fallback Alias:** None

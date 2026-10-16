@@ -22,6 +22,11 @@ from spl.token.instructions import (
 from pumpfun_trading.infra.rpc_pool import (
     RpcConnectionPool,
 )
+from .costs import (
+    TransactionCosts,
+    model_transaction_costs,
+    parse_transaction_costs,
+)
 from .curve import (
     calculate_buy_execution_slippage,
     calculate_buy_price_impact,
@@ -541,6 +546,107 @@ class PumpFunExecutionClient:
                 accounts.append((address, amount))
         return accounts
 
+    def tip_account_set(self) -> set[str]:
+        """Every Jito tip account a tip may have been sent to."""
+        accounts = set(JITO_TIP_ACCOUNTS)
+        if self.jito_client is not None:
+            accounts.update(str(a) for a in self.jito_client.tip_accounts or [])
+        return accounts
+
+    def wallet_token_accounts(self, mint: str) -> list[str]:
+        """The wallet's ATA for ``mint`` under both token programs."""
+        mint_pubkey = self._to_pubkey(mint)
+        return [
+            str(
+                get_associated_token_address(
+                    self.wallet, mint_pubkey, self._to_pubkey(program)
+                )
+            )
+            for program in (TOKEN_PROGRAM_ID_STR, TOKEN_2022_PROGRAM_ID_STR)
+        ]
+
+    def modelled_priority_fee_lamports(self) -> int:
+        """Priority fee the transaction builder attaches (compute price x limit)."""
+        if self.compute_unit_limit <= 0:
+            return 0
+        unit_price = self.compute_unit_price_micro_lamports
+        if unit_price is None:
+            if self.priority_fee_lamports <= 0:
+                return 0
+            unit_price = int(
+                (self.priority_fee_lamports * 1_000_000) / self.compute_unit_limit
+            )
+        return max(0, int(unit_price * self.compute_unit_limit / 1_000_000))
+
+    def model_trade_costs(
+        self, *, rent_lamports: int = 0, signature: str | None = None
+    ) -> TransactionCosts:
+        """Modelled costs of one trade for paper/dry-run accounting (FEAT-49).
+
+        Uses the static ``jito_tip_lamports``; live trades may pay a higher
+        dynamic tip, which is read from the transaction instead.
+        """
+        return model_transaction_costs(
+            priority_fee_lamports=self.modelled_priority_fee_lamports(),
+            tip_lamports=self.jito_tip_lamports if self.use_jito else 0,
+            rent_lamports=rent_lamports,
+            signature=signature,
+        )
+
+    async def get_transaction_costs(
+        self,
+        signature: str,
+        mint: str,
+        *,
+        is_buy: bool,
+        attempts: int = 4,
+        delay_seconds: float = 0.5,
+    ) -> TransactionCosts:
+        """Fee, tip, rent and exact swap amount of a confirmed trade (FEAT-49).
+
+        ``getTransaction`` can return ``null`` for a moment after confirmation, so
+        it is polled a few times. Raises ``RuntimeError`` if it never appears.
+        """
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {
+                    "encoding": "json",
+                    "commitment": "confirmed",
+                    "maxSupportedTransactionVersion": 0,
+                },
+            ],
+        }
+        last_error: Exception | None = None
+        for attempt in range(max(1, attempts)):
+            try:
+                parsed = await self.rpc_pool.request(
+                    payload, max_retries=1, timeout_seconds=5.0
+                )
+                result = parsed.get("result") if isinstance(parsed, dict) else None
+                if isinstance(result, dict):
+                    return parse_transaction_costs(
+                        result,
+                        wallet=str(self.wallet),
+                        is_buy=is_buy,
+                        token_accounts=self.wallet_token_accounts(mint),
+                        tip_accounts=self.tip_account_set(),
+                        signature=signature,
+                    )
+                last_error = RuntimeError("transaction not found yet")
+            except ValueError:
+                raise
+            except Exception as exc:
+                last_error = exc
+            if attempt + 1 < attempts:
+                await asyncio.sleep(delay_seconds)
+        raise RuntimeError(
+            f"Transaction costs unavailable for {signature}: {last_error}"
+        )
+
     async def get_ata_address(
         self,
         mint: str,
@@ -953,6 +1059,23 @@ class PumpFunExecutionClient:
         curve_state["creator"] = creator
         return curve_state
 
+    @staticmethod
+    def _live_curve_reserves(mint: str, curve_state: dict[str, Any]) -> tuple[int, int]:
+        """Virtual (SOL, token) reserves read from the curve account.
+
+        Raises instead of quoting against made-up initial-curve reserves when the
+        account reports none (drained, graduated or undecodable curve): slippage
+        must come from live reserves only (BUG-101).
+        """
+        v_sol = int(curve_state.get("virtual_sol_reserves", 0) or 0)
+        v_token = int(curve_state.get("virtual_token_reserves", 0) or 0)
+        if v_sol <= 0 or v_token <= 0:
+            raise CurveStateUnavailableError(
+                f"Bonding curve for {mint} reports no reserves "
+                f"(sol={v_sol}, token={v_token}); refusing to quote"
+            )
+        return v_sol, v_token
+
     async def build_buy_tx(
         self,
         mint: str,
@@ -977,11 +1100,7 @@ class PumpFunExecutionClient:
         is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
 
         if token_amount is None or token_amount <= 0:
-            v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-            v_token = int(curve_state.get("virtual_token_reserves", 0))
-            if v_sol <= 0 or v_token <= 0:
-                v_sol = 30_000_000_000
-                v_token = 1_073_000_000_000_000
+            v_sol, v_token = self._live_curve_reserves(mint, curve_state)
             token_amount = self.calculate_buy_tokens_out(
                 lamports,
                 v_sol,
@@ -1036,7 +1155,15 @@ class PumpFunExecutionClient:
         min_sol_output: int | float = 0,
         slippage_bps: int | None = None,
         tip_lamports: Optional[int] = None,
+        close_token_account: bool = False,
     ) -> VersionedTransaction:
+        """Pump.fun bonding-curve sell.
+
+        With ``close_token_account`` the wallet's token account is closed after the
+        sell, refunding its ~0.002 SOL rent (BUG-96). Only pass it when
+        ``token_amount`` is the whole balance: closing a non-empty account fails
+        the whole transaction.
+        """
         slippage_bps = self.normalize_slippage_bps(
             slippage_bps, self.default_slippage_bps
         )
@@ -1054,11 +1181,7 @@ class PumpFunExecutionClient:
         is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
 
         if min_sol_lamports <= 0:
-            v_sol = int(curve_state.get("virtual_sol_reserves", 0))
-            v_token = int(curve_state.get("virtual_token_reserves", 0))
-            if v_sol <= 0 or v_token <= 0:
-                v_sol = 30_000_000_000
-                v_token = 1_073_000_000_000_000
+            v_sol, v_token = self._live_curve_reserves(mint, curve_state)
             min_sol_lamports = self.calculate_sell_sol_out(
                 token_amount,
                 v_token,
@@ -1082,8 +1205,27 @@ class PumpFunExecutionClient:
                 is_mayhem_mode=is_mayhem_mode,
             )
         ]
+        if close_token_account:
+            instructions.append(
+                self._token_account_close_instruction(mint, base_token_prog)
+            )
         return await self._build_tx_with_instructions(
             instructions, tip_lamports=tip_lamports
+        )
+
+    def _token_account_close_instruction(
+        self, mint: str, token_program: Pubkey | str
+    ) -> Instruction:
+        """Close the wallet's (empty) token account, refunding its rent (BUG-96)."""
+        program = self._to_pubkey(token_program)
+        ata = get_associated_token_address(self.wallet, self._to_pubkey(mint), program)
+        return close_account(
+            CloseAccountParams(
+                program_id=program,
+                account=ata,
+                dest=self.wallet,
+                owner=self.wallet,
+            )
         )
 
     def build_raydium_swap_instruction(
@@ -1591,6 +1733,7 @@ class PumpFunExecutionClient:
         slippage_bps: Optional[int] = None,
         use_jito: Optional[bool] = None,
         conviction_score: float = 1.0,
+        close_token_account: bool = False,
     ) -> str:
         should_jito = self.use_jito if use_jito is None else use_jito
         tip_lamports = None
@@ -1608,6 +1751,7 @@ class PumpFunExecutionClient:
             min_sol_output=min_sol_output,
             slippage_bps=slippage_bps,
             tip_lamports=tip_lamports,
+            close_token_account=close_token_account,
         )
         if should_jito:
             return await self.send_jito_bundle_with_fallback([tx])

@@ -4,7 +4,7 @@ The Terminal User Interface (`pumpbot`) is an institutional-grade, low-overhead 
 
 > **Operational Note & Lifecycle Strategy**: The Terminal UI is the **income path** for the project: profits made with it fund the hosted Web Dashboard (FEAT-10). Web UI work starts only after the funding gate in [`dev/RELEASE-GATE.md` §3.7](dev/RELEASE-GATE.md#37-funding-gate-for-the-web-ui) passes, and the Terminal UI stays the primary interface until the Sprint 35 deprecation gate; after that it is kept as a lightweight diagnostic fallback. Planned terminal improvements for income (net PnL after fees and tips, wallet reconciliation, pause without restart, daily PnL digest) are in Phase 4b of [`dev/TODO.md`](dev/TODO.md#phase-4b-terminal-income-track-highest-priority).
 >
-> **Note on `Daily PnL`:** until Sprint 24B (FEAT-49) it is **gross** realized PnL; network fees, priority fees, Jito tips and rent are not deducted. Use the daily wallet reconciliation in [`dev/RUNBOOK.md` §5.3](dev/RUNBOOK.md#53-daily-wallet-reconciliation) for the real number.
+> **Note on PnL:** since Sprint 24B (FEAT-49) the Risk panel shows `Daily PnL (net)` (after network fees, priority fees, Jito tips and token-account rent), `Daily PnL (gross)`, `Costs today` and `Session net PnL`. In paper mode the costs and the Pump.fun fee are modelled; live trades read them from the confirmed transaction. Check the numbers against the wallet with `pumpfun-audit reconcile` ([`dev/RUNBOOK.md` §5.3](dev/RUNBOOK.md#53-daily-wallet-reconciliation)).
 
 ---
 
@@ -106,6 +106,7 @@ The Overview section provides an immediate operational snapshot split across fou
 * **`Equity guard`**: Status of the pre-trade equity guard (`enabled` for live trading, `dry-run` during simulation).
 * **`Daily PnL`**: Cumulative realized profit/loss for the current UTC trading day (e.g. `+0.2299 SOL` or `+229.9000 µSOL`).
 * **`Circuit breaker`**: Portfolio circuit breaker state: `ok` (healthy) or `LOCKED` (trading halted due to drawdown limit breach).
+* **`Reconciliation`**: Last `pumpfun-audit reconcile` result for this audit trail: `OK (n trades, age)` in green, `GAP (n problem(s), age)` in red, `STALE` when the last OK is older than 36 hours, or `not run`. The bot doesn't reconcile by itself; run the command daily ([`dev/RUNBOOK.md` §5.3](dev/RUNBOOK.md#53-daily-wallet-reconciliation)).
 
 #### C. Bot Status Sub-Panel (`border_style="blue"`)
 * **`State`**: Real-time lifecycle state machine value (`IDLE`, `MONITORING`, `BUYING`, `HOLDING`, `SELLING`, `SHUTDOWN`).

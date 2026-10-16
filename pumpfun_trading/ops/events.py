@@ -130,6 +130,24 @@ class DiagnosticEvent:
         )
 
 
+def _coerce_category(category: EventCategory | str) -> EventCategory:
+    if isinstance(category, EventCategory):
+        return category
+    try:
+        return EventCategory(str(category).lower())
+    except ValueError:
+        return EventCategory.LIFECYCLE
+
+
+def _coerce_severity(severity: EventSeverity | str) -> EventSeverity:
+    if isinstance(severity, EventSeverity):
+        return severity
+    try:
+        return EventSeverity(str(severity).lower())
+    except ValueError:
+        return EventSeverity.INFO
+
+
 class DiagnosticEventLogger:
     """
     High-throughput, asynchronous, non-blocking diagnostic event writer.
@@ -198,19 +216,15 @@ class DiagnosticEventLogger:
             return False
 
         if event is None:
-            if not self.is_category_enabled(category):
+            # Normalise first so an unknown category or severity falls back to
+            # LIFECYCLE / INFO (as ``DiagnosticEvent`` does) instead of raising
+            # on the hot path (BUG-98).
+            resolved_category = _coerce_category(category)
+            if not self.is_category_enabled(resolved_category):
                 return False
             event = DiagnosticEvent(
-                category=(
-                    category
-                    if isinstance(category, EventCategory)
-                    else EventCategory(str(category).lower())
-                ),
-                severity=(
-                    severity
-                    if isinstance(severity, EventSeverity)
-                    else EventSeverity(str(severity).lower())
-                ),
+                category=resolved_category,
+                severity=_coerce_severity(severity),
                 event_name=event_name,
                 mint=mint,
                 mint_name=mint_name,
