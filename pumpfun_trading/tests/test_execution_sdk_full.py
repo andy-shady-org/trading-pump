@@ -282,8 +282,8 @@ async def test_execution_client_v2_instructions_and_creator():
         base_token_program="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
     )
     assert buy_ix is not None
-    assert len(buy_ix.accounts) == 27
-    assert buy_ix.data[:8] == bytes([184, 23, 238, 97, 103, 197, 211, 61])
+    assert len(buy_ix.accounts) == 18
+    assert buy_ix.data[:8] == bytes([102, 6, 61, 18, 1, 218, 235, 234])
 
     # build_sell_instruction_v2
     sell_ix = client.build_sell_instruction_v2(
@@ -295,8 +295,8 @@ async def test_execution_client_v2_instructions_and_creator():
         base_token_program="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
     )
     assert sell_ix is not None
-    assert len(sell_ix.accounts) == 26
-    assert sell_ix.data[:8] == bytes([93, 246, 130, 60, 231, 233, 64, 178])
+    assert len(sell_ix.accounts) == 16
+    assert sell_ix.data[:8] == bytes([51, 230, 133, 164, 1, 127, 131, 173])
 
     # decode_bonding_curve_data with creator
     raw_data = (

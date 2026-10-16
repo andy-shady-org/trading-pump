@@ -40,7 +40,68 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-30** | High | Bot / Dry-Run Cash Accounting | **RESOLVED** | Synchronize simulated wallet cash flows (`wallet_balance_sol`) on dry-run buy/sell executions to prevent false drawdown circuit breaker lockouts |
 | **BUG-31** | High | Execution / Buy Token Amount | **RESOLVED** | Dynamic bonding curve token estimation in `build_buy_tx` & wallet balance query in `OrderExecutor.execute_buy` |
 | **BUG-32** | Medium | Bot / Config Lifecycle | **RESOLVED** | Preserved full configuration properties using `dataclasses.replace` in `TradingBot.__init__` |
-| **BUG-33** | Critical | Execution / On-Chain V2 Instruction Layout | **RESOLVED** | Upgraded to Pump.fun BuyV2/SellV2 instructions, Token-2022 compatibility, and dynamic volume/fee/creator PDAs |
+| **BUG-33** | Critical | Execution / On-Chain V2 Instruction Layout | **SUPERSEDED** | Upgraded to Pump.fun BuyV2/SellV2 instructions, Token-2022 compatibility, and dynamic volume/fee/creator PDAs (layout rejected on-chain, see BUG-34) |
+| **BUG-34** | Critical | Execution / Live Buy Failures | **RESOLVED** | Mainnet-verified `buy`/`sell` account layout with `bonding-curve-v2` PDA, mayhem-mode fee recipient routing, and `base64` Jito bundle encoding |
+| **BUG-35** | Critical | Bot / Position State | **OPEN** | RPC token-balance failure reads as zero, so live positions are deleted as "dust" |
+| **BUG-36** | Critical | SDK / Raydium Sell | **OPEN** | `build_raydium_sell_tx` uses buy-direction token accounts (WSOL → token) |
+| **BUG-37** | Critical | Execution / Atomic Arbitrage | **OPEN** | Arb bundle Raydium legs use the token ATA as both source and destination |
+| **BUG-38** | Critical | Strategy / Pre-Graduation Exits | **OPEN** | Curve progress of ~1% is read as 92–100%, so pre-graduation tranches fire immediately |
+| **BUG-39** | High | Bot / Exit Retry Queue | **OPEN** | `_process_exit_retry_queue` is never called from the runtime |
+| **BUG-40** | High | Bot / Geyser Dispatch | **OPEN** | Geyser events are handled twice (callbacks and `listen()`) |
+| **BUG-41** | High | Bot / Concurrency | **OPEN** | Sells are not covered by `_trade_lock`, so the same mint can be sold twice at once |
+| **BUG-42** | High | Strategy / Exit Engine | **OPEN** | Take-profit tiers are not latched on emit; pre-graduation tranches are latched before the fill |
+| **BUG-43** | High | Strategy / Exit Engine | **OPEN** | Pre-graduation `target_tier` 1/2 marks the 2.0x/3.5x take-profit tiers as done |
+| **BUG-44** | High | Bot / Graduation | **OPEN** | Graduated positions cannot be sold on Raydium |
+| **BUG-45** | High | Bot / Persistence | **OPEN** | Status snapshot drops `cost_sol` and `pool_keys`; after restart, unit `buy_price` is used as position cost |
+| **BUG-46** | High | Bot / Health | **OPEN** | `_risk_killed` stays set after transient stream or RPC problems; only a restart clears it |
+| **BUG-47** | High | Bot / Daily Circuit Breaker | **OPEN** | Daily equity tracker does not roll over at UTC midnight while the breaker is latched |
+| **BUG-48** | High | Execution / Sell Proceeds | **OPEN** | Live sell proceeds are the slippage floor (`min_sol_lamports`), not actual SOL received |
+| **BUG-49** | High | Execution / Buy Fill Size | **OPEN** | Buy fill size is the whole ATA balance; fallback estimate uses the post-trade curve |
+| **BUG-50** | High | Execution / Raydium Buy | **OPEN** | Live Raydium buys record `token_amount=0` |
+| **BUG-51** | High | SDK / Raydium Buy | **OPEN** | Raydium buy never wraps SOL into WSOL and ignores `slippage_bps` |
+| **BUG-52** | High | Execution / Slippage Policy | **OPEN** | Dynamic slippage never gets live curve reserves; sells are sized as 0.01 SOL |
+| **BUG-53** | High | SDK / Jito Confirmation | **OPEN** | Bundles that landed with an on-chain error are reported as successful |
+| **BUG-54** | High | SDK / ATA Creation | **OPEN** | An ATA lookup error adds a non-idempotent `create_associated_token_account` |
+| **BUG-55** | High | Streams / Geyser | **OPEN** | Yellowstone client never opens a gRPC stream and subscribes to mint keys instead of curve PDAs |
+| **BUG-56** | High | Strategy / Anti-Rug | **OPEN** | `max_gini_coefficient` (0.85) is only a soft penalty; hard reject happens only above 0.95 |
+| **BUG-57** | High | Strategy / Anti-Rug | **OPEN** | Anti-rug checks pass when holder or dev data is missing |
+| **BUG-58** | High | Bot / Dev Wallet Enrichment | **OPEN** | `tokens_launched_24h` of 0 falls back to the creator's lifetime launch count |
+| **BUG-59** | High | Bot / Cross-Venue Arbitrage | **OPEN** | Arbitrage is quoted and executed on made-up pool reserves |
+| **BUG-60** | High | Engines / Optimizer | **OPEN** | Holdout (test) fitness is used to select trials (train/test leakage) |
+| **BUG-61** | High | Engines / Replay | **OPEN** | Paper replay ignores most parameters the optimizer searches |
+| **BUG-62** | High | Engines / Replay Metrics | **OPEN** | Profit factor is computed from return percentages, not SOL PnL |
+| **BUG-63** | High | Engines / Replay Arbitrage | **OPEN** | Replay arbitrage adds profit on every snapshot without committing capital |
+| **BUG-64** | High | Ops / Retention | **OPEN** | `ops prune` can delete any file in the target directory; `--max-files` is ignored |
+| **BUG-65** | Medium | Bot / Token Amount Fallbacks | **OPEN** | Remaining balance of `0` is treated as missing and replaced with 100,000,000 raw tokens |
+| **BUG-66** | Medium | SDK / Curve Math | **OPEN** | Buy/sell curve quotes ignore Pump.fun protocol and creator fees |
+| **BUG-67** | Medium | Infra / RPC Pool | **OPEN** | JSON-RPC error responses are recorded as endpoint successes |
+| **BUG-68** | Medium | SDK / Creator Vault | **OPEN** | Creator vault falls back to the trader's own wallet when the creator is unknown |
+| **BUG-69** | Medium | SDK / Token Program | **OPEN** | Token-2022 detection errors silently fall back to SPL Token |
+| **BUG-70** | Medium | Bot / Risk Limits | **OPEN** | `check_loss_per_trade` never fires with defaults and can divide by zero |
+| **BUG-71** | Medium | Bot / Risk Limits | **OPEN** | Exposure cap uses full `cost_sol` after partial exits |
+| **BUG-72** | Medium | Storage / Status Snapshot | **OPEN** | `storage.write_status_snapshot` is non-atomic and persists a monotonic clock value |
+| **BUG-73** | Medium | Execution / Confirmation | **OPEN** | Confirmation timeouts are treated as definite failures (untracked fills, possible double sells) |
+| **BUG-74** | Medium | Bot / Resource Lifecycle | **OPEN** | `start()`/`run()` and `get_coins_by_mints` leave aiohttp sessions open |
+| **BUG-75** | Medium | Bot / WebSocket Market Cap | **OPEN** | WebSocket market-cap unit check can inflate market cap by ~1e6 |
+| **BUG-76** | Medium | Strategy / Exit Engine | **OPEN** | Stop-loss and take-profit cannot fire when `entry_market_cap <= 0` |
+| **BUG-77** | Medium | Strategy / Memory | **OPEN** | Per-mint screening, order-flow, and graduation caches grow without limit |
+| **BUG-78** | Medium | Strategy / Risk Validation | **OPEN** | `validate_risk_limits` ignores exposure, position size, and concentration caps |
+| **BUG-79** | Medium | Strategy / Sybil Detection | **OPEN** | When no trades fall inside the wash-trade window, the full trade history is used instead |
+| **BUG-80** | Medium | Services / Market Data | **OPEN** | Missing market cap defaults to 30 SOL |
+| **BUG-81** | Medium | SDK / Raydium Parsing | **OPEN** | `parse_raydium_initialize2_accounts` never reads `pc_mint` from the account list |
+| **BUG-82** | Medium | Engines / Replay | **OPEN** | Pre-graduation harvesting in replay only runs when cross-venue arbitrage is enabled |
+| **BUG-83** | Medium | Engines / Replay | **OPEN** | Replay can sell and buy again in the same snapshot at an already-known price |
+| **BUG-84** | Medium | Engines / Replay | **OPEN** | ISO-8601 timestamps sort as time 0 |
+| **BUG-85** | Medium | CLI / Replay | **OPEN** | `--replay-mode` is never used, and the unified CLI's `--mode` collides with replay's `--mode` |
+| **BUG-86** | Medium | CLI / Recorder | **OPEN** | `pumpfun-recorder --ws-url` is never used; every API poll is recorded as a buy signal |
+| **BUG-87** | Medium | Config / Env Aliases | **OPEN** | Status and audit path env var names differ between `get_runtime_env()`, the bot, and the docs |
+| **BUG-88** | Medium | UI / Dashboard | **OPEN** | Position reason always shows `watch` (reads `reason`, not `entry_reason`) |
+| **BUG-89** | Medium | CLI / Events | **OPEN** | `pumpfun-events --tail` exits instead of waiting for the file to appear |
+| **BUG-90** | Medium | CLI / Arbitrage | **OPEN** | `pumpfun-arb --monitor` / `--live` only evaluate hardcoded sample reserves |
+| **BUG-91** | Low | Bot / Lifecycle | **OPEN** | An in-flight buy that finishes after shutdown tries to move SHUTDOWN → MONITORING |
+| **BUG-92** | Low | Bot / Config | **OPEN** | `max_positions_per_mint` is stored but never used |
+| **BUG-93** | Low | SDK / PDA Helpers | **OPEN** | Associated bonding-curve helper uses `FEE_RECIPIENT` as the token-program seed |
+| **BUG-94** | Low | Bot / Persistence | **OPEN** | Failed atomic status writes leave stray `.tmp.<pid>` files |
 
 ---
 
@@ -244,6 +305,13 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Impact:** Custom user configurations, fine-tuned risk controls, and strategy adjustments were silently overwritten with default values upon bot initialization, causing unexpected runtime behavior and UI discrepancies.
 * **Remedy:** Refactored `TradingBot.__init__` to use `dataclasses.replace(base, ...)` to override only runtime-injected options (such as `dry_run`, `paper_trade`, `verbose`, `headless`, `stream_url`, `api_base_url`, `replay_log_path`) while preserving 100% of the loaded configuration settings. Added regression tests in `test_ui_and_storage.py`.
 
+### BUG-34: Every Live Buy Fails With `buy_confirmation_failed` [RESOLVED]
+* **Location:** `pumpfun_trading/sdk/execution.py`, `pumpfun_trading/sdk/jito.py`
+* **Status:** **Fixed** — Buy/sell instructions now mirror successful mainnet Pump.fun `buy` (18 accounts) and `sell` (16 accounts) instructions, mayhem-mode curves route fees to `Global.reserved_fee_recipient`, and Jito `sendBundle` declares `{"encoding": "base64"}`.
+* **Description:** Live runs logged `buy_executed` with `error: buy_confirmation_failed` after ~22s for every token, and the reported signatures never appeared on-chain. Simulating the generated transactions showed three causes: (1) the `BuyV2` layout passed the curve creator where the program expects the `sharing_config` PDA, so it failed with `ConstraintSeeds` (error 2006); (2) mayhem-mode curves (bonding curve byte 81) reject the standard fee recipient with `NotAuthorized` (error 6000); (3) Jito `sendBundle` got base64 transactions without an encoding parameter, so it tried to read them as base58 and every bundle was rejected (`transaction #0 could not be decoded`). The bot then fell back to RPC with `skipPreflight`, and the failing transaction never landed.
+* **Impact:** The bot could not open any live position.
+* **Remedy:** Rebuilt the instruction account lists from decoded mainnet transactions, including the `bonding-curve-v2` PDA and buyback fee recipient. Added `is_mayhem_mode` to `decode_bonding_curve_data` and passed it to the instruction builders. Fixed Jito bundle encoding. Added regression tests in `test_pump_instruction_layout.py`.
+
 ---
 
 ## 3. Low Severity & Quality of Life Bugs
@@ -288,3 +356,377 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 * **Description:** In `PositionManager.record_buy`, when computing effective buy price from `cost_sol` and `token_amount`: `effective_buy_price = float(cost_sol) / int(token_amount)`. Because `token_amount` is passed in raw integer base units ($100 \times 10^6 = 10^8$ base units for 100 tokens with 6 decimals), dividing `0.01 SOL` by $10^8$ without adjusting for SPL token decimals ($10^{-6}$) yielded $10^{-10}\text{ SOL}$, rather than $0.0001\text{ SOL}$ per token ($100\text{ µSOL/token}$).
 * **Impact:** Any component relying on `Position.buy_price` or `Position.entry_price` to assess unit price movements or calculate slippage computed an artificially depressed valuation ($10^{-10}$ SOL), leading to erroneous display values in status snapshots and export payloads.
 * **Remedy:** Scaled integer `token_amount` by $10^6$ (or derived spot price from `entry_market_cap / 1e9`) in `PositionManager.record_buy`. Added unit test coverage in `test_order_executor.py`.
+
+---
+
+## 4. Open Issues — Project-Wide Audit (2026-10-16): Critical & High Severity
+
+These were found by reading the code. They have not been reproduced or fixed yet. Line numbers are from the working copy at the time of the audit and may drift.
+
+### BUG-35: RPC Token-Balance Failure Treated as Zero, Live Positions Deleted as Dust [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution.py` (`get_token_balance`, ~L1450–1500), `pumpfun_trading/bot/run.py` (`_sell_token` ~L1910–1916, `_reconcile_positions_on_startup` ~L1983–2005)
+* **Description:** `get_token_balance` catches every exception from both of its RPC paths (`except Exception: pass`) and returns `0`. `_sell_token` and startup reconciliation trust that value. If it is at or below `min_sell_balance`, they call `remove_position` and report success.
+* **Impact:** A single RPC timeout, a 429, or a parse failure makes the bot forget a real position. The tokens stay in the wallet and are never sold.
+* **Remedy:** Return `None` or raise on RPC failure so it is distinct from a real zero balance. Only remove a position after a successful fetch shows dust; otherwise put it in the exit retry queue.
+
+### BUG-36: Raydium Sell Uses Buy-Direction Token Accounts [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution.py` (`build_raydium_swap_instruction` ~L1028–1044, `build_raydium_sell_tx` ~L1089–1106)
+* **Description:** `build_raydium_swap_instruction` defaults the source to the `pc_mint` (WSOL) ATA and the destination to the `coin_mint` (token) ATA, which is the buy direction. `build_raydium_sell_tx` passes `None` for both, so it gets those defaults.
+* **Impact:** Every Raydium "sell" (graduation exits, `swap_raydium(is_buy=False)`) either fails or spends WSOL to buy more of the token.
+* **Remedy:** For sells, use the token ATA as source and the WSOL ATA as destination, then close the WSOL ATA to unwrap.
+
+### BUG-37: Atomic Arbitrage Raydium Legs Use the Token ATA as Both Source and Destination [OPEN]
+* **Location:** `pumpfun_trading/execution/arbitrage.py` (~L74–109)
+* **Description:** In both `pump_to_raydium` and `raydium_to_pump`, the Raydium leg sets `user_source_token_account` and `user_destination_token_account` to the same mint ATA. The bundle also never wraps or unwraps WSOL, never creates ATAs, and always derives ATAs with the classic `TOKEN_PROGRAM_ID`, which is wrong for Token-2022 mints.
+* **Impact:** Live arbitrage bundles fail or do nothing. Tips and fees are still at risk.
+* **Remedy:** Choose WSOL ATA vs token ATA by direction, add create/wrap/unwrap instructions, and derive ATAs with the mint's real token program.
+
+### BUG-38: Pre-Graduation Progress of ~1% Read as 92–100% [OPEN]
+* **Location:** `pumpfun_trading/strategies/exits.py` (`evaluate_exit_strategy` ~L242–252)
+* **Description:** `GraduationCandidate.progress_pct` is a 0–100 percentage. The exit engine only divides by 100 when the value is `> 1.0`. Values from 0.92 to 1.0 (under 1 SOL of real reserves) are left as-is and compared to the fractional tranche targets (`0.92` / `0.97`). They pass, and at exactly `1.0` every tranche fires.
+* **Impact:** With `enable_pre_graduation_harvesting`, positions are partly sold right after entry at about 1% curve progress. Together with BUG-43, this can turn into a full exit.
+* **Remedy:** Use one scale everywhere: always pass a fraction, or always compare percent to percent. Do not guess the unit from `> 1.0`.
+
+### BUG-39: Exit Retry Queue Is Never Processed [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`_process_exit_retry_queue` ~L1870; enqueued at ~L1831–1868, 1992, 2055; never called from `start()` / `_run_health_loop()`)
+* **Description:** Failed sells go into `_exit_retry_queue` with backoff and slippage that rises to `max_exit_slippage_bps`, but only tests call `_process_exit_retry_queue`. `get_status_snapshot` also leaves the queue out, so the restore code for it never runs.
+* **Impact:** The escalating-slippage exit path (BUG-08) is dead in production. During a fast dump, sells keep failing at base slippage.
+* **Remedy:** Drain the queue from the health loop and after stream reconnects. Persist it using wall-clock `next_retry_at` values.
+
+### BUG-40: Geyser Events Are Handled Twice [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`start()` ~L3489–3520), `pumpfun_trading/streams/geyser.py` (`dispatch_*` ~L641–697)
+* **Description:** `start()` registers `on_bonding_curve` / `on_trade` / `on_complete` callbacks that call the event router, and it also iterates `listen()` into the same router. Geyser's `dispatch_*` both triggers the callbacks and enqueues the event.
+* **Impact:** Every curve, trade, and complete event is processed twice. `order_flow_engine.record_trade` double-counts trades, which skews the buy ratio and z-score and can trigger false momentum entries. Exit evaluation runs twice, which leads to concurrent sells (BUG-41).
+* **Remedy:** Use either callbacks or `listen()`, not both.
+
+### BUG-41: Sells Are Not Covered by `_trade_lock` [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`_sell_token` callers ~L1290–1302, 2351, 2527–2549, 2697–2701, 3085–3108, 3340–3377)
+* **Description:** `_trade_lock` only wraps buy paths. The health-loop market-cap refresh, Geyser/WebSocket exit checks, graduation exits, copy-trade mirrors, and emergency liquidation all call `_sell_token` without a lock.
+* **Impact:** Two tasks can read the same balance and submit overlapping full or partial sells for the same mint. The second one fails or oversells, and position accounting ends up out of sync.
+* **Remedy:** Add a per-mint lock (or reuse `_trade_lock`) that covers the whole balance-check → sell → `record_sell` sequence.
+
+### BUG-42: Take-Profit Tiers Not Latched on Emit; Pre-Grad Tranches Latched Before the Fill [OPEN]
+* **Location:** `pumpfun_trading/strategies/exits.py` (~L247–253 vs ~L307–366), `pumpfun_trading/strategies/base.py` (`TradingStrategy.evaluate_exit`)
+* **Description:** Tier 1/2 decisions only set `tier_X_executed` later in `record_partial_exit`. If the exit is evaluated again before the fill, the same 50%/25% sell is issued again. Pre-graduation tranches do the opposite: they add to `executed_pre_grad_tranches` before the sell lands, so a failed sell is never retried. `TradingStrategy.evaluate_exit` builds a throwaway `PositionExitState` from a dict, so state changes are lost.
+* **Impact:** Duplicate partial sells, or tranches that silently get skipped.
+* **Remedy:** Set a pending flag when the decision is made, mark it executed only when the fill is confirmed, and clear it on failure. Write the state back when the caller passed a dict.
+
+### BUG-43: Pre-Graduation `target_tier` Marks the Take-Profit Ladder as Done [OPEN]
+* **Location:** `pumpfun_trading/strategies/exits.py` (~L83–89, ~L247–278)
+* **Description:** Pre-graduation tranches return `target_tier = idx + 1` (1 or 2). `record_partial_exit(tier=1/2)` then sets `tier_1_executed` / `tier_2_executed` and turns on `moonbag_active`. On the next evaluation the moonbag check (`perf <= moonbag_trailing_floor` = 2.5x) is true for a position still near 1.x.
+* **Impact:** After two harvest fills, the rest of the position is fully sold right away and the 2.0x / 3.5x tiers never run.
+* **Remedy:** Give pre-graduation tranches their own tier IDs (e.g. `"pre_grad_1"`) or a separate flag.
+
+### BUG-44: Graduated Positions Cannot Exit on Raydium [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`CompleteEvent` handling ~L2697–2701, `_handle_raydium_pool_update` ~L2716–2717)
+* **Description:** When a curve completes, the bot tries to sell through the Pump.fun bonding curve, which no longer accepts trades. The position stays open. When the Raydium pool shows up, `_handle_raydium_pool_update` returns early for any mint that is already held, so it never attaches `pool_keys` or sells through the AMM.
+* **Impact:** Positions held through migration get stuck. BUG-35 and BUG-39 make it worse.
+* **Remedy:** Mark the position as `migrating` on completion. When pool keys arrive, attach them and sell through Raydium (after BUG-36/51 are fixed).
+
+### BUG-45: Persisted Positions Drop Cost Basis and Raydium Metadata [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`get_status_snapshot` ~L1320–1361, restore ~L673–676, PnL in `_sell_token` ~L2059–2074, 2128–2131, 2189–2192)
+* **Description:** The snapshot's `active_positions` keeps `buy_price` (a per-token unit price) but drops `cost_sol` / `entry_sol` / `position_id` / `pool_keys`. After a restart, `_sell_token` falls back to `buy_price` as if it were the total SOL spent.
+* **Impact:** Realized PnL after a restart is roughly the full sale proceeds, which inflates daily PnL and skews the circuit breaker. Restored Raydium positions can't find their pool.
+* **Remedy:** Persist `position_manager.to_dict()` (or at least `cost_sol`, remaining tokens, `position_id`, `pool_keys`). Never use unit `buy_price` as position cost.
+
+### BUG-46: `_risk_killed` Stays Set After Transient Stream or RPC Problems [OPEN]
+* **Location:** `pumpfun_trading/bot/health.py` (~L9–24, ~L28–48), `pumpfun_trading/bot/run.py` (`_check_account_equity_guard` ~L1189–1217)
+* **Description:** A stale stream or health check sets `_risk_killed = True`. When the stream recovers, `mark_health_check` only resets `_health_ok`. `_check_account_equity_guard` also sets `_risk_killed = True` on any exception from `get_balance_sol()`. Only `start()` or a manual circuit-breaker reset clears the flag.
+* **Impact:** A 60s Geyser gap or one flaky balance call stops all new entries until the process restarts.
+* **Remedy:** Track the "stream stale" and "RPC error" causes separately from real risk-limit breaches, and clear them automatically on recovery or after a cooldown.
+
+### BUG-47: Daily Equity Tracker Does Not Roll Over at UTC Midnight While the Breaker Is Latched [OPEN]
+* **Location:** `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.evaluate_circuit_breaker` ~L140–189, `initialize_or_rollover` ~L84–90)
+* **Description:** While `circuit_breaker_engaged` is set and the lock hasn't expired, `evaluate_circuit_breaker` returns early and never calls `initialize_or_rollover`. When a rollover does happen, it resets `circuit_breaker_action` but not `circuit_breaker_engaged` / `locked_at_timestamp`. The unlock path doesn't reset `realized_daily_pnl_sol`.
+* **Impact:** A lock at 23:00 UTC with `emergency_hard_lock_hours=24` carries into the next trading day, and the new day's baseline and PnL never start.
+* **Remedy:** Always roll over on a UTC date change, and reset the lock state and daily PnL together.
+
+### BUG-48: Live Sell Proceeds Are the Slippage Floor, Not Actual SOL Received [OPEN]
+* **Location:** `pumpfun_trading/execution/executor.py` (`execute_sell` ~L425–436), `pumpfun_trading/bot/run.py` (`_sell_token` ~L2087–2103)
+* **Description:** After a confirmed live sell, `amount_sol` is set to `min_sol_lamports / 1e9`, which already has the slippage haircut applied (up to 50% on emergency exits). `_sell_token` uses this as `sell_p`. If it is 0, it falls back to `cost * frac * (curr_mc / entry_mc)`, which is also an estimate.
+* **Impact:** Realized PnL, wallet cash, drawdown, and audit records are all systematically understated or modeled rather than based on what actually happened on-chain.
+* **Remedy:** Read the actual lamports received (pre/post SOL balance from `getTransaction` meta) and record that as the proceeds.
+
+### BUG-49: Buy Fill Size Is the Whole ATA Balance; Fallback Uses the Post-Trade Curve [OPEN]
+* **Location:** `pumpfun_trading/execution/executor.py` (`execute_buy` ~L212–244)
+* **Description:** On success, `acquired_tokens = get_token_balance(mint)` is read without a balance snapshot from before the trade, so dust from earlier positions or airdrops counts as part of this fill. If the balance reads 0 (RPC lag), the fallback calls `calculate_buy_tokens_out` on the current, already-moved reserves with the slippage haircut.
+* **Impact:** `initial_token_amount` and cost basis are wrong. Sells can be oversized and fail, or leave tokens untracked.
+* **Remedy:** Snapshot the balance before the trade and record `post - pre`, or decode the fill from the transaction meta. Retry the balance read before estimating.
+
+### BUG-50: Live Raydium Buys Record `token_amount=0` [OPEN]
+* **Location:** `pumpfun_trading/execution/executor.py` (`execute_raydium_buy` ~L460, ~L512–519)
+* **Description:** A confirmed live Raydium buy returns `ExecutionResult(token_amount=0)`. There is no balance query like the one in `execute_buy`. The dry-run path hardcodes 100,000,000.
+* **Impact:** `record_buy(token_amount=0)` creates positions that later exits skip or size with the 100M fallback (BUG-65).
+* **Remedy:** Read the token balance difference (or the swap output) after confirmation.
+
+### BUG-51: Raydium Buy Never Wraps SOL and Ignores `slippage_bps` [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution.py` (`build_raydium_buy_tx` ~L1055–1087)
+* **Description:** The swap spends from the WSOL ATA, but the transaction never creates it, transfers lamports into it, or calls `SyncNative`. `slippage_bps` is accepted but never used: `min_amount_out` stays at the caller default of `1`, and `calculate_raydium_swap_out` is never called.
+* **Impact:** Raydium buys fail unless a pre-funded WSOL ATA already exists. When they do go through, they have no slippage protection and can be sandwiched for almost the whole input.
+* **Remedy:** Add create-ATA → transfer → `SyncNative` → swap → close-account instructions. Compute `min_out` from the pool reserves and `slippage_bps`.
+
+### BUG-52: Dynamic Slippage Never Gets Live Curve Reserves; Sells Sized as 0.01 SOL [OPEN]
+* **Location:** `pumpfun_trading/execution/executor.py` (~L76–87, ~L277–287), `pumpfun_trading/execution/policy.py` (`resolve_parameters` ~L110–184)
+* **Description:** `execute_buy` / `execute_sell` call `resolve_parameters` without `virtual_sol_reserves` / `virtual_token_reserves`, so the policy always falls back to the initial 30 SOL curve. Sells also pass a hardcoded `0.01` SOL notional, and `record_curve_update` is never called.
+* **Impact:** Price-impact-based slippage is effectively disabled. Late-curve or large trades get slippage that is too tight (exits fail) or too loose.
+* **Remedy:** Pass the current reserves and the real trade size in SOL, and feed curve updates into `record_curve_update`.
+
+### BUG-53: Jito Bundles That Landed With an On-Chain Error Count as Success [OPEN]
+* **Location:** `pumpfun_trading/sdk/jito.py` (`JitoBundleStatus.is_landed` ~L114–125, `wait_for_bundle_confirmation` ~L451–457), `pumpfun_trading/sdk/execution.py` (~L1222–1229)
+* **Description:** `is_landed` is true whenever `confirmation_status` is `confirmed`/`finalized`, without looking at `err`. Callers check `is_landed` before `is_failed`. Jito reports success as `{"Ok": null}`, so a plain `err is not None` check would also be wrong.
+* **Impact:** A bundle that landed but failed on-chain (slippage exceeded, insufficient funds) is reported as a successful trade.
+* **Remedy:** Count a bundle as landed only if it is confirmed and `err` is null or `{"Ok": null}`. Check for failure first.
+
+### BUG-54: ATA Lookup Error Adds a Non-Idempotent ATA Create [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution.py` (`get_ata_exists` ~L487–526, `build_buy_tx` ~L903–921, `build_raydium_buy_tx` ~L1068–1076)
+* **Description:** `get_ata_exists` returns `False` on any exception, and the builder then adds `create_associated_token_account`. If the ATA already exists, the transaction fails with "account already in use".
+* **Impact:** Any RPC hiccup during a buy turns a valid buy into a failed transaction, which costs a fee and the entry.
+* **Remedy:** Use the idempotent ATA create instruction (`CreateIdempotent`), or treat lookup errors as unknown instead of "missing".
+
+### BUG-55: Yellowstone Geyser Client Never Connects and Subscribes to the Wrong Accounts [OPEN]
+* **Location:** `pumpfun_trading/streams/geyser.py` (`_stream_loop` / `_run_mock_or_grpc_stream` ~L741–780, `subscribe_bonding_curves` ~L550–555)
+* **Description:** Without a `custom_transport`, the client marks itself `CONNECTED` and then just loops on `asyncio.sleep(0.5)`. It never opens a Yellowstone subscription. `subscribe_bonding_curves(mints)` also filters on mint pubkeys instead of the `["bonding-curve", mint]` PDAs, and `dispatch_raw_account` labels curve PDAs as mints.
+* **Impact:** Setting a Geyser endpoint makes the bot sit idle with no market data while showing a healthy connection. Even with a real transport, curve reserves would not be received.
+* **Remedy:** Implement the gRPC subscribe (or fail fast when no transport is available), and subscribe to the curve PDAs.
+
+### BUG-56: Configured Gini Cap Is Not a Hard Reject [OPEN]
+* **Location:** `pumpfun_trading/strategies/filters.py` (`evaluate_holder_distribution` ~L378–387)
+* **Description:** `docs/STRATEGY.md` and `max_gini_coefficient` (0.85) say tokens with G > 0.85 are rejected. The code only sets `passed = False` when G > 0.95, and only checks Gini at all when there are at least 5 top holders. For 0.85 < G ≤ 0.95 it adds about 16 penalty points, which is well under `max_acceptable_risk_score` (50).
+* **Impact:** Highly concentrated tokens pass the anti-rug screen.
+* **Remedy:** Reject when `gini > max_gini`, and fail closed when the holder sample is too small.
+
+### BUG-57: Anti-Rug Checks Pass When Data Is Missing [OPEN]
+* **Location:** `pumpfun_trading/strategies/filters.py` (~L311–313, 342–343, 362–363, 423–424; `calculate_gini_coefficient`; `token_is_eligible`)
+* **Description:** `evaluate_dev_wallet(None)`, `evaluate_creator_holdings(0)`, `evaluate_holder_distribution(None / empty)`, and `evaluate_cluster_heuristics(None)` all pass. `calculate_gini_coefficient([])` returns `0.0` (perfect equality), and `token_is_eligible(screening_verdict=None)` passes.
+* **Impact:** When enrichment fails or times out, serial ruggers and concentrated tokens get through, which is exactly when the screen matters most.
+* **Remedy:** When `enable_anti_rug_filters` is on, missing data should reject the token or add a large penalty.
+
+### BUG-58: 24h Launch Count of 0 Falls Back to the Lifetime Count [OPEN]
+* **Location:** `pumpfun_trading/bot/enrichment.py` (~L87–109)
+* **Description:** `tokens_launched_24h=count_24h or len(creator_coins)` turns a real `0` into the creator's lifetime launch count. The dict-response branch sets the 24h count to `len(coins_list)` without any time filter. Timestamps are also compared to `now_ms` without checking whether they are in seconds or milliseconds.
+* **Impact:** Legitimate developers with past launches are flagged as serial launchers and rejected. The 24h serial-launcher signal is unreliable.
+* **Remedy:** Use `count_24h` even when it is 0, normalize timestamps (s vs ms), and apply the 24h filter to both response shapes.
+
+### BUG-59: Cross-Venue Arbitrage Executes on Made-Up Reserves [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (~L2762–2768, ~L2786–2812)
+* **Description:** Raydium reserves are taken from `candidate.real_sol_reserves` (the bonding curve's SOL) plus a hardcoded `200_000_000_000_000` token amount. Pump virtual reserves are also invented (`real_sol + 30` SOL and the same token constant). `arb_executor.execute_arbitrage` can still submit live Jito bundles based on these numbers.
+* **Impact:** With `enable_cross_venue_arbitrage` on, the bot can trade on spreads that don't exist.
+* **Remedy:** Read the real Raydium vault balances and Pump curve reserves before quoting, and never execute on placeholder values.
+
+### BUG-60: Optimizer Selects Trials Using Holdout Fitness [OPEN]
+* **Location:** `pumpfun_trading/engines/optimizer.py` (`OptimizationTrial.composite_score` ~L726–732; selection at ~L924, 981, 1023, 1106)
+* **Description:** When `test_fitness` exists, `composite_score` is computed from the test objective minus an overfit penalty. Genetic tournament selection, elitism, and the final `best_trial` all rank by this score.
+* **Impact:** The walk-forward holdout is used during selection, so the reported out-of-sample scores are optimistically biased.
+* **Remedy:** Select on `train_fitness` only, and use test metrics only for reporting.
+
+### BUG-61: Paper Replay Ignores Most Parameters the Optimizer Searches [OPEN]
+* **Location:** `pumpfun_trading/engines/replay.py` (~L40–54, ~L478–561), `pumpfun_trading/engines/optimizer.py` (~L352–509, ~L802–828)
+* **Description:** The search space varies `buy_amount_sol`, tiered take-profits, trailing stops, drawdown caps, market-cap filters, and more. `PaperTradingEngine` only uses `take_profit` / `stop_loss` / `max_active_positions` and a few flags. It sizes positions with `buy_fraction` of cash and never runs the tiered or trailing exits.
+* **Impact:** Fitness is mostly flat across these parameters, and exported "calibrated" configs don't match what was actually simulated.
+* **Remedy:** Run the live `TradingStrategy` sizing and exit logic in replay, or limit the search space to fields the engine actually uses.
+
+### BUG-62: Profit Factor Computed From Return Percentages [OPEN]
+* **Location:** `pumpfun_trading/engines/replay.py` (~L605–617), consumed by `pumpfun_trading/engines/optimizer.py` (~L636–645)
+* **Description:** `gross_profit` / `gross_loss` add up `return_pct` values instead of SOL `pnl`. For example, +100% on 1 SOL and −50% on 50 SOL gives a profit factor of 2.0 instead of 0.04.
+* **Impact:** The `profit_factor` and `composite` optimizer objectives and the CLI summaries are wrong.
+* **Remedy:** Sum winning and losing `pnl` in SOL, and skip zero-PnL buy records.
+
+### BUG-63: Replay Arbitrage Adds Profit Every Snapshot Without Committing Capital [OPEN]
+* **Location:** `pumpfun_trading/engines/replay.py` (~L396–446)
+* **Description:** On every snapshot with Raydium reserves, a profitable spread does `cash += opp.net_profit_sol` without deducting `optimal_input_sol`, checking that enough cash is available, or applying a per-mint cooldown.
+* **Impact:** Replay equity and trade counts can grow without limit, and with arbitrage enabled (the default) this leaks into optimizer fitness.
+* **Remedy:** Require `cash >= input`, book each opportunity once, and apply a cooldown.
+
+### BUG-64: `ops prune` Can Delete Any File; `--max-files` Is Ignored [OPEN]
+* **Location:** `pumpfun_trading/ops/retention.py` (~L257, ~L282–313), `pumpfun_trading/cli/main.py` (~L165–213)
+* **Description:** The age-based pass deletes any `*.log*` / `*.jsonl*` older than `--days` under `--target` (default `.`), including active `events.jsonl` and replay datasets. The size-quota pass then lists `glob("*")` and deletes the oldest files of any type (source code, configs, `.env`) until the directory is under `--max-bytes`. `RetentionPolicy.max_files` is never read.
+* **Impact:** A routine prune run can delete project files or secrets.
+* **Remedy:** Limit both passes to rotated archives that match the log patterns, skip active log files, enforce `max_files`, and default the target to a logs directory.
+
+---
+
+## 5. Open Issues — Project-Wide Audit (2026-10-16): Medium Severity
+
+### BUG-65: Remaining Balance of `0` Replaced With 100,000,000 Raw Tokens [OPEN]
+* **Location:** `pumpfun_trading/execution/liquidator.py` (~L38–40), `pumpfun_trading/bot/position_manager.py` (`Position.from_dict` ~L131–136, `record_sell` ~L356–357), `pumpfun_trading/strategies/exits.py` (`PositionExitState.from_dict` ~L119–130, `effective_balance` ~L199–211)
+* **Description:** These places use `x or y or 100_000_000`. A real `0` is falsy, so a fully sold position falls back to `token_amount` / `initial_token_amount`, or to the 100M default.
+* **Impact:** Emergency liquidation or exit logic submits sells for tokens that aren't there. Combined with BUG-50, this always happens for live Raydium positions.
+* **Remedy:** Check `is None` instead of using `or`, and never make up a balance. Hold or skip when the balance is 0.
+
+### BUG-66: Curve Quotes Ignore Pump.fun Fees [OPEN]
+* **Location:** `pumpfun_trading/sdk/curve.py` (`calculate_buy_tokens_out`, `calculate_sell_sol_out` ~L80–141), used in `pumpfun_trading/sdk/execution.py` (`build_buy_tx` ~L890–899, `build_sell_tx` ~L987–998)
+* **Description:** Both quotes are pure constant-product (`k = x·y`) and leave out protocol and creator fees. The results are written into the buy `amount` / sell `min_sol_output`, so the fee comes out of the slippage budget.
+* **Impact:** With tight slippage (e.g. 250 bps or less), trades can revert with "too much SOL required" / "too little SOL received". The mainnet simulation used 1000 bps, which hid this.
+* **Remedy:** Apply the fees from `fee_config` before running the constant-product formula.
+
+### BUG-67: RPC Pool Records JSON-RPC Errors as Successes [OPEN]
+* **Location:** `pumpfun_trading/infra/rpc_pool.py` (~L448–468)
+* **Description:** After an HTTP 200, only errors with code 429 or messages containing `"rate"` / `"limit"` cause a failover. Every other JSON-RPC error (`Blockhash not found`, `-32602`, node behind) calls `record_success` and returns the error payload. A compute-budget error message that contains "limit" can also be mistaken for a rate limit.
+* **Impact:** Unhealthy endpoints keep a good health score, and callers misread `result: null` as "account missing".
+* **Remedy:** When `"error"` is present, call `record_failure` and fail over (except for deterministic client errors). Detect rate limits by code or HTTP status only.
+
+### BUG-68: Creator Vault Falls Back to the Trader's Wallet [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution.py` (~L572–576, ~L659–663, ~L861)
+* **Description:** If decoding the bonding curve fails or `creator` is missing, `creator_pubkey = self.wallet`, so the `creator-vault` PDA is derived from the trader's own key.
+* **Impact:** The instruction fails on-chain with a seeds constraint error. This is a confusing failure instead of a clear "curve fetch failed".
+* **Remedy:** Stop with a clear error when the creator can't be decoded.
+
+### BUG-69: Token-2022 Detection Errors Silently Fall Back to SPL Token [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution.py` (`get_token_program_for_mint` ~L452–469)
+* **Description:** All RPC errors are swallowed and `TOKEN_PROGRAM_ID` is returned.
+* **Impact:** For Token-2022 Pump mints, a transient error produces the wrong ATA seeds and the wrong token program in the instruction, so the trade fails.
+* **Remedy:** Retry, and abort the trade if the mint owner can't be read. Cache successful results.
+
+### BUG-70: `check_loss_per_trade` Never Fires With Defaults and Can Divide by Zero [OPEN]
+* **Location:** `pumpfun_trading/bot/risk.py` (~L569–574)
+* **Description:** The check compares a market-cap loss ratio (at most 1.0) to `max_loss_per_trade_sol / buy_amount_sol` (default `0.02 / 0.01 = 2.0`), so it can never trigger. If `buy_amount_sol == 0`, it raises `ZeroDivisionError` on the hot path.
+* **Impact:** The per-trade loss cap does nothing.
+* **Remedy:** Compare `cost_sol * loss_ratio` to `max_loss_per_trade_sol`, and guard against a zero denominator.
+
+### BUG-71: Exposure Cap Uses Full `cost_sol` After Partial Exits [OPEN]
+* **Location:** `pumpfun_trading/bot/risk.py` (`check_risk_limits` ~L474–476), compare `pumpfun_trading/bot/position_manager.py` (~L524–537)
+* **Description:** Exposure adds up the full original `cost_sol` without scaling by the remaining token fraction. `PositionManager.total_cost_sol()` scales correctly (BUG-21), but this path was not updated.
+* **Impact:** After take-profit partial sells, `max_total_exposure_sol` and the concentration checks block new entries that should be allowed.
+* **Remedy:** Scale cost by `remaining / initial` using the same helper as the valuation code.
+
+### BUG-72: `storage.write_status_snapshot` Is Non-Atomic and Persists a Monotonic Clock [OPEN]
+* **Location:** `pumpfun_trading/storage/status.py` (~L11–21)
+* **Description:** The file is truncated in place with `open(path, "w")`, with no temp file, `fsync`, or `os.replace` (unlike `bot/persistence.py`). It also stores `_last_message_at`, a `time.monotonic()` value that has no meaning after a restart.
+* **Impact:** A crash during the write leaves truncated JSON, and crash recovery is lost (`safe_read_status_snapshot` returns `None`).
+* **Remedy:** Reuse the atomic write in `StatusPersistenceManager`, and store wall-clock times only.
+
+### BUG-73: Confirmation Timeouts Treated as Definite Failures [OPEN]
+* **Location:** `pumpfun_trading/execution/executor.py` (~L197–210, ~L410–423, ~L497–510, ~L576–589), `pumpfun_trading/sdk/execution.py` (RPC fallback with `skipPreflight=True`)
+* **Description:** When `confirm_transaction` returns `False`, the executor returns `success=False` with a signature. Callers then skip `record_buy` or queue a sell retry, even though the transaction may still land. Because the RPC fallback sends with `skipPreflight=True`, an invalid transaction also waits silently for about 20s before failing.
+* **Impact:** A buy that lands late leaves tokens untracked, and a sell that lands late can be sold again.
+* **Remedy:** After a timeout, check the signature status and balances again before deciding. Key retries by signature. Run a preflight on the RPC fallback, or simulate first.
+
+### BUG-74: aiohttp Sessions Left Open [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`start()` `finally` ~L3550–3567, `close()` ~L610–626, `run()` ~L3569–3574), `pumpfun_trading/api/client.py` (`get_coins_by_mints` ~L263–267)
+* **Description:** On shutdown, `start()` never calls `execution.close()` or `api.close()`, and `run()` never calls `close()`. `get_coins_by_mints` creates a new `PumpFunApiClient` on every call and never closes it, and also ignores `self`'s settings.
+* **Impact:** Sockets and file descriptors leak during long sessions ("Unclosed client session" warnings).
+* **Remedy:** Call `await self.close()` from `start()`'s `finally`, and use `self.post(...)` in `get_coins_by_mints`.
+
+### BUG-75: WebSocket Market-Cap Unit Check Can Inflate Market Cap ~1e6× [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (~L2892–2898, ~L3030–3035)
+* **Description:** If `v_tokens > 1_000_000_000`, the code assumes raw base units and divides by 1e6. PumpPortal reports about 1.073e9 virtual tokens in UI units, which also passes that threshold.
+* **Impact:** Entry filters, TP/SL, and trailing stops can run on market caps that are wrong by a factor of about a million. (Medium confidence: depends on the payload format.)
+* **Remedy:** Use separate ranges for raw vs UI units (raw is ≳ 1e12), or use on-chain curve reserves.
+
+### BUG-76: Stop-Loss Cannot Fire When `entry_market_cap <= 0` [OPEN]
+* **Location:** `pumpfun_trading/strategies/exits.py` (~L35–37, ~L226–234)
+* **Description:** `performance` is hardcoded to `1.0` when entry MC is 0 or missing, so neither the stop-loss (`<= 0.85`) nor take-profit (`>= 2.0`) can trigger. Time-based exits also fail when `now` is a replay timestamp and `entry_time` defaulted to `time.time()`, because the negative duration is clamped to 0.
+* **Impact:** Positions with no stop-loss.
+* **Remedy:** Fall back to unit price, or force an exit when there is no valid entry MC, and use the same clock for `entry_time` and `now`.
+
+### BUG-77: Per-Mint Caches Grow Without Limit [OPEN]
+* **Location:** `pumpfun_trading/strategies/filters.py` (`ScreeningCache` ~L248–299), `pumpfun_trading/strategies/momentum.py` (`OrderFlowEngine` ~L339–354, ~L469–487), `pumpfun_trading/strategies/graduation.py` (~L411–440, ~L652–670)
+* **Description:** `evict_expired()`, `cleanup_inactive_tokens()`, and `cleanup_expired_candidates()` are only called from tests. Every mint seen gets a permanent entry.
+* **Impact:** Memory keeps growing over long Geyser or WebSocket sessions.
+* **Remedy:** Evict on insert (size cap and TTL), and run the cleanups from the health loop.
+
+### BUG-78: `validate_risk_limits` Ignores Exposure Caps [OPEN]
+* **Location:** `pumpfun_trading/strategies/risk_validation.py` (~L8–27)
+* **Description:** It only checks `max_active_positions` and the wallet reserve. `max_total_exposure_sol`, `max_position_size_sol`, `max_token_concentration_pct`, and `max_loss_per_trade_sol` are not checked.
+* **Impact:** Anything that relies on `TradingStrategy.validate_risk` (replay, optimizer, external callers) has much weaker protection than the live bot.
+* **Remedy:** Delegate to `bot/risk.check_risk_limits`, or implement the same caps here.
+
+### BUG-79: Sybil Wash-Trade Window Falls Back to the Full History [OPEN]
+* **Location:** `pumpfun_trading/strategies/cluster.py` (~L329–340)
+* **Description:** If no trades fall inside `now - window`, the function uses all trades. With replay timestamps and the default `now = time.time()`, the window is always empty.
+* **Impact:** In replay, wash ratios are computed over the full history, so time-windowed detection is silently disabled.
+* **Remedy:** Return "no wash activity" when the window is empty, and take `now` from the trade clock.
+
+### BUG-80: Missing Market Cap Defaults to 30 SOL [OPEN]
+* **Location:** `pumpfun_trading/services/market_data.py` (`get_market_cap_sol` ~L40–48)
+* **Description:** When no market-cap key parses, the function returns `30.0`, which looks like a real initial curve.
+* **Impact:** Tokens with missing or malformed API data can pass min-MC filters or fail max-MC filters, and can be used as an entry MC.
+* **Remedy:** Return `None` or `0.0` and let callers skip those tokens.
+
+### BUG-81: `parse_raydium_initialize2_accounts` Never Reads `pc_mint` [OPEN]
+* **Location:** `pumpfun_trading/sdk/raydium.py` (~L172–225)
+* **Description:** `pc_mint` defaults to `WSOL_MINT`, which is truthy, so `accounts[9] if not pc_mint else pc_mint` always keeps WSOL.
+* **Impact:** Pools quoted in something other than SOL (and the 18-account fallback layout) get the wrong `pc_mint` and the wrong ATAs.
+* **Remedy:** Default `pc_mint` to `""`, like `coin_mint`.
+
+### BUG-82: Replay Pre-Graduation Harvesting Only Runs When Arbitrage Is Enabled [OPEN]
+* **Location:** `pumpfun_trading/engines/replay.py` (~L396–469)
+* **Description:** The `evaluate_pre_graduation_harvesting_entry` block is indented inside `if self.enable_cross_venue_arbitrage`.
+* **Impact:** Turning arbitrage off silently turns pre-graduation entries off in replay.
+* **Remedy:** Unindent the block so only `enable_pre_graduation_harvesting` controls it.
+
+### BUG-83: Replay Sells and Re-Enters in the Same Snapshot [OPEN]
+* **Location:** `pumpfun_trading/engines/replay.py` (~L478–588)
+* **Description:** After a TP, SL, or signal sell, the same loop iteration can buy again at the same snapshot price.
+* **Impact:** Inflated trade counts and drawdowns that look smoother than they really are (look-ahead bias).
+* **Remedy:** Block new entries on a mint until the next snapshot after an exit.
+
+### BUG-84: ISO-8601 Timestamps Sort as Time 0 [OPEN]
+* **Location:** `pumpfun_trading/engines/replay.py` (`_snapshot_float` ~L113–118, sort ~L192–199)
+* **Description:** `_snapshot_float` returns `0.0` on `ValueError`, so ISO `created_at` / `timestamp` strings all sort before epoch timestamps.
+* **Impact:** Replay ordering and walk-forward splits are wrong for typical API exports.
+* **Remedy:** Parse epoch seconds, epoch milliseconds, and ISO datetimes. Keep the original order when parsing fails.
+
+### BUG-85: `--replay-mode` Never Used; Unified CLI `--mode` Collision [OPEN]
+* **Location:** `pumpfun_trading/cli/replay.py` (~L36–45, ~L121), `pumpfun_trading/cli/main.py` (~L272–276, ~L343–347)
+* **Description:** The replay CLI uses `args.mode or args.replay_mode`, but `--mode` always has a default, so `--replay-mode summary` is ignored. `pumpfun replay --mode summary` can also fail validation against the parent parser's `--mode` choices.
+* **Impact:** Operators can't select the replay output mode they documented.
+* **Remedy:** Give the replay option its own `dest` and remove `--mode` from the parent parser.
+
+### BUG-86: `pumpfun-recorder --ws-url` Never Used; Polls Recorded as Buys [OPEN]
+* **Location:** `pumpfun_trading/cli/record.py` (~L101–104, ~L272–277)
+* **Description:** When Geyser isn't used, harvesting always polls `get_latest_coins()` and stamps every coin with `is_buy=True` / `signal="buy"` at the same wall-clock time. `--ws-url` is parsed but never used.
+* **Impact:** Recorded datasets are not trade tapes. In replay, every poll counts as an entry signal.
+* **Remedy:** Use `--ws-url` for the PumpPortal subscription, and record quotes without made-up signals.
+
+### BUG-87: Status and Audit Path Env Var Names Inconsistent [OPEN]
+* **Location:** `pumpfun_trading/config/env.py` (~L103–104), `pumpfun_trading/bot/run.py` (~L378–379), `docs/ENVIRONMENTAL-VARIABLES.md`
+* **Description:** The docs list `PUMPFUN_STATUS_PATH` / `PUMPFUN_AUDIT_LOG_PATH` as primary names, with `PUMPFUN_BOT_STATUS_PATH` / `PUMPFUN_AUDIT_LOG` as aliases. `get_runtime_env()` reads only the aliases, and the bot reads only the primary names.
+* **Impact:** Depending on which name is set, the setting is ignored by one of the two components.
+* **Remedy:** Read primary-or-alias in both places, as the docs describe.
+
+### BUG-88: Dashboard Position Reason Always Shows `watch` [OPEN]
+* **Location:** `pumpfun_trading/ui/dashboard.py` (~L256, ~L286)
+* **Description:** Positions expose `entry_reason`, but the dashboard reads `reason` and falls back to `"watch"`.
+* **Impact:** Operators can't see why a position was opened.
+* **Remedy:** Read `entry_reason` first, then `reason`.
+
+### BUG-89: `pumpfun-events --tail` Does Not Wait for the File [OPEN]
+* **Location:** `pumpfun_trading/cli/events.py` (~L340–377)
+* **Description:** It prints "Waiting for events file … to be created…" and then immediately calls `open()`. If the file doesn't exist yet, the generic error handler runs and the command exits.
+* **Impact:** You can't start `--tail` before the bot.
+* **Remedy:** Poll until the file exists (with an optional timeout), then follow it.
+
+### BUG-90: `pumpfun-arb --monitor` / `--live` Only Evaluate Hardcoded Samples [OPEN]
+* **Location:** `pumpfun_trading/cli/arbitrage.py` (~L49–60, ~L143–199)
+* **Description:** `run_arbitrage_cli` always evaluates two hardcoded reserve tuples. It never reads a stream, wallet, or Jito connection, and `--mint` is only used as a label.
+* **Impact:** The advertised monitor and live-execution modes don't work, and the output can be mistaken for real opportunities.
+* **Remedy:** Connect `--monitor` to the disparity monitor and real reserve reads, and only execute bundles when `--live` is set. Otherwise label the output as a demo.
+
+---
+
+## 6. Open Issues — Project-Wide Audit (2026-10-16): Low Severity
+
+### BUG-91: In-Flight Buy After Shutdown Attempts SHUTDOWN → MONITORING [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`_buy_token` ~L1598–1601, `_buy_raydium_token` ~L1697–1700, `_transition_to` ~L807–811)
+* **Description:** Observed in `runtime/bot.log` on 2026-10-16: "Ignored invalid state transition from SHUTDOWN to MONITORING due to buy_failed". Shutdown does not cancel or wait for buy tasks that are still running. When one of them fails, it tries to move the bot back to `MONITORING`.
+* **Impact:** The state machine blocks it, but a buy can still be sent after shutdown was requested, and if it fills, the result is never recorded.
+* **Remedy:** Check `_stop_requested` before sending and before transitioning, and cancel or wait for in-flight trade tasks during shutdown.
+
+### BUG-92: `max_positions_per_mint` Is Ignored [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (stored ~L186, `_should_buy` ~L1472–1473)
+* **Description:** `_should_buy` rejects any mint already in `active_positions`, so values above 1 have no effect.
+* **Impact:** This config setting does nothing.
+* **Remedy:** Count open lots per mint, or remove the field.
+
+### BUG-93: Associated Bonding-Curve PDA Helper Uses Wrong Seeds [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution.py` (~L535–539)
+* **Description:** ATA seeds must be `[owner, token_program, mint]`, but the helper uses `[bonding_curve, FEE_RECIPIENT, mint]`. The instruction builders currently use `get_associated_token_address(...)` and callers ignore this return value, so live trades are not affected yet.
+* **Impact:** A latent bug: any future caller would get the wrong account.
+* **Remedy:** Use `get_associated_token_address(bonding_curve, mint, token_program)`.
+
+### BUG-94: Failed Atomic Status Writes Leave Stray Temp Files [OPEN]
+* **Location:** `pumpfun_trading/bot/persistence.py` (~L61–76)
+* **Description:** The `.tmp.<pid>` file is not deleted when the dump or `os.replace` fails.
+* **Impact:** Leftover files pile up next to `bot_status.json`. The status file itself is not corrupted.
+* **Remedy:** Delete the temp file in a `finally` block if it still exists.

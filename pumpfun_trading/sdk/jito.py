@@ -412,7 +412,8 @@ class JitoClient:
             "jsonrpc": "2.0",
             "id": 1,
             "method": "sendBundle",
-            "params": [encoded_txs],
+            # Jito defaults to base58; base64 payloads must declare their encoding
+            "params": [encoded_txs, {"encoding": "base64"}],
         }
 
         result = await self._send_json_rpc(payload, endpoint_url=endpoint_url)

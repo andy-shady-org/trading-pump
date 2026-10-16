@@ -42,6 +42,8 @@ from .raydium import (
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 GLOBAL_STATE = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 FEE_RECIPIENT = "FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz"
+# Global.reserved_fee_recipient: mandatory fee recipient for mayhem-mode curves
+MAYHEM_FEE_RECIPIENT = "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS"
 BUYBACK_FEE_RECIPIENT = "5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"
 PUMP_FEE_PROGRAM_ID = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
 WSOL_MINT_STR = "So11111111111111111111111111111111111111112"
@@ -205,7 +207,7 @@ class PumpFunExecutionClient:
         return float(lamports) / 1_000_000_000.0
 
     @staticmethod
-    def decode_bonding_curve_data(data: bytes) -> dict[str, int | float | bool]:
+    def decode_bonding_curve_data(data: bytes) -> dict[str, Any]:
         """Decode raw Solana account data of a Pump.fun bonding curve.
 
         Layout:
@@ -216,6 +218,8 @@ class PumpFunExecutionClient:
           32..40: real_sol_reserves (u64)
           40..48: token_total_supply (u64)
           48..49: complete (bool)
+          49..81: creator (Pubkey)
+          81..82: is_mayhem_mode (bool)
         """
         if len(data) < 49:
             raise ValueError(
@@ -244,6 +248,7 @@ class PumpFunExecutionClient:
                 creator = str(creator_pk)
             except Exception:
                 creator = None
+        is_mayhem_mode = bool(data[81]) if len(data) >= 82 else False
 
         price_sol = (
             (virtual_sol_reserves / 1_000_000_000.0)
@@ -268,6 +273,7 @@ class PumpFunExecutionClient:
             "price_sol": price_sol,
             "market_cap_sol": market_cap_sol,
             "creator": creator,
+            "is_mayhem_mode": is_mayhem_mode,
         }
 
     calculate_buy_tokens_out = staticmethod(calculate_buy_tokens_out)
@@ -541,6 +547,7 @@ class PumpFunExecutionClient:
         max_sol_cost: int,
         creator: str | None = None,
         base_token_program: Pubkey | str | None = None,
+        is_mayhem_mode: bool = False,
     ) -> Instruction:
         self.is_valid_mint(mint)
         self.is_valid_pubkey(bonding_curve)
@@ -555,10 +562,10 @@ class PumpFunExecutionClient:
             if base_token_program is not None
             else token_program
         )
-        quote_mint = self._to_pubkey(WSOL_MINT_STR)
-        fee_recipient = self._to_pubkey(FEE_RECIPIENT)
+        fee_recipient = self._to_pubkey(
+            MAYHEM_FEE_RECIPIENT if is_mayhem_mode else FEE_RECIPIENT
+        )
         buyback_fee_recipient = self._to_pubkey(BUYBACK_FEE_RECIPIENT)
-        ata_program = self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID)
         system_program = self._to_pubkey(SYSTEM_PROGRAM_ID)
         event_authority = self._to_pubkey(EVENT_AUTHORITY)
 
@@ -580,66 +587,42 @@ class PumpFunExecutionClient:
         fee_config, _ = Pubkey.find_program_address(
             [b"fee_config", FEE_CONFIG_KEY], pump_fee_program
         )
+        bonding_curve_v2, _ = Pubkey.find_program_address(
+            [b"bonding-curve-v2", bytes(mint_pubkey)], pump_program
+        )
 
-        assoc_quote_fee = get_associated_token_address(
-            fee_recipient, quote_mint, TOKEN_PROGRAM_ID
-        )
-        assoc_quote_buyback = get_associated_token_address(
-            buyback_fee_recipient, quote_mint, TOKEN_PROGRAM_ID
-        )
         assoc_base_curve = get_associated_token_address(
             bonding_curve_pubkey, mint_pubkey, base_token_prog
-        )
-        assoc_quote_curve = get_associated_token_address(
-            bonding_curve_pubkey, quote_mint, TOKEN_PROGRAM_ID
         )
         assoc_base_user = get_associated_token_address(
             user_pubkey, mint_pubkey, base_token_prog
         )
-        assoc_quote_user = get_associated_token_address(
-            user_pubkey, quote_mint, TOKEN_PROGRAM_ID
-        )
-        assoc_creator_vault = get_associated_token_address(
-            creator_vault, quote_mint, TOKEN_PROGRAM_ID
-        )
-        assoc_user_vol = get_associated_token_address(
-            user_vol, quote_mint, TOKEN_PROGRAM_ID
-        )
 
-        data = BUY_V2_DISCRIMINATOR + self._u64(token_amount) + self._u64(max_sol_cost)
+        data = BUY_DISCRIMINATOR + self._u64(token_amount) + self._u64(max_sol_cost)
 
         accounts = [
             AccountMeta(
                 pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
             ),
-            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=base_token_prog, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=token_program, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=ata_program, is_signer=False, is_writable=False),
             AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_quote_fee, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_base_curve, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_base_user, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=system_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=base_token_prog, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=event_authority, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=global_vol, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=user_vol, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_fee_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=bonding_curve_v2, is_signer=False, is_writable=False),
             AccountMeta(
                 pubkey=buyback_fee_recipient, is_signer=False, is_writable=True
             ),
-            AccountMeta(pubkey=assoc_quote_buyback, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_base_curve, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_quote_curve, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
-            AccountMeta(pubkey=assoc_base_user, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_quote_user, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_creator_vault, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=creator_pubkey, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=global_vol, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=user_vol, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_user_vol, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=pump_fee_program, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=system_program, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=event_authority, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=pump_program, is_signer=False, is_writable=False),
         ]
         return Instruction(program_id=pump_program, accounts=accounts, data=data)
 
@@ -651,6 +634,7 @@ class PumpFunExecutionClient:
         min_sol_output: int,
         creator: str | None = None,
         base_token_program: Pubkey | str | None = None,
+        is_mayhem_mode: bool = False,
     ) -> Instruction:
         self.is_valid_mint(mint)
         self.is_valid_pubkey(bonding_curve)
@@ -665,10 +649,10 @@ class PumpFunExecutionClient:
             if base_token_program is not None
             else token_program
         )
-        quote_mint = self._to_pubkey(WSOL_MINT_STR)
-        fee_recipient = self._to_pubkey(FEE_RECIPIENT)
+        fee_recipient = self._to_pubkey(
+            MAYHEM_FEE_RECIPIENT if is_mayhem_mode else FEE_RECIPIENT
+        )
         buyback_fee_recipient = self._to_pubkey(BUYBACK_FEE_RECIPIENT)
-        ata_program = self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID)
         system_program = self._to_pubkey(SYSTEM_PROGRAM_ID)
         event_authority = self._to_pubkey(EVENT_AUTHORITY)
 
@@ -681,73 +665,43 @@ class PumpFunExecutionClient:
         creator_vault, _ = Pubkey.find_program_address(
             [b"creator-vault", bytes(creator_pubkey)], pump_program
         )
-        user_vol, _ = Pubkey.find_program_address(
-            [b"user_volume_accumulator", bytes(user_pubkey)], pump_program
-        )
         fee_config, _ = Pubkey.find_program_address(
             [b"fee_config", FEE_CONFIG_KEY], pump_fee_program
         )
+        bonding_curve_v2, _ = Pubkey.find_program_address(
+            [b"bonding-curve-v2", bytes(mint_pubkey)], pump_program
+        )
 
-        assoc_quote_fee = get_associated_token_address(
-            fee_recipient, quote_mint, TOKEN_PROGRAM_ID
-        )
-        assoc_quote_buyback = get_associated_token_address(
-            buyback_fee_recipient, quote_mint, TOKEN_PROGRAM_ID
-        )
         assoc_base_curve = get_associated_token_address(
             bonding_curve_pubkey, mint_pubkey, base_token_prog
-        )
-        assoc_quote_curve = get_associated_token_address(
-            bonding_curve_pubkey, quote_mint, TOKEN_PROGRAM_ID
         )
         assoc_base_user = get_associated_token_address(
             user_pubkey, mint_pubkey, base_token_prog
         )
-        assoc_quote_user = get_associated_token_address(
-            user_pubkey, quote_mint, TOKEN_PROGRAM_ID
-        )
-        assoc_creator_vault = get_associated_token_address(
-            creator_vault, quote_mint, TOKEN_PROGRAM_ID
-        )
-        assoc_user_vol = get_associated_token_address(
-            user_vol, quote_mint, TOKEN_PROGRAM_ID
-        )
 
-        data = (
-            SELL_V2_DISCRIMINATOR + self._u64(token_amount) + self._u64(min_sol_output)
-        )
+        data = SELL_DISCRIMINATOR + self._u64(token_amount) + self._u64(min_sol_output)
 
         accounts = [
             AccountMeta(
                 pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
             ),
-            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=base_token_prog, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=token_program, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=ata_program, is_signer=False, is_writable=False),
             AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_quote_fee, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_base_curve, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=assoc_base_user, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=system_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=base_token_prog, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=event_authority, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=pump_fee_program, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=bonding_curve_v2, is_signer=False, is_writable=False),
             AccountMeta(
                 pubkey=buyback_fee_recipient, is_signer=False, is_writable=True
             ),
-            AccountMeta(pubkey=assoc_quote_buyback, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_base_curve, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_quote_curve, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
-            AccountMeta(pubkey=assoc_base_user, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_quote_user, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_creator_vault, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=creator_pubkey, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=user_vol, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=assoc_user_vol, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=pump_fee_program, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=system_program, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=event_authority, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=pump_program, is_signer=False, is_writable=False),
         ]
         return Instruction(program_id=pump_program, accounts=accounts, data=data)
 
@@ -757,66 +711,18 @@ class PumpFunExecutionClient:
         bonding_curve: str,
         token_amount: int,
         max_sol_cost: int,
+        creator: str | None = None,
+        base_token_program: Pubkey | str | None = None,
+        is_mayhem_mode: bool = False,
     ) -> Instruction:
-        self.is_valid_mint(mint)
-        self.is_valid_pubkey(bonding_curve)
-        data = BUY_DISCRIMINATOR + self._u64(token_amount) + self._u64(max_sol_cost)
-        mint_pubkey = self._to_pubkey(mint)
-        bonding_curve_pubkey = self._to_pubkey(bonding_curve)
-        user_pubkey = self.wallet
-
-        accounts = [
-            AccountMeta(
-                pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(FEE_RECIPIENT), is_signer=False, is_writable=True
-            ),
-            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
-            AccountMeta(
-                pubkey=get_associated_token_address(
-                    bonding_curve_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
-                ),
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(
-                pubkey=get_associated_token_address(
-                    user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
-                ),
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
-            AccountMeta(
-                pubkey=self._to_pubkey(SYSTEM_PROGRAM_ID),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(TOKEN_PROGRAM_ID_STR),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(RENT_PROGRAM_ID),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(EVENT_AUTHORITY),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(PUMP_PROGRAM_ID),
-                is_signer=False,
-                is_writable=False,
-            ),
-        ]
-        return Instruction(
-            program_id=self._to_pubkey(PUMP_PROGRAM_ID), accounts=accounts, data=data
+        return self.build_buy_instruction_v2(
+            mint=mint,
+            bonding_curve=bonding_curve,
+            token_amount=token_amount,
+            max_sol_cost=max_sol_cost,
+            creator=creator,
+            base_token_program=base_token_program,
+            is_mayhem_mode=is_mayhem_mode,
         )
 
     def build_sell_instruction(
@@ -825,66 +731,18 @@ class PumpFunExecutionClient:
         bonding_curve: str,
         token_amount: int,
         min_sol_output: int,
+        creator: str | None = None,
+        base_token_program: Pubkey | str | None = None,
+        is_mayhem_mode: bool = False,
     ) -> Instruction:
-        self.is_valid_mint(mint)
-        self.is_valid_pubkey(bonding_curve)
-        data = SELL_DISCRIMINATOR + self._u64(token_amount) + self._u64(min_sol_output)
-        mint_pubkey = self._to_pubkey(mint)
-        bonding_curve_pubkey = self._to_pubkey(bonding_curve)
-        user_pubkey = self.wallet
-
-        accounts = [
-            AccountMeta(
-                pubkey=self._to_pubkey(GLOBAL_STATE), is_signer=False, is_writable=False
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(FEE_RECIPIENT), is_signer=False, is_writable=True
-            ),
-            AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=bonding_curve_pubkey, is_signer=False, is_writable=True),
-            AccountMeta(
-                pubkey=get_associated_token_address(
-                    bonding_curve_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
-                ),
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(
-                pubkey=get_associated_token_address(
-                    user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
-                ),
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(pubkey=user_pubkey, is_signer=True, is_writable=True),
-            AccountMeta(
-                pubkey=self._to_pubkey(SYSTEM_PROGRAM_ID),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(ASSOCIATED_TOKEN_PROGRAM_ID),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(TOKEN_PROGRAM_ID_STR),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(EVENT_AUTHORITY),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=self._to_pubkey(PUMP_PROGRAM_ID),
-                is_signer=False,
-                is_writable=False,
-            ),
-        ]
-        return Instruction(
-            program_id=self._to_pubkey(PUMP_PROGRAM_ID), accounts=accounts, data=data
+        return self.build_sell_instruction_v2(
+            mint=mint,
+            bonding_curve=bonding_curve,
+            token_amount=token_amount,
+            min_sol_output=min_sol_output,
+            creator=creator,
+            base_token_program=base_token_program,
+            is_mayhem_mode=is_mayhem_mode,
         )
 
     def build_set_compute_unit_limit_instruction(
@@ -998,6 +856,7 @@ class PumpFunExecutionClient:
 
         base_token_prog = await self.get_token_program_for_mint(mint)
         creator = None
+        is_mayhem_mode = False
 
         if token_amount is None or token_amount <= 0 or creator is None:
             try:
@@ -1022,6 +881,7 @@ class PumpFunExecutionClient:
                     v_sol = int(curve_state.get("virtual_sol_reserves", 0))
                     v_token = int(curve_state.get("virtual_token_reserves", 0))
                     creator = str(curve_state.get("creator") or "") or None
+                    is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
                     if (
                         (token_amount is None or token_amount <= 0)
                         and v_sol > 0
@@ -1068,6 +928,7 @@ class PumpFunExecutionClient:
                 max_sol_cost,
                 creator=creator,
                 base_token_program=base_token_prog,
+                is_mayhem_mode=is_mayhem_mode,
             )
         )
         return await self._build_tx_with_instructions(
@@ -1097,6 +958,7 @@ class PumpFunExecutionClient:
 
         base_token_prog = await self.get_token_program_for_mint(mint)
         creator = None
+        is_mayhem_mode = False
 
         if min_sol_lamports <= 0 or creator is None:
             try:
@@ -1121,6 +983,7 @@ class PumpFunExecutionClient:
                     v_sol = int(curve_state.get("virtual_sol_reserves", 0))
                     v_token = int(curve_state.get("virtual_token_reserves", 0))
                     creator = str(curve_state.get("creator") or "") or None
+                    is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
                     if min_sol_lamports <= 0 and v_sol > 0 and v_token > 0:
                         min_sol_lamports = self.calculate_sell_sol_out(
                             token_amount, v_token, v_sol, slippage_bps=slippage_bps
@@ -1146,6 +1009,7 @@ class PumpFunExecutionClient:
                 min_sol_lamports,
                 creator=creator,
                 base_token_program=base_token_prog,
+                is_mayhem_mode=is_mayhem_mode,
             )
         ]
         return await self._build_tx_with_instructions(
@@ -1320,7 +1184,7 @@ class PumpFunExecutionClient:
             "jsonrpc": "2.0",
             "id": 1,
             "method": "sendBundle",
-            "params": [encoded_txs],
+            "params": [encoded_txs, {"encoding": "base64"}],
         }
         timeout = aiohttp.ClientTimeout(total=15.0)
         async with aiohttp.ClientSession(timeout=timeout) as session:
