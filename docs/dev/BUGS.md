@@ -44,7 +44,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-34** | Critical | Execution / Live Buy Failures | **RESOLVED** | Mainnet-verified `buy`/`sell` account layout with `bonding-curve-v2` PDA, mayhem-mode fee recipient routing, and `base64` Jito bundle encoding |
 | **BUG-35** | Critical | Bot / Position State | **RESOLVED** | RPC token-balance failure reads as zero, so live positions are deleted as "dust" |
 | **BUG-36** | Critical | SDK / Raydium Sell | **RESOLVED** | `build_raydium_sell_tx` uses buy-direction token accounts (WSOL → token) |
-| **BUG-37** | Critical | Execution / Atomic Arbitrage | **OPEN** | Arb bundle Raydium legs use the token ATA as both source and destination |
+| **BUG-37** | Critical | Execution / Atomic Arbitrage | **MITIGATED** | Arb bundle Raydium legs use the token ATA as both source and destination |
 | **BUG-38** | Critical | Strategy / Pre-Graduation Exits | **RESOLVED** | Curve progress of ~1% is read as 92–100%, so pre-graduation tranches fire immediately |
 | **BUG-39** | High | Bot / Exit Retry Queue | **RESOLVED** | `_process_exit_retry_queue` is never called from the runtime |
 | **BUG-40** | High | Bot / Geyser Dispatch | **RESOLVED** | Geyser events are handled twice (callbacks and `listen()`) |
@@ -62,13 +62,13 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-52** | High | Execution / Slippage Policy | **RESOLVED** | Dynamic slippage never gets live curve reserves; sells are sized as 0.01 SOL |
 | **BUG-53** | High | SDK / Jito Confirmation | **RESOLVED** | Bundles that landed with an on-chain error are reported as successful |
 | **BUG-54** | High | SDK / ATA Creation | **RESOLVED** | An ATA lookup error adds a non-idempotent `create_associated_token_account` |
-| **BUG-55** | High | Streams / Geyser | **OPEN** | Yellowstone client never opens a gRPC stream and subscribes to mint keys instead of curve PDAs |
+| **BUG-55** | High | Streams / Geyser | **MITIGATED** | Yellowstone client never opens a gRPC stream and subscribes to mint keys instead of curve PDAs |
 | **BUG-56** | High | Strategy / Anti-Rug | **RESOLVED** | `max_gini_coefficient` (0.85) is only a soft penalty; hard reject happens only above 0.95 |
 | **BUG-57** | High | Strategy / Anti-Rug | **RESOLVED** | Anti-rug checks pass when holder or dev data is missing |
 | **BUG-58** | High | Bot / Dev Wallet Enrichment | **RESOLVED** | `tokens_launched_24h` of 0 falls back to the creator's lifetime launch count |
-| **BUG-59** | High | Bot / Cross-Venue Arbitrage | **OPEN** | Arbitrage is quoted and executed on made-up pool reserves |
+| **BUG-59** | High | Bot / Cross-Venue Arbitrage | **MITIGATED** | Arbitrage is quoted and executed on made-up pool reserves |
 | **BUG-60** | High | Engines / Optimizer | **RESOLVED** | Holdout (test) fitness is used to select trials (train/test leakage) |
-| **BUG-61** | High | Engines / Replay | **OPEN** | Paper replay ignores most parameters the optimizer searches |
+| **BUG-61** | High | Engines / Replay | **MITIGATED** | Paper replay ignores most parameters the optimizer searches |
 | **BUG-62** | High | Engines / Replay Metrics | **RESOLVED** | Profit factor is computed from return percentages, not SOL PnL |
 | **BUG-63** | High | Engines / Replay Arbitrage | **RESOLVED** | Replay arbitrage adds profit on every snapshot without committing capital |
 | **BUG-64** | High | Ops / Retention | **RESOLVED** | `ops prune` can delete any file in the target directory; `--max-files` is ignored |
@@ -97,7 +97,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-87** | Medium | Config / Env Aliases | **RESOLVED** | Status and audit path env var names differ between `get_runtime_env()`, the bot, and the docs |
 | **BUG-88** | Medium | UI / Dashboard | **RESOLVED** | Position reason always shows `watch` (reads `reason`, not `entry_reason`) |
 | **BUG-89** | Medium | CLI / Events | **RESOLVED** | `pumpfun-events --tail` exits instead of waiting for the file to appear |
-| **BUG-90** | Medium | CLI / Arbitrage | **OPEN** | `pumpfun-arb --monitor` / `--live` only evaluate hardcoded sample reserves |
+| **BUG-90** | Medium | CLI / Arbitrage | **MITIGATED** | `pumpfun-arb --monitor` / `--live` only evaluate hardcoded sample reserves |
 | **BUG-91** | Low | Bot / Lifecycle | **RESOLVED** | An in-flight buy that finishes after shutdown tries to move SHUTDOWN → MONITORING |
 | **BUG-92** | Low | Bot / Config | **MITIGATED** | `max_positions_per_mint` is stored but never used (values other than 1 are now clamped to 1 with a warning; per-mint pyramiding is a follow-up) |
 | **BUG-93** | Low | SDK / PDA Helpers | **RESOLVED** | Associated bonding-curve helper uses `FEE_RECIPIENT` as the token-program seed |
@@ -375,11 +375,12 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Every Raydium "sell" (graduation exits, `swap_raydium(is_buy=False)`) either fails or spends WSOL to buy more of the token.
 * **Remedy:** For sells, use the token ATA as source and the WSOL ATA as destination, then close the WSOL ATA to unwrap.
 
-### BUG-37: Atomic Arbitrage Raydium Legs Use the Token ATA as Both Source and Destination [OPEN]
+### BUG-37: Atomic Arbitrage Raydium Legs Use the Token ATA as Both Source and Destination [MITIGATED]
 * **Location:** `pumpfun_trading/execution/arbitrage.py` (~L74–109)
 * **Description:** In both `pump_to_raydium` and `raydium_to_pump`, the Raydium leg sets `user_source_token_account` and `user_destination_token_account` to the same mint ATA. The bundle also never wraps or unwraps WSOL, never creates ATAs, and always derives ATAs with the classic `TOKEN_PROGRAM_ID`, which is wrong for Token-2022 mints.
 * **Impact:** Live arbitrage bundles fail or do nothing. Tips and fees are still at risk.
 * **Remedy:** Choose WSOL ATA vs token ATA by direction, add create/wrap/unwrap instructions, and derive ATAs with the mint's real token program.
+* **Resolution (MITIGATED):** Raydium legs now swap token ATA ↔ WSOL ATA by direction, with idempotent ATA creation, WSOL wrap/unwrap and the mint's real token program. Not verified on mainnet; live execution stays blocked by the BUG-59 guard. Follow-up: mainnet simulate of both directions.
 
 ### BUG-38: Pre-Graduation Progress of ~1% Read as 92–100% [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/exits.py` (`evaluate_exit_strategy` ~L242–252)
@@ -483,11 +484,12 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Any RPC hiccup during a buy turns a valid buy into a failed transaction, which costs a fee and the entry.
 * **Remedy:** Use the idempotent ATA create instruction (`CreateIdempotent`), or treat lookup errors as unknown instead of "missing".
 
-### BUG-55: Yellowstone Geyser Client Never Connects and Subscribes to the Wrong Accounts [OPEN]
+### BUG-55: Yellowstone Geyser Client Never Connects and Subscribes to the Wrong Accounts [MITIGATED]
 * **Location:** `pumpfun_trading/streams/geyser.py` (`_stream_loop` / `_run_mock_or_grpc_stream` ~L741–780, `subscribe_bonding_curves` ~L550–555)
 * **Description:** Without a `custom_transport`, the client marks itself `CONNECTED` and then just loops on `asyncio.sleep(0.5)`. It never opens a Yellowstone subscription. `subscribe_bonding_curves(mints)` also filters on mint pubkeys instead of the `["bonding-curve", mint]` PDAs, and `dispatch_raw_account` labels curve PDAs as mints.
 * **Impact:** Setting a Geyser endpoint makes the bot sit idle with no market data while showing a healthy connection. Even with a real transport, curve reserves would not be received.
 * **Remedy:** Implement the gRPC subscribe (or fail fast when no transport is available), and subscribe to the curve PDAs.
+* **Resolution (MITIGATED):** `YellowstoneGeyserClient.start()` raises `GeyserTransportUnavailableError` when no gRPC transport is wired in (no fake CONNECTED state), and `TradingBot` falls back to the WebSocket stream with an error event. Curve subscriptions use the bonding-curve PDA and map updates back to the mint. Follow-up: implement the real Yellowstone gRPC subscribe transport.
 
 ### BUG-56: Configured Gini Cap Is Not a Hard Reject [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/filters.py` (`evaluate_holder_distribution` ~L378–387)
@@ -507,11 +509,12 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** Legitimate developers with past launches are flagged as serial launchers and rejected. The 24h serial-launcher signal is unreliable.
 * **Remedy:** Use `count_24h` even when it is 0, normalize timestamps (s vs ms), and apply the 24h filter to both response shapes.
 
-### BUG-59: Cross-Venue Arbitrage Executes on Made-Up Reserves [OPEN]
+### BUG-59: Cross-Venue Arbitrage Executes on Made-Up Reserves [MITIGATED]
 * **Location:** `pumpfun_trading/bot/run.py` (~L2762–2768, ~L2786–2812)
 * **Description:** Raydium reserves are taken from `candidate.real_sol_reserves` (the bonding curve's SOL) plus a hardcoded `200_000_000_000_000` token amount. Pump virtual reserves are also invented (`real_sol + 30` SOL and the same token constant). `arb_executor.execute_arbitrage` can still submit live Jito bundles based on these numbers.
 * **Impact:** With `enable_cross_venue_arbitrage` on, the bot can trade on spreads that don't exist.
 * **Remedy:** Read the real Raydium vault balances and Pump curve reserves before quoting, and never execute on placeholder values.
+* **Resolution (MITIGATED):** `ArbitrageOpportunity.reserves_verified` (default False) gates execution: `AtomicArbitrageExecutor` refuses live bundles and `TradingBot` neither executes nor banks dry-run profit on placeholder reserves. Follow-up: read Raydium vault balances and live curve reserves, then set `reserves_verified=True`.
 
 ### BUG-60: Optimizer Selects Trials Using Holdout Fitness [RESOLVED]
 * **Location:** `pumpfun_trading/engines/optimizer.py` (`OptimizationTrial.composite_score` ~L726–732; selection at ~L924, 981, 1023, 1106)
@@ -519,11 +522,12 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** The walk-forward holdout is used during selection, so the reported out-of-sample scores are optimistically biased.
 * **Remedy:** Select on `train_fitness` only, and use test metrics only for reporting.
 
-### BUG-61: Paper Replay Ignores Most Parameters the Optimizer Searches [OPEN]
+### BUG-61: Paper Replay Ignores Most Parameters the Optimizer Searches [MITIGATED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L40–54, ~L478–561), `pumpfun_trading/engines/optimizer.py` (~L352–509, ~L802–828)
 * **Description:** The search space varies `buy_amount_sol`, tiered take-profits, trailing stops, drawdown caps, market-cap filters, and more. `PaperTradingEngine` only uses `take_profit` / `stop_loss` / `max_active_positions` and a few flags. It sizes positions with `buy_fraction` of cash and never runs the tiered or trailing exits.
 * **Impact:** Fitness is mostly flat across these parameters, and exported "calibrated" configs don't match what was actually simulated.
 * **Remedy:** Run the live `TradingStrategy` sizing and exit logic in replay, or limit the search space to fields the engine actually uses.
+* **Resolution (MITIGATED):** `build_default_strategy_search_space` now searches only what replay reads (`take_profit`, `stop_loss_pct`, `max_active_positions`, momentum thresholds). Follow-up: port live sizing and tiered/trailing exits into `PaperTradingEngine`, then widen the space again.
 
 ### BUG-62: Profit Factor Computed From Return Percentages [RESOLVED]
 * **Location:** `pumpfun_trading/engines/replay.py` (~L605–617), consumed by `pumpfun_trading/engines/optimizer.py` (~L636–645)
@@ -697,11 +701,12 @@ These were found by reading the code. They have not been reproduced or fixed yet
 * **Impact:** You can't start `--tail` before the bot.
 * **Remedy:** Poll until the file exists (with an optional timeout), then follow it.
 
-### BUG-90: `pumpfun-arb --monitor` / `--live` Only Evaluate Hardcoded Samples [OPEN]
+### BUG-90: `pumpfun-arb --monitor` / `--live` Only Evaluate Hardcoded Samples [MITIGATED]
 * **Location:** `pumpfun_trading/cli/arbitrage.py` (~L49–60, ~L143–199)
 * **Description:** `run_arbitrage_cli` always evaluates two hardcoded reserve tuples. It never reads a stream, wallet, or Jito connection, and `--mint` is only used as a label.
 * **Impact:** The advertised monitor and live-execution modes don't work, and the output can be mistaken for real opportunities.
 * **Remedy:** Connect `--monitor` to the disparity monitor and real reserve reads, and only execute bundles when `--live` is set. Otherwise label the output as a demo.
+* **Resolution (MITIGATED):** `pumpfun-arb --live` exits with code 2; output, `--raw` and exports are labelled as demo data and `--monitor` warns that it is not implemented. Follow-up: wire a real disparity monitor once BUG-59's reserve reads exist.
 
 ---
 

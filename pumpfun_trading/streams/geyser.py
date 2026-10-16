@@ -33,6 +33,10 @@ TRADE_EVENT_DISCRIMINATOR = bytes([189, 219, 127, 211, 78, 230, 97, 238])
 COMPLETE_EVENT_DISCRIMINATOR = bytes([95, 114, 97, 156, 212, 46, 152, 8])
 
 
+class GeyserTransportUnavailableError(RuntimeError):
+    """Raised when the client has no gRPC transport and would only idle (BUG-55)."""
+
+
 class GeyserConnectionState(str, Enum):
     """Lifecycle state of the Yellowstone Geyser stream connection."""
 
@@ -519,6 +523,8 @@ class YellowstoneGeyserClient:
         self._worker_task: Optional[asyncio.Task[None]] = None
         self._keepalive_task: Optional[asyncio.Task[None]] = None
         self._custom_transport = custom_transport
+        # Bonding-curve PDA -> mint, so curve account updates carry the real mint.
+        self._curve_to_mint: dict[str, str] = {}
 
         # Registered event callbacks
         self._on_bonding_curve_callbacks: list[EventCallback] = []
@@ -547,12 +553,39 @@ class YellowstoneGeyserClient:
         """Register a callback invoked for raw Geyser transaction updates."""
         self._on_transaction_callbacks.append(callback)
 
+    @property
+    def has_transport(self) -> bool:
+        """True when a real gRPC transport is wired in."""
+        return self._custom_transport is not None
+
+    def bonding_curve_address(self, mint: str) -> str:
+        """Derive the `["bonding-curve", mint]` PDA that holds curve reserves."""
+        from solders.pubkey import Pubkey
+
+        pda, _ = Pubkey.find_program_address(
+            [b"bonding-curve", bytes(Pubkey.from_string(mint))],
+            Pubkey.from_string(self.program_id),
+        )
+        return str(pda)
+
     def subscribe_bonding_curves(self, mints: list[str]) -> None:
-        """Add specific mint addresses to the account subscription filter."""
+        """Subscribe to the bonding-curve PDAs of `mints` (not the mint accounts).
+
+        Yellowstone account filters match account pubkeys, so filtering on the
+        mint would never deliver curve reserves (BUG-55).
+        """
         existing = self.filter.accounts.setdefault("pump_curves", [])
         for m in mints:
-            if m not in existing:
-                existing.append(m)
+            try:
+                curve = self.bonding_curve_address(m)
+            except Exception as exc:
+                logger.warning(
+                    "Skipping invalid mint %r for curve subscribe: %s", m, exc
+                )
+                continue
+            self._curve_to_mint[curve] = m
+            if curve not in existing:
+                existing.append(curve)
 
     def subscribe_transactions(
         self, account_include: list[str], filter_name: str = "pump_txs"
@@ -564,6 +597,13 @@ class YellowstoneGeyserClient:
         """Start the Yellowstone Geyser client streaming worker in the background."""
         if self._running:
             return
+        if not self.has_transport:
+            # Fail fast instead of reporting CONNECTED while idling (BUG-55).
+            self.state = GeyserConnectionState.DISCONNECTED
+            raise GeyserTransportUnavailableError(
+                f"No Yellowstone gRPC transport configured for {self.endpoint}; "
+                "pass custom_transport= or use the WebSocket stream."
+            )
         self._running = True
         self.state = GeyserConnectionState.CONNECTING
         self._worker_task = asyncio.create_task(self._stream_loop())
@@ -647,7 +687,7 @@ class YellowstoneGeyserClient:
             try:
                 bonding_update = BondingCurveBinaryParser.parse_account_data(
                     data,
-                    mint=mint or pubkey,
+                    mint=mint or self._curve_to_mint.get(pubkey) or pubkey,
                     bonding_curve_pubkey=pubkey,
                     slot=slot,
                 )
@@ -738,15 +778,19 @@ class YellowstoneGeyserClient:
                     else GeyserConnectionState.RECONNECTING
                 )
 
-                if self._custom_transport is not None:
-                    self.state = GeyserConnectionState.CONNECTED
-                    backoff = self.reconnect_initial_backoff
-                    await self._custom_transport(self)
-                else:
-                    # Built-in mock / simulation stream connection handler
-                    self.state = GeyserConnectionState.CONNECTED
-                    backoff = self.reconnect_initial_backoff
-                    await self._run_mock_or_grpc_stream()
+                if self._custom_transport is None:
+                    raise GeyserTransportUnavailableError(
+                        f"No Yellowstone gRPC transport for {self.endpoint}"
+                    )
+                self.state = GeyserConnectionState.CONNECTED
+                backoff = self.reconnect_initial_backoff
+                await self._custom_transport(self)
+
+            except GeyserTransportUnavailableError as exc:
+                logger.error("Geyser stream stopped: %s", exc)
+                self._running = False
+                self.state = GeyserConnectionState.DISCONNECTED
+                return
 
             except asyncio.CancelledError:
                 break
@@ -773,11 +817,6 @@ class YellowstoneGeyserClient:
                     break
 
         self.state = GeyserConnectionState.CLOSED
-
-    async def _run_mock_or_grpc_stream(self) -> None:
-        """Default stream execution loop."""
-        while self._running:
-            await asyncio.sleep(0.5)
 
     async def _keepalive_loop(self) -> None:
         """Periodic keepalive loop sending ping / heartbeat telemetry."""

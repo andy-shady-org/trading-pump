@@ -2984,6 +2984,16 @@ class TradingBot:
                     data=opp.to_dict(),
                 )
 
+            if not opp.reserves_verified:
+                # Reserves above are placeholders (curve SOL + a constant token
+                # lot), so the spread is not real: never execute or bank it, in
+                # live or dry-run (BUG-59).
+                self._log(
+                    f"[ARBITRAGE] {mint[:8]} not executed: reserves are estimates, "
+                    "not on-chain reads",
+                    level=logging.WARNING,
+                )
+                return
             res = await self.arb_executor.execute_arbitrage(opp)
             if res.get("success"):
                 net_profit = float(res.get("net_profit_sol", 0.0))
@@ -3651,11 +3661,32 @@ class TradingBot:
             != YellowstoneGeyserClient.listen
         )
 
+        # The built-in Geyser client has no gRPC transport; never "connect" it and
+        # idle while looking healthy. Fall back to the WebSocket stream (BUG-55).
+        use_geyser = bool(
+            self.geyser_client and (self.geyser_endpoint or is_custom_listen)
+        )
+        if (
+            use_geyser
+            and not is_custom_listen
+            and not getattr(self.geyser_client, "has_transport", True)
+        ):
+            use_geyser = False
+            message = (
+                f"geyser endpoint {self.geyser_endpoint} has no gRPC transport; "
+                "using the WebSocket stream instead"
+            )
+            self._log(message, level=logging.ERROR)
+            self._record_event(message)
+
         try:
-            if self.geyser_client and (self.geyser_endpoint or is_custom_listen):
+            if use_geyser:
                 # Events are consumed via listen() only; registering callbacks too
                 # would route every event twice (BUG-40).
-                if hasattr(self.geyser_client, "start"):
+                # An injected listen() source needs no transport to be started.
+                if hasattr(self.geyser_client, "start") and getattr(
+                    self.geyser_client, "has_transport", True
+                ):
                     await self.geyser_client.start()
                 self._record_event(
                     f"geyser stream started: {self.geyser_endpoint}", alert=False

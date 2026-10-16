@@ -306,12 +306,18 @@ def test_geyser_stream_metrics():
     assert summary["avg_latency_ms"] == 2.0
 
 
+async def _idle_transport(client_ref):
+    while client_ref._running:
+        await asyncio.sleep(0.02)
+
+
 @pytest.mark.asyncio
 async def test_geyser_client_lifecycle_and_dispatch():
     client = YellowstoneGeyserClient(
         endpoint="mock.geyser.rpc:443",
         keepalive_interval=0.1,
         max_queue_size=10,
+        custom_transport=_idle_transport,
     )
 
     received_bonding: list[BondingCurveStateUpdate] = []
@@ -326,13 +332,12 @@ async def test_geyser_client_lifecycle_and_dispatch():
     client.on_account(lambda update: received_accounts.append(update))
     client.on_transaction(lambda update: received_txs.append(update))
 
-    client.subscribe_bonding_curves(["MintCurve111111111111111111111111111111111"])
+    client.subscribe_bonding_curves(["CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump"])
     client.subscribe_transactions(["Wallet1111111111111111111111111111111111111"])
 
-    assert (
-        "MintCurve111111111111111111111111111111111"
-        in client.filter.accounts["pump_curves"]
-    )
+    # Subscriptions target the bonding-curve PDA, not the mint (BUG-55).
+    curve = client.bonding_curve_address("CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump")
+    assert client.filter.accounts["pump_curves"] == [curve]
     assert (
         "Wallet1111111111111111111111111111111111111"
         in client.filter.transactions["pump_txs"]
@@ -448,6 +453,7 @@ async def test_geyser_client_listen_generator_and_idempotent_start():
     client = YellowstoneGeyserClient(
         endpoint="mock.geyser.rpc:443",
         keepalive_interval=0.05,
+        custom_transport=_idle_transport,
     )
 
     await client.start()
@@ -502,9 +508,14 @@ async def test_geyser_client_duplicate_subscriptions_and_malformed_curve():
         endpoint="mock.geyser.rpc:443",
     )
     # Duplicate subscriptions
-    client.subscribe_bonding_curves(["MintA", "MintB"])
-    client.subscribe_bonding_curves(["MintA", "MintC"])
-    assert client.filter.accounts["pump_curves"] == ["MintA", "MintB", "MintC"]
+    mint_a = "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump"
+    mint_b = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    client.subscribe_bonding_curves([mint_a, mint_b, "not-a-mint"])
+    client.subscribe_bonding_curves([mint_a])
+    assert client.filter.accounts["pump_curves"] == [
+        client.bonding_curve_address(mint_a),
+        client.bonding_curve_address(mint_b),
+    ]
 
     # Sync callback exception
     def sync_failing_callback(event):

@@ -185,6 +185,11 @@ async def test_atomic_arbitrage_builder_and_executor():
     mock_client.build_sell_instruction.return_value = real_ix
     mock_client.build_raydium_swap_instruction.return_value = real_ix
     mock_client.build_jito_tip_instruction.return_value = real_ix
+    mock_client._wsol_open_instructions.return_value = [real_ix]
+    mock_client._wsol_close_instruction.return_value = real_ix
+    mock_client.get_token_program_for_mint = AsyncMock(
+        return_value=Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+    )
     mock_client.get_latest_blockhash = AsyncMock(
         return_value="11111111111111111111111111111111"
     )
@@ -313,6 +318,14 @@ async def test_atomic_arbitrage_builder_and_executor():
     assert res_dry["status"] == "simulated"
 
     executor_live = AtomicArbitrageExecutor(mock_client, builder=builder, dry_run=False)
+    # Unverified (placeholder) reserves never execute live (BUG-59).
+    res_blocked = await executor_live.execute_arbitrage(opp_pump)
+    assert res_blocked["success"] is False and res_blocked["status"] == "blocked"
+    mock_client.send_jito_bundle_with_fallback.assert_not_awaited()
+
+    import dataclasses
+
+    opp_pump = dataclasses.replace(opp_pump, reserves_verified=True)
     res_live = await executor_live.execute_arbitrage(opp_pump)
     assert res_live["success"] is True
     assert res_live["signature"] == "tx_sig_123"
@@ -1008,11 +1021,13 @@ def test_optimizer_parameter_space_and_params():
     rng = random.Random(42)
     space = build_default_strategy_search_space()
     assert len(space) > 0
-    assert "buy_amount_sol" in space.names
+    # Only parameters replay simulates are searched (BUG-61).
+    assert "buy_amount_sol" not in space.names
+    assert "take_profit" in space.names
 
     sampled = space.sample_configuration(rng)
     assert isinstance(sampled, dict)
-    assert "buy_amount_sol" in sampled
+    assert "take_profit" in sampled
 
     # Parameter types
     fp = FloatParam(name="float_p", min_val=0.1, max_val=1.0, step=0.1, default=0.5)

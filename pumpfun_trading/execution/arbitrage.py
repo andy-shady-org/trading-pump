@@ -10,7 +10,11 @@ from solders.instruction import Instruction
 from solders.message import MessageV0
 from solders.transaction import VersionedTransaction
 from spl.token.constants import TOKEN_PROGRAM_ID
-from spl.token.instructions import get_associated_token_address
+from solders.pubkey import Pubkey
+from spl.token.instructions import (
+    create_idempotent_associated_token_account,
+    get_associated_token_address,
+)
 
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.sdk.jito import JITO_TIP_ACCOUNTS
@@ -30,6 +34,7 @@ class AtomicArbitrageBuilder:
         tip_lamports: Optional[int] = None,
         compute_unit_limit: int = 400_000,
         priority_fee_micro_lamports: int = 50_000,
+        token_program: Optional[Pubkey] = None,
     ) -> list[Instruction]:
         """Assemble all atomic instructions for dual-leg swap and Jito validator tip."""
         instructions: list[Instruction] = []
@@ -53,73 +58,78 @@ class AtomicArbitrageBuilder:
         leg1_min_tokens = opportunity.leg1_min_amount_out
         leg2_min_sol = opportunity.leg2_min_amount_out
 
-        if opportunity.direction == "pump_to_raydium":
-            if not pool_keys:
-                raise ValueError(
-                    "Raydium pool keys required for pump_to_raydium arbitrage"
-                )
-
-            # Leg 1: Buy on Pump.fun (SOL -> Token)
-            buy_ix = self.client.build_buy_instruction(
-                mint=mint,
-                bonding_curve=bonding_curve_str,
-                token_amount=leg1_min_tokens,
-                max_sol_cost=input_lamports,
-            )
-            instructions.append(buy_ix)
-
-            # Leg 2: Sell on Raydium AMM v4 (Token -> SOL)
-            user_pubkey = self.client.wallet
-            mint_pubkey = self.client._to_pubkey(mint)
-            user_token_ata = get_associated_token_address(
-                user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
-            )
-
-            # Source: User Token ATA, Destination: WSOL / User Wallet
-            raydium_sell_ix = self.client.build_raydium_swap_instruction(
-                pool_keys=pool_keys,
-                amount_in_lamports=leg1_min_tokens,
-                min_amount_out=leg2_min_sol,
-                user_source_token_account=str(user_token_ata),
-                user_destination_token_account=str(
-                    user_token_ata
-                ),  # Routed through ATA or WSOL
-            )
-            instructions.append(raydium_sell_ix)
-
-        elif opportunity.direction == "raydium_to_pump":
-            if not pool_keys:
-                raise ValueError(
-                    "Raydium pool keys required for raydium_to_pump arbitrage"
-                )
-
-            user_pubkey = self.client.wallet
-            mint_pubkey = self.client._to_pubkey(mint)
-            user_token_ata = get_associated_token_address(
-                user_pubkey, mint_pubkey, TOKEN_PROGRAM_ID
-            )
-
-            # Leg 1: Buy on Raydium AMM v4 (SOL -> Token)
-            raydium_buy_ix = self.client.build_raydium_swap_instruction(
-                pool_keys=pool_keys,
-                amount_in_lamports=input_lamports,
-                min_amount_out=leg1_min_tokens,
-                user_source_token_account=str(user_token_ata),
-                user_destination_token_account=str(user_token_ata),
-            )
-            instructions.append(raydium_buy_ix)
-
-            # Leg 2: Sell on Pump.fun (Token -> SOL)
-            sell_ix = self.client.build_sell_instruction(
-                mint=mint,
-                bonding_curve=bonding_curve_str,
-                token_amount=leg1_min_tokens,
-                min_sol_output=leg2_min_sol,
-            )
-            instructions.append(sell_ix)
-
-        else:
+        if opportunity.direction not in {"pump_to_raydium", "raydium_to_pump"}:
             raise ValueError(f"Unknown arbitrage direction: {opportunity.direction}")
+        if not pool_keys:
+            raise ValueError(
+                f"Raydium pool keys required for {opportunity.direction} arbitrage"
+            )
+
+        # Raydium trades SPL WSOL, Pump.fun trades native SOL: the WSOL ATA is the
+        # SOL side of the Raydium leg and the mint ATA (with the mint's real token
+        # program) is the token side. Source and destination never coincide (BUG-37).
+        user_pubkey = self.client.wallet
+        mint_program = token_program or TOKEN_PROGRAM_ID
+        wsol_ata = get_associated_token_address(
+            user_pubkey, self.client._to_pubkey(pool_keys.pc_mint), TOKEN_PROGRAM_ID
+        )
+        instructions.append(
+            create_idempotent_associated_token_account(
+                payer=user_pubkey,
+                owner=user_pubkey,
+                mint=self.client._to_pubkey(mint),
+                token_program_id=mint_program,
+            )
+        )
+
+        if opportunity.direction == "pump_to_raydium":
+            # Leg 1: Buy on Pump.fun (SOL -> Token)
+            instructions.append(
+                self.client.build_buy_instruction(
+                    mint=mint,
+                    bonding_curve=bonding_curve_str,
+                    token_amount=leg1_min_tokens,
+                    max_sol_cost=input_lamports,
+                    base_token_program=mint_program,
+                )
+            )
+            # Leg 2: Sell on Raydium AMM v4 (token ATA -> WSOL ATA), then unwrap.
+            instructions.extend(self.client._wsol_open_instructions(wsol_ata, 0))
+            instructions.append(
+                self.client.build_raydium_swap_instruction(
+                    pool_keys=pool_keys,
+                    amount_in_lamports=leg1_min_tokens,
+                    min_amount_out=leg2_min_sol,
+                    is_buy=False,
+                    coin_token_program=mint_program,
+                )
+            )
+            instructions.append(self.client._wsol_close_instruction(wsol_ata))
+        else:
+            # Leg 1: Wrap SOL, buy on Raydium AMM v4 (WSOL ATA -> token ATA), unwrap.
+            instructions.extend(
+                self.client._wsol_open_instructions(wsol_ata, input_lamports)
+            )
+            instructions.append(
+                self.client.build_raydium_swap_instruction(
+                    pool_keys=pool_keys,
+                    amount_in_lamports=input_lamports,
+                    min_amount_out=leg1_min_tokens,
+                    is_buy=True,
+                    coin_token_program=mint_program,
+                )
+            )
+            instructions.append(self.client._wsol_close_instruction(wsol_ata))
+            # Leg 2: Sell on Pump.fun (Token -> SOL)
+            instructions.append(
+                self.client.build_sell_instruction(
+                    mint=mint,
+                    bonding_curve=bonding_curve_str,
+                    token_amount=leg1_min_tokens,
+                    min_sol_output=leg2_min_sol,
+                    base_token_program=mint_program,
+                )
+            )
 
         # 3. Dynamic Jito Tip Instruction
         tip_amt = (
@@ -146,8 +156,11 @@ class AtomicArbitrageBuilder:
         priority_fee_micro_lamports: int = 50_000,
     ) -> VersionedTransaction:
         """Compile and sign atomic VersionedTransaction containing all dual-leg swap instructions."""
+        # Raises if the mint owner can't be read; never guess SPL vs Token-2022.
+        token_program = await self.client.get_token_program_for_mint(opportunity.mint)
         instructions = self.build_arbitrage_instructions(
             opportunity=opportunity,
+            token_program=token_program,
             tip_account=tip_account,
             tip_lamports=tip_lamports,
             compute_unit_limit=compute_unit_limit,
@@ -206,6 +219,17 @@ class AtomicArbitrageExecutor:
                 "gross_profit_sol": opportunity.gross_profit_sol,
                 "tip_sol": opportunity.estimated_jito_tip_sol,
                 "latency_ms": elapsed_ms,
+            }
+
+        if not getattr(opportunity, "reserves_verified", False):
+            # Live bundles only on reserves read from chain, never on placeholder
+            # or estimated books (BUG-59).
+            return {
+                "success": False,
+                "status": "blocked",
+                "error": "arbitrage reserves not verified on-chain; live execution disabled",
+                "opportunity": opportunity.to_dict(),
+                "latency_ms": (time.monotonic() - start_time) * 1000.0,
             }
 
         try:

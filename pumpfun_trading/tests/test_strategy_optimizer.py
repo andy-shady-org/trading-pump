@@ -163,17 +163,29 @@ def test_parameter_space_operations():
 
 
 def test_build_default_strategy_search_space():
-    cfg = TradingBotConfig(buy_amount_sol=0.01, max_active_positions=5)
+    cfg = TradingBotConfig(take_profit=1.8, max_active_positions=5)
     space = build_default_strategy_search_space(cfg)
-    assert len(space) >= 15
-    assert "buy_amount_sol" in space.names
-    assert "take_profit_tier1_multiplier" in space.names
-    assert "trailing_stop_drop_pct" in space.names
-    assert "max_daily_drawdown_pct" in space.names
+    # Only knobs PaperTradingEngine reads are searched (BUG-61).
+    assert set(space.names) == {
+        "max_active_positions",
+        "momentum_min_z_score",
+        "momentum_min_buy_ratio",
+        "momentum_min_unique_buyers",
+        "momentum_window_seconds",
+        "stop_loss_pct",
+        "take_profit",
+    }
+    for unused in (
+        "buy_amount_sol",
+        "take_profit_tier1_multiplier",
+        "trailing_stop_drop_pct",
+        "max_daily_drawdown_pct",
+    ):
+        assert unused not in space.names
 
-    buy_p = space.get("buy_amount_sol")
-    assert buy_p is not None
-    assert buy_p.default == 0.01
+    tp = space.get("take_profit")
+    assert tp is not None
+    assert tp.default == 1.8
 
 
 def test_fitness_metrics_calculation():

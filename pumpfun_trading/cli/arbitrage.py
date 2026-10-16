@@ -141,7 +141,22 @@ def render_opportunity_table(opportunities: list[ArbitrageOpportunity]) -> None:
 
 
 def run_arbitrage_cli(args: argparse.Namespace) -> int:
-    """Execute arbitrage CLI command."""
+    """Execute arbitrage CLI command.
+
+    Only a demo over hardcoded sample reserves is implemented: there is no live
+    reserve feed or bundle execution here, so `--live` is refused and all output
+    is labelled as demo data (BUG-90).
+    """
+    if not getattr(args, "dry_run", True):
+        console.print(
+            "[red]pumpfun-arb --live is not supported: this command only evaluates "
+            "hardcoded demo reserves and cannot execute bundles.[/red]"
+        )
+        return 2
+    if getattr(args, "monitor", False):
+        console.print(
+            "[yellow]--monitor is not implemented yet; showing demo samples only.[/yellow]"
+        )
     calculator = OptimalArbitrageCalculator(
         jito_tip_profit_share_pct=args.tip_share,
     )
@@ -179,17 +194,21 @@ def run_arbitrage_cli(args: argparse.Namespace) -> int:
     if opp2:
         sample_opportunities.append(opp2)
 
+    demo_rows = [{**o.to_dict(), "demo": True} for o in sample_opportunities]
     if args.raw:
-        data = [o.to_dict() for o in sample_opportunities]
-        console.print(json.dumps(data, indent=2))
+        console.print(json.dumps(demo_rows, indent=2))
     else:
+        console.print(
+            "[bold yellow]DEMO DATA: hardcoded sample reserves, not live market "
+            "opportunities.[/bold yellow]"
+        )
         render_opportunity_table(sample_opportunities)
 
     if args.export_history:
         export_path = Path(args.export_history)
         export_path.parent.mkdir(parents=True, exist_ok=True)
         export_path.write_text(
-            json.dumps([o.to_dict() for o in sample_opportunities], indent=2),
+            json.dumps(demo_rows, indent=2),
             encoding="utf-8",
         )
         console.print(

@@ -344,20 +344,17 @@ class ParameterSpace:
 def build_default_strategy_search_space(
     base_config: TradingBotConfig | None = None,
 ) -> ParameterSpace:
-    """Builds standard quantitative strategy search space covering sizing, momentum, exits, and risk."""
+    """Search space limited to parameters `PaperTradingEngine` actually reads.
+
+    Replay simulates flat take-profit/stop-loss exits, `max_active_positions`
+    and momentum entries only. Sizing, tiered/trailing exits, drawdown caps,
+    market-cap and anti-rug knobs are not simulated, so searching them gave a
+    flat fitness landscape and exported configs that were never tested (BUG-61).
+    """
     cfg = base_config or TradingBotConfig()
     space = ParameterSpace()
 
-    # 1. Position Sizing & Exposure
-    space.add_parameter(
-        FloatParam(
-            name="buy_amount_sol",
-            min_val=0.002,
-            max_val=0.05,
-            step=0.001,
-            default=getattr(cfg, "buy_amount_sol", 0.005),
-        )
-    )
+    # 1. Concurrency
     space.add_parameter(
         IntParam(
             name="max_active_positions",
@@ -365,33 +362,6 @@ def build_default_strategy_search_space(
             max_val=8,
             step=1,
             default=getattr(cfg, "max_active_positions", 4),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="max_total_exposure_sol",
-            min_val=0.01,
-            max_val=0.20,
-            step=0.01,
-            default=getattr(cfg, "max_total_exposure_sol", 0.03),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="min_market_cap_sol",
-            min_val=15.0,
-            max_val=45.0,
-            step=1.0,
-            default=getattr(cfg, "min_market_cap_sol", 25.0),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="max_market_cap_sol",
-            min_val=50.0,
-            max_val=120.0,
-            step=5.0,
-            default=getattr(cfg, "max_market_cap_sol", 80.0),
         )
     )
 
@@ -433,52 +403,7 @@ def build_default_strategy_search_space(
         )
     )
 
-    # 3. Take Profit Multi-Tier & Trailing Exits
-    space.add_parameter(
-        FloatParam(
-            name="take_profit_tier1_multiplier",
-            min_val=1.15,
-            max_val=2.50,
-            step=0.05,
-            default=getattr(cfg, "take_profit_tier1_multiplier", 1.35),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="take_profit_tier1_pct",
-            min_val=0.20,
-            max_val=0.80,
-            step=0.05,
-            default=getattr(cfg, "take_profit_tier1_pct", 0.40),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="take_profit_tier2_multiplier",
-            min_val=1.50,
-            max_val=5.00,
-            step=0.10,
-            default=getattr(cfg, "take_profit_tier2_multiplier", 1.85),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="take_profit_tier2_pct",
-            min_val=0.10,
-            max_val=0.50,
-            step=0.05,
-            default=getattr(cfg, "take_profit_tier2_pct", 0.35),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="trailing_stop_drop_pct",
-            min_val=0.05,
-            max_val=0.30,
-            step=0.01,
-            default=getattr(cfg, "trailing_stop_drop_pct", 0.12),
-        )
-    )
+    # 3. Flat exits (replay ignores tiered and trailing exits)
     space.add_parameter(
         FloatParam(
             name="stop_loss_pct",
@@ -488,71 +413,14 @@ def build_default_strategy_search_space(
             default=getattr(cfg, "stop_loss_pct", 0.85),
         )
     )
-    space.add_parameter(
-        FloatParam(
-            name="stagnant_curve_timeout_seconds",
-            min_val=15.0,
-            max_val=180.0,
-            step=5.0,
-            default=getattr(cfg, "stagnant_curve_timeout_seconds", 45.0),
-        )
-    )
 
-    # 4. Adaptive Realized Ratchet & Portfolio Risk
     space.add_parameter(
         FloatParam(
-            name="max_daily_drawdown_pct",
-            min_val=0.10,
-            max_val=0.40,
-            step=0.01,
-            default=getattr(cfg, "max_daily_drawdown_pct", 0.25),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="profit_drawdown_tolerance_pct",
-            min_val=0.20,
-            max_val=0.50,
-            step=0.01,
-            default=getattr(cfg, "profit_drawdown_tolerance_pct", 0.40),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="profit_ratchet_ratio",
-            min_val=0.25,
-            max_val=0.80,
+            name="take_profit",
+            min_val=1.15,
+            max_val=3.00,
             step=0.05,
-            default=getattr(cfg, "profit_ratchet_ratio", 0.50),
-        )
-    )
-
-    # 5. Anti-Rug & Cluster Limits
-    space.add_parameter(
-        FloatParam(
-            name="max_creator_initial_pct",
-            min_val=0.03,
-            max_val=0.15,
-            step=0.01,
-            default=getattr(cfg, "max_creator_initial_pct", 0.08),
-        )
-    )
-    space.add_parameter(
-        FloatParam(
-            name="max_cluster_concentration_pct",
-            min_val=0.10,
-            max_val=0.40,
-            step=0.02,
-            default=getattr(cfg, "max_cluster_concentration_pct", 0.25),
-        )
-    )
-    space.add_parameter(
-        IntParam(
-            name="min_order_flow_buyers",
-            min_val=1,
-            max_val=5,
-            step=1,
-            default=getattr(cfg, "min_order_flow_buyers", 3),
+            default=getattr(cfg, "take_profit", 1.5),
         )
     )
 

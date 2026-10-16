@@ -51,6 +51,9 @@ class ArbitrageOpportunity:
     )
     leg1_min_amount_out: int = 0
     leg2_min_amount_out: int = 0
+    # True only when both venues' reserves were read from chain (BUG-59). Live
+    # execution refuses opportunities built from placeholder reserves.
+    reserves_verified: bool = False
 
     @property
     def is_profitable(self) -> bool:
