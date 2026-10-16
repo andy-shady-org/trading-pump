@@ -144,7 +144,7 @@ Actions: **move** (rename/relocate, content unchanged), **split** (spread across
 |---|---:|---:|---|---|---|
 | `conftest.py` | 58 | – | `conftest.py` (kept) + `support/` | keep, extract helpers | 26 |
 | `test_anti_rug_bot_integration.py` | 319 | 10 | `integration/test_anti_rug_bot.py` | move | 26 |
-| `test_anti_rug_filters.py` | 464 | 10 | `unit/strategies/test_filters.py` | move (remove `time.sleep`) | 26 |
+| `test_anti_rug_filters.py` | 464 | 10 | `unit/strategies/test_filters.py` | move (remove `time.sleep`); **done** (26 / 4a) | 26 |
 | `test_api_client.py` | 91 | 4 | `unit/api/test_client.py` | merge with `_full` | 27 |
 | `test_api_client_full.py` | 134 | 3 | `unit/api/test_client.py` | merge | 27 |
 | `test_audit_tool.py` | 167 | 6 | `unit/bot/test_audit.py` | merge with `test_audit_full.py` | 27 |
@@ -156,7 +156,7 @@ Actions: **move** (rename/relocate, content unchanged), **split** (spread across
 | `test_capital_displacement.py` | 242 | 4 | `unit/bot/test_position_manager.py` | merge | 26 |
 | `test_cli_suite.py` | 334 | 7 | `unit/cli/test_main.py`, `unit/cli/test_audit.py`, `unit/cli/test_bot.py`, `unit/cli/test_replay.py` | split | 26 |
 | `test_containment_regressions.py` | 118 | 4 | `unit/cli/test_arbitrage.py`, `unit/execution/test_arbitrage.py`, `unit/strategies/test_arbitrage.py` | split + tag `regression` | 27 |
-| `test_copy_trading.py` | 373 | 9 | `unit/strategies/test_copy_trading.py` | move | 26 |
+| `test_copy_trading.py` | 373 | 9 | `unit/strategies/test_copy_trading.py` | move; **done** (26 / 4a) | 26 |
 | `test_copy_trading_bot_integration.py` | 246 | 5 | `integration/test_copy_trading_bot.py` | move | 26 |
 | `test_coverage_95_comprehensive.py` | 3,395 | 50 | module files across `unit/bot`, `unit/cli`, `unit/engines`, `unit/execution`, `unit/ops`, `unit/sdk`, `unit/strategies`, `unit/streams`, `unit/ui` | dissolve | 27 |
 | `test_coverage_95_final_push.py` | 380 | 6 | `unit/api/test_client.py`, `unit/bot/test_audit.py`, `unit/bot/test_run.py`, `unit/sdk/test_execution.py` | dissolve | 27 |
@@ -164,45 +164,45 @@ Actions: **move** (rename/relocate, content unchanged), **split** (spread across
 | `test_coverage_boost_final.py` | 298 | 6 | `unit/api/test_client.py`, `unit/bot/test_run.py`, `unit/cli/*`, `unit/sdk/test_execution.py` | dissolve | 27 |
 | `test_coverage_boost_v2.py` | 1,984 | 22 | module files across `unit/bot`, `unit/config`, `unit/execution`, `unit/infra`, `unit/sdk`, `unit/strategies`, `unit/streams` | dissolve | 27 |
 | `test_cross_venue_arbitrage.py` | 386 | 8 | `unit/strategies/test_arbitrage.py`, `unit/execution/test_arbitrage.py`, `integration/test_arbitrage_replay.py` | split (remove `asyncio.run`) | 26 |
-| `test_curve_math.py` | 215 | 7 | `unit/sdk/test_curve.py` (+ `property/test_curve_properties.py`) | move, add properties | 26 / 27 |
-| `test_diagnostic_events.py` | 174 | 4 | `unit/ops/test_events.py` | move | 26 |
-| `test_dynamic_execution_policy.py` | 245 | 5 | `unit/execution/test_policy.py` | move | 26 |
-| `test_events_cli.py` | 186 | 4 | `unit/cli/test_events.py` | move | 26 |
+| `test_curve_math.py` | 215 | 7 | `unit/sdk/test_curve.py` (+ `property/test_curve_properties.py`) | move, add properties; **done** (26 / 4a) | 26 / 27 |
+| `test_diagnostic_events.py` | 174 | 4 | `unit/ops/test_events.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
+| `test_dynamic_execution_policy.py` | 245 | 5 | `unit/execution/test_policy.py` | move; **done** (26 / 4a) | 26 |
+| `test_events_cli.py` | 186 | 4 | `unit/cli/test_events.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_execution_sdk.py` | 148 | 12 | `unit/sdk/test_execution.py` | merge with `_full` | 27 |
 | `test_execution_sdk_full.py` | 344 | 5 | `unit/sdk/test_execution.py` | merge | 27 |
-| `test_funding_cluster_and_sybil.py` | 444 | 12 | `unit/strategies/test_cluster.py` | move | 26 |
+| `test_funding_cluster_and_sybil.py` | 444 | 12 | `unit/strategies/test_cluster.py` | move; **done** (26 / 4a) | 26 |
 | `test_geyser_bot_integration.py` | 600 | 11 | `integration/test_geyser_bot.py` | move | 26 |
-| `test_geyser_stream.py` | 534 | 14 | `unit/streams/test_geyser.py` (+ `property/test_geyser_parsers.py`) | move, add properties | 26 / 27 |
+| `test_geyser_stream.py` | 534 | 14 | `unit/streams/test_geyser.py` (+ `property/test_geyser_parsers.py`) | move, add properties; **done** (26 / 4a) | 26 / 27 |
 | `test_graduation_bot_integration.py` | 197 | 5 | `integration/test_graduation_bot.py` | move | 26 |
 | `test_graduation_harvester.py` | 258 | 5 | `unit/strategies/test_graduation.py`, `unit/strategies/test_exits.py` | split | 26 |
 | `test_jito_execution_integration.py` | 358 | 14 | `integration/test_jito_execution.py` | move | 26 |
-| `test_jito_sdk.py` | 507 | 17 | `unit/sdk/test_jito.py` | move | 26 |
-| `test_logging_rotation.py` | 80 | 4 | `unit/ops/test_logging.py` | move (remove `time.sleep`) | 26 |
-| `test_market_data_resilience.py` | 56 | 3 | `unit/services/test_market_data.py` | move (remove `asyncio.run`) | 26 |
+| `test_jito_sdk.py` | 507 | 17 | `unit/sdk/test_jito.py` | move; **done** (26 / 4a) | 26 |
+| `test_logging_rotation.py` | 80 | 4 | `unit/ops/test_logging.py` | move (remove `time.sleep`); **done** (26 / 4a) | 26 |
+| `test_market_data_resilience.py` | 56 | 3 | `unit/services/test_market_data.py` | move (remove `asyncio.run`); **done** (26 / 4a) | 26 |
 | `test_market_recorder.py` | 786 | 23 | `unit/bot/test_recorder.py`, `unit/engines/test_generators.py`, `unit/cli/test_record.py`, `integration/test_recorder_replay.py` | split | 26 |
 | `test_momentum_bot_integration.py` | 248 | 5 | `integration/test_momentum_bot.py` | move | 26 |
-| `test_ops_cli.py` | 50 | 2 | `unit/cli/test_main.py` | merge | 26 |
+| `test_ops_cli.py` | 50 | 2 | `unit/cli/test_main.py` | merge; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_ops_readiness.py` | 92 | 3 | `unit/ops/test_monitoring.py`, `unit/config/test_env.py` | split | 26 |
-| `test_ops_retention.py` | 134 | 6 | `unit/ops/test_retention.py` | move (remove `time.sleep`) | 26 |
+| `test_ops_retention.py` | 134 | 6 | `unit/ops/test_retention.py` | move (remove `time.sleep`); **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_order_executor.py` | 518 | 15 | `unit/execution/test_executor.py`, `unit/execution/test_liquidator.py` | split | 26 |
-| `test_order_flow_momentum.py` | 375 | 12 | `unit/strategies/test_momentum.py` | move | 26 |
+| `test_order_flow_momentum.py` | 375 | 12 | `unit/strategies/test_momentum.py` | move; **done** (26 / 4a) | 26 |
 | `test_persistence_cache_regressions.py` | 143 | 6 | `unit/bot/test_persistence.py`, `unit/storage/test_status.py`, `unit/strategies/test_filters.py` | split + tag `regression` | 27 |
 | `test_portfolio_circuit_breaker.py` | 702 | 14 | `unit/bot/test_risk.py` | merge | 26 |
-| `test_position_manager.py` | 414 | 12 | `unit/bot/test_position_manager.py` | move | 26 |
+| `test_position_manager.py` | 414 | 12 | `unit/bot/test_position_manager.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_pump_instruction_layout.py` | 208 | 6 | `unit/sdk/test_execution.py` | merge | 27 |
-| `test_raydium_execution.py` | 258 | 5 | `unit/sdk/test_raydium.py` | move | 26 |
+| `test_raydium_execution.py` | 258 | 5 | `unit/sdk/test_raydium.py` | move; **done** (26 / 4a) | 26 |
 | `test_raydium_graduation.py` | 230 | 5 | `unit/strategies/test_graduation.py` | merge | 26 |
-| `test_replay_engine.py` | 443 | 9 | `unit/engines/test_replay.py` | move | 26 |
+| `test_replay_engine.py` | 443 | 9 | `unit/engines/test_replay.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_risk_adaptive_ratchet.py` | 374 | 9 | `unit/bot/test_risk.py` | merge | 26 |
 | `test_risk_health_execution.py` | 440 | 8 | `unit/bot/test_health.py`, `unit/bot/test_lifecycle.py`, `unit/execution/test_builder.py`, `unit/strategies/test_risk_validation.py` | split | 26 |
-| `test_rpc_pool.py` | 360 | 11 | `unit/infra/test_rpc_pool.py` | move | 26 |
+| `test_rpc_pool.py` | 360 | 11 | `unit/infra/test_rpc_pool.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_rpc_pool_bot_integration.py` | 175 | 3 | `integration/test_rpc_pool_bot.py` | move | 26 |
 | `test_runtime_coverage_boost.py` | 151 | 5 | `unit/config/test_env.py`, `unit/ops/test_logging.py`, `unit/services/test_market_data.py` | dissolve (remove `asyncio.run`) | 27 |
 | `test_sdk_contract_regressions.py` | 321 | 17 | `unit/sdk/test_curve.py`, `unit/sdk/test_execution.py`, `unit/sdk/test_jito.py`, `unit/infra/test_rpc_pool.py`, `unit/api/test_client.py` | split + tag `regression` | 27 |
 | `test_strategy_data_regressions.py` | 122 | 9 | `unit/strategies/test_filters.py`, `unit/strategies/test_cluster.py`, `unit/bot/test_enrichment.py`, `unit/execution/test_liquidator.py` | split + tag `regression` | 27 |
 | `test_strategy_modularity.py` | 401 | 10 | `unit/strategies/test_signal.py`, `unit/strategies/test_exits.py`, `unit/strategies/test_presets.py`, `unit/strategies/test_risk_validation.py` | split | 26 |
-| `test_strategy_optimizer.py` | 583 | 14 | `unit/engines/test_optimizer.py` | move | 26 |
-| `test_strategy_safety.py` | 353 | 10 | `unit/bot/test_strategy.py` | move | 26 |
+| `test_strategy_optimizer.py` | 583 | 14 | `unit/engines/test_optimizer.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
+| `test_strategy_safety.py` | 353 | 10 | `unit/bot/test_strategy.py` | move; **done** (26 / 4a) | 26 |
 | `test_tooling_regressions.py` | 216 | 9 | `unit/cli/test_main.py`, `unit/cli/test_record.py`, `unit/cli/test_replay.py`, `unit/ops/test_retention.py` | split + tag `regression` | 27 |
 | `test_trailing_and_tiered_exits.py` | 739 | 22 | `unit/strategies/test_exits.py`, `unit/bot/test_risk.py` | split | 26 |
 | `test_ui_and_storage.py` | 753 | 11 | `unit/ui/test_dashboard.py`, `unit/storage/test_status.py` | split | 26 |
