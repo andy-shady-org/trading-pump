@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
+import sys
+import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -82,6 +86,47 @@ def isolate_test_environment(
         monkeypatch.setattr(
             PumpFunExecutionClient, "get_transaction_costs", no_cost_rpc
         )
+
+
+@pytest.fixture(autouse=True)
+def instant_retry_backoff(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """Retry failed API / RPC calls without the real backoff wait.
+
+    With the network blocked, every unmocked Pump.fun API or RPC lookup fails
+    and retries: ~3.5 s of API backoff and ~0.7 s of RPC-pool backoff per call,
+    which was most of the suite's wall-clock time. Retries still happen and are
+    still counted; only the wait is skipped. Modules that test the backoff
+    itself opt out with ``USES_REAL_RETRY_BACKOFF = True``.
+    """
+    if getattr(request.module, "USES_REAL_RETRY_BACKOFF", False):
+        return
+
+    from pumpfun_trading.api import client as api_client
+    from pumpfun_trading.infra import rpc_pool
+
+    # Both backoffs are awaited inline in ``request``; other sleeps in these
+    # modules (the pool's health-loop interval) keep their real value.
+    _zero_sleeps_in(monkeypatch, api_client, api_client.PumpFunApiClient.request)
+    _zero_sleeps_in(monkeypatch, rpc_pool, rpc_pool.RpcConnectionPool.request)
+
+
+def _zero_sleeps_in(
+    monkeypatch: pytest.MonkeyPatch, module: types.ModuleType, function: Any
+) -> None:
+    """Give ``module`` an ``asyncio`` whose ``sleep`` is instant inside ``function``."""
+    real_sleep = asyncio.sleep
+    code = function.__code__
+
+    def sleep(delay: float, result: Any = None) -> Any:
+        if sys._getframe(1).f_code is code:
+            delay = 0
+        return real_sleep(delay, result)
+
+    stand_in = types.SimpleNamespace(**vars(asyncio))
+    stand_in.sleep = sleep
+    monkeypatch.setattr(module, "asyncio", stand_in)
 
 
 OFFLINE_CREATOR = "7nYabs9dUhvxYwdTnrWVBL9MYviKSfrEbdWCUbcnwkpF"

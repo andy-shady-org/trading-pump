@@ -41,11 +41,12 @@ def test_rotated_file_sink_size_rotation_and_compression():
         sink.flush()
         sink.close()
 
-        # Let background compression threads finish
-        time.sleep(0.3)
+        # Join the background compression instead of waiting for it
+        sink._wait_for_compression()
 
         files = list(Path(tmpdir).glob("audit_trail.jsonl*"))
         assert len(files) >= 2
+        assert any(f.name.endswith(".gz") for f in files)
 
 
 async def test_rotated_file_sink_async_write_batch():

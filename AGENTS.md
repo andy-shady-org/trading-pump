@@ -48,6 +48,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[TESTS] Green On 3.14 Is Not Green On 3.11:** A global `Path.stat` mock passed on 3.14 but broke `Path.glob` on 3.12/3.13. Never patch `pathlib` methods globally; wrap the real call and fake only the target file. Supported interpreters are 3.11–3.14 (`nox -s tests-<ver>`, CI matrix).
 - **[PACKAGING] Tests Never Ship:** `packages.find` exclude alone still packed `pumpfun_trading/tests` as package data; keep the `MANIFEST.in` prune and run `nox -s package` after any packaging change. Never add a release/publish workflow (proprietary).
 - **[ASYNC] Never Cancel A Dequeued Write:** Cancelling a task awaiting `asyncio.to_thread` also cancels a not-yet-started executor job, so data already taken off a queue is lost on shutdown (BUG-103). Shield in-flight writes and finish them before re-raising `CancelledError`; test shutdown races deterministically (busy one-thread executor), not with wall-clock durations.
+- **[TESTS] Slow Tests Mean Unmocked Retries:** Most of the suite's 136 s was real retry backoff on blocked-network API/RPC lookups, not the bot. Profile with `--durations` before tuning; never add real sleeps or rely on backoff in tests (`instant_retry_backoff` in `tests/conftest.py` skips it; `USES_REAL_RETRY_BACKOFF = True` to opt out), and keep a new retry loop's sleep inline in a `request` method or extend that fixture.
 
 
 ## Project Overview

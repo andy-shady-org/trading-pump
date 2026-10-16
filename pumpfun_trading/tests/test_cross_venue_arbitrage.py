@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import pytest
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -240,7 +239,7 @@ def test_mempool_backrun_engine() -> None:
     assert whale_opp.is_profitable
 
 
-def test_atomic_arbitrage_builder_and_executor() -> None:
+async def test_atomic_arbitrage_builder_and_executor() -> None:
     """Test assembly of atomic multi-hop transactions with dual-leg swaps and dynamic Jito tips."""
     kp = Keypair()
     priv_b58 = kp.to_base58_string() if hasattr(kp, "to_base58_string") else str(kp)
@@ -300,7 +299,7 @@ def test_atomic_arbitrage_builder_and_executor() -> None:
     assert len(rev_ixs) >= 4
 
     # 3. Dry-run simulation execution
-    sim_res = asyncio.run(executor.execute_arbitrage(opp))
+    sim_res = await executor.execute_arbitrage(opp)
     assert sim_res["success"] is True
     assert sim_res["status"] == "simulated"
     assert sim_res["net_profit_sol"] == opp.net_profit_sol

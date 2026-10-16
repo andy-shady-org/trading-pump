@@ -12,6 +12,7 @@ from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.recorder import ReplayRecorder
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.cli.bot import build_parser as build_bot_parser
+from pumpfun_trading.cli import record as record_module
 from pumpfun_trading.cli.record import build_record_parser, run_record_cli
 from pumpfun_trading.engines.generators import (
     RestHistoryExporter,
@@ -19,6 +20,7 @@ from pumpfun_trading.engines.generators import (
 )
 from pumpfun_trading.engines.replay import PaperTradingEngine, run_replay
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.tests.support.fakes import FakeClock
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     TradeEventUpdate,
@@ -499,8 +501,15 @@ async def test_rest_history_exporter_branches(tmp_path: Path):
     assert len(records) == 1
 
 
-def test_record_cli_exceptions_and_polling_branches(tmp_path: Path):
+def test_record_cli_exceptions_and_polling_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Test record CLI error branches, duration triggers, and signal handlers."""
+    # Poll waits run on a fake clock instead of real seconds; the limit, not
+    # the (fake-time) duration, ends the run.
+    clock = FakeClock()
+    clock.install(monkeypatch, record_module)
+    clock.install_async_sleep(monkeypatch, record_module)
     out = tmp_path / "poll_branch.jsonl"
     parser = build_record_parser(parser=argparse.ArgumentParser())
 
@@ -511,7 +520,7 @@ def test_record_cli_exceptions_and_polling_branches(tmp_path: Path):
             "--limit",
             "1",
             "--duration",
-            "5.0",
+            "60.0",
             "--flush-interval",
             "0.05",
         ]
@@ -533,6 +542,7 @@ def test_record_cli_exceptions_and_polling_branches(tmp_path: Path):
         run_record_cli(args)
 
     assert out.exists()
+    assert "PollMint1" in out.read_text()
 
 
 def test_record_cli_keyboard_interrupt(tmp_path: Path):

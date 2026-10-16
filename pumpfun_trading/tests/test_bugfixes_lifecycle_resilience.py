@@ -232,7 +232,7 @@ def test_request_shutdown_idempotent_and_stops_geyser():
     assert bot.state == TradingBotState.SHUTDOWN
 
 
-def test_bug29_console_stream_suppression_and_headless_mode():
+async def test_bug29_console_stream_suppression_and_headless_mode():
     """Test BUG-29: Suppress console StreamHandler during interactive Live UI rendering."""
     # 1. Interactive terminal mode (verbose=True, headless=False): no StreamHandler
     bot_interactive = _make_bot(verbose=True, headless=False)
@@ -270,11 +270,6 @@ def test_bug29_console_stream_suppression_and_headless_mode():
         ]
         assert len(env_stream_handlers) == 1
 
-    # 4. _render_loop skips execution when headless=True
-    import asyncio
-
-    async def _check_render_loop():
-        # Should return immediately without starting Live context
-        await bot_headless._render_loop()
-
-    asyncio.run(_check_render_loop())
+    # 4. _render_loop skips execution when headless=True: it returns at once
+    # without starting a Live context
+    await bot_headless._render_loop()

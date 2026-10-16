@@ -38,15 +38,7 @@ async def test_market_data_service_detects_stale_data():
     assert not service.is_data_fresh(last_seen_at=0.0, max_age_seconds=30)
 
 
-def test_market_data_service_extracts_market_cap_and_name():
+async def test_market_data_service_extracts_market_cap_and_name():
     service = MarketDataService()
-    assert asyncio_run(service.get_market_cap_sol({"marketCapSol": 25.0})) == 25.0
-    assert (
-        asyncio_run(service.get_token_name({"displayName": " Token A "})) == "Token A"
-    )
-
-
-def asyncio_run(coro):
-    import asyncio
-
-    return asyncio.run(coro)
+    assert await service.get_market_cap_sol({"marketCapSol": 25.0}) == 25.0
+    assert await service.get_token_name({"displayName": " Token A "}) == "Token A"

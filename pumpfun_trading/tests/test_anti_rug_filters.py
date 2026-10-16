@@ -1,4 +1,3 @@
-import time
 import pytest
 
 from pumpfun_trading.strategies.decision import TradingStrategy
@@ -16,7 +15,9 @@ from pumpfun_trading.strategies.filters import (
     evaluate_token_heuristics,
     passes_anti_rug_screening,
 )
+from pumpfun_trading.strategies import filters as filters_module
 from pumpfun_trading.strategies.presets import resolve_strategy_config
+from pumpfun_trading.tests.support.fakes import FakeClock
 
 
 def test_token_metadata_parsing():
@@ -288,7 +289,9 @@ def test_metadata_socials_evaluation():
     assert penalty == 0.0
 
 
-def test_screening_cache():
+def test_screening_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    clock.install(monkeypatch, filters_module)
     cache = ScreeningCache(default_ttl=1.0)
     assert cache.size() == 0
 
@@ -299,7 +302,7 @@ def test_screening_cache():
     assert cache.get("Mint1") == verdict
 
     # Expiry
-    time.sleep(0.15)
+    clock.advance(0.15)
     assert cache.evict_expired() == 2
     assert cache.get("Mint1") is None
     assert cache.evict_expired() == 0

@@ -124,10 +124,10 @@ async def test_market_data_service_fallback_and_resilience_paths():
     assert service.is_data_fresh(last_seen_at=None, max_age_seconds=30) is False
 
 
-def test_market_data_service_handles_missing_client_and_invalid_data():
+async def test_market_data_service_handles_missing_client_and_invalid_data():
     service = MarketDataService(api_client=None)
-    assert await_async(
-        service.fetch_with_fallback([], fallback_value={"name": "fallback"})
+    assert await service.fetch_with_fallback(
+        [], fallback_value={"name": "fallback"}
     ) == {"name": "fallback"}
 
     class BrokenClient:
@@ -135,16 +135,10 @@ def test_market_data_service_handles_missing_client_and_invalid_data():
             return {}
 
     broken = MarketDataService(BrokenClient())
-    assert await_async(
-        broken.fetch_with_fallback(
-            [("missing_method", None)],
-            fallback_value={"name": "fallback"},
-        )
+    assert await broken.fetch_with_fallback(
+        [("missing_method", None)],
+        fallback_value={"name": "fallback"},
     ) == {"name": "fallback"}
 
-    assert await_async(service.get_market_cap_sol({"marketCapSol": "bad"})) == 0.0
-    assert await_async(service.get_token_name({"tokenName": "  "})) is None
-
-
-def await_async(coro):
-    return asyncio.run(coro)
+    assert await service.get_market_cap_sol({"marketCapSol": "bad"}) == 0.0
+    assert await service.get_token_name({"tokenName": "  "}) is None
