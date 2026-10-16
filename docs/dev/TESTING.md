@@ -29,7 +29,7 @@ Snapshot at planning time: **65 files** (64 `test_*.py` + `conftest.py`), **~25,
 | T5 | Tests coupled to the runtime monolith | **24** files import `pumpfun_trading.bot.run.TradingBot` and reach into private attributes |
 | T6 | Marker noise, no taxonomy | **216** redundant `@pytest.mark.asyncio` although `asyncio_mode = "auto"`; no `unit` / `integration` / `regression` / `slow` markers; no `--strict-markers`; `parametrize` used only twice |
 | T7 | Non-deterministic / slow tests | `time.sleep` in `test_anti_rug_filters.py`, `test_logging_rotation.py`, `test_ops_retention.py`; `asyncio.run` inside async-mode tests in `test_bugfixes_lifecycle_resilience.py`, `test_cross_venue_arbitrage.py`, `test_market_data_resilience.py`, `test_runtime_coverage_boost.py`; no fake clock |
-| T8 | Tests ship in the wheel | `[tool.setuptools.packages.find] include = ["pumpfun_trading*"]` matches `pumpfun_trading.tests` |
+| T8 | Tests ship in the wheel | `[tool.setuptools.packages.find] include = ["pumpfun_trading*"]` matches `pumpfun_trading.tests`. **Resolved in Sprint 25:** `packages.find` exclude plus `MANIFEST.in` `prune pumpfun_trading/tests` (the exclude alone still packed tests as package data); checked by `nox -s package` |
 | T9 | Regressions scattered by theme, not BUG ID | `test_*_regressions.py`, `test_bugfixes_*`; no way to check that every resolved bug has a test |
 
 ---

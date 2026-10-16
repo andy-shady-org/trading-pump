@@ -1,0 +1,5 @@
+# The test suite lives inside the package (AGENTS.md) but is not distributed:
+# pruning it here keeps it out of the sdist and stops setuptools from treating the
+# test files as package data in the wheel (Sprint 25, T8; checked by `nox -s package`).
+prune pumpfun_trading/tests
+global-exclude *.py[cod] __pycache__

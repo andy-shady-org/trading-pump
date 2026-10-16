@@ -2982,13 +2982,23 @@ def test_retention_sink_and_manager_edge_branches(tmp_path: Path):
     stats_dir.mkdir()
     (stats_dir / "test.log").write_text("hello", encoding="utf-8")
     mgr_stats = LogRetentionManager(stats_dir, policy=policy, file_patterns=("*.log",))
-    with patch("pathlib.Path.stat") as mock_stat:
-        mock_st = MagicMock()
-        mock_st.st_size = 5 * 1024 * 1024 * 1024 * 1024
-        mock_st.st_mtime = time.time()
-        mock_stat.return_value = mock_st
+    # Only fake the size of the log file: on Python < 3.14 ``Path.glob`` itself
+    # calls ``stat()`` on the directory, so a blanket mock breaks the glob.
+    real_stat = Path.stat
+    huge = 5 * 1024 * 1024 * 1024 * 1024
+
+    def _fake_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        st = real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
+        if self.name != "test.log":
+            return st
+        fields = list(st[:10])
+        fields[6] = huge  # st_size
+        return os.stat_result(fields)
+
+    with patch.object(Path, "stat", _fake_stat):
         stats = mgr_stats.get_storage_stats()
-        assert "TB" in stats["total_human"]
+    assert stats["total_bytes"] == huge
+    assert stats["total_human"] == "5.00 TB"
 
 
 # ==============================================================================

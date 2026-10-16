@@ -68,12 +68,16 @@ After these steps are completed successfully, you're all set up.
 This project uses `nox` to manage the standard development tasks. The repository defines these sessions:
 
 ```bash
-$ nox -s tests
+$ nox -s tests          # every installed interpreter of 3.11–3.14 (missing ones are skipped locally)
+$ nox -s tests-3.14     # a single interpreter
 $ nox -s lint
 $ nox -s audit
 $ nox -s mypy
 $ nox -s format
+$ nox -s package        # builds the wheel and checks it is private and ships no tests
 ```
+
+Ruff (`target-version = "py311"`) and mypy (`python_version = "3.11"`) check against the oldest supported Python, so 3.12+-only syntax or stdlib APIs fail lint/typing even on 3.14.
 
 Useful one-off checks:
 
@@ -109,16 +113,16 @@ $ nox -s tests
 
 ## CI automation
 
-The repository includes GitHub Actions workflows for validation and release:
+The repository has one GitHub Actions workflow, `tests.yml`, which runs on push and pull request to `main` and `master`:
 
-* `tests.yml` runs automatically on push and pull request to `main` and `master`
-* it executes the nox checks for tests, lint, and security audit
+* `test` job: `nox -s tests-<version>` on Python 3.11, 3.12, 3.13 and 3.14 (coverage uploaded from 3.14)
+* `checks` job: `nox -s lint mypy audit package` on Python 3.14
 
-To publish a release:
+This is a proprietary project (see `LICENSE`): there is no release workflow and nothing is ever published to PyPI or another index. A release is an annotated **private** git tag on the release commit, with its `CHANGELOG.md` entry and release record ([`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy)). Don't create GitHub Releases.
 
 ```bash
-$ git tag v0.1.0
-$ git push origin v0.1.0
+$ git tag -a v0.2.1 -m "v0.2.1"
+$ git push origin v0.2.1
 ```
 
 ## Final notes

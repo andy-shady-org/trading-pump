@@ -8,11 +8,13 @@ on:
 
 jobs:
   test:
+    name: tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.14"]
+        # Every interpreter the package supports (requires-python >= 3.11).
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout code
@@ -28,12 +30,34 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install nox
 
-      - name: Run lint, tests, typing, and coverage
-        run: nox -s tests lint audit mypy
+      - name: Run tests with coverage
+        run: nox -s "tests-${{ matrix.python-version }}"
 
       - name: Upload coverage report
+        if: matrix.python-version == '3.14'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
+
+  checks:
+    name: lint, typing, audit, package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install nox
+
+      - name: Run lint, typing, dependency audit and wheel check
+        run: nox -s lint mypy audit package
