@@ -21,7 +21,6 @@ All operational manuals, mathematical strategy guides, and architectural bluepri
 ---
 
 <div align="center">
-<a href="https://pypi.org/project/pumpfun-trading/"><img src="https://img.shields.io/pypi/v/pumpfun-trading" alt="PyPi"/></a>
 <a href="https://codecov.io/gh/andy-shady-org/pumpfun-trading"><img src="https://codecov.io/gh/andy-shady-org/pumpfun-trading/branch/main/graph/badge.svg" alt="Coverage"/></a>
 <a href="https://github.com/andy-shady-org/pumpfun-trading/stargazers"><img src="https://img.shields.io/github/stars/andy-shady-org/pumpfun-trading?style=flat" alt="Stars Badge"/></a>
 <a href="https://github.com/andy-shady-org/pumpfun-trading/network/members"><img src="https://img.shields.io/github/forks/andy-shady-org/pumpfun-trading?style=flat" alt="Forks Badge"/></a>

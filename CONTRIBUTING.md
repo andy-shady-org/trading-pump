@@ -107,14 +107,12 @@ Or use the standard nox session:
 $ nox -s tests
 ```
 
-## CI and release automation
+## CI automation
 
 The repository includes GitHub Actions workflows for validation and release:
 
 * `tests.yml` runs automatically on push and pull request to `main` and `master`
 * it executes the nox checks for tests, lint, and security audit
-* `release.yml` runs when a version tag like `v0.1.0` is pushed
-* the release workflow builds the project and publishes to PyPI using the `PYPI_API_TOKEN` secret
 
 To publish a release:
 
@@ -122,10 +120,6 @@ To publish a release:
 $ git tag v0.1.0
 $ git push origin v0.1.0
 ```
-
-Then GitHub Actions will build the package and upload to PyPI.
-
-Before creating a release, make sure the `PYPI_API_TOKEN` repository secret is configured in GitHub.
 
 ## Final notes
 
