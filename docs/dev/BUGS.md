@@ -124,6 +124,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-114** | Low | Risk / Telemetry | **RESOLVED** | `circuit_breaker_trips` grows every 5 s while the breaker stays locked (394 for one trip), and `circuit_breaker_lockout_until` holds the lock time, not the unlock time |
 | **BUG-115** | Low | Audit / Reporting | **RESOLVED** | `pumpfun-audit pnl --group-by reason` books every buy's costs (rent, tip, fee) on an `entry` row, so each exit reason shows a positive net while the positions lost money |
 | **BUG-116** | High | Streams / Trade feed | **RESOLVED** | A refused `subscribeTokenTrade` was cleared by any reconnect, so buys resumed blind while the PumpPortal API key was still unfunded; now a trade-feed circuit breaker stays open until a probe subscription is confirmed or trade data arrives, and its alert names the likely cause (the key's wallet ran out of funds) |
+| **BUG-117** | High | Config / Streams | **RESOLVED** | A `strategy_preset` config filled in the public PumpPortal URL, which beat `PUMPFUN_STREAM_URL`, so the funded API key was never sent and every `subscribeTokenTrade` was refused while the alert blamed the key's funds |
 
 ---
 
@@ -1013,3 +1014,13 @@ Found while preparing the 24 h capture run on v0.2.2, after a funded PumpPortal 
 * **Not covered:** the first position after a start still opens before any subscription has been confirmed.
 * **Verification:** `tests/unit/bot/test_trade_feed.py`, `tests/unit/bot/test_run.py` (`regression("BUG-116")`): the breaker survives a reconnect, blocks buys, closes on trade data or a confirmed probe, unsubscribes a probe mint but not a held one, and alerts once per trip.
 
+## 17. Stream URL Precedence (2026-10-17)
+
+Found in the first minute of the v0.2.2 24 h capture run: the trade-feed breaker opened although the PumpPortal key's wallet held 0.03 SOL.
+
+### BUG-117: Preset Stream URL Hides The API Key In `PUMPFUN_STREAM_URL` [RESOLVED]
+* **Location:** `pumpfun_trading/strategies/presets.py` (`resolve_strategy_config` defaults `stream_url` to `wss://pumpportal.fun/api/data`), `pumpfun_trading/bot/run.py` (`TradingBot.__init__` stream URL precedence)
+* **Description:** any config with `strategy_preset` and no `stream_url` (both `canary.json` and `capture.json`) came back with the public PumpPortal URL. The BUG-100 order (argument > config > env) treated that as a deliberate config URL, so `PUMPFUN_STREAM_URL` with `?api-key=…` was ignored. The bot connected without a key (`bot.log`: `Connecting to WebSocket stream at wss://pumpportal.fun/api/data`, no `?api-key=***`), PumpPortal refused the first `subscribeTokenTrade`, and the BUG-116 alert said the key was missing or out of funds. The BUG-100 note that `pumpbot` "behaves exactly as before" was wrong for preset configs.
+* **Impact:** high: no trade data for held positions and buys blocked by `require_trade_feed`, with a misleading "add funds" message. The pre-run key check passed because it connected with the env URL directly, not through the bot's config.
+* **Resolution:** the public PumpPortal URL and the `http://127.0.0.1:10000` sentinel are both placeholders: an env URL now beats them, and any other config URL still beats the env. `TradeFeedBreaker.stream_has_api_key` records whether the PumpPortal URL in use has an `api-key`; without one the bot logs a warning at stream start, and the breaker's alert, `likely_cause` and `bot_status.json` → `trade_feed_breaker.stream_has_api_key` say the URL carries no key instead of blaming funds.
+* **Verification:** `tests/unit/bot/test_run.py` and `tests/unit/bot/test_trade_feed.py` (`regression("BUG-117")`): a preset config plus the keyed env URL connects with the key, a different config URL still wins, no env keeps the public URL and the alert names the missing key; `stream_url_has_api_key` table. Loading the runtime `capture.json` with the runtime `.envrc` now gives `wss://pumpportal.fun/api/data?api-key=***`.

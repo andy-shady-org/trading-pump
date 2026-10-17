@@ -39,7 +39,11 @@ from pumpfun_trading.bot.lifecycle import (
 from pumpfun_trading.bot.operator import OperatorPause
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
 from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
-from pumpfun_trading.bot.trade_feed import TradeFeedBreaker
+from pumpfun_trading.bot.trade_feed import (
+    PUMPPORTAL_PUBLIC_STREAM_URL,
+    TradeFeedBreaker,
+    stream_url_has_api_key,
+)
 from pumpfun_trading.bot.trade_feed import is_confirmation as is_trade_feed_confirmation
 from pumpfun_trading.bot.trade_feed import is_refusal as is_trade_feed_refusal
 from pumpfun_trading.bot.reconcile import (
@@ -192,15 +196,21 @@ class TradingBot:
         # Precedence (BUG-100): an explicit ``stream_url=`` argument wins, then a
         # config URL, then PUMPFUN_STREAM_URL / PUMPFUN_WS_URL, then the default.
         # ``pumpbot`` never passes the argument, so its order is unchanged.
+        # Preset configs fill in the public PumpPortal URL when the JSON has no
+        # ``stream_url``; that placeholder must not hide the env URL carrying the
+        # API key (BUG-117).
         default_stream_url = "http://127.0.0.1:10000"
+        placeholder_stream_urls = {default_stream_url, PUMPPORTAL_PUBLIC_STREAM_URL}
         env_stream_url = os.getenv("PUMPFUN_STREAM_URL") or os.getenv("PUMPFUN_WS_URL")
         effective_stream_url = stream_url
         if stream_url and stream_url != default_stream_url:
             effective_stream_url = stream_url
-        elif base.stream_url and base.stream_url != default_stream_url:
+        elif base.stream_url and base.stream_url not in placeholder_stream_urls:
             effective_stream_url = base.stream_url
         elif env_stream_url:
             effective_stream_url = env_stream_url
+        elif base.stream_url:
+            effective_stream_url = base.stream_url
 
         self.config = replace(
             base,
@@ -284,7 +294,8 @@ class TradingBot:
         self.trade_feed_breaker = TradeFeedBreaker(
             probe_interval_seconds=float(
                 getattr(self.config, "trade_feed_probe_seconds", 300.0) or 300.0
-            )
+            ),
+            stream_has_api_key=stream_url_has_api_key(self.stream_url),
         )
 
         # Subsystems & Engines
@@ -4072,6 +4083,12 @@ class TradingBot:
     async def _run_websocket_stream(self) -> None:
         """Connects to the WebSocket endpoint and ingests real-time events."""
         backoff = self.reconnect_delay_seconds
+        if self.trade_feed_breaker.stream_has_api_key is False:
+            self._log(
+                "PumpPortal stream URL has no api-key: subscribeTokenTrade will "
+                "be refused. Export PUMPFUN_STREAM_URL with ?api-key=… (BUG-117).",
+                level=logging.WARNING,
+            )
         while not self._stop_requested:
             try:
                 self._log(f"Connecting to WebSocket stream at {self.stream_url}...")

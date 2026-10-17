@@ -17,11 +17,28 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from urllib.parse import parse_qsl, urlsplit
+
+PUMPPORTAL_PUBLIC_STREAM_URL = "wss://pumpportal.fun/api/data"
 
 FUNDING_REQUIREMENT = (
     "PumpPortal needs the API key's linked wallet to hold at least 0.02 SOL "
     "(0.01 SOL per 10,000 messages)"
 )
+
+
+def stream_url_has_api_key(url: str | None) -> bool | None:
+    """Whether a PumpPortal stream URL carries ``api-key``; None for other hosts."""
+    try:
+        parts = urlsplit(str(url or ""))
+    except ValueError:
+        return None
+    if not (parts.hostname or "").endswith("pumpportal.fun"):
+        return None
+    return any(
+        key.lower().replace("_", "-") == "api-key" and bool(value)
+        for key, value in parse_qsl(parts.query)
+    )
 
 
 def is_refusal(text: str) -> bool:
@@ -55,6 +72,7 @@ class TradeFeedBreaker:
     next_probe_at: float | None = None
     probe_mint: str | None = None
     confirmed_before_trip: bool = False
+    stream_has_api_key: bool | None = None
 
     @property
     def is_open(self) -> bool:
@@ -111,6 +129,12 @@ class TradeFeedBreaker:
         return mint
 
     def likely_cause(self) -> str:
+        if self.stream_has_api_key is False:
+            return (
+                "the stream URL the bot connected with carries no api-key: "
+                "check that PUMPFUN_STREAM_URL is exported with ?api-key=… "
+                "and that the config's stream_url does not override it"
+            )
         if self.confirmed_before_trip:
             return (
                 "the PumpPortal API key worked earlier in this run, so its "
@@ -148,6 +172,7 @@ class TradeFeedBreaker:
             "send_failures": self.send_failures,
             "last_confirmed_at": self.last_confirmed_at,
             "next_probe_at": self.next_probe_at,
+            "stream_has_api_key": self.stream_has_api_key,
             "likely_cause": self.likely_cause() if self.is_open else None,
             "last_refusal": self.last_refusal or None,
         }

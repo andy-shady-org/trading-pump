@@ -5834,3 +5834,67 @@ async def test_paper_starting_balance_is_configurable(
     )
     assert bot.wallet_balance_sol == pytest.approx(expected)
     await bot.close()
+
+
+@pytest.mark.regression("BUG-117")
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        # A preset fills in the public PumpPortal URL; the keyed env URL wins.
+        (
+            {"strategy_preset": "conservative"},
+            "wss://pumpportal.fun/api/data?api-key=k1",
+        ),
+        (
+            {"stream_url": "wss://pumpportal.fun/api/data"},
+            "wss://pumpportal.fun/api/data?api-key=k1",
+        ),
+        # A deliberately different config URL still beats the env.
+        ({"stream_url": "wss://custom.test/feed"}, "wss://custom.test/feed"),
+    ],
+)
+def test_init_preset_stream_url_does_not_hide_env_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config: dict[str, Any],
+    expected: str,
+) -> None:
+    monkeypatch.setenv("PUMPFUN_STREAM_URL", "wss://pumpportal.fun/api/data?api-key=k1")
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        config=_config_from_dict(config),
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        verbose=False,
+    )
+    assert bot.stream_url == expected
+    if "pumpportal" in expected:
+        assert bot.trade_feed_breaker.stream_has_api_key is True
+
+
+@pytest.mark.regression("BUG-117")
+def test_init_preset_without_env_keeps_public_url_and_warns_no_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PUMPFUN_STREAM_URL", raising=False)
+    monkeypatch.delenv("PUMPFUN_WS_URL", raising=False)
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        config=_config_from_dict({"strategy_preset": "conservative"}),
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        verbose=False,
+    )
+    assert bot.stream_url == "wss://pumpportal.fun/api/data"
+    breaker = bot.trade_feed_breaker
+    assert breaker.stream_has_api_key is False
+    breaker.record_refusal("subscribeTokenTrade only available with an API key")
+    assert "carries no api-key" in breaker.likely_cause()
+
+
+def _config_from_dict(data: dict[str, Any]) -> Any:
+    from pumpfun_trading.strategies.base import TradingBotConfig
+
+    return TradingBotConfig.from_dict(data)

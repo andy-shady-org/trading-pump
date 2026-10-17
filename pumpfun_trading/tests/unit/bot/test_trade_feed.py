@@ -8,6 +8,7 @@ from pumpfun_trading.bot.trade_feed import (
     TradeFeedBreaker,
     is_confirmation,
     is_refusal,
+    stream_url_has_api_key,
 )
 
 REFUSAL = (
@@ -103,3 +104,20 @@ def test_to_dict_reports_state() -> None:
     assert data["trips"] == 1 and data["send_failures"] == 1
     assert data["last_refusal"] == REFUSAL
     assert "API key" in data["likely_cause"]
+
+
+@pytest.mark.regression("BUG-117")
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("wss://pumpportal.fun/api/data?api-key=abc", True),
+        ("wss://pumpportal.fun/api/data?api_key=abc", True),
+        ("wss://pumpportal.fun/api/data?api-key=", False),
+        ("wss://pumpportal.fun/api/data", False),
+        ("wss://other.test/feed?api-key=abc", None),
+        (None, None),
+        ("http://[::1", None),
+    ],
+)
+def test_stream_url_has_api_key(url: str | None, expected: bool | None) -> None:
+    assert stream_url_has_api_key(url) is expected
