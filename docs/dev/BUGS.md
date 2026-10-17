@@ -111,6 +111,10 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-101** | Medium | SDK / Quoting | **RESOLVED** | Pump.fun builders raise `CurveStateUnavailableError` instead of quoting against initial-curve placeholder reserves |
 | **BUG-102** | High | Security / Telemetry | **RESOLVED** | `ops/redact.py` masks credentials in every URL written to `bot_status.json`, config dicts, `bot.log`, `events.jsonl`, dashboard events and alerts (Sprint 24C phase 1) |
 | **BUG-103** | Medium | Recorder / Replay data | **RESOLVED** | `ReplayRecorder.close()` no longer drops the batch being written at shutdown; the write is shielded and finished before the cancel is honoured |
+| **BUG-104** | High | Paper pricing / Curve decoding | **OPEN** | Paper entries are priced from the stream create event while exits are priced from the on-chain curve; non-standard curve variants decode to 25×–3,500× market caps, producing +64 SOL of phantom paper profit in Stage 0 |
+| **BUG-105** | Medium | Audit / PnL reporting | **OPEN** | `pumpfun-audit pnl` win rate and expectancy are per sell, so the rent refunded on a full exit turns flat exits into wins (97% reported vs 19–29% per position) |
+| **BUG-106** | Low | Lifecycle | **OPEN** | With a position open, every new buy logs `Ignored invalid state transition from HOLDING to BUYING` (276 in 14 h); the single global state can't represent concurrent positions |
+| **BUG-107** | Medium | Screening / Enrichment | **OPEN** | Holder data unavailable for 67% of tokens that passed screening; they pass at exactly the risk threshold with no top-5 or Gini check |
 
 ---
 
@@ -858,3 +862,38 @@ Found while writing behaviour tests to bring coverage back to 95%. None is on th
 * **Impact:** the last records before shutdown could be missing from `--record-replay` captures and `pumpfun-recorder` datasets (replay parity and tuning input, Sprint 24C). No effect on trading, the audit trail or the status file.
 * **Resolution:** the write runs as a future awaited through `asyncio.shield`; on cancellation the worker waits for it to finish, counts it in `records_written`, then re-raises. Write errors are still logged, not raised.
 * **Verification:** `tests/unit/bot/test_recorder.py` (`regression("BUG-103")`): a write still queued in a busy executor and a write already running when `close()` is called are both kept and counted; both failed before the fix on 3.14 too. Full suite on 3.12 and 3.14: 1,040 passed, coverage 96.30%.
+
+---
+
+## 11. Stage 0 Pilot on v0.2.0, Checkpoint 1 (2026-10-17)
+
+Found in the first 14 h of the official Stage 0 paper pilot. Evidence and figures: [`releases/v0.2.0-stage0.md`](releases/v0.2.0-stage0.md).
+
+### BUG-104: Phantom Paper Profit From Mismatched Entry and Exit Prices on Non-Standard Curves [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`_handle_new_token_event` → `_buy_token(mint, current_market_cap)` uses the stream's `marketCapSol` or the 27.96 SOL default; `_refresh_active_positions_market_caps` and `_handle_trade_update` then price the position from `get_bonding_curve_state`), `pumpfun_trading/sdk/execution.py` (`decode_bonding_curve_data`)
+* **Description:** the paper entry price and the exit price come from different sources. For most tokens they agree. For one curve variant they don't: the curve account (166 bytes, same discriminator) has extra non-zero data after byte 81, `virtual_sol_reserves` of 764–105,860 SOL while `real_sol_reserves` is 0 and `real_token_reserves` is still 793.1M, and the account has only its creation signature (never traded). `decode_bonding_curve_data` reads that field as SOL, so the first refresh, about 1–5 s after entry, reports a 25×–3,500× market cap. Tier 1, tier 2 and the trailing stop then fire at prices nobody could sell at.
+* **Impact:** Stage 0 reported +63.5 SOL net on 11.6 SOL deployed; 137 positions (12%) produced +64.5 SOL of it. Without them the run lost about 0.75 SOL. Paper results, replay parity and any tuning on this capture are invalid. On a live run, the bot would buy curves that nobody trades, and its exit maths would misfire on them; whether the buy instruction even succeeds on this variant is unverified (one such curve shows failed transactions with `Custom: 6000`).
+* **Remedy:**
+  * Price paper fills from the same source as exits: read the curve before the paper buy and fill against its reserves.
+  * Reject curves that fail sanity checks before screening: `virtual_sol_reserves` ≠ initial virtual SOL + `real_sol_reserves` (within a tolerance), unknown data after the documented layout, or a constant-product price inconsistent with the stream's.
+  * Find out what the variant is (layout of bytes 81+, quote asset) before trading it; until then skip it.
+  * Tests in `tests/unit/sdk/test_execution.py` and `tests/unit/bot/test_run.py` with the four recorded curve accounts as fixtures (`tests/support/payloads.py`).
+* **Scheduled:** before the next Stage 0 (Sprint 24A, `docs/dev/TODO.md`). Money path: needs a fresh Stage 0.
+
+### BUG-105: Per-Sell Win Rate Counts the Rent Refund as Profit [OPEN]
+* **Location:** `pumpfun_trading/cli/audit.py` / `pumpfun_trading/bot/pnl.py` (`pnl` summary), `bot_status.json` `pnl_totals.win_rate` / `expectancy_sol`, `engines/parity.py` per-mint net
+* **Description:** a buy books its rent (0.0015 SOL) and tip as costs on the buy row; the closing sell books the rent refund as a negative cost. Win rate and expectancy are computed per sell, so a flat exit nets +0.00096 SOL and counts as a win. The total net PnL is right; the per-trade statistics are not.
+* **Impact:** Stage 0 reported a 97% win rate; per position it was 29% (19% without BUG-104 artefacts). Anyone judging the strategy from the dashboard or `pnl` summary is misled.
+* **Remedy:** compute win rate, expectancy and per-reason net per **position** (buy plus all its sells, keyed by `position_id`); keep per-sell rows for detail only. Tests in `tests/unit/bot/test_pnl.py` and `tests/unit/cli/test_audit.py`.
+
+### BUG-106: Concurrent Positions Produce Invalid Lifecycle Transitions [OPEN]
+* **Location:** `pumpfun_trading/bot/lifecycle.py`, `pumpfun_trading/bot/run.py` (`_buy_token` transition to `BUYING`)
+* **Description:** the bot has one global lifecycle state. With a position open the state is `HOLDING`, and `HOLDING → BUYING` is not an allowed transition, so every further buy logs a warning and the state shown is wrong while the buy runs.
+* **Impact:** 276 warnings in 14 h; the dashboard/status state is misleading during buys. No trading effect seen.
+* **Remedy:** allow `HOLDING → BUYING` (and back), or track lifecycle per position and derive the bot state; fold into the Sprint 29 lifecycle work if not fixed earlier. Test in `tests/unit/bot/test_lifecycle.py`.
+
+### BUG-107: Holder Data Unavailable for Most Screened Tokens [OPEN]
+* **Location:** `pumpfun_trading/bot/enrichment.py` (`getTokenLargestAccounts` lookup, 2.5 s cap), `pumpfun_trading/sdk/execution.py` (`get_token_largest_accounts`)
+* **Description:** after BUG-95 the holder lookup runs, but in Stage 0 2,839 rejections and 776 of the 1,165 passes (67%) still carried `Holder distribution data unavailable`. Those passes scored exactly 30, the `max_acceptable_risk_score`, so the top-5 concentration and Gini checks never ran for two thirds of the buys.
+* **Impact:** the anti-rug screen is much weaker than configured; creator-controlled supply goes unchecked.
+* **Remedy:** log why the lookup fails (timeout, RPC error, empty result for a brand-new mint), retry once after a short delay for new mints, and treat "unavailable" as a reject in the canary config until the cause is fixed. Test in `tests/unit/bot/test_enrichment.py`.

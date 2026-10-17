@@ -24,7 +24,7 @@ Update this table whenever a gate run finishes. Link the release record rather t
 | Item | Status | Evidence |
 |---|---|---|
 | Release gate for the current `main` | Not yet run against a tagged version | – |
-| Live capital stage | **Stage 0 – Paper pilot: not passed** | No completed 72h pilot; replay benchmark recorded `Trades: 0` |
+| Live capital stage | **Stage 0 – Paper pilot: in progress on v0.2.0, cannot pass on this build** | [Stage 0 log](releases/v0.2.0-stage0.md): 14 h clean operationally; paper PnL invalid (BUG-104), corrected net negative; alerts not configured; BUG-104/105/107 to fix before the next Stage 0 |
 | Net PnL measurement | Implemented on branch `sprint-24b-net-pnl` (fees, tips, rent per trade; `pumpfun-audit pnl` / `reconcile`, last result on the dashboard); release gate green (922 tests, coverage 96.3%); test-pass bugs BUG-97…101 fixed; cost parser checked read-only on real mainnet sells; the bot's own canary trades not yet reconciled | Sprint 24B (FEAT-49, BUG-96) |
 | Funding gate for the Web UI ([§3.7](#37-funding-gate-for-the-web-ui)) | Not passed | – |
 | Mainnet-verified money paths | Pump.fun `buy`/`sell` layout only (BUG-34) | `BUGS.md` |

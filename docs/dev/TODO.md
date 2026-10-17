@@ -714,7 +714,14 @@ The bot can trade live, but there is no evidence yet that it is profitable after
 - [ ] Tag the current `main` as a release (`v0.x.y`) after it passes the release gate ([`RELEASE-GATE.md` §2](RELEASE-GATE.md#2-release-gate-every-release))
 - [ ] Set up a dedicated runtime directory outside the repo with explicit `PUMPFUN_STATUS_PATH` / `PUMPFUN_AUDIT_LOG_PATH` / `PUMPFUN_EVENT_LOG_PATH` ([`RUNBOOK.md` §1](RUNBOOK.md#1-runtime-directory-layout))
 - [ ] Run the incident drills in paper mode ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills))
-- [ ] Stage 0: 72h paper pilot on the live stream with replay recording; record the summary in the release record
+- [ ] Stage 0: 72h paper pilot on the live stream with replay recording; record the summary in the release record *(started on v0.2.0 2026-10-16 18:48; log in [`releases/v0.2.0-stage0.md`](releases/v0.2.0-stage0.md). Checkpoint 1 at 14 h: no exceptions or stream drops, but the paper PnL is invalid (BUG-104) and the corrected net is negative, so this run cannot pass; keep it to 72 h for the operational criteria only)*
+- [ ] Fix the Stage 0 checkpoint-1 findings before the next Stage 0 ([`BUGS.md` §11](BUGS.md#11-stage-0-pilot-on-v020-checkpoint-1-2026-10-17)):
+  - [ ] **BUG-104 (High):** price paper entries from the on-chain curve, as exits are; reject curve accounts that fail the reserve sanity checks (non-standard variant with data after byte 81)
+  - [ ] **BUG-105:** `pnl` win rate and expectancy per position, not per sell
+  - [ ] **BUG-107:** find why holder data is missing for 67% of passes; treat "unavailable" as a reject in `canary.json` until fixed
+  - [ ] **BUG-106 (Low):** allow concurrent-position lifecycle transitions (or defer to Sprint 29)
+  - [ ] Configure an alert provider and send a test alert (Stage 0 criterion)
+  - [ ] Then re-tag, restart Stage 0 with an empty `data/`, and re-run the parity check on the new capture
 - [ ] Stage 1: live canary on a dedicated hot wallet with the canary config (0.01 SOL buys, ≤ 2 positions, 10% daily drawdown; arbitrage, back-running, pre-graduation harvesting, Raydium sniping and copy trading off)
 - [ ] Daily wallet reconciliation (on-chain Δ SOL vs audit realized PnL) logged for every canary day ([`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-reconciliation))
 - [ ] Log every discrepancy or failure in `BUGS.md`; fix before continuing

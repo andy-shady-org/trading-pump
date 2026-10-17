@@ -107,6 +107,7 @@ Sprint 24B of the Terminal Income Track: the bot now measures profit **after** c
 - Replay parity: not checked (replay alignment is Sprint 24C)
 - Mainnet simulation: cost parser checked read-only on 3 third-party Pump.fun sells
 - Capital stage after this release: 0 (official Stage 0 paper pilot to start on this tag)
+- Stage 0 paper pilot: started 2026-10-16 18:48 (+03:00); log in [`docs/dev/releases/v0.2.0-stage0.md`](docs/dev/releases/v0.2.0-stage0.md). Checkpoint 1 (T + 14 h): operationally clean (0 exceptions, 0 stream drops, 115 MB RSS), but **Stage 0 cannot pass on this build**: the reported +63.5 SOL net is a pricing artefact (BUG-104), corrected net is about −0.75 SOL over 1,024 trades, the 97% win rate is per sell (BUG-105), holder checks did not run for 67% of buys (BUG-107), and no alert provider is configured
 - Canary daily log: –
 - Sign-off: –
 
