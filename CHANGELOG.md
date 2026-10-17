@@ -8,7 +8,11 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Fixes from the v0.2.1 Stage 0 close-out (PR #17) and a dashboard layout change, plus the trade-feed circuit breaker and mayhem-mode filter (branch `feat/mayhem-filter-trade-feed-breaker`). These change which tokens are bought and when exits see prices, so they need a new tag and a fresh Stage 0.
+## [0.2.2] - 2026-10-17
+
+Fixes from the v0.2.1 Stage 0 close-out (PR #17) and a dashboard layout change, plus the trade-feed circuit breaker and mayhem-mode filter (PR #18). These change which tokens are bought and when exits see prices, so this build starts with a 24 h capture run and then a fresh 72 h Stage 0.
+
+Under the [§6 versioning policy](docs/dev/RELEASE-GATE.md#6-versioning-policy) the new config keys would make this a MINOR release (0.3.0); it is kept as 0.2.2 by operator decision, as with 0.2.1.
 
 ### Added
 - Trade-feed circuit breaker (`bot/trade_feed.py`, BUG-116): opens on PumpPortal's `subscribeTokenTrade` refusal, blocks new buys, survives reconnects and closes only on a confirmed subscription or trade data. The alert names the likely cause: the PumpPortal API key's wallet has run out of funds (it needs ≥ 0.02 SOL). While open a probe subscription is sent every `trade_feed_probe_seconds` (default `300`, minimum `30`), so a top-up is picked up without a restart; recovery is alerted. Status: `trade_feed_breaker`.
@@ -29,6 +33,25 @@ Fixes from the v0.2.1 Stage 0 close-out (PR #17) and a dashboard layout change, 
 - BUG-113: the creator came from the API record even when it was the system program; the create event's signer is now preferred, and an unresolved creator adds the missing-dev-data penalty.
 - BUG-114: `circuit_breaker_trips` counted every 5 s check while locked (394 for one trip); it now counts once per lock.
 - BUG-116: a trade-subscription refusal was cleared by any reconnect, so buys resumed blind while the key was still unfunded; failed subscription sends are now logged and counted instead of swallowed.
+
+### Known limitations
+- The first position after a start can open before any `subscribeTokenTrade` has been confirmed; the breaker only trips on the first refusal.
+- The entry confirmation (buy only after other wallets buy, TODO Sprint 24A) is not built yet; its thresholds wait for the 24 h capture run.
+
+### Release record – v0.2.2 (2026-10-17)
+- Commit: `7829724` (merge of PR #18, `feat/mayhem-filter-trade-feed-breaker` → `main`). The release commit on `release/v0.2.2` only adds this record; `pyproject.toml` (`0.2.2`) and the code are those of `38af508`.
+- Merged since v0.2.1: `4cc58f5` (PR #16, v0.2.1 Stage 0 log), `e2dc05b` (PR #17, BUG-111…115 and dashboard layout), `7829724` (PR #18, BUG-116 and mayhem-mode filter)
+- Release gate: PASS (`nox -s lint mypy package`, tests on 3.12, 3.13 and 3.14; 3.11 only in CI)
+- Tests: 1,372 collected, all passed; coverage 96.33% (statement + branch)
+- Replay parity: not yet run on a capture with trade data
+- Mainnet checks (read-only): the funded PumpPortal API key got "Successfully subscribed to keys" for 3 of 3 `subscribeTokenTrade` requests and trade messages arrived; 2 of 4 mayhem-mode curves had left the 30 SOL virtual-reserve invariant within 2 s (46.0 SOL seen), all normal curves had not
+- Money path changed (creator resolution, buys blocked while the trade feed is refused, mayhem-mode refusals, 1 s position re-pricing), so earlier Stage 0 results don't carry over
+- Runtime settings: `capture.json` validated (canary settings plus `paper_trade: true`, `paper_starting_balance_sol` 2.0, `max_daily_drawdown_pct` 0.5, 5 positions / 0.05 SOL exposure, `stagnant_timeout_seconds` 120, `skip_mayhem_mode`, `trade_feed_probe_seconds` 300); `canary.json` `paper_entry_slippage_bps` lowered to 100
+- Next: pin `runtime/pumpfun-trading` to `v0.2.2`, run the 24 h capture ([RUNBOOK §6.2](docs/dev/RUNBOOK.md#62-24-h-capture-run)), build and tune the entry confirmation, freeze `canary.json`, then a 72 h Stage 0
+- RUNBOOK §7 drills (incl. the new trade-feed breaker drill): not yet run
+- Capital stage after this release: 0
+- Stage 0 paper pilot: not started on this build
+- Sign-off: –
 
 ## [0.2.1] - 2026-10-17
 
@@ -210,7 +233,8 @@ First tagged build (`v0.0.1-alpha` points at the same commit). Baseline for the 
 - Capital stage after this release: 0
 - Sign-off: –
 
-[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.1.0...v0.1.1
