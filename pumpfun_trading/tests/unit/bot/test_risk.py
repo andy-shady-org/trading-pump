@@ -545,7 +545,7 @@ async def test_trading_bot_circuit_breaker_liquidates_and_locks(tmp_path):
     bot._send_alert.assert_called()
 
     # 3. New candidate token rejected immediately while circuit breaker locked
-    candidate_mint = "CandidateMint22222222222222222222222222222"
+    candidate_mint = "CandidateMint22222222222222222222222222pump"
     update_candidate = BondingCurveStateUpdate(
         mint=candidate_mint,
         bonding_curve_pubkey="Curve222222222222222222222222222222222222222",

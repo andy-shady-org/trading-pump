@@ -24,6 +24,7 @@ from pumpfun_trading.sdk.costs import (
 )
 from pumpfun_trading.sdk.execution import (
     NonStandardCurveError,
+    NotPumpFunCurveError,
     PumpFunExecutionClient,
     TokenBalanceUnavailableError,
 )
@@ -663,3 +664,113 @@ async def test_execute_sell_non_standard_curve_still_sells_without_quote() -> No
 
     assert result.success
     assert result.amount_sol == 0.0
+
+
+# --- BUG-108: only Pump.fun curves are bought -------------------------------------
+
+
+@pytest.mark.regression("BUG-108")
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_execute_buy_without_pump_fun_curve_is_refused(dry_run: bool) -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=NotPumpFunCurveError("Bonding curve account not found")
+        )
+    )
+    executor = _executor(client)
+
+    result = await executor.execute_buy(MINT, 0.01, dry_run=dry_run)
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.startswith("not_pump_fun")
+    client.buy.assert_not_awaited()
+
+
+# --- Paper entries pay for latency ------------------------------------------------
+
+
+async def test_execute_buy_dry_run_entry_slippage_worsens_the_fill() -> None:
+    plain = await _executor(_client()).execute_buy(MINT, 0.01, dry_run=True)
+    worse = await _executor(_client(), paper_entry_slippage_bps=300).execute_buy(
+        MINT, 0.01, dry_run=True
+    )
+
+    assert worse.token_amount == plain.token_amount * 9_700 // 10_000
+    assert worse.metadata["entry_market_cap_sol"] == pytest.approx(30.0 / 0.97)
+    assert worse.metadata["paper_entry_slippage_bps"] == 300
+    assert "paper_entry_slippage_bps" not in plain.metadata
+
+
+async def test_execute_buy_dry_run_delay_prices_from_the_later_curve() -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=[
+                {
+                    "virtual_token_reserves": 1_000_000_000_000_000,
+                    "virtual_sol_reserves": 30_000_000_000,
+                },
+                {
+                    "virtual_token_reserves": 500_000_000_000_000,
+                    "virtual_sol_reserves": 60_000_000_000,
+                },
+            ]
+        )
+    )
+    executor = _executor(client, paper_entry_delay_seconds=1.5)
+
+    with patch(
+        "pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()
+    ) as sleep:
+        result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    sleep.assert_awaited_once_with(1.5)
+    assert result.success
+    # The curve doubled in price while the "buy" was landing.
+    assert result.metadata["entry_market_cap_sol"] == pytest.approx(120.0)
+    assert result.metadata["paper_entry_delay_seconds"] == 1.5
+
+
+async def test_execute_buy_dry_run_curve_turning_non_standard_after_delay_refuses() -> (
+    None
+):
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=[
+                {
+                    "virtual_token_reserves": 1_000_000_000_000_000,
+                    "virtual_sol_reserves": 30_000_000_000,
+                },
+                NonStandardCurveError("virtual SOL offset 764 SOL"),
+            ]
+        )
+    )
+    executor = _executor(client, paper_entry_delay_seconds=1.0)
+
+    with patch("pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()):
+        result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.startswith("non_standard_curve")
+
+
+async def test_execute_buy_dry_run_without_curve_skips_the_delay() -> None:
+    client = _client(get_bonding_curve_state=AsyncMock(side_effect=RuntimeError("x")))
+    executor = _executor(client, paper_entry_delay_seconds=2.0)
+
+    with patch(
+        "pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()
+    ) as sleep:
+        result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    assert result.success
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize("configured, applied", [(-5, 0), (9_999, 5_000), (250, 250)])
+def test_paper_entry_slippage_bps_is_clamped(configured: int, applied: int) -> None:
+    executor = _executor(_client())
+    executor.config = MagicMock(paper_entry_slippage_bps=configured)
+
+    assert executor._paper_entry_slippage_bps() == applied

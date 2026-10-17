@@ -71,6 +71,8 @@ def isolate_test_environment(
     monkeypatch.setenv("PUMPFUN_BOT_STATUS_PATH", isolated_status_path)
     monkeypatch.setenv("PUMPFUN_AUDIT_LOG_PATH", isolated_audit_path)
     monkeypatch.setenv("PUMPFUN_AUDIT_LOG", isolated_audit_path)
+    # Without it every TradingBot appended to ``bot.log`` in the working directory.
+    monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", str(tmp_path / "bot.log"))
 
     from pumpfun_trading.execution.executor import OrderExecutor
 

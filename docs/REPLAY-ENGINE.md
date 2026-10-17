@@ -211,6 +211,17 @@ Enable background stream recording during live or paper trading without executio
 pumpbot --preset balanced --record-replay ./datasets/live_session.jsonl
 ```
 
+Besides market ticks and the bot's own fills, the capture holds one record per screened token with what the screener saw. These records have no price, and the replay engine skips them; use them to see which filters rejected tokens that later ran:
+
+```json
+{"timestamp": 1760700000.1, "mint": "…pump", "name": "Tok", "event": "screening",
+ "screening": {"passed": false, "risk_score": 60.0, "reasons": ["…"], "market_cap_sol": 31.2,
+   "latency_ms": 1104.2, "social_links": 1, "twitter": true, "telegram": false, "website": false,
+   "holders_available": true, "holder_count": 12, "top5_pct": 0.21, "gini": 0.62,
+   "creator_pct": 0.04, "creator": "…", "creator_launches_24h": 3, "creator_total_launches": 9,
+   "creator_rugs": 0, "flags": {"missing_holder_data": false}}}
+```
+
 ### 2. Standalone Harvester CLI (`pumpfun record` / `pumpfun-recorder`)
 Collect market quote streams and trade events directly from Yellowstone Geyser or WebSockets without a funded trading wallet:
 

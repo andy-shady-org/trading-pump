@@ -26,6 +26,7 @@ from pumpfun_trading.sdk.curve import (
 from pumpfun_trading.sdk.execution import (
     PUMP_DEFAULT_FEE_BPS,
     NonStandardCurveError,
+    NotPumpFunCurveError,
     PumpFunExecutionClient,
 )
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
@@ -139,7 +140,9 @@ class OrderExecutor:
         """Returns live ``(virtual_sol_lamports, virtual_token_raw)`` or ``None``.
 
         With ``reject_non_standard`` a curve that fails the layout checks raises
-        :class:`NonStandardCurveError` instead of returning ``None`` (BUG-104).
+        :class:`NonStandardCurveError` (BUG-104), and a mint without a curve owned
+        by the Pump.fun program raises :class:`NotPumpFunCurveError` (BUG-108),
+        instead of returning ``None``.
         """
         if self.execution is None:
             return None
@@ -147,7 +150,7 @@ class OrderExecutor:
             state = await self.execution.get_bonding_curve_state(mint)
             v_sol = int(state.get("virtual_sol_reserves", 0))
             v_token = int(state.get("virtual_token_reserves", 0))
-        except NonStandardCurveError as exc:
+        except (NonStandardCurveError, NotPumpFunCurveError) as exc:
             if reject_non_standard:
                 raise
             logger.debug("Curve reserves unavailable for %s: %s", mint, exc)
@@ -158,6 +161,33 @@ class OrderExecutor:
         if v_sol <= 0 or v_token <= 0:
             return None
         return v_sol, v_token
+
+    def _paper_entry_slippage_bps(self) -> int:
+        value = getattr(self.config, "paper_entry_slippage_bps", 0)
+        if not isinstance(value, int):
+            return 0
+        return max(0, min(5_000, value))
+
+    @staticmethod
+    def _refused_buy(
+        mint: str, amount_sol: float, reason: str, exc: Exception, dry_run: bool
+    ) -> ExecutionResult:
+        """A buy refused because the curve is not a standard Pump.fun curve."""
+        logger.warning("Skipping buy of %s: %s", mint, exc)
+        kind = (
+            "not_pump_fun"
+            if isinstance(exc, NotPumpFunCurveError)
+            else "non_standard_curve"
+        )
+        return ExecutionResult(
+            success=False,
+            mint=mint,
+            is_buy=True,
+            amount_sol=amount_sol,
+            reason=reason,
+            error=f"{kind}: {exc}",
+            dry_run=dry_run,
+        )
 
     def _resolve_dynamic_slippage(
         self,
@@ -295,17 +325,8 @@ class OrderExecutor:
 
         try:
             reserves = await self._fetch_curve_reserves(mint, reject_non_standard=True)
-        except NonStandardCurveError as exc:
-            logger.warning("Skipping buy of %s: %s", mint, exc)
-            return ExecutionResult(
-                success=False,
-                mint=mint,
-                is_buy=True,
-                amount_sol=amount_sol,
-                reason=reason,
-                error=f"non_standard_curve: {exc}",
-                dry_run=is_dry_run,
-            )
+        except (NonStandardCurveError, NotPumpFunCurveError) as exc:
+            return self._refused_buy(mint, amount_sol, reason, exc, is_dry_run)
         resolved_slippage = slippage_bps
         dynamic_params: DynamicSlippageResult | None = None
         if resolved_slippage is None and getattr(
@@ -328,17 +349,39 @@ class OrderExecutor:
                 resolved_slippage,
                 urgency,
             )
+            delay = float(getattr(self.config, "paper_entry_delay_seconds", 0.0) or 0.0)
+            if delay > 0 and reserves is not None:
+                # A live buy lands after screening and confirmation; price the
+                # paper fill from the curve as it is then, not at the signal.
+                await asyncio.sleep(delay)
+                try:
+                    reserves = (
+                        await self._fetch_curve_reserves(mint, reject_non_standard=True)
+                        or reserves
+                    )
+                except (NonStandardCurveError, NotPumpFunCurveError) as exc:
+                    return self._refused_buy(mint, amount_sol, reason, exc, True)
+            penalty_bps = self._paper_entry_slippage_bps()
             simulated_token_amount = self._estimate_buy_tokens(amount_sol, reserves)
             if simulated_token_amount <= 0:
                 simulated_token_amount = 100_000_000
+            simulated_token_amount = (
+                simulated_token_amount * (10_000 - penalty_bps) // 10_000
+            )
 
             dry_signature = f"dry_run_buy_{mint[:8]}_{int(time.time())}"
             metadata: dict[str, Any] = {}
             if reserves is not None:
-                # Paper entries are priced from the same curve as exits (BUG-104).
-                metadata["entry_market_cap_sol"] = calculate_market_cap_sol(
-                    reserves[0], reserves[1]
+                # Paper entries are priced from the same curve as exits (BUG-104),
+                # worsened by the configured latency penalty.
+                metadata["entry_market_cap_sol"] = (
+                    calculate_market_cap_sol(reserves[0], reserves[1])
+                    * 10_000
+                    / (10_000 - penalty_bps)
                 )
+            if penalty_bps or delay > 0:
+                metadata["paper_entry_slippage_bps"] = penalty_bps
+                metadata["paper_entry_delay_seconds"] = delay
             return ExecutionResult(
                 success=True,
                 signature=dry_signature,

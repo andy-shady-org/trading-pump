@@ -86,6 +86,84 @@ def creator_initial_buy_pct(
     return min(1.0, amount / total_supply_ui)
 
 
+PUMP_MINT_SUFFIX = "pump"
+SCREENING_EVENT = "screening"
+
+
+def non_pump_launch_reason(
+    mint: str, token_data: dict[str, Any] | None, *, require_suffix: bool = True
+) -> str | None:
+    """Why a stream token is not a Pump.fun bonding-curve launch, or ``None``.
+
+    PumpPortal's new-token feed also carries other launchpads (``pool`` is then
+    e.g. ``bonk``), and Stage 0 bought 263 such mints, USDC among them
+    (BUG-108). Pump.fun's own launches get a vanity mint ending in ``pump``.
+    This is the cheap first filter; the buy path still checks that the curve
+    exists and is owned by the Pump.fun program.
+    """
+    pool = (token_data or {}).get("pool")
+    if isinstance(pool, str) and pool.strip() and pool.strip().lower() != "pump":
+        return f"launched on '{pool.strip()}', not Pump.fun"
+    if require_suffix and not mint.endswith(PUMP_MINT_SUFFIX):
+        return f"mint does not end in '{PUMP_MINT_SUFFIX}'"
+    return None
+
+
+def _round(value: float | None, digits: int = 6) -> float | None:
+    return None if value is None else round(float(value), digits)
+
+
+def screening_snapshot(
+    verdict: TokenScreeningVerdict,
+    *,
+    name: str | None = None,
+    market_cap_sol: float = 0.0,
+    latency_ms: float | None = None,
+    timestamp: float | None = None,
+) -> dict[str, Any]:
+    """Replay-capture record of what the screener saw for one token.
+
+    Captures used to hold no social links, holders or creator history, so
+    filters could not be tuned from them. The record has no price field and
+    ``event = "screening"``, so the replay engine never treats it as a tick.
+    """
+    holders = verdict.holder_distribution
+    metadata = verdict.metadata
+    dev = verdict.dev_profile
+    screening: dict[str, Any] = {
+        "passed": bool(verdict.passed),
+        "risk_score": _round(verdict.risk_score, 2),
+        "reasons": list(verdict.reasons or []),
+        "market_cap_sol": _round(market_cap_sol, 4),
+        "latency_ms": _round(latency_ms, 1),
+        "social_links": metadata.social_links_count() if metadata else None,
+        "twitter": bool(metadata and metadata.twitter),
+        "telegram": bool(metadata and metadata.telegram),
+        "website": bool(metadata and metadata.website),
+        "holders_available": bool(holders and holders.top_holders),
+        "holder_count": len(holders.top_holders) if holders else 0,
+        "top5_pct": _round(holders.compute_top5_non_curve_pct()) if holders else None,
+        "gini": _round(holders.compute_gini_coefficient()) if holders else None,
+        "creator_pct": _round(holders.creator_initial_pct) if holders else None,
+        "creator": (dev.creator_address or None) if dev else None,
+        "creator_launches_24h": dev.tokens_launched_24h if dev else None,
+        "creator_total_launches": dev.total_tokens_launched if dev else None,
+        "creator_rugs": dev.rug_history_count if dev else None,
+        "flags": {
+            key: value
+            for key, value in (verdict.flags or {}).items()
+            if isinstance(value, (bool, int, float, str)) or value is None
+        },
+    }
+    return {
+        "timestamp": time.time() if timestamp is None else timestamp,
+        "mint": verdict.mint,
+        "name": name or verdict.mint,
+        "event": SCREENING_EVENT,
+        "screening": screening,
+    }
+
+
 class TokenEnricher:
     """Handles off-chain token metadata enrichment, creator profiling, and anti-rug screening."""
 

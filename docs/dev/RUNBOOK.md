@@ -21,6 +21,7 @@ Point every output file into `data/` explicitly:
 export PUMPFUN_STATUS_PATH=data/bot_status.json
 export PUMPFUN_AUDIT_LOG_PATH=data/audit_trail.jsonl
 export PUMPFUN_EVENT_LOG_PATH=data/events.jsonl
+export PUMPFUN_BOT_LOG_PATH=data/bot.log
 ```
 
 All variables are documented in [`../ENVIRONMENTAL-VARIABLES.md`](../ENVIRONMENTAL-VARIABLES.md).

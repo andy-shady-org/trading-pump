@@ -36,6 +36,7 @@ from pumpfun_trading.sdk.execution import (
     TOKEN_PROGRAM_ID_STR,
     CurveStateUnavailableError,
     NonStandardCurveError,
+    NotPumpFunCurveError,
     PumpFunExecutionClient,
     TokenBalanceUnavailableError,
     TokenProgramUnavailableError,
@@ -1999,3 +2000,50 @@ async def test_build_buy_tx_non_standard_curve_refuses_to_build() -> None:
             await client.build_buy_tx(MINT, str(Pubkey.new_unique()), 0.01)
 
     build.assert_not_awaited()
+
+
+# --- BUG-108: the curve must exist and be owned by the Pump.fun program -----------
+
+
+@pytest.mark.regression("BUG-108")
+async def test_get_bonding_curve_state_missing_account_is_not_pump_fun() -> None:
+    client = _client()
+    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={"result": {"value": None}}
+    )
+
+    with pytest.raises(NotPumpFunCurveError, match="not found"):
+        await client.get_bonding_curve_state(SAMPLE_MINT)
+
+
+@pytest.mark.regression("BUG-108")
+async def test_get_bonding_curve_state_foreign_owner_is_not_pump_fun() -> None:
+    client = _client()
+    account = _curve_account(*STANDARD_CURVE_RESERVES[0])
+    account["result"]["value"]["owner"] = "11111111111111111111111111111111"
+    client._request_rpc_json = AsyncMock(return_value=account)  # type: ignore[method-assign]
+
+    with pytest.raises(NotPumpFunCurveError, match="not the Pump.fun program"):
+        await client.get_bonding_curve_state(SAMPLE_MINT)
+
+
+async def test_get_bonding_curve_state_pump_owner_is_decoded() -> None:
+    client = _client()
+    account = _curve_account(*STANDARD_CURVE_RESERVES[0])
+    account["result"]["value"]["owner"] = PUMP_PROGRAM_ID
+    client._request_rpc_json = AsyncMock(return_value=account)  # type: ignore[method-assign]
+
+    state = await client.get_bonding_curve_state(SAMPLE_MINT)
+
+    assert state["market_cap_sol"] == pytest.approx(27.96, abs=0.01)
+
+
+@pytest.mark.regression("BUG-108")
+async def test_fetch_trade_curve_state_foreign_owner_refuses_to_build() -> None:
+    client = _client()
+    account = _curve_account(*STANDARD_CURVE_RESERVES[0])
+    account["result"]["value"]["owner"] = "11111111111111111111111111111111"
+    client.rpc_pool.request = AsyncMock(return_value=account)  # type: ignore[method-assign]
+
+    with pytest.raises(NotPumpFunCurveError):
+        await client._fetch_trade_curve_state(SAMPLE_MINT)

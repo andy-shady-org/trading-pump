@@ -12,14 +12,24 @@ from solders.pubkey import Pubkey
 
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.enrichment import (
+    SCREENING_EVENT,
     TokenEnricher,
     count_launches_last_24h,
     creator_initial_buy_pct,
     merge_token_data,
+    non_pump_launch_reason,
+    screening_snapshot,
 )
-from pumpfun_trading.bot.strategy import ScreeningCache, TokenScreeningVerdict
+from pumpfun_trading.bot.strategy import (
+    DevWalletProfile,
+    HolderDistribution,
+    ScreeningCache,
+    TokenMetadata,
+    TokenScreeningVerdict,
+)
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
 from pumpfun_trading.tests.support.factories import make_config
 
 CREATOR = str(Pubkey.new_unique())
@@ -415,3 +425,79 @@ async def test_require_holder_data_turns_missing_holders_into_a_reject(
     assert verdict.risk_score == pytest.approx(30.0)
     assert "Holder distribution data unavailable" in verdict.reasons
     assert verdict.passed is passes
+
+
+# --- BUG-108: only Pump.fun launches --------------------------------------------
+
+
+@pytest.mark.regression("BUG-108")
+@pytest.mark.parametrize(
+    "mint, data, require_suffix, expected",
+    [
+        (SAMPLE_PUMP_MINT, {"pool": "pump"}, True, None),
+        (SAMPLE_PUMP_MINT, {}, True, None),
+        (SAMPLE_PUMP_MINT, {"pool": "bonk"}, True, "launched on 'bonk', not Pump.fun"),
+        (SAMPLE_MINT, {"pool": "bonk"}, False, "launched on 'bonk', not Pump.fun"),
+        (SAMPLE_MINT, {}, True, "mint does not end in 'pump'"),
+        (SAMPLE_MINT, None, False, None),
+        (SAMPLE_MINT, {"pool": "  "}, False, None),
+    ],
+)
+def test_non_pump_launch_reason_table(
+    mint: str,
+    data: dict[str, Any] | None,
+    require_suffix: bool,
+    expected: str | None,
+) -> None:
+    assert non_pump_launch_reason(mint, data, require_suffix=require_suffix) == expected
+
+
+# --- Screening data in the replay capture ----------------------------------------
+
+
+def test_screening_snapshot_records_what_the_screener_saw() -> None:
+    curve = str(Pubkey.new_unique())
+    verdict = TokenScreeningVerdict(
+        mint=SAMPLE_PUMP_MINT,
+        passed=False,
+        risk_score=60.0,
+        reasons=["Insufficient social links: found 1, required at least 2"],
+        flags={"missing_holder_data": False, "nested": {"x": 1}},
+        dev_profile=DevWalletProfile(
+            creator_address=CREATOR, tokens_launched_24h=3, total_tokens_launched=9
+        ),
+        holder_distribution=HolderDistribution(
+            creator_initial_pct=0.04,
+            top_holders=[(curve, 800_000_000_000_000), ("A", 100_000_000_000_000)],
+            bonding_curve_address=curve,
+        ),
+        metadata=TokenMetadata(twitter="https://x.com/token"),
+    )
+
+    record = screening_snapshot(
+        verdict, name="Tok", market_cap_sol=27.96, latency_ms=812.34, timestamp=5.0
+    )
+
+    assert record["event"] == SCREENING_EVENT
+    assert {"price", "market_cap_sol", "signal"}.isdisjoint(record)
+    assert record["mint"] == SAMPLE_PUMP_MINT and record["timestamp"] == 5.0
+    screening = record["screening"]
+    assert screening["passed"] is False
+    assert screening["social_links"] == 1 and screening["twitter"] is True
+    assert screening["holders_available"] is True and screening["holder_count"] == 2
+    assert screening["top5_pct"] == pytest.approx(0.1)
+    assert screening["creator"] == CREATOR
+    assert screening["creator_launches_24h"] == 3
+    assert screening["latency_ms"] == 812.3
+    assert screening["flags"] == {"missing_holder_data": False}
+
+
+def test_screening_snapshot_without_enrichment_data_has_nulls() -> None:
+    verdict = TokenScreeningVerdict(mint=SAMPLE_PUMP_MINT, passed=True, risk_score=0.0)
+
+    screening = screening_snapshot(verdict)["screening"]
+
+    assert screening["social_links"] is None
+    assert screening["holders_available"] is False
+    assert screening["holder_count"] == 0
+    assert screening["top5_pct"] is None and screening["creator"] is None

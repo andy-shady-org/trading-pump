@@ -307,6 +307,8 @@ Microcap liquidity pools are susceptible to malicious exploits. Every candidate 
   "max_gini_coefficient": 0.85,
   "require_social_links": false,
   "require_holder_data": false,
+  "require_pump_mint_suffix": true,
+  "allow_mint_reentry": false,
   "min_social_links_count": 1,
   "max_acceptable_risk_score": 50.0,
   "screening_cache_ttl_seconds": 60
@@ -314,6 +316,10 @@ Microcap liquidity pools are susceptible to malicious exploits. Every candidate 
 ```
 
 `require_holder_data: true` rejects a token outright when no holder data could be read (otherwise missing holders adds 30 risk points and the top-5 / Gini checks are skipped). The canary config sets it (BUG-107).
+
+`require_pump_mint_suffix` (default `true`) skips stream tokens whose mint doesn't end in `pump`; tokens that PumpPortal tags with another launchpad `pool` are always skipped, and every buy needs a bonding curve owned by the Pump.fun program (BUG-108). `allow_mint_reentry` (default `false`) controls whether a mint whose position was closed may be bought again (BUG-109).
+
+Paper mode (`--paper-trade` / `dry_run`) can be made to pay for the latency of a real buy: `paper_entry_delay_seconds` waits and re-reads the curve before the fill, and `paper_entry_slippage_bps` worsens the fill (fewer tokens, higher entry market cap). Both default to 0. For Stage 0 use roughly the screening p50 plus landing time, e.g. `1.5` s and `300` bps, so paper profit is a conservative estimate.
 
 * **`enable_anti_rug_filters`**: Master toggle for heuristic pre-trade screening.
 * **`max_creator_initial_holding_pct`**: Maximum percentage of curve supply creator can hold at inception (e.g. `0.08` = 8%).

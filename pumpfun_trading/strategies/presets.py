@@ -482,6 +482,14 @@ def resolve_strategy_config(
         require_holder_data=bool(base.get("require_holder_data", False)),
         min_social_links_count=int(base.get("min_social_links_count", 0)),
         max_acceptable_risk_score=float(base.get("max_acceptable_risk_score", 50.0)),
+        require_pump_mint_suffix=bool(base.get("require_pump_mint_suffix", True)),
+        allow_mint_reentry=bool(base.get("allow_mint_reentry", False)),
+        paper_entry_delay_seconds=max(
+            0.0, float(base.get("paper_entry_delay_seconds", 0.0))
+        ),
+        paper_entry_slippage_bps=max(
+            0, min(5_000, int(base.get("paper_entry_slippage_bps", 0)))
+        ),
         screening_cache_ttl_seconds=int(base.get("screening_cache_ttl_seconds", 60)),
         enable_momentum_signals=bool(base.get("enable_momentum_signals", True)),
         momentum_window_seconds=int(base.get("momentum_window_seconds", 30)),

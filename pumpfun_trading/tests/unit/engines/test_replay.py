@@ -121,6 +121,22 @@ def test_live_entry_rejected_by_live_risk_limits(
         assert summary["buy_count"] == 0
 
 
+def test_screening_records_are_not_replayed_as_market_data() -> None:
+    screening = {
+        "event": "screening",
+        "mint": MINT_A,
+        "price": 1.0,
+        "timestamp": 0.0,
+        "buy_signal": True,
+        "screening": {"passed": True},
+    }
+
+    summary = _engine().run([screening])
+
+    assert summary["buy_count"] == 0
+    assert summary["entry_rejections"] == {}
+
+
 def test_live_entry_respects_max_buy_attempts_per_mint() -> None:
     snaps = [
         _snap(MINT_A, 1.0, 0.0, buy=True),
