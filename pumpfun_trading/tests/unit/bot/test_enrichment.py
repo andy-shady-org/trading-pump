@@ -18,6 +18,7 @@ from pumpfun_trading.bot.enrichment import (
     count_launches_last_24h,
     creator_initial_buy_pct,
     merge_token_data,
+    mayhem_mode_reason,
     non_pump_launch_reason,
     resolve_creator,
     screening_snapshot,
@@ -581,3 +582,19 @@ async def test_enrich_unresolved_creator_adds_missing_dev_penalty() -> None:
     api.get_creator_coins.assert_not_awaited()
     assert verdict.dev_profile is None
     assert "Dev wallet data unavailable" in verdict.reasons
+
+
+@pytest.mark.parametrize(
+    "data, expected",
+    [
+        ({"is_mayhem_mode": True}, "mayhem-mode launch"),
+        ({"is_mayhem_mode": "true"}, "mayhem-mode launch"),
+        ({"is_mayhem_mode": False}, None),
+        ({}, None),
+        (None, None),
+    ],
+)
+def test_mayhem_mode_reason_table(
+    data: dict[str, Any] | None, expected: str | None
+) -> None:
+    assert mayhem_mode_reason(data) == expected

@@ -58,6 +58,8 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[ASYNC] Alerts Are I/O Too:** `_send_alert` ran a blocking `urlopen` (10 s timeout) on the trading loop for every alerted event, buys included (BUG-110). Never call a sync network client from loop code; dispatch with `asyncio.to_thread` / a tracked task, and flush (bounded) before `asyncio.run` exits. Test it with a webhook that blocks until released, not with timings.
 - **[OPS] Withdrawals Are Not Drawdowns:** A profit sweep lowers wallet equity on purpose. Anything that moves SOL out must call `DailyEquityTracker.record_withdrawal` and write a `sweep` audit record that `reconcile` counts, or the breaker trips and the wallet check shows a gap (FEAT-42).
 - **[STREAMS] Check That Subscriptions Deliver:** PumpPortal refuses `subscribeTokenTrade` without a funded API key and replies with a mint-less `message` the bot dropped, so v0.2.0 and v0.2.1 held positions blind (exits on a 5 s curve poll, empty order flow, captures with no trades; BUG-112). Log and alert any server `message`, and treat a held mint with no trade messages as degraded data, not a quiet market.
+- **[STREAMS] A Reconnect Is Not A Fix:** BUG-116 cleared the trade-feed refusal on every reconnect, so buys resumed blind while the key's wallet was still empty. Close a feed breaker only on proof of delivery (a confirmed subscription or data), probe while it is open, and name the likely cause (metered API key out of funds) in the alert.
+- **[ENTRY] Mayhem Curves Break The Invariant:** mayhem-mode curves drifted to 46 SOL virtual reserve 2 s after launch. Skip `is_mayhem_mode` tokens (`skip_mayhem_mode`) unless their pricing is modelled.
 
 
 ## Project Overview

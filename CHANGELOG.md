@@ -8,12 +8,15 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Fixes from the v0.2.1 Stage 0 close-out (branch `fix/stage0-bugs-111-115`) and a dashboard layout change. These change which tokens are bought and when exits see prices, so they need a new tag and a fresh Stage 0.
+Fixes from the v0.2.1 Stage 0 close-out (PR #17) and a dashboard layout change, plus the trade-feed circuit breaker and mayhem-mode filter (branch `feat/mayhem-filter-trade-feed-breaker`). These change which tokens are bought and when exits see prices, so they need a new tag and a fresh Stage 0.
 
 ### Added
+- Trade-feed circuit breaker (`bot/trade_feed.py`, BUG-116): opens on PumpPortal's `subscribeTokenTrade` refusal, blocks new buys, survives reconnects and closes only on a confirmed subscription or trade data. The alert names the likely cause: the PumpPortal API key's wallet has run out of funds (it needs ≥ 0.02 SOL). While open a probe subscription is sent every `trade_feed_probe_seconds` (default `300`, minimum `30`), so a top-up is picked up without a restart; recovery is alerted. Status: `trade_feed_breaker`.
+- `skip_mayhem_mode` (default `true`): create events with `is_mayhem_mode` are rejected before screening (`mayhem_rejections` in the status file), and a buy is refused when the curve's mayhem flag is set (`mayhem_mode` error), in paper mode too. On mainnet, mayhem curves drifted off the 30 SOL virtual-reserve invariant within 2 s (46.0 SOL seen), so curve pricing doesn't hold for them.
+- `paper_starting_balance_sol` (default `0`, meaning reserve + 10 buys): simulated wallet for long paper data runs, so the drawdown breaker isn't reached within hours.
 - `position_refresh_seconds` (default `1.0`): held positions are re-priced from their bonding curve in their own task, instead of on the 5 s health loop (BUG-112).
 - `require_trade_feed` (default `true`): no new buys while the stream refuses token-trade subscriptions (BUG-112).
-- Status snapshot: `trade_feed_available` and `circuit_breaker_locked_at`; dashboard Health Check row `Trade feed` (`ok` / `REFUSED`).
+- Status snapshot: `trade_feed_available` and `circuit_breaker_locked_at`; dashboard Health Check row `Trade feed` (`ok` / `REFUSED (key funds?)`).
 
 ### Changed
 - Dashboard: `Max total exposure`, `Max position size`, `Max loss / trade` and `Daily drawdown` moved from the Risk panel to the Strategy panel (they are configured limits; Risk now shows live risk state). Metrics moved from a full-width bottom panel into the Run Time panel, beside Coin Polling at half width each, so open positions no longer push it off the screen.
@@ -25,6 +28,7 @@ Fixes from the v0.2.1 Stage 0 close-out (branch `fix/stage0-bugs-111-115`) and a
 - BUG-112: PumpPortal's refusal of `subscribeTokenTrade` (no funded API key) was silently dropped. Server `message` replies are now logged and counted; a refusal is alerted once, marks the trade feed degraded and blocks buys until a reconnect. **Operator action:** add a funded PumpPortal API key to `PUMPFUN_STREAM_URL`.
 - BUG-113: the creator came from the API record even when it was the system program; the create event's signer is now preferred, and an unresolved creator adds the missing-dev-data penalty.
 - BUG-114: `circuit_breaker_trips` counted every 5 s check while locked (394 for one trip); it now counts once per lock.
+- BUG-116: a trade-subscription refusal was cleared by any reconnect, so buys resumed blind while the key was still unfunded; failed subscription sends are now logged and counted instead of swallowed.
 
 ## [0.2.1] - 2026-10-17
 

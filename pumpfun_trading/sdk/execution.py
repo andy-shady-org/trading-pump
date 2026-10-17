@@ -129,6 +129,10 @@ class NonStandardCurveError(CurveStateUnavailableError):
     """The curve's reserves don't match the standard Pump.fun layout (BUG-104)."""
 
 
+class MayhemModeCurveError(NonStandardCurveError):
+    """The curve is in mayhem mode, which the bot does not trade."""
+
+
 class NotPumpFunCurveError(CurveStateUnavailableError):
     """The mint has no bonding curve owned by the Pump.fun program (BUG-108)."""
 

@@ -144,6 +144,20 @@ Every interval the bot moves the wallet's SOL above the floor to the cold wallet
 - **Paper / dry-run:** the transfer is simulated against the paper wallet (`dry_run_sweep_…` signatures), which is how the drill (§7) is run.
 - **Failure:** an RPC error or an unconfirmed transfer alerts `ALERT profit sweep failed`, records `last_error` (dashboard: `Profit sweep: ERROR`) and books nothing; check the signature in the error on-chain before the next interval.
 
+### 5.7 Trade-feed circuit breaker (PumpPortal API key funds, BUG-116)
+
+PumpPortal meters token-trade data against the API key's linked wallet (0.01 SOL per 10,000 messages) and refuses `subscribeTokenTrade` once that wallet holds less than 0.02 SOL. The bot then opens the trade-feed circuit breaker:
+
+- one alert, `ALERT trade-feed circuit breaker OPEN …`, saying the key's wallet has probably run out of funds when the key had worked earlier in the run;
+- dashboard `Trade feed: REFUSED (key funds?)`, `bot_status.json` → `trade_feed_breaker.open: true`;
+- no new buys (`require_trade_feed`); held positions keep exiting on the 1 s curve refresh.
+
+**Action:** top up the PumpPortal key's wallet (keep well above 0.02 SOL; a busy run uses roughly 0.01 SOL per 10,000 trade messages). No restart is needed: the bot sends a probe subscription every `trade_feed_probe_seconds` (default 300 s) and, once PumpPortal confirms it or trade data arrives, closes the breaker, sends `trade-feed circuit breaker CLOSED` and resumes buying. A reconnect alone never closes it. If the key itself changed, update `PUMPFUN_STREAM_URL` and restart.
+
+```bash
+jq '.trade_feed_breaker' data/bot_status.json
+```
+
 ## 6. Paper pilot procedure
 
 Stage 0 of the live capital gate. Exit criteria: [`RELEASE-GATE.md` §3.2](RELEASE-GATE.md#32-stage-0--paper-pilot-exit-criteria).
@@ -176,6 +190,34 @@ Run these on a **copy** of the capture, from a second runtime directory, never a
    ```
    Fitness is net of modelled costs. Promote the tuned config only if its **test** (out-of-sample) score beats the canary config's, and only through a fresh Stage 0 run (`RELEASE-GATE.md` §3). The exported file masks any credential in URLs (BUG-102), so keep endpoints in the environment.
 
+### 6.2 24 h capture run
+
+A paper run whose only job is to record trade flow with the funded API key, so the entry confirmation (TODO Sprint 24A) and exits can be tuned by replay. It is **not** a Stage 0 run and its PnL is not evidence of anything.
+
+`configs/capture.json` is the canary config with these changes:
+
+| Key | Capture | Canary | Why |
+|---|---|---|---|
+| `paper_trade` | `true` | `false` (set by `--paper-trade`) | The file can never trade live by accident |
+| `paper_starting_balance_sol` | `2.0` | default (0.25) | A 0.25 SOL paper wallet hits the breaker within hours |
+| `max_daily_drawdown_pct` | `0.5` | `0.10` | Keep recording all day |
+| `max_active_positions` / `max_total_exposure_sol` | `5` / `0.05` | `2` / `0.03` | More tokens with trade data per hour |
+| `stagnant_timeout_seconds` | `120` | `45` | Trade data past 45 s, so replay can compare both timeouts |
+
+Run it from the runtime directory into its own folder (the `.envrc` paths point at `data/`):
+
+```bash
+mkdir -p capture
+PUMPFUN_STATUS_PATH=capture/bot_status.json \
+PUMPFUN_AUDIT_LOG_PATH=capture/audit_trail.jsonl \
+PUMPFUN_EVENT_LOG_PATH=capture/events.jsonl \
+PUMPFUN_BOT_LOG_PATH=capture/bot.log \
+pumpbot --config configs/capture.json --paper-trade --headless \
+  --record-replay capture/replay_capture.jsonl
+```
+
+In the first minutes check that `capture/bot.log` has "Successfully subscribed to keys", `Trade feed` is `ok`, and `capture/replay_capture.jsonl` holds `buy`/`sell` market trades, not only creates. Watch `trade_feed_breaker` (§5.7) and `mayhem_rejections` in the status file. Afterwards run §6.1 against `capture/` and replay with `configs/canary.json` as well, so the 45 s and 120 s timeouts can be compared on the same data.
+
 ## 7. Incident drills
 
 Run these in paper mode before Stage 1 and after any release that touches lifecycle, persistence or execution.
@@ -192,6 +234,7 @@ Run these in paper mode before Stage 1 and after any release that touches lifecy
 | Profit sweep | Paper instance with `profit_sweep_enabled`, a test destination and a paper wallet above the floor | One `sweep` audit record and alert; paper wallet at the floor minus the fee; no circuit-breaker trip; nothing swept below the floor |
 | Supervisor restart | Under systemd / launchd (§8), `kill -9` the bot process | Restarted within the restart delay; `bot started` alert; snapshot restored; pause state kept |
 | Degradation alert | Stream drill above for longer than `degradation_alert_minutes` | One `ALERT stream degraded` and one `RECOVERED stream` alert |
+| Trade-feed breaker | Paper instance with `PUMPFUN_STREAM_URL` without `?api-key=` (or an empty-wallet key), until the first buy | One `trade-feed circuit breaker OPEN` alert naming the key's funds; no new buys; `trade_feed_breaker.open` true; still open after a reconnect |
 
 ## 8. Supervised deployment and hardening (Sprint 24D)
 

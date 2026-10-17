@@ -123,6 +123,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-113** | Medium | Screening | **RESOLVED** | The creator is taken from the API record before the stream's `traderPublicKey`; when the API returns the system program `1111…1111`, the serial-launcher and rug-history checks run against nothing (10% of screened tokens) |
 | **BUG-114** | Low | Risk / Telemetry | **RESOLVED** | `circuit_breaker_trips` grows every 5 s while the breaker stays locked (394 for one trip), and `circuit_breaker_lockout_until` holds the lock time, not the unlock time |
 | **BUG-115** | Low | Audit / Reporting | **RESOLVED** | `pumpfun-audit pnl --group-by reason` books every buy's costs (rent, tip, fee) on an `entry` row, so each exit reason shows a positive net while the positions lost money |
+| **BUG-116** | High | Streams / Trade feed | **RESOLVED** | A refused `subscribeTokenTrade` was cleared by any reconnect, so buys resumed blind while the PumpPortal API key was still unfunded; now a trade-feed circuit breaker stays open until a probe subscription is confirmed or trade data arrives, and its alert names the likely cause (the key's wallet ran out of funds) |
 
 ---
 
@@ -999,4 +1000,16 @@ Found when the v0.2.1 Stage 0 run was closed after its circuit breaker tripped a
 * **Fix:** attribute the buy leg to the position's first exit reason, so each row's net is the net of its positions; drop the `entry` row for closed positions.
 * **Resolution:** with `--group-by reason`, a position's buy legs are booked under the reason of its first exit, so each row's net is the net of the positions it closed; buys of positions still open stay under their entry reason. Other groupings are unchanged.
 * **Verification:** `tests/unit/bot/test_pnl.py::test_summarize_pnl_reason_groups_sum_to_closed_net` (`regression("BUG-115")`): per-reason nets sum to the closed net, losing stagnant exits show a loss; `tests/unit/cli/test_audit.py` updated for the new rows.
+
+## 16. Trade Feed and Mayhem Mode (2026-10-17)
+
+Found while preparing the 24 h capture run on v0.2.2, after a funded PumpPortal API key was added.
+
+### BUG-116: Trade-Feed Refusal Cleared By Any Reconnect [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_run_websocket_stream`, `_handle_server_message`, `_subscribe_to_token_trades`)
+* **Description:** the BUG-112 fix reset `_trade_feed_refused_at` on every new WebSocket connection, on the assumption that a reconnect might carry a new key. The stream URL is fixed for the process, so a reconnect never brings a new key. PumpPortal meters the key's linked wallet (0.01 SOL per 10,000 messages) and refuses `subscribeTokenTrade` once it holds less than 0.02 SOL; after the first reconnect the bot would buy again and hold that position without trade data. Failed subscription sends were also swallowed without a log line.
+* **Impact:** high once the key runs dry mid-run: the same blind exits as BUG-112 (stop-loss filled 2.5–4.7 points late in the v0.2.1 run), and the alert only said an API key was needed, not that its funds had run out.
+* **Resolution:** new `bot/trade_feed.py::TradeFeedBreaker`. The first refusal opens it (one alert, counted in `trips`); new buys stay blocked while it is open (`require_trade_feed`). It closes only on proof of delivery: PumpPortal's "Successfully subscribed to keys." reply or a buy/sell message for a subscribed mint, with a recovery alert. A reconnect leaves it open and schedules a probe; while open the health loop sends a probe `subscribeTokenTrade` every `trade_feed_probe_seconds` (default 300 s) on a held mint, or on the latest new mint (unsubscribed again once answered), so a top-up is noticed without a restart. The alert says the key's wallet has probably run out of funds when the key had worked earlier in the run. Send failures are logged and counted. State is in `bot_status.json` → `trade_feed_breaker`.
+* **Not covered:** the first position after a start still opens before any subscription has been confirmed.
+* **Verification:** `tests/unit/bot/test_trade_feed.py`, `tests/unit/bot/test_run.py` (`regression("BUG-116")`): the breaker survives a reconnect, blocks buys, closes on trade data or a confirmed probe, unsubscribes a probe mint but not a held one, and alerts once per trip.
 
