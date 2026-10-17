@@ -79,3 +79,17 @@ async def test_second_buy_while_holding_logs_no_invalid_transition(
     assert bot.state == TradingBotState.HOLDING
     assert "Ignored invalid state transition" not in caplog.text
     await bot.close()
+
+
+@pytest.mark.regression("BUG-111")
+@pytest.mark.parametrize(
+    "current, next_state",
+    [
+        (TradingBotState.BUYING, TradingBotState.SELLING),
+        (TradingBotState.SELLING, TradingBotState.BUYING),
+    ],
+)
+def test_buy_and_sell_may_overlap(
+    current: TradingBotState, next_state: TradingBotState
+) -> None:
+    assert is_valid_transition(current, next_state)

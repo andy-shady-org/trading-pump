@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from pumpfun_trading.bot.enrichment import (
     creator_initial_buy_pct,
     merge_token_data,
     non_pump_launch_reason,
+    resolve_creator,
     screening_snapshot,
 )
 from pumpfun_trading.bot.strategy import (
@@ -501,3 +503,81 @@ def test_screening_snapshot_without_enrichment_data_has_nulls() -> None:
     assert screening["holders_available"] is False
     assert screening["holder_count"] == 0
     assert screening["top5_pct"] is None and screening["creator"] is None
+
+
+SYSTEM_PROGRAM = "11111111111111111111111111111111"
+
+
+@pytest.mark.regression("BUG-113")
+@pytest.mark.parametrize(
+    "stream, record, expected",
+    [
+        (
+            {"txType": "create", "traderPublicKey": CREATOR},
+            {"creator": SYSTEM_PROGRAM},
+            CREATOR,
+        ),
+        ({"traderPublicKey": CREATOR}, {"creator": "ApiCreator"}, CREATOR),
+        (None, {"creator": SYSTEM_PROGRAM, "dev_wallet": "DevWallet"}, "DevWallet"),
+        (
+            {"txType": "create", "traderPublicKey": SYSTEM_PROGRAM},
+            {"creator": " "},
+            None,
+        ),
+        # On a copied buy the signer is the trader; the record names the creator.
+        (
+            {"txType": "buy", "traderPublicKey": "Trader"},
+            {"creator": "ApiCreator"},
+            "ApiCreator",
+        ),
+        ({"txType": "buy", "creator": CREATOR}, {"creator": "ApiCreator"}, CREATOR),
+        ({}, {"creator": 42}, None),
+    ],
+)
+def test_resolve_creator_skips_placeholders_and_prefers_stream_signer(
+    stream: dict[str, Any] | None, record: dict[str, Any], expected: str | None
+) -> None:
+    assert resolve_creator(stream, record) == expected
+
+
+@pytest.mark.regression("BUG-113")
+async def test_enrich_system_program_creator_uses_stream_signer() -> None:
+    mint = str(Pubkey.new_unique())
+    client = _execution_client()
+    api = _api(coin={"mint": mint, "creator": SYSTEM_PROGRAM})
+    serial = [{"created_timestamp": time.time() * 1000} for _ in range(9)]
+    api.get_creator_coins = AsyncMock(return_value=serial)
+    enricher = TokenEnricher(
+        api_client=api, execution_client=client, config=_strict_config()
+    )
+
+    with patch.object(
+        client.rpc_pool, "request", AsyncMock(return_value=_rpc_holders(client, mint))
+    ):
+        verdict = await enricher.enrich_and_screen(mint, _stream_payload(mint))
+
+    api.get_creator_coins.assert_awaited_once_with(CREATOR, limit=20)
+    assert verdict.dev_profile is not None
+    assert verdict.dev_profile.creator_address == CREATOR
+    assert not verdict.passed
+    assert any("Serial launcher" in reason for reason in verdict.reasons)
+
+
+@pytest.mark.regression("BUG-113")
+async def test_enrich_unresolved_creator_adds_missing_dev_penalty() -> None:
+    mint = str(Pubkey.new_unique())
+    client = _execution_client()
+    api = _api(coin={"mint": mint, "creator": SYSTEM_PROGRAM})
+    enricher = TokenEnricher(
+        api_client=api, execution_client=client, config=_strict_config()
+    )
+    payload = {**_stream_payload(mint), "traderPublicKey": SYSTEM_PROGRAM}
+
+    with patch.object(
+        client.rpc_pool, "request", AsyncMock(return_value=_rpc_holders(client, mint))
+    ):
+        verdict = await enricher.enrich_and_screen(mint, payload)
+
+    api.get_creator_coins.assert_not_awaited()
+    assert verdict.dev_profile is None
+    assert "Dev wallet data unavailable" in verdict.reasons

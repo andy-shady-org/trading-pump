@@ -1757,3 +1757,27 @@ def test_risk_helpers_and_limits():
         == 50.0
     )
     assert track_position_peak(mock_bot, mint="m1", current_market_cap=60.0) == 60.0
+
+
+@pytest.mark.regression("BUG-114")
+@pytest.mark.parametrize(
+    "hours, expected_offset",
+    [
+        (0.0, 11 * 3600.0),  # unlocks at the next 00:00 UTC
+        (24.0, 11 * 3600.0),  # midnight comes before the 24 h hard lock
+        (2.0, 2 * 3600.0),  # a shorter hard lock ends first
+    ],
+)
+def test_lockout_until_reports_release_time(
+    hours: float, expected_offset: float
+) -> None:
+    locked_at = datetime.datetime(
+        2026, 10, 17, 13, 0, tzinfo=datetime.timezone.utc
+    ).timestamp()
+    tracker = DailyEquityTracker(
+        circuit_breaker_engaged=True, locked_at_timestamp=locked_at
+    )
+
+    assert tracker.lockout_until(hours) == pytest.approx(locked_at + expected_offset)
+    tracker.circuit_breaker_engaged = False
+    assert tracker.lockout_until(hours) is None

@@ -8,6 +8,24 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+Fixes from the v0.2.1 Stage 0 close-out (branch `fix/stage0-bugs-111-115`) and a dashboard layout change. These change which tokens are bought and when exits see prices, so they need a new tag and a fresh Stage 0.
+
+### Added
+- `position_refresh_seconds` (default `1.0`): held positions are re-priced from their bonding curve in their own task, instead of on the 5 s health loop (BUG-112).
+- `require_trade_feed` (default `true`): no new buys while the stream refuses token-trade subscriptions (BUG-112).
+- Status snapshot: `trade_feed_available` and `circuit_breaker_locked_at`; dashboard Health Check row `Trade feed` (`ok` / `REFUSED`).
+
+### Changed
+- Dashboard: `Max total exposure`, `Max position size`, `Max loss / trade` and `Daily drawdown` moved from the Risk panel to the Strategy panel (they are configured limits; Risk now shows live risk state). Metrics moved from a full-width bottom panel into the Run Time panel, beside Coin Polling at half width each, so open positions no longer push it off the screen.
+- `pumpfun-audit pnl --group-by reason`: buy legs are booked under the position's first exit reason, and the `entry` row only holds buys of positions still open (BUG-115).
+- `circuit_breaker_lockout_until` now holds the unlock time (next 00:00 UTC, or the hard-lock end if sooner); the lock time moved to `circuit_breaker_locked_at` (BUG-114).
+
+### Fixed
+- BUG-111: a sell that starts during a buy's paper entry delay no longer logs an invalid `BUYING → SELLING` transition or settles the state while the buy is still running.
+- BUG-112: PumpPortal's refusal of `subscribeTokenTrade` (no funded API key) was silently dropped. Server `message` replies are now logged and counted; a refusal is alerted once, marks the trade feed degraded and blocks buys until a reconnect. **Operator action:** add a funded PumpPortal API key to `PUMPFUN_STREAM_URL`.
+- BUG-113: the creator came from the API record even when it was the system program; the create event's signer is now preferred, and an unresolved creator adds the missing-dev-data penalty.
+- BUG-114: `circuit_breaker_trips` counted every 5 s check while locked (394 for one trip); it now counts once per lock.
+
 ## [0.2.1] - 2026-10-17
 
 Everything merged to `main` since v0.2.0 (PRs #8–#14): Sprint 24C (no more API keys on disk; backtests that run the live sizing, exits and costs), Sprint 25 (packaging and repository hygiene), Sprints 26–27 (test restructure), the Stage 0 fixes BUG-104…109 and entry hardening, and Sprint 24D (unattended operation). This is the build the restarted Stage 0 paper pilot runs on.

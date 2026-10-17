@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import replace
 import json
 import logging
@@ -10,7 +11,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 import aiohttp
 from dotenv import load_dotenv
@@ -271,6 +272,12 @@ class TradingBot:
         self._risk_killed = False
         self._last_health_check = time.monotonic()
         self.state = TradingBotState.IDLE
+        # In-flight buys/sells; a paper buy can wait while a sell runs (BUG-111).
+        self._inflight_operations: dict[str, int] = {}
+        self._counted_breaker_lock_at: float | None = None
+        # Server notices from the stream (e.g. PumpPortal refusals) by text (BUG-112).
+        self._stream_server_messages: dict[str, int] = {}
+        self._trade_feed_refused_at: float | None = None
 
         # Subsystems & Engines
         self.position_manager = PositionManager(self.config)
@@ -967,9 +974,13 @@ class TradingBot:
             self.daily_equity_tracker.circuit_breaker_engaged = bool(
                 snapshot.get("circuit_breaker_engaged", False)
             )
+            # Before BUG-114 the lockout field held the lock time.
             self.daily_equity_tracker.locked_at_timestamp = snapshot.get(
-                "circuit_breaker_lockout_until"
+                "circuit_breaker_locked_at",
+                snapshot.get("circuit_breaker_lockout_until"),
             )
+        # A lock restored from disk was already counted when it tripped (BUG-114).
+        self._counted_breaker_lock_at = self.daily_equity_tracker.locked_at_timestamp
 
         metrics = snapshot.get("metrics", {})
         if isinstance(metrics, dict):
@@ -1003,6 +1014,13 @@ class TradingBot:
             current, next_state, holds_positions=bool(self.active_positions)
         )
         if current == next_state:
+            return
+        if (
+            next_state in (TradingBotState.MONITORING, TradingBotState.HOLDING)
+            and current in (TradingBotState.BUYING, TradingBotState.SELLING)
+            and self._inflight_count() > 1
+        ):
+            # Another buy/sell is still running; it settles the state (BUG-111).
             return
         if current == TradingBotState.SHUTDOWN and next_state != TradingBotState.IDLE:
             # In-flight work finishing after shutdown must not revive the bot (BUG-91).
@@ -1564,7 +1582,11 @@ class TradingBot:
                     )
 
                 self._risk_killed = True
-                self._record_metric("circuit_breaker_trips")
+                # Count a trip once per lock, not on every check while locked (BUG-114).
+                locked_at = self.daily_equity_tracker.locked_at_timestamp
+                if locked_at != getattr(self, "_counted_breaker_lock_at", None):
+                    self._counted_breaker_lock_at = locked_at
+                    self._record_metric("circuit_breaker_trips")
                 if self.state in {
                     TradingBotState.BUYING,
                     TradingBotState.HOLDING,
@@ -1702,6 +1724,8 @@ class TradingBot:
             "operator_pause": self._operator_pause.to_dict(),
             "daily_summary": self._daily_summary.to_dict(),
             "degraded_conditions": self._degradation.degraded_for(time.monotonic()),
+            "trade_feed_available": self.trade_feed_available(),
+            "stream_server_messages": dict(self._stream_server_messages),
             "profit_sweep": self._sweep_state.to_dict(),
             # How often the holder lookup found data while screening (BUG-107).
             "holder_lookup_stats": self._holder_lookup_stats(),
@@ -1729,7 +1753,10 @@ class TradingBot:
                 else str(self.daily_equity_tracker.circuit_breaker_action)
             ),
             "circuit_breaker_engaged": self.daily_equity_tracker.circuit_breaker_engaged,
-            "circuit_breaker_lockout_until": self.daily_equity_tracker.locked_at_timestamp,
+            "circuit_breaker_locked_at": self.daily_equity_tracker.locked_at_timestamp,
+            "circuit_breaker_lockout_until": self.daily_equity_tracker.lockout_until(
+                float(getattr(self.config, "emergency_hard_lock_hours", 0.0) or 0.0)
+            ),
             "screening_cache_size": len(getattr(self.screening_cache, "_cache", {})),
             "enable_anti_rug_filters": self.config.enable_anti_rug_filters,
             "enable_momentum_signals": self.config.enable_momentum_signals,
@@ -1821,6 +1848,13 @@ class TradingBot:
             return False
         if not self._health_ok_for_trading():
             return False
+        if (
+            getattr(self.config, "require_trade_feed", True) is True
+            and not self.trade_feed_available()
+        ):
+            # Never open a position the bot cannot watch (BUG-112).
+            self._last_event = "buy blocked: token-trade feed refused"
+            return False
         if self._is_recently_seen(mint):
             return False
         if self._is_closed_reentry(mint):
@@ -1868,7 +1902,65 @@ class TradingBot:
             pass
         return None
 
+    @contextlib.contextmanager
+    def _track_operation(self, kind: str) -> Iterator[None]:
+        """Counts an in-flight buy or sell; re-settles the state when it ends (BUG-111)."""
+        counts = self._inflight_operations_map()
+        counts[kind] = counts.get(kind, 0) + 1
+        try:
+            yield
+        finally:
+            counts[kind] = max(0, counts.get(kind, 0) - 1)
+            self._settle_after_operation()
+
+    def _inflight_count(self) -> int:
+        return sum(self._inflight_operations_map().values())
+
+    def _inflight_operations_map(self) -> dict[str, int]:
+        counts: dict[str, int] | None = getattr(self, "_inflight_operations", None)
+        if counts is None:
+            counts = {}
+            self._inflight_operations = counts
+        return counts
+
+    def _settle_after_operation(self) -> None:
+        """Leave BUYING/SELLING only once no buy or sell is in flight (BUG-111)."""
+        if self.state not in (TradingBotState.BUYING, TradingBotState.SELLING):
+            return
+        counts = self._inflight_operations_map()
+        if counts.get("sell", 0):
+            target = TradingBotState.SELLING
+        elif counts.get("buy", 0):
+            target = TradingBotState.BUYING
+        else:
+            target = (
+                TradingBotState.HOLDING
+                if self.active_positions
+                else TradingBotState.MONITORING
+            )
+        if target != self.state:
+            self._transition_to(target, reason="operation_settled")
+
     async def _buy_token(
+        self,
+        mint: str,
+        market_cap_sol: float,
+        token_name: str | None = None,
+        screening_verdict: TokenScreeningVerdict | None = None,
+        reason: str | None = None,
+        buy_amount_sol: float | None = None,
+    ) -> bool:
+        with self._track_operation("buy"):
+            return await self._buy_token_impl(
+                mint,
+                market_cap_sol,
+                token_name=token_name,
+                screening_verdict=screening_verdict,
+                reason=reason,
+                buy_amount_sol=buy_amount_sol,
+            )
+
+    async def _buy_token_impl(
         self,
         mint: str,
         market_cap_sol: float,
@@ -2043,6 +2135,23 @@ class TradingBot:
         return True
 
     async def _buy_raydium_token(
+        self,
+        mint: str,
+        pool_keys: RaydiumPoolKeys,
+        token_name: str | None = None,
+        screening_verdict: TokenScreeningVerdict | None = None,
+        reason: str | None = "raydium_graduation_snipe",
+    ) -> bool:
+        with self._track_operation("buy"):
+            return await self._buy_raydium_token_impl(
+                mint,
+                pool_keys,
+                token_name=token_name,
+                screening_verdict=screening_verdict,
+                reason=reason,
+            )
+
+    async def _buy_raydium_token_impl(
         self,
         mint: str,
         pool_keys: RaydiumPoolKeys,
@@ -2391,15 +2500,16 @@ class TradingBot:
     ) -> bool:
         """Sell under a per-mint lock so concurrent exits cannot overlap (BUG-41)."""
         async with self._mint_lock(mint):
-            return await self._sell_token_locked(
-                mint,
-                sell_amount_tokens=sell_amount_tokens,
-                sell_fraction=sell_fraction,
-                reason=reason,
-                target_tier=target_tier,
-                slippage_bps=slippage_bps,
-                retry_count=retry_count,
-            )
+            with self._track_operation("sell"):
+                return await self._sell_token_locked(
+                    mint,
+                    sell_amount_tokens=sell_amount_tokens,
+                    sell_fraction=sell_fraction,
+                    reason=reason,
+                    target_tier=target_tier,
+                    slippage_bps=slippage_bps,
+                    retry_count=retry_count,
+                )
 
     async def _sell_token_locked(
         self,
@@ -3748,7 +3858,54 @@ class TradingBot:
                         await self._subscribe_to_token_trades(websocket, mint)
                     return
 
+    def _handle_server_message(self, text: str) -> None:
+        """Logs, counts and (for subscription refusals) alerts a stream notice.
+
+        PumpPortal answers a refused ``subscribeTokenTrade`` with a mint-less
+        ``message``; dropping it left held positions without trade data (BUG-112).
+        """
+        text = redact_text(str(text)).strip()[:300]
+        counts = self._stream_server_messages
+        first = text not in counts
+        counts[text] = counts.get(text, 0) + 1
+        if len(counts) > 50:
+            counts.pop(next(iter(counts)))
+        lowered = text.lower()
+        refused = "subscribetokentrade" in lowered and (
+            "api key" in lowered or "only available" in lowered
+        )
+        if refused:
+            already = self._trade_feed_refused_at is not None
+            if not already:
+                self._trade_feed_refused_at = time.monotonic()
+            self._last_status = "degraded: token-trade subscription refused"
+            if not already:
+                notice = (
+                    "ALERT stream refused token-trade subscription: held positions "
+                    "get no trade data. Add a funded PumpPortal API key to "
+                    f"PUMPFUN_STREAM_URL. Server said: {text}"
+                )
+                self._log(notice, level=logging.ERROR)
+                self._record_event(notice, alert=True)
+            return
+        self._log(
+            f"Stream server message: {text}",
+            level=logging.INFO if first else logging.DEBUG,
+        )
+
+    def trade_feed_available(self) -> bool:
+        """False while the stream refuses token-trade subscriptions (BUG-112)."""
+        return getattr(self, "_trade_feed_refused_at", None) is None
+
     async def _handle_message(self, data: Any, websocket: Any = None) -> None:
+        if (
+            isinstance(data, dict)
+            and isinstance(data.get("message"), str)
+            and not data.get("mint")
+            and not data.get("txType")
+        ):
+            self._handle_server_message(data["message"])
+            return
         if isinstance(data, dict):
             # Check for Raydium pool keys message
             if "amm_id" in data and "coin_mint" in data:
@@ -3830,6 +3987,8 @@ class TradingBot:
                         self._last_message_at = time.monotonic()
                         self._circuit_breaker_tripped = False
                         self._stream_consecutive_failures = 0
+                        # A new connection may carry a new API key (BUG-112).
+                        self._trade_feed_refused_at = None
                         self._last_status = "monitoring active tokens"
                         self._health_ok = True
 
@@ -3955,13 +4114,38 @@ class TradingBot:
                 except Exception:
                     pass
 
+    def _position_refresh_interval(self) -> float:
+        try:
+            return max(0.0, float(getattr(self.config, "position_refresh_seconds", 0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    async def _run_position_refresh_loop(self) -> None:
+        """Re-prices held positions from their curves every few seconds (BUG-112).
+
+        Trade messages are the fast path; this loop bounds how stale an exit
+        decision can get when they are missing or refused.
+        """
+        interval = self._position_refresh_interval()
+        if interval <= 0:
+            return
+        while not self._stop_requested:
+            try:
+                await asyncio.sleep(interval)
+                await self._refresh_active_positions_market_caps()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._log(f"Position refresh exception: {exc}", level=logging.DEBUG)
+
     async def _run_health_loop(self) -> None:
         """Periodic background task evaluating health, equity, and reconciliations."""
         while not self._stop_requested:
             try:
                 await asyncio.sleep(5)
                 await self._update_health_state()
-                await self._refresh_active_positions_market_caps()
+                if self._position_refresh_interval() <= 0:
+                    await self._refresh_active_positions_market_caps()
                 await self._process_exit_retry_queue()
                 await self._check_and_enforce_circuit_breaker()
                 self._prune_seen_mints()
@@ -3985,7 +4169,11 @@ class TradingBot:
             "stream": (
                 stream_down,
                 f"{self._last_status}; no message for {int(silent_for)}s",
-            )
+            ),
+            "trade_feed": (
+                not self.trade_feed_available(),
+                "token-trade subscription refused (PumpPortal API key needed)",
+            ),
         }
         if self.rpc_pool is not None:
             telemetry = self.rpc_pool.get_telemetry()
@@ -4238,6 +4426,7 @@ class TradingBot:
         await self._reconcile_positions_on_startup()
 
         health_task = asyncio.create_task(self._run_health_loop())
+        refresh_task = asyncio.create_task(self._run_position_refresh_loop())
         render_task = None
         if self.verbose and not self.headless:
             render_task = asyncio.create_task(self._render_loop())
@@ -4327,6 +4516,7 @@ class TradingBot:
             self._log(f"Stream error in start loop: {exc}", level=logging.WARNING)
         finally:
             health_task.cancel()
+            refresh_task.cancel()
             if render_task:
                 render_task.cancel()
             if self.geyser_client and hasattr(self.geyser_client, "stop"):

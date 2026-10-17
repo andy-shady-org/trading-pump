@@ -102,6 +102,26 @@ class DailyEquityTracker:
             return True
         return False
 
+    def lockout_until(self, emergency_hard_lock_hours: float = 0.0) -> float | None:
+        """Epoch time the active lock is released, ``None`` when unlocked (BUG-114).
+
+        A daily lock ends at the next 00:00 UTC rollover, or earlier when the
+        hard-lock duration elapses first.
+        """
+        if not self.circuit_breaker_engaged or self.locked_at_timestamp is None:
+            return None
+        locked_at = float(self.locked_at_timestamp)
+        locked_dt = datetime.datetime.fromtimestamp(locked_at, tz=datetime.timezone.utc)
+        next_midnight = datetime.datetime.combine(
+            locked_dt.date() + datetime.timedelta(days=1),
+            datetime.time(0, 0),
+            tzinfo=datetime.timezone.utc,
+        ).timestamp()
+        hours = max(0.0, float(emergency_hard_lock_hours or 0.0))
+        if hours > 0:
+            return min(next_midnight, locked_at + hours * 3600.0)
+        return next_midnight
+
     def update_valuation(
         self,
         current_wallet_balance_sol: float,

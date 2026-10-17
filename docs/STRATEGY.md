@@ -321,6 +321,8 @@ Microcap liquidity pools are susceptible to malicious exploits. Every candidate 
 
 Paper mode (`--paper-trade` / `dry_run`) can be made to pay for the latency of a real buy: `paper_entry_delay_seconds` waits and re-reads the curve before the fill, and `paper_entry_slippage_bps` worsens the fill (fewer tokens, higher entry market cap). Both default to 0. For Stage 0 use roughly the screening p50 plus landing time, e.g. `1.5` s and `300` bps, so paper profit is a conservative estimate.
 
+Held positions are re-priced from their bonding curve every `position_refresh_seconds` (default `1.0`; `0` falls back to the 5 s health loop), in their own task, so exits don't depend on trade messages arriving (BUG-112). `require_trade_feed` (default `true`) refuses new buys while the stream refuses token-trade subscriptions, so the bot never opens a position it can't watch. The creator used by the serial-launcher and rug-history checks comes from the create event's signer; a missing creator or the system-program placeholder counts as missing dev data (+30 risk points) rather than a clean pass (BUG-113).
+
 * **`enable_anti_rug_filters`**: Master toggle for heuristic pre-trade screening.
 * **`max_creator_initial_holding_pct`**: Maximum percentage of curve supply creator can hold at inception (e.g. `0.08` = 8%).
 * **`max_gini_coefficient`**: Maximum acceptable Gini concentration coefficient (e.g. `0.85`).

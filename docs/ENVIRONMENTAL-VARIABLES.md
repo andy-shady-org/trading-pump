@@ -153,7 +153,8 @@ The table below summarizes every supported environment variable, its recognized 
 * **Required:** Required if `PUMPFUN_GEYSER_ENDPOINT` is omitted
 * **Default:** `wss://pumpportal.fun/api/data`
 * **Description:** WebSocket streaming endpoint (e.g. PumpPortal public trade feed) used for event-driven market tracking when Geyser gRPC is unavailable.
-* **Example:** `PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"`
+* **Example:** `PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data?api-key=<key>"`
+* **PumpPortal API key (required for trading):** without `?api-key=`, PumpPortal serves new-token events but refuses `subscribeTokenTrade`, so held positions get no trade data (BUG-112). The key's linked wallet must hold at least 0.02 SOL; PumpPortal meters trade messages against it. The bot logs and alerts the refusal, shows `Trade feed: REFUSED` on the dashboard, and with `require_trade_feed` (default `true`) blocks new buys until a reconnect is accepted. The key is masked in every log, status file and alert (`ops/redact.py`).
 
 #### `PUMPFUN_STREAM_MAX_RETRIES`
 * **Fallback Alias:** `PUMPFUN_WS_MAX_RETRIES`

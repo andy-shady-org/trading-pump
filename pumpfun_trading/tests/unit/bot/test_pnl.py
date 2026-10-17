@@ -127,8 +127,45 @@ def test_summarize_pnl_totals_win_rate_and_cost_share() -> None:
     assert totals["win_rate"] == pytest.approx(0.5)
     assert totals["expectancy_sol"] == pytest.approx((0.003 - 0.0044) / 2)
     assert totals["cost_share_of_gross"] == pytest.approx(0.0044 / 0.003)
-    assert set(summary["groups"]) == {"entry", "trailing_stop_hit", "stop_loss_hit"}
-    assert summary["groups"]["stop_loss_hit"]["net_pnl_sol"] == pytest.approx(-0.0021)
+    # Buy legs are booked under the position's exit reason, not "entry" (BUG-115).
+    assert set(summary["groups"]) == {"trailing_stop_hit", "stop_loss_hit"}
+    assert summary["groups"]["stop_loss_hit"]["net_pnl_sol"] == pytest.approx(
+        -0.0021 + trade_net_pnl(_buy("p2"))
+    )
+
+
+@pytest.mark.regression("BUG-115")
+def test_summarize_pnl_reason_groups_sum_to_closed_net() -> None:
+    trades = [
+        _buy("p1"),
+        _sell("p1", 0.0095, reason="stagnant_curve_timeout"),
+        _buy("p2"),
+        _sell("p2", 0.0094, reason="stagnant_curve_timeout"),
+        _buy("p3"),
+        _sell("p3", 0.012, reason="trailing_stop_hit"),
+        {**_buy("p4"), "reason": "momentum_entry"},
+    ]
+
+    summary = summarize_pnl(trades, group_by="reason")
+    groups = summary["groups"]
+    closed = summarize_pnl(trades[:6])["totals"]
+
+    stagnant = groups["stagnant_curve_timeout"]
+    assert stagnant["buys"] == 2 and stagnant["sells"] == 2
+    assert stagnant["positions_closed"] == 2
+    # The losing stagnant exits no longer look profitable once their buys count.
+    assert stagnant["net_pnl_sol"] == pytest.approx(stagnant["closed_net_pnl_sol"])
+    assert stagnant["net_pnl_sol"] < 0
+    closed_net = sum(
+        g["closed_net_pnl_sol"] for key, g in groups.items() if key != "momentum_entry"
+    )
+    assert closed_net == pytest.approx(closed["net_pnl_sol"])
+    # A still-open position's buy stays under its entry reason.
+    assert groups["momentum_entry"]["buys"] == 1
+    assert groups["momentum_entry"]["positions_closed"] == 0
+    assert sum(g["net_pnl_sol"] for g in groups.values()) == pytest.approx(
+        summary["totals"]["net_pnl_sol"]
+    )
 
 
 @pytest.mark.parametrize(

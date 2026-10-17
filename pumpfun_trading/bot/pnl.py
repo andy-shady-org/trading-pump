@@ -310,8 +310,10 @@ def summarize_pnl(
 ) -> dict[str, Any]:
     """Net PnL summary: totals plus optional per-day / per-reason groups.
 
-    ``reason`` groups attribute buys to their entry reason and sells to their
-    exit reason, so per-exit-reason rows show what each exit rule earns.
+    ``reason`` groups book a position's buy legs (entry costs, rent) under the
+    exit reason that first sold it, so each row's net is the net of the
+    positions that exit rule handled (BUG-115). Buys of positions that have
+    not exited yet stay under their entry reason.
 
     Win rate and expectancy are per closed position (BUG-105). In groups, a
     position counts once, in the group of its first exit: the exit rule that
@@ -323,6 +325,8 @@ def summarize_pnl(
     # Per open position: net booked so far and the group of its first exit.
     open_net: dict[str, float] = {}
     open_group: dict[str, str] = {}
+    # reason grouping: buy legs waiting for the position's first exit (BUG-115).
+    pending_buys: dict[str, list[dict[str, Any]]] = {}
     count = 0
     for trade in trades:
         count += 1
@@ -332,22 +336,42 @@ def summarize_pnl(
         if not group_by:
             continue
         group = _group_key(trade, group_by)
-        groups.setdefault(group, PnlTotals()).add(trade, track_positions=False)
-        if not (is_buy(trade) or is_sell(trade) or is_round_trip(trade)):
+        is_position_trade = is_buy(trade) or is_sell(trade) or is_round_trip(trade)
+        if not is_position_trade:
+            groups.setdefault(group, PnlTotals()).add(trade, track_positions=False)
             continue
         key = position_key(trade)
         net = open_net.pop(key, 0.0) + trade_net_pnl(trade)
         if group_by == "reason":
-            if not is_buy(trade):
+            if is_buy(trade) and key not in open_group:
+                pending_buys.setdefault(key, []).append(trade)
+            else:
+                first_exit = groups.setdefault(
+                    open_group.setdefault(key, group), PnlTotals()
+                )
+                for buy in pending_buys.pop(key, []):
+                    first_exit.add(buy, track_positions=False)
+                own = (
+                    first_exit
+                    if is_buy(trade)
+                    else groups.setdefault(group, PnlTotals())
+                )
+                own.add(trade, track_positions=False)
+        else:
+            groups.setdefault(group, PnlTotals()).add(trade, track_positions=False)
+            if group_by != "day":
                 open_group.setdefault(key, group)
-        elif group_by != "day":
-            open_group.setdefault(key, group)
         if closes_position(trade):
             target = group if group_by == "day" else open_group.get(key, group)
             open_group.pop(key, None)
             groups.setdefault(target, PnlTotals()).add_position(net)
         else:
             open_net[key] = net
+    for buys in pending_buys.values():
+        for buy in buys:
+            groups.setdefault(_group_key(buy, "reason"), PnlTotals()).add(
+                buy, track_positions=False
+            )
     summary: dict[str, Any] = {
         "trades": count,
         "totals": totals.to_dict(),

@@ -64,6 +64,51 @@ def merge_token_data(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str,
     return merged
 
 
+# Placeholder creators some API records carry for new mints (BUG-113).
+_PLACEHOLDER_CREATORS = frozenset({"11111111111111111111111111111111"})
+# Stream keys first: PumpPortal's create event names the creator as the signer.
+_STREAM_CREATOR_KEYS = ("creator", "traderPublicKey", "user")
+_RECORD_CREATOR_KEYS = (
+    "creator",
+    "user",
+    "creatorAddress",
+    "dev_wallet",
+    "traderPublicKey",
+)
+
+
+def _valid_creator(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or value in _PLACEHOLDER_CREATORS:
+        return None
+    return value
+
+
+def resolve_creator(
+    stream_data: dict[str, Any] | None, coin_data: dict[str, Any]
+) -> str | None:
+    """Creator wallet, preferring the stream's signer over the API record.
+
+    The system program and empty values are ignored, so an unresolved creator
+    stays ``None`` and the screen applies its missing-data penalty (BUG-113).
+    """
+    stream = stream_data or {}
+    tx_type = str(stream.get("txType") or "create").lower()
+    # On a buy/sell (copy trading) the signer is the trader, not the creator.
+    stream_keys = _STREAM_CREATOR_KEYS if tx_type == "create" else ("creator",)
+    for source, keys in (
+        (stream, stream_keys),
+        (coin_data, _RECORD_CREATOR_KEYS),
+    ):
+        for key in keys:
+            creator = _valid_creator(source.get(key))
+            if creator:
+                return creator
+    return None
+
+
 def creator_initial_buy_pct(
     coin_data: dict[str, Any], *, total_supply_ui: float = PUMP_TOTAL_SUPPLY_UI
 ) -> float | None:
@@ -224,14 +269,8 @@ class TokenEnricher:
         metadata = TokenMetadata.from_dict(coin_data) if coin_data else None
 
         dev_profile = None
-        creator = (
-            coin_data.get("creator")
-            or coin_data.get("user")
-            or coin_data.get("creatorAddress")
-            or coin_data.get("dev_wallet")
-            or coin_data.get("traderPublicKey")
-        )
-        if creator and isinstance(creator, str) and self.api:
+        creator = resolve_creator(token_data, coin_data)
+        if creator and self.api:
             try:
                 creator_coins = await asyncio.wait_for(
                     self.api.get_creator_coins(creator, limit=20),
@@ -254,7 +293,7 @@ class TokenEnricher:
             except Exception as exc:
                 logger.debug("Creator profile query for %s failed: %s", creator, exc)
                 dev_profile = DevWalletProfile(creator_address=str(creator))
-        elif creator and isinstance(creator, str):
+        elif creator:
             dev_profile = DevWalletProfile(creator_address=str(creator))
 
         bonding_curve_pda = None

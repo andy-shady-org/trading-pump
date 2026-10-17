@@ -28,6 +28,8 @@ VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = {
         TradingBotState.SHUTDOWN,
     },
     TradingBotState.BUYING: {
+        # A sell can start while a buy waits out its paper entry delay (BUG-111).
+        TradingBotState.SELLING,
         TradingBotState.HOLDING,
         TradingBotState.MONITORING,
         TradingBotState.SHUTDOWN,
@@ -40,6 +42,7 @@ VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = {
         TradingBotState.SHUTDOWN,
     },
     TradingBotState.SELLING: {
+        TradingBotState.BUYING,
         TradingBotState.MONITORING,
         TradingBotState.HOLDING,
         TradingBotState.SHUTDOWN,

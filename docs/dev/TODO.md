@@ -727,14 +727,15 @@ The bot can trade live, but there is no evidence yet that it is profitable after
     - [x] Screening data in the replay capture: one `event: "screening"` record per screened token (socials, holders, top-5 / Gini, creator history, reasons, latency); replay skips these records
   - [x] Configure an alert provider and send a test alert (Stage 0 criterion) *(Slack; test alert and "bot started" received)*
   - [ ] Then re-tag, restart Stage 0 with an empty `data/`, and re-run the parity check on the new capture *(re-tagged `v0.2.1` and restarted 2026-10-17; parity check due at the first full-day checkpoint)*
-- [ ] Fix BUG-111 (Low, [`BUGS.md` §14](BUGS.md#14-stage-0-pilot-on-v021-2026-10-17)) after this Stage 0 run, not during it
+- [x] Fix BUG-111 (Low, [`BUGS.md` §14](BUGS.md#14-stage-0-pilot-on-v021-2026-10-17)) after this Stage 0 run, not during it *(branch `fix/stage0-bugs-111-115`)*
 - [ ] Adjustments before the next Stage 0 (v0.2.1 close-out, [`BUGS.md` §15](BUGS.md#15-stage-0-close-out-on-v021-2026-10-17)):
-  - [ ] **BUG-112 (High):** funded PumpPortal API key in `PUMPFUN_STREAM_URL`; log, count and alert refused subscriptions; re-price held curves every `position_refresh_seconds` (1 s) in their own task
-  - [ ] **BUG-113:** resolve the creator from `traderPublicKey` when the API returns the system program; penalise an unknown creator
+  - [x] **BUG-112 (High), code:** log, count and alert refused subscriptions, block buys while refused (`require_trade_feed`), dashboard `Trade feed` row; re-price held curves every `position_refresh_seconds` (1 s) in their own task *(branch `fix/stage0-bugs-111-115`)*
+  - [ ] **BUG-112, operator:** create a PumpPortal API key, fund its wallet with ≥ 0.02 SOL and add `?api-key=…` to `PUMPFUN_STREAM_URL` in `runtime/.envrc`; check `Trade feed: ok` after the first buy
+  - [x] **BUG-113:** resolve the creator from `traderPublicKey` when the API returns the system program; penalise an unknown creator
   - [ ] **Entry confirmation (new):** stop buying at the create event. Put passed tokens on a watch list, subscribe to their trades and buy only if, within a window (for example 20 s), at least N distinct non-creator wallets buy, net buy inflow reaches X SOL and the market cap is above the launch level. Window, N and X are config keys, chosen from a capture with trade data, not guessed
   - [ ] Paper cost model: lower `paper_entry_slippage_bps` from 300 to about 100, because `paper_entry_delay_seconds` already re-reads the curve; keep the delay
   - [ ] Keep `max_daily_drawdown_pct` 0.10, the screen and the exit stack unchanged in `canary.json`; do not tune exits until a capture with market trades exists
-  - [ ] BUG-114 / BUG-115 (Low, telemetry and reporting) and BUG-111
+  - [x] BUG-114 / BUG-115 (Low, telemetry and reporting) and BUG-111
   - [ ] Then a tagged build, a 24 h **capture run** (paper, not counted as Stage 0, breaker raised in a separate `configs/capture.json`) to record trade flow, tune the entry confirmation by replay, freeze `canary.json`, and only then a new 72 h Stage 0
 - [ ] Stage 1: live canary on a dedicated hot wallet with the canary config (0.01 SOL buys, ≤ 2 positions, 10% daily drawdown; arbitrage, back-running, pre-graduation harvesting, Raydium sniping and copy trading off)
 - [ ] Daily wallet reconciliation (on-chain Δ SOL vs audit realized PnL) logged for every canary day ([`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-reconciliation))

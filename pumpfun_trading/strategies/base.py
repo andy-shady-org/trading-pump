@@ -70,6 +70,12 @@ class TradingBotConfig:
     # re-read the curve, then worsen the fill by this many bps.
     paper_entry_delay_seconds: float = 0.0
     paper_entry_slippage_bps: int = 0
+    # Re-price held positions from the curve this often, in their own task;
+    # 0 falls back to the 5 s health loop (BUG-112).
+    position_refresh_seconds: float = 1.0
+    # Refuse new buys while the stream refuses token-trade subscriptions, so no
+    # position is held without trade data (BUG-112).
+    require_trade_feed: bool = True
     screening_cache_ttl_seconds: int = 60
     enable_momentum_signals: bool = True
     momentum_window_seconds: int = 30
@@ -230,6 +236,8 @@ class TradingBotConfig:
             "allow_mint_reentry": self.allow_mint_reentry,
             "paper_entry_delay_seconds": self.paper_entry_delay_seconds,
             "paper_entry_slippage_bps": self.paper_entry_slippage_bps,
+            "position_refresh_seconds": self.position_refresh_seconds,
+            "require_trade_feed": self.require_trade_feed,
             "screening_cache_ttl_seconds": self.screening_cache_ttl_seconds,
             "enable_momentum_signals": self.enable_momentum_signals,
             "momentum_window_seconds": self.momentum_window_seconds,
