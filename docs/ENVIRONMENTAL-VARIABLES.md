@@ -68,6 +68,7 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_RECONCILE_STATUS_PATH`](#pumpfun_reconcile_status_path) | — | String (Path) | Optional | `reconcile_status.json` next to the audit trail | Persistence / Forensic |
 | [`PUMPFUN_RECORD_REPLAY`](#pumpfun_record_replay) | — | Boolean / Path | Optional | `false` | Replay Simulation |
 | [`PUMPFUN_REPLAY_LOG_PATH`](#pumpfun_replay_log_path) | — | String (Path) | Optional | `None` | Replay Simulation |
+| [`PUMPFUN_BOT_LOG_PATH`](#pumpfun_bot_log_path) | — | String (Path) | Optional | `bot.log` (config `log_file`) | Log Retention |
 | [`PUMPFUN_LOG_MAX_BYTES`](#pumpfun_log_max_bytes) | — | Integer (Bytes) | Optional | `10485760` (10 MB) | Log Retention |
 | [`PUMPFUN_LOG_BACKUP_COUNT`](#pumpfun_log_backup_count) | — | Integer | Optional | `5` | Log Retention |
 | [`PUMPFUN_LOG_ROTATION_TYPE`](#pumpfun_log_rotation_type) | — | String | Optional | `size` | Log Retention |
@@ -388,6 +389,14 @@ The table below summarizes every supported environment variable, its recognized 
 ---
 
 ### 3.9 Automated Retention, Rollover & Multi-Sink Compression (FEAT-22)
+
+#### `PUMPFUN_BOT_LOG_PATH`
+* **Fallback Alias:** None
+* **Type:** String (File Path), or `none` / `off`
+* **Required:** Optional
+* **Default:** the config's `log_file` (`bot.log`, relative to the working directory)
+* **Description:** Destination of the primary application log (`bot.log`) written by `pumpbot`. It wins over `log_file` in the JSON config (whose default is always `bot.log`); only an explicit `log_file=` argument in code wins over it. Missing directories are created, and the file's directory is added to the retention sweep. `none` or `off` disables the file log; an empty value is ignored.
+* **Example:** `PUMPFUN_BOT_LOG_PATH="data/bot.log"`
 
 #### `PUMPFUN_LOG_MAX_BYTES`
 * **Fallback Alias:** None
@@ -793,6 +802,7 @@ PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS=true
 PUMPFUN_EVENT_LOG_PATH="runtime/events.jsonl"
 PUMPFUN_STATUS_PATH="runtime/bot_status.json"
 PUMPFUN_AUDIT_LOG_PATH="runtime/audit_trail.jsonl"
+PUMPFUN_BOT_LOG_PATH="runtime/bot.log"
 PUMPFUN_LOG_MAX_BYTES=10485760
 PUMPFUN_LOG_BACKUP_COUNT=5
 PUMPFUN_LOG_COMPRESS=true

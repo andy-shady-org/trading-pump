@@ -311,7 +311,8 @@ async def test_concurrent_mint_events_do_not_exceed_max_positions():
         verbose=False,
         dry_run=True,
         config=resolve_strategy_config(
-            "balanced", overrides={"max_active_positions": 1}
+            "balanced",
+            overrides={"max_active_positions": 1, "require_pump_mint_suffix": False},
         ),
     )
 

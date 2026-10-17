@@ -304,3 +304,28 @@ def test_require_holder_data_is_off_by_default_and_overridable_from_json() -> No
 
     assert config.require_holder_data is True
     assert config.to_dict()["require_holder_data"] is True
+
+
+@pytest.mark.regression("BUG-108")
+def test_entry_hardening_keys_default_and_override_from_json() -> None:
+    default = resolve_strategy_config("conservative")
+    assert default.require_pump_mint_suffix is True
+    assert default.allow_mint_reentry is False
+    assert default.paper_entry_delay_seconds == 0.0
+    assert default.paper_entry_slippage_bps == 0
+
+    config = TradingBotConfig.from_dict(
+        {
+            "strategy_preset": "conservative",
+            "require_pump_mint_suffix": False,
+            "allow_mint_reentry": True,
+            "paper_entry_delay_seconds": -1.0,
+            "paper_entry_slippage_bps": 9_000,
+        }
+    )
+
+    assert config.require_pump_mint_suffix is False
+    assert config.allow_mint_reentry is True
+    assert config.paper_entry_delay_seconds == 0.0
+    assert config.paper_entry_slippage_bps == 5_000
+    assert config.to_dict()["paper_entry_slippage_bps"] == 5_000

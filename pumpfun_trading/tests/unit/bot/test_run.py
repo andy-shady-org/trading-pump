@@ -50,6 +50,7 @@ from pumpfun_trading.streams.geyser import (
 from pumpfun_trading.tests.support.constants import (
     SAMPLE_MINT,
     SAMPLE_PRIVATE_KEY,
+    SAMPLE_PUMP_MINT,
     WSOL_MINT,
 )
 from pumpfun_trading.tests.support.factories import (
@@ -1213,6 +1214,8 @@ def base_bot(tmp_path):
         min_market_cap_sol=10.0,
         min_balance_sol=0.1,
         enable_tiered_take_profit=False,
+        # The sample mints are not ``…pump`` vanity mints (BUG-108).
+        require_pump_mint_suffix=False,
     )
     status_file = tmp_path / "bot_status.json"
     audit_file = tmp_path / "audit.jsonl"
@@ -2156,6 +2159,7 @@ async def test_bot_run_all_missing_branches(tmp_path):
         buy_amount_sol=0.05,
         min_market_cap_sol=10.0,
         max_active_positions=2,
+        require_pump_mint_suffix=False,
     )
     bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
@@ -4755,7 +4759,7 @@ async def test_handle_new_token_event_market_cap_from_reserves_not_inflated(
     bot._should_buy = capture  # type: ignore[method-assign, assignment]
     await bot._handle_new_token_event(
         {
-            "mint": SAMPLE_MINT,
+            "mint": SAMPLE_PUMP_MINT,
             "vSolInBondingCurve": v_sol,
             "vTokensInBondingCurve": v_tokens,
         }
@@ -4833,4 +4837,206 @@ async def test_refresh_ignores_non_standard_curve_and_keeps_stored_price(
     await bot._refresh_active_positions_market_caps()
 
     evaluate.assert_awaited_once_with(MINT, pytest.approx(28.0))
+    await bot.close()
+
+
+# --- BUG-108: only Pump.fun launches are screened or bought ------------------------
+
+
+@pytest.mark.regression("BUG-108")
+@pytest.mark.parametrize(
+    "payload, reason",
+    [
+        ({"mint": SAMPLE_PUMP_MINT, "pool": "bonk"}, "launched on 'bonk'"),
+        ({"mint": SAMPLE_MINT}, "mint does not end in 'pump'"),
+    ],
+)
+async def test_new_token_from_another_launchpad_is_never_screened(
+    tmp_path: Path, payload: dict[str, Any], reason: str
+) -> None:
+    bot = make_bot(tmp_path)
+    screen = AsyncMock()
+    bot._enrich_and_screen_token = screen  # type: ignore[method-assign]
+
+    await bot._handle_new_token_event({**payload, "marketCapSol": 30.0})
+
+    screen.assert_not_awaited()
+    assert bot._is_recently_seen(payload["mint"])
+    assert bot.get_status_snapshot()["non_pump_rejections"] == {reason: 1}
+    await bot.close()
+
+
+async def test_new_pump_token_is_screened(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    bot._should_buy = lambda *_a, **_k: True  # type: ignore[method-assign]
+    screen = AsyncMock(
+        return_value=TokenScreeningVerdict(
+            mint=SAMPLE_PUMP_MINT, passed=False, risk_score=90.0
+        )
+    )
+    bot._enrich_and_screen_token = screen  # type: ignore[method-assign]
+
+    await bot._handle_new_token_event(
+        {"mint": SAMPLE_PUMP_MINT, "pool": "pump", "marketCapSol": 30.0, "name": "T"}
+    )
+
+    screen.assert_awaited_once()
+    kwargs = screen.await_args_list[0].kwargs
+    assert kwargs["market_cap_sol"] == pytest.approx(30.0)
+    assert kwargs["token_name"] == "T"
+    await bot.close()
+
+
+# --- BUG-109: a closed mint is never bought again ---------------------------------
+
+
+@pytest.mark.regression("BUG-109")
+async def test_closed_mint_is_not_bought_again_after_seen_cache_expires(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 50.0) is True
+
+    bot._mark_traded(SAMPLE_PUMP_MINT)  # bought, then fully exited
+    bot._seen_mints.clear()  # the seen-mints TTL ran out
+
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 50.0) is False
+    await bot.close()
+
+
+async def test_mint_reentry_allowed_when_configured(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, allow_mint_reentry=True)
+    bot._mark_traded(SAMPLE_PUMP_MINT)
+
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 50.0) is True
+    await bot.close()
+
+
+async def test_open_position_is_not_a_closed_reentry(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    bot._mark_traded(SAMPLE_PUMP_MINT)
+    bot.active_positions = {SAMPLE_PUMP_MINT: {"mint": SAMPLE_PUMP_MINT}}
+
+    assert bot._is_closed_reentry(SAMPLE_PUMP_MINT) is False
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-109")
+async def test_paper_buy_marks_the_mint_traded(tmp_path: Path) -> None:
+    bot = _paper_bot(tmp_path)
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "virtual_sol_reserves": STANDARD_CURVE_RESERVES[0][0],
+            "virtual_token_reserves": 1_073_000_000_000_000,
+            "real_sol_reserves": STANDARD_CURVE_RESERVES[0][1],
+        }
+    )
+
+    assert await bot._buy_token(SAMPLE_PUMP_MINT, market_cap_sol=28.0) is True
+
+    assert SAMPLE_PUMP_MINT in bot._traded_mints
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-109")
+async def test_traded_mints_survive_a_restart(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    bot._mark_traded(SAMPLE_PUMP_MINT)
+    bot._write_status_snapshot()
+    await bot.close()
+
+    restarted = make_bot(tmp_path)
+
+    assert SAMPLE_PUMP_MINT in restarted._traded_mints
+    assert restarted._should_buy(SAMPLE_PUMP_MINT, 50.0) is False
+    await restarted.close()
+
+
+def test_old_snapshot_seeds_traded_mints_from_ledger_and_positions(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "status.json").write_text(
+        json.dumps(
+            {
+                "trade_ledger": [{"mint": "LedgerMint", "action": "buy"}, "bad"],
+                "active_positions": {"OpenMint": {"name": "Open"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bot = make_bot(tmp_path)
+
+    assert {"LedgerMint", "OpenMint"} <= set(bot._traded_mints)
+
+
+def test_traded_mints_are_capped_oldest_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pumpfun_trading.bot.run.TRADED_MINTS_LIMIT", 2)
+    bot = make_bot(tmp_path)
+
+    for mint in ("A", "B", "A", "C"):
+        bot._mark_traded(mint)
+
+    assert list(bot._traded_mints) == ["A", "C"]
+
+
+# --- Screening data in the replay capture ----------------------------------------
+
+
+async def test_screening_is_recorded_in_the_replay_capture(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    recorder = MagicMock()
+    bot.replay_recorder = recorder
+    verdict = TokenScreeningVerdict(
+        mint=SAMPLE_PUMP_MINT, passed=False, risk_score=60.0, reasons=["r"]
+    )
+    bot.enricher.enrich_and_screen = AsyncMock(return_value=verdict)  # type: ignore[method-assign]
+
+    await bot._enrich_and_screen_token(
+        SAMPLE_PUMP_MINT, {}, token_name="Tok", market_cap_sol=31.5
+    )
+
+    (record,) = [c.args[0] for c in recorder.record_snapshot.call_args_list]
+    assert record["event"] == "screening"
+    assert record["name"] == "Tok"
+    assert record["screening"]["market_cap_sol"] == 31.5
+    assert record["screening"]["reasons"] == ["r"]
+
+
+# --- PUMPFUN_BOT_LOG_PATH ----------------------------------------------------------
+
+
+async def test_bot_log_path_env_places_the_application_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "data" / "bot.log"
+    monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", str(target))
+    monkeypatch.chdir(tmp_path)
+
+    bot = make_bot(tmp_path)
+    bot.logger.info("hello from the bot")
+    for handler in bot.logger.handlers:
+        handler.flush()
+
+    assert "hello from the bot" in target.read_text(encoding="utf-8")
+    assert not (tmp_path / "bot.log").exists()
+    assert target.parent in {Path(m.target_directory) for m in bot.retention_managers}
+    await bot.close()
+
+
+async def test_bot_log_path_off_writes_no_application_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", "off")
+    monkeypatch.chdir(tmp_path)
+
+    bot = make_bot(tmp_path)
+    bot.logger.info("nowhere")
+
+    assert not any(
+        isinstance(handler, logging.FileHandler) for handler in bot.logger.handlers
+    )
+    assert not (tmp_path / "bot.log").exists()
     await bot.close()

@@ -129,6 +129,10 @@ class NonStandardCurveError(CurveStateUnavailableError):
     """The curve's reserves don't match the standard Pump.fun layout (BUG-104)."""
 
 
+class NotPumpFunCurveError(CurveStateUnavailableError):
+    """The mint has no bonding curve owned by the Pump.fun program (BUG-108)."""
+
+
 class PumpFunExecutionClient:
     """Build and broadcast real Pump.fun transactions using the program instruction pattern."""
 
@@ -1017,8 +1021,15 @@ class PumpFunExecutionClient:
         parsed = await self._request_rpc_json(payload)
         value = (parsed.get("result") or {}).get("value")
         if not value:
-            raise RuntimeError(
+            raise NotPumpFunCurveError(
                 f"Bonding curve account {bonding_curve_pda} not found on-chain"
+            )
+        owner = value.get("owner")
+        if owner is not None and str(owner) != PUMP_PROGRAM_ID:
+            # Anyone can fund a PDA address; only the program can own its data.
+            raise NotPumpFunCurveError(
+                f"Bonding curve account {bonding_curve_pda} of {mint} is owned by "
+                f"{owner}, not the Pump.fun program"
             )
         raw_data_b64 = value.get("data", [""])[0]
         raw_bytes = base64.b64decode(raw_data_b64)
@@ -1059,6 +1070,12 @@ class PumpFunExecutionClient:
             raise CurveStateUnavailableError(
                 f"Bonding curve fetch failed for {mint}: {exc}"
             ) from exc
+        owner = value.get("owner") if value else None
+        if owner is not None and str(owner) != PUMP_PROGRAM_ID:
+            raise NotPumpFunCurveError(
+                f"Bonding curve account {bonding_curve_pda} of {mint} is owned by "
+                f"{owner}, not the Pump.fun program"
+            )
         creator = str(curve_state.get("creator") or "")
         if not creator or creator == SYSTEM_PROGRAM_ID:
             raise CurveStateUnavailableError(

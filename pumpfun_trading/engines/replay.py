@@ -46,8 +46,9 @@ class PaperTradingEngine:
     the live bot bought (its recorded fills, so exits and sizing can be compared
     with the audit trail); ``signals`` buys on buy signals; ``auto`` (default)
     uses ``live_fills`` when the dataset contains recorded fills. The live
-    screener (social links, holders, creator history) is not replayed, because a
-    capture does not record the enrichment data.
+    screener (social links, holders, creator history) is not replayed. Captures
+    from v0.2.1 on hold ``event = "screening"`` records of what it saw (for
+    filter analysis); the replay loop skips them.
     """
 
     def __init__(
@@ -523,6 +524,9 @@ class PaperTradingEngine:
         )
 
         for index, snapshot in enumerate(snapshots):
+            if snapshot.get("event") == "screening":
+                # Screener inputs recorded for filter tuning, not market data.
+                continue
             mint = self._snapshot_mint(snapshot)
             name = self._snapshot_name(snapshot)
             price = max(0.0, self._snapshot_price(snapshot))

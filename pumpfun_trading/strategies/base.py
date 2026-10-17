@@ -61,6 +61,15 @@ class TradingBotConfig:
     require_holder_data: bool = False
     min_social_links_count: int = 1
     max_acceptable_risk_score: float = 50.0
+    # Only buy Pump.fun launches: mint vanity suffix, stream pool and an existing
+    # curve owned by the Pump.fun program (BUG-108).
+    require_pump_mint_suffix: bool = True
+    # Never buy a mint again once its position has been closed (BUG-109).
+    allow_mint_reentry: bool = False
+    # Paper fills pay for the screening/landing latency a live buy has: wait,
+    # re-read the curve, then worsen the fill by this many bps.
+    paper_entry_delay_seconds: float = 0.0
+    paper_entry_slippage_bps: int = 0
     screening_cache_ttl_seconds: int = 60
     enable_momentum_signals: bool = True
     momentum_window_seconds: int = 30
@@ -205,6 +214,10 @@ class TradingBotConfig:
             "require_holder_data": self.require_holder_data,
             "min_social_links_count": self.min_social_links_count,
             "max_acceptable_risk_score": self.max_acceptable_risk_score,
+            "require_pump_mint_suffix": self.require_pump_mint_suffix,
+            "allow_mint_reentry": self.allow_mint_reentry,
+            "paper_entry_delay_seconds": self.paper_entry_delay_seconds,
+            "paper_entry_slippage_bps": self.paper_entry_slippage_bps,
             "screening_cache_ttl_seconds": self.screening_cache_ttl_seconds,
             "enable_momentum_signals": self.enable_momentum_signals,
             "momentum_window_seconds": self.momentum_window_seconds,

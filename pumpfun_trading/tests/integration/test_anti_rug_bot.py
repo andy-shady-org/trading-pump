@@ -29,6 +29,8 @@ def bot(tmp_path):
         max_creator_initial_holding_pct=0.10,
         max_top5_holder_concentration_pct=0.15,
         max_acceptable_risk_score=40.0,
+        # The sample mints are not ``…pump`` vanity mints (BUG-108).
+        require_pump_mint_suffix=False,
         dry_run=True,
     )
     return TradingBot(

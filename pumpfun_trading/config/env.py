@@ -45,6 +45,29 @@ def get_env_list(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
     return tuple(part.strip() for part in value.split(",") if part.strip())
 
 
+BOT_LOG_PATH_ENV = "PUMPFUN_BOT_LOG_PATH"
+_LOG_FILE_DISABLED = {"none", "off", "false", "0", "-"}
+
+
+def resolve_bot_log_path(
+    explicit: str | None = None, configured: str | None = "bot.log"
+) -> str | None:
+    """Where the bot's application log (``bot.log``) is written, or ``None``.
+
+    Precedence: an explicit ``log_file=`` argument, then ``PUMPFUN_BOT_LOG_PATH``,
+    then the config's ``log_file``. The config always carries ``bot.log`` as its
+    default, so the environment must win over it, as ``PUMPFUN_EVENT_LOG_PATH``
+    does. ``none`` / ``off`` (in the argument or the variable) turn the file
+    off; an empty variable is ignored.
+    """
+    for candidate in (explicit, os.getenv(BOT_LOG_PATH_ENV)):
+        if candidate is None or not candidate.strip():
+            continue
+        value = candidate.strip()
+        return None if value.lower() in _LOG_FILE_DISABLED else value
+    return configured or None
+
+
 def mask_secret(value: str | None, *, hidden: str = "********") -> str:
     if not value:
         return "<unset>"
@@ -121,6 +144,7 @@ def get_runtime_env(**overrides: Any) -> dict[str, Any]:
         "PUMPFUN_LOG_BACKUP_COUNT": os.getenv("PUMPFUN_LOG_BACKUP_COUNT"),
         "PUMPFUN_LOG_ROTATION_TYPE": os.getenv("PUMPFUN_LOG_ROTATION_TYPE"),
         "PUMPFUN_LOG_COMPRESS": os.getenv("PUMPFUN_LOG_COMPRESS"),
+        "PUMPFUN_BOT_LOG_PATH": os.getenv("PUMPFUN_BOT_LOG_PATH"),
         "PUMPFUN_AUDIT_MAX_BYTES": os.getenv("PUMPFUN_AUDIT_MAX_BYTES"),
         "PUMPFUN_AUDIT_BACKUP_COUNT": os.getenv("PUMPFUN_AUDIT_BACKUP_COUNT"),
         "PUMPFUN_AUDIT_RETENTION_DAYS": os.getenv("PUMPFUN_AUDIT_RETENTION_DAYS"),

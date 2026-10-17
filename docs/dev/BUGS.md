@@ -115,6 +115,8 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-105** | Medium | Audit / PnL reporting | **RESOLVED** | Win rate and expectancy are per closed position (buy + all sells); per-sell win rate kept as `sell_win_rate` |
 | **BUG-106** | Low | Lifecycle | **RESOLVED** | `HOLDING → BUYING` allowed; a buy or sell that ends with positions open settles in `HOLDING` |
 | **BUG-107** | Medium | Screening / Enrichment | **RESOLVED** | Empty `getTokenLargestAccounts` answers (RPC index flapping) are retried within the lookup budget; outcomes counted in `holder_lookup_stats`; `require_holder_data` makes missing holders a hard reject |
+| **BUG-108** | High | Entry screening / Execution | **RESOLVED** | Tokens from other launchpads (PumpPortal `pool` ≠ `pump`, mints without the `…pump` suffix) are rejected before screening; buys require a bonding curve that exists and is owned by the Pump.fun program (`NotPumpFunCurveError`), in paper mode too |
+| **BUG-109** | Medium | Entry / Position lifecycle | **RESOLVED** | Every bought mint is kept in `traded_mints` (persisted, capped at 10,000); a mint whose position is closed is never bought again unless `allow_mint_reentry` is set |
 
 ---
 
@@ -906,3 +908,27 @@ Found in the first 14 h of the official Stage 0 paper pilot. Evidence and figure
 * **Root cause:** the lookup succeeds at the RPC level but the answer flaps. Probing six fresh PumpPortal mints on the pilot's RPC (read-only, at 0.5/1.5/3/6 s after creation) returned e.g. 2, 0, 2, 0 and 13, 0, 0, 20 accounts for the same mint, each in ~0.1 s: the load-balanced nodes' token-account index lags. One empty answer was taken as "no holders".
 * **Resolution:** `TokenEnricher._fetch_largest_holders` retries an empty or failed answer up to 4 times (0.25 s apart, each call capped at half the 2.5 s budget, the whole lookup at the budget). Outcomes are counted in `TokenEnricher.holder_lookup_stats` and written to `bot_status.json` → `holder_lookup_stats` (`ok`, `ok_after_retry`, `empty`, `error`, `timeout`) so the next pilot shows the miss rate. New config key `require_holder_data` (default `false`; set `true` in `canary.json`) makes "Holder distribution data unavailable" a hard reject instead of 30 risk points.
 * **Verification:** `tests/unit/bot/test_enrichment.py` and `tests/unit/strategies/test_presets.py` (`regression("BUG-107")`): two empty answers then holders give a full distribution; bounded attempts on persistent `[]` or errors; a timeout is counted; `require_holder_data` rejects a token that otherwise scores exactly the 30-point threshold.
+
+---
+
+## 12. Entry Hardening Before the Next Stage 0 (2026-10-17)
+
+Found in the v0.2.0 Stage 0 checkpoint-1 data ([`releases/v0.2.0-stage0.md`](releases/v0.2.0-stage0.md)). Fixed on `fix/stage0-entry-hardening` together with two paper-fidelity changes (latency penalty, screening data in captures) listed in `TODO.md` Sprint 24A.
+
+### BUG-108: Bot Buys Tokens That Are Not Pump.fun Launches [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_handle_new_token_event`), `pumpfun_trading/execution/executor.py` (`execute_buy`, paper path), `pumpfun_trading/sdk/execution.py` (`get_bonding_curve_state`, `_fetch_trade_curve_state`)
+* **Description:** 263 of the 1,159 Stage 0 entries had mints that don't end in `pump`, including the USDC mint (bought twice), and 39 of them produced most of the BUG-104 phantom profit. PumpPortal's new-token feed also carries other launchpads (`pool: "bonk"` etc.), and the bot trusted every create event. In paper mode a missing curve was not an error: `_fetch_curve_reserves` returned `None` and the paper fill went ahead with a simulated token amount at the stream's market cap. `get_bonding_curve_state` never checked who owns the curve account.
+* **Impact:** paper results polluted by tokens the live bot could never buy on Pump.fun; live, a buy on such a mint fails and costs fees, and a funded look-alike PDA could be decoded as a curve.
+* **Resolution:**
+  * `bot/enrichment.py::non_pump_launch_reason` rejects a stream token before screening when PumpPortal's `pool` is set and isn't `pump`, or (config `require_pump_mint_suffix`, default `true`) the mint doesn't end in `pump`. Rejections are counted by reason in `bot_status.json` → `non_pump_rejections` and emitted as `token_rejected_not_pump_fun` events; the mint is marked seen.
+  * `get_bonding_curve_state` and `_fetch_trade_curve_state` raise `NotPumpFunCurveError` (a `CurveStateUnavailableError`) when the curve PDA has no account or its `owner` isn't the Pump.fun program.
+  * `OrderExecutor.execute_buy` refuses the buy on that error in live and paper mode (`not_pump_fun: …`).
+* **Not covered:** a transient RPC error on the curve read still lets a paper buy fill at the stream price (live would fail at build time). The suffix filter also drops genuine Pump.fun tokens created without a vanity mint; set `require_pump_mint_suffix: false` if that matters.
+* **Verification:** `tests/unit/bot/test_enrichment.py`, `tests/unit/sdk/test_execution.py`, `tests/unit/execution/test_executor.py`, `tests/unit/bot/test_run.py`, `tests/unit/strategies/test_presets.py` (`regression("BUG-108")`).
+
+### BUG-109: An Exited Mint Is Bought Again Hours Later [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_should_buy`, `_buy_token`, `_buy_raydium_token`)
+* **Description:** a successful buy resets `_buy_attempts[mint]` to 0 and the only other guard, `_seen_mints`, expires after `recent_token_ttl_seconds`. Once it expired a token the bot had already exited could be bought again; Stage 0 bought two mints twice, about 6 h apart.
+* **Impact:** repeat entries into tokens that already failed the exit rules, and doubled exposure to one creator's token.
+* **Resolution:** every filled buy adds the mint to `_traded_mints` (wall-clock time, oldest first, capped at `TRADED_MINTS_LIMIT` = 10,000), saved in `bot_status.json` → `traded_mints` and restored on start; older snapshots seed it from the trade ledger and open positions. `_should_buy` rejects a traded mint that has no open position, so adding to an open position (`max_positions_per_mint` > 1) still works. New config key `allow_mint_reentry` (default `false`) turns the guard off.
+* **Verification:** `tests/unit/bot/test_run.py` (`regression("BUG-109")`): a closed mint is refused after the seen-mints cache is cleared, a paper buy marks the mint, the set survives a restart, old snapshots seed it, the cap drops the oldest, and `allow_mint_reentry` allows it.

@@ -18,7 +18,11 @@ from rich.live import Live
 
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.alerts import AlertDispatcher
-from pumpfun_trading.bot.enrichment import TokenEnricher
+from pumpfun_trading.bot.enrichment import (
+    TokenEnricher,
+    non_pump_launch_reason,
+    screening_snapshot,
+)
 from pumpfun_trading.bot.event_router import EventRouter
 from pumpfun_trading.bot.health import (
     health_ok_for_trading,
@@ -64,7 +68,11 @@ from pumpfun_trading.bot.strategy import (
     TradingStrategy,
     resolve_strategy_config,
 )
-from pumpfun_trading.config.env import get_env_bool, get_env_int
+from pumpfun_trading.config.env import (
+    get_env_bool,
+    get_env_int,
+    resolve_bot_log_path,
+)
 from pumpfun_trading.execution.arbitrage import (
     AtomicArbitrageBuilder,
     AtomicArbitrageExecutor,
@@ -105,6 +113,9 @@ from pumpfun_trading.ui.dashboard import build_dashboard
 ARBITRAGE_COST_LOOKUP_TIMEOUT_SECONDS = 8.0
 # Raw base-unit virtual token reserves are ~1.07e15; UI units are ~1.07e9 (BUG-75).
 RAW_TOKEN_UNITS_THRESHOLD = 1_000_000_000_000
+# Mints bought before; persisted in the status file and capped so the snapshot
+# stays small (~2k new buys a day in the Stage 0 paper run) (BUG-109).
+TRADED_MINTS_LIMIT = 10_000
 
 
 class TradingBot:
@@ -298,6 +309,10 @@ class TradingBot:
         )
         self._buy_attempts: dict[str, int] = {}
         self._seen_mints: dict[str, float] = {}
+        # Every mint ever bought (wall-clock time of the buy), oldest first (BUG-109).
+        self._traded_mints: dict[str, float] = {}
+        # Stream tokens rejected as not Pump.fun launches, by reason (BUG-108).
+        self._non_pump_rejections: dict[str, int] = {}
         self.console = get_configured_console(file=sys.stdout)
 
         self.geyser_endpoint = geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
@@ -361,7 +376,7 @@ class TradingBot:
             "PUMPFUN_LOG_ROTATION_TYPE", self.config.log_rotation_type
         )
         log_compress = get_env_bool("PUMPFUN_LOG_COMPRESS", self.config.log_compress)
-        effective_log_file = log_file if log_file is not None else self.config.log_file
+        effective_log_file = resolve_bot_log_path(log_file, self.config.log_file)
 
         self.logger = setup_structured_logging(
             logger_name="pumpfun_trading.bot",
@@ -758,6 +773,20 @@ class TradingBot:
                 if isinstance(value, (int, float))
             }
 
+        traded_mints = snapshot.get("traded_mints", {})
+        if isinstance(traded_mints, dict):
+            self._traded_mints = {
+                str(key): float(value)
+                for key, value in traded_mints.items()
+                if isinstance(value, (int, float))
+            }
+        # Older snapshots: anything in the ledger was traded (BUG-109).
+        for item in snapshot.get("trade_ledger") or []:
+            if isinstance(item, dict) and item.get("mint"):
+                self._traded_mints.setdefault(str(item["mint"]), 0.0)
+        for mint in self.active_positions:
+            self._traded_mints.setdefault(mint, 0.0)
+
         trade_ledger = snapshot.get("trade_ledger", [])
         if isinstance(trade_ledger, list):
             self._trade_ledger = [
@@ -1045,6 +1074,23 @@ class TradingBot:
     def _is_recently_seen(self, mint: str) -> bool:
         self._prune_seen_mints()
         return mint in self._seen_mints
+
+    def _mark_traded(self, mint: str) -> None:
+        self._traded_mints.pop(mint, None)
+        self._traded_mints[mint] = time.time()
+        while len(self._traded_mints) > TRADED_MINTS_LIMIT:
+            self._traded_mints.pop(next(iter(self._traded_mints)))
+
+    def _is_closed_reentry(self, mint: str) -> bool:
+        """A mint already traded whose position is closed: never buy it again.
+
+        The seen-mints cache expires after ``recent_token_ttl_seconds`` and a
+        fill resets the attempt counter, so Stage 0 bought exited mints again
+        hours later (BUG-109). Adding to an open position is still allowed.
+        """
+        if getattr(self.config, "allow_mint_reentry", False):
+            return False
+        return mint in self._traded_mints and mint not in self.active_positions
 
     def _next_trade_id(self) -> str:
         self._trade_sequence += 1
@@ -1526,6 +1572,8 @@ class TradingBot:
             },
             "buy_attempts": dict(self._buy_attempts),
             "seen_mints": dict(self._seen_mints),
+            "traded_mints": dict(self._traded_mints),
+            "non_pump_rejections": dict(self._non_pump_rejections),
             "trade_ledger": list(self._trade_ledger),
             "recent_actions": list(self._recent_actions),
             "recent_events": list(self._recent_events),
@@ -1575,13 +1623,28 @@ class TradingBot:
         }
 
     async def _enrich_and_screen_token(
-        self, mint: str, token_data: dict[str, Any] | None = None
+        self,
+        mint: str,
+        token_data: dict[str, Any] | None = None,
+        *,
+        token_name: str | None = None,
+        market_cap_sol: float = 0.0,
     ) -> TokenScreeningVerdict:
         t0 = time.perf_counter()
         verdict = await self.enricher.enrich_and_screen(
             mint, token_data=token_data, config=self.config
         )
         latency_ms = (time.perf_counter() - t0) * 1000.0
+        if self.replay_recorder is not None:
+            # Record what the screener saw, so filters can be tuned on captures.
+            self.replay_recorder.record_snapshot(
+                screening_snapshot(
+                    verdict,
+                    name=token_name,
+                    market_cap_sol=market_cap_sol,
+                    latency_ms=latency_ms,
+                )
+            )
         if hasattr(self, "event_logger") and self.event_logger is not None:
             gini = (
                 verdict.holder_distribution.compute_gini_coefficient()
@@ -1631,6 +1694,8 @@ class TradingBot:
         if not self._health_ok_for_trading():
             return False
         if self._is_recently_seen(mint):
+            return False
+        if self._is_closed_reentry(mint):
             return False
         open_lots = 1 if mint in self.active_positions else 0
         if open_lots >= self.max_positions_per_mint:
@@ -1813,6 +1878,7 @@ class TradingBot:
 
         self._buy_attempts[mint] = 0
         self._mark_seen(mint)
+        self._mark_traded(mint)
         self._last_new_token = mint
         self._last_new_token_name = position_name
         self._record_trade(
@@ -1929,6 +1995,7 @@ class TradingBot:
 
         self._buy_attempts[mint] = 0
         self._mark_seen(mint)
+        self._mark_traded(mint)
         self._last_new_token = mint
         self._last_new_token_name = position_name
         self._record_trade(
@@ -3280,6 +3347,28 @@ class TradingBot:
                 }
             )
 
+        not_pump = non_pump_launch_reason(
+            mint,
+            data,
+            require_suffix=bool(getattr(self.config, "require_pump_mint_suffix", True)),
+        )
+        if not_pump is not None:
+            # Never screen or buy another launchpad's token (BUG-108).
+            key = not_pump.split(",")[0]
+            self._non_pump_rejections[key] = self._non_pump_rejections.get(key, 0) + 1
+            self._mark_seen(mint)
+            self._last_event = f"not_pump_fun {mint[:8]}"
+            if hasattr(self, "event_logger") and self.event_logger is not None:
+                self.event_logger.emit(
+                    category=EventCategory.SCREENING,
+                    severity=EventSeverity.DEBUG,
+                    event_name="token_rejected_not_pump_fun",
+                    mint=mint,
+                    mint_name=token_name,
+                    data={"reason": not_pump, "pool": data.get("pool")},
+                )
+            return
+
         async with self._trade_lock:
             if mint in self.active_positions or self._is_recently_seen(mint):
                 return
@@ -3288,7 +3377,10 @@ class TradingBot:
                 return
 
             screening_verdict = await self._enrich_and_screen_token(
-                mint, token_data=data
+                mint,
+                token_data=data,
+                token_name=token_name,
+                market_cap_sol=current_market_cap,
             )
             if not screening_verdict.passed:
                 self._log(

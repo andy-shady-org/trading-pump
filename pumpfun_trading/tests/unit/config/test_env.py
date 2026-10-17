@@ -7,6 +7,7 @@ import pytest
 from solders.keypair import Keypair
 
 from pumpfun_trading.config.env import (
+    resolve_bot_log_path,
     decode_keypair,
     get_env_bool,
     get_env_float,
@@ -176,3 +177,39 @@ def test_required_runtime_env_accepts_standard_names(monkeypatch):
     monkeypatch.delenv("PUMPFUN_RPC_URL", raising=False)
     with pytest.raises(ValueError, match="Missing required environment variables"):
         validate_required_runtime_env()
+
+
+@pytest.mark.parametrize(
+    "explicit, env, configured, expected",
+    [
+        (None, None, "bot.log", "bot.log"),
+        (None, "data/bot.log", "bot.log", "data/bot.log"),
+        ("arg.log", "data/bot.log", "bot.log", "arg.log"),
+        (None, "  ", "bot.log", "bot.log"),
+        (None, " data/bot.log ", "bot.log", "data/bot.log"),
+        (None, "none", "bot.log", None),
+        (None, "OFF", "bot.log", None),
+        ("off", "data/bot.log", "bot.log", None),
+        (None, None, None, None),
+        (None, None, "", None),
+    ],
+)
+def test_resolve_bot_log_path_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    explicit: str | None,
+    env: str | None,
+    configured: str | None,
+    expected: str | None,
+) -> None:
+    if env is None:
+        monkeypatch.delenv("PUMPFUN_BOT_LOG_PATH", raising=False)
+    else:
+        monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", env)
+
+    assert resolve_bot_log_path(explicit, configured) == expected
+
+
+def test_runtime_env_reports_bot_log_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", "data/bot.log")
+
+    assert get_runtime_env()["PUMPFUN_BOT_LOG_PATH"] == "data/bot.log"
