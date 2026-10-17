@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import sys
 import types
@@ -59,6 +60,10 @@ def isolate_test_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path, request: pytest.FixtureRequest
 ) -> None:
     """Isolate tests from ambient persistence, audit env vars and live RPC."""
+    # An operator shell (direnv ``.envrc``) exports tips, keys and endpoints;
+    # tests must see the defaults, not the runtime's settings.
+    for name in [key for key in os.environ if key.startswith("PUMPFUN_")]:
+        monkeypatch.delenv(name, raising=False)
     isolated_status_path = str(tmp_path / "bot_status.json")
     isolated_audit_path = str(tmp_path / "audit_trail.jsonl")
 
@@ -70,6 +75,10 @@ def isolate_test_environment(
     from pumpfun_trading.execution.executor import OrderExecutor
 
     monkeypatch.setattr(OrderExecutor, "balance_retry_delay_seconds", 0.0)
+
+    from pumpfun_trading.bot.enrichment import TokenEnricher
+
+    monkeypatch.setattr(TokenEnricher, "holder_retry_delay_seconds", 0.0)
 
     # Fee/tip capture after a fill calls getTransaction (FEAT-49). Tests with a
     # partly mocked client must not reach mainnet, so it fails fast unless the

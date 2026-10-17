@@ -15,7 +15,8 @@ against the chain.
 from __future__ import annotations
 
 import datetime as _dt
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from typing import Any, Iterable
 
 from pumpfun_trading.sdk.costs import TransactionCosts
@@ -52,6 +53,23 @@ def is_buy(record: dict[str, Any]) -> bool:
     return not is_sell(record) and "buy" in str(
         record.get("action") or record.get("side") or ""
     )
+
+
+def is_round_trip(record: dict[str, Any]) -> bool:
+    """An arbitrage bundle: buy and sell in one record (BUG-99)."""
+    return "arbitrage" in str(record.get("action") or "").lower()
+
+
+def closes_position(record: dict[str, Any]) -> bool:
+    """A full exit (or an arbitrage round trip), not a partial sell."""
+    if is_round_trip(record):
+        return True
+    action = str(record.get("action") or record.get("side") or "")
+    return is_sell(record) and "partial" not in action
+
+
+def position_key(record: dict[str, Any]) -> str:
+    return str(record.get("position_id") or record.get("mint") or "")
 
 
 def _float(value: Any) -> float:
@@ -115,9 +133,33 @@ def build_pnl_fields(
     return fields
 
 
+_FLOAT_FIELDS = (
+    "gross_pnl_sol",
+    "net_pnl_sol",
+    "fees_sol",
+    "tips_sol",
+    "rent_sol",
+    "costs_sol",
+    "closed_net_pnl_sol",
+)
+_INT_FIELDS = (
+    "buys",
+    "sells",
+    "winning_sells",
+    "positions_closed",
+    "winning_positions",
+)
+
+
 @dataclass
 class PnlTotals:
-    """Running gross/net PnL and cost totals (session or group)."""
+    """Running gross/net PnL and cost totals (session or group).
+
+    Win rate and expectancy are per **position** (its buy plus all its sells):
+    a buy books the token-account rent and a full exit refunds it, so scoring
+    each sell on its own turns flat exits into wins (BUG-105). The per-sell
+    figure stays available as ``sell_win_rate``.
+    """
 
     gross_pnl_sol: float = 0.0
     net_pnl_sol: float = 0.0
@@ -128,29 +170,64 @@ class PnlTotals:
     buys: int = 0
     sells: int = 0
     winning_sells: int = 0
+    positions_closed: int = 0
+    winning_positions: int = 0
+    closed_net_pnl_sol: float = 0.0
+    # Net PnL booked so far by each position that is still open.
+    open_position_net: dict[str, float] = field(default_factory=dict)
 
-    def add(self, record: dict[str, Any]) -> None:
+    def add(self, record: dict[str, Any], *, track_positions: bool = True) -> None:
+        net = trade_net_pnl(record)
         self.gross_pnl_sol += trade_gross_pnl(record)
-        self.net_pnl_sol += trade_net_pnl(record)
+        self.net_pnl_sol += net
         self.fees_sol += _float(record.get("fee_sol"))
         self.tips_sol += _float(record.get("tip_sol"))
         self.rent_sol += _float(record.get("rent_sol"))
         self.costs_sol += _float(record.get("costs_sol"))
         if is_sell(record):
             self.sells += 1
-            if trade_net_pnl(record) > 0:
+            if net > 0:
                 self.winning_sells += 1
         elif is_buy(record):
             self.buys += 1
+        if track_positions:
+            self._track_position(record, net)
+
+    def _track_position(self, record: dict[str, Any], net: float) -> None:
+        if not (is_buy(record) or is_sell(record) or is_round_trip(record)):
+            return
+        key = position_key(record)
+        booked = self.open_position_net.pop(key, 0.0) + net
+        if closes_position(record):
+            self.add_position(booked)
+        else:
+            self.open_position_net[key] = booked
+
+    def add_position(self, net_pnl_sol: float) -> None:
+        """Count one closed position with its total net PnL."""
+        self.positions_closed += 1
+        self.closed_net_pnl_sol += net_pnl_sol
+        if net_pnl_sol > 0:
+            self.winning_positions += 1
 
     @property
     def win_rate(self) -> float:
+        """Share of closed positions with positive net PnL (BUG-105)."""
+        if not self.positions_closed:
+            return 0.0
+        return self.winning_positions / self.positions_closed
+
+    @property
+    def sell_win_rate(self) -> float:
+        """Share of sells with positive net PnL (detail only; see BUG-105)."""
         return self.winning_sells / self.sells if self.sells else 0.0
 
     @property
     def expectancy_sol(self) -> float:
-        """Average net PnL per sell (entry costs included)."""
-        return self.net_pnl_sol / self.sells if self.sells else 0.0
+        """Average net PnL per closed position, entry and exit costs included."""
+        if not self.positions_closed:
+            return 0.0
+        return self.closed_net_pnl_sol / self.positions_closed
 
     @property
     def cost_share_of_gross(self) -> float | None:
@@ -160,10 +237,14 @@ class PnlTotals:
         return self.costs_sol / self.gross_pnl_sol
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
+        data: dict[str, Any] = {
+            f.name: getattr(self, f.name) for f in dataclass_fields(self)
+        }
+        data["open_position_net"] = dict(self.open_position_net)
         data.update(
             {
                 "win_rate": self.win_rate,
+                "sell_win_rate": self.sell_win_rate,
                 "expectancy_sol": self.expectancy_sol,
                 "cost_share_of_gross": self.cost_share_of_gross,
             }
@@ -174,20 +255,18 @@ class PnlTotals:
     def from_dict(cls, data: dict[str, Any] | None) -> "PnlTotals":
         data = data or {}
         totals = cls()
-        for name in (
-            "gross_pnl_sol",
-            "net_pnl_sol",
-            "fees_sol",
-            "tips_sol",
-            "rent_sol",
-            "costs_sol",
-        ):
+        for name in _FLOAT_FIELDS:
             setattr(totals, name, _float(data.get(name)))
-        for name in ("buys", "sells", "winning_sells"):
+        for name in _INT_FIELDS:
             try:
                 setattr(totals, name, int(data.get(name) or 0))
             except (TypeError, ValueError):
                 setattr(totals, name, 0)
+        open_net = data.get("open_position_net")
+        if isinstance(open_net, dict):
+            totals.open_position_net = {
+                str(key): _float(value) for key, value in open_net.items()
+            }
         return totals
 
 
@@ -233,18 +312,42 @@ def summarize_pnl(
 
     ``reason`` groups attribute buys to their entry reason and sells to their
     exit reason, so per-exit-reason rows show what each exit rule earns.
+
+    Win rate and expectancy are per closed position (BUG-105). In groups, a
+    position counts once, in the group of its first exit: the exit rule that
+    started it for ``reason``, the closing day for ``day``.
     """
     totals = PnlTotals()
     groups: dict[str, PnlTotals] = {}
     sources: dict[str, int] = {}
+    # Per open position: net booked so far and the group of its first exit.
+    open_net: dict[str, float] = {}
+    open_group: dict[str, str] = {}
     count = 0
     for trade in trades:
         count += 1
         totals.add(trade)
         source = str(trade.get("cost_source") or COST_SOURCE_NONE)
         sources[source] = sources.get(source, 0) + 1
-        if group_by:
-            groups.setdefault(_group_key(trade, group_by), PnlTotals()).add(trade)
+        if not group_by:
+            continue
+        group = _group_key(trade, group_by)
+        groups.setdefault(group, PnlTotals()).add(trade, track_positions=False)
+        if not (is_buy(trade) or is_sell(trade) or is_round_trip(trade)):
+            continue
+        key = position_key(trade)
+        net = open_net.pop(key, 0.0) + trade_net_pnl(trade)
+        if group_by == "reason":
+            if not is_buy(trade):
+                open_group.setdefault(key, group)
+        elif group_by != "day":
+            open_group.setdefault(key, group)
+        if closes_position(trade):
+            target = group if group_by == "day" else open_group.get(key, group)
+            open_group.pop(key, None)
+            groups.setdefault(target, PnlTotals()).add_position(net)
+        else:
+            open_net[key] = net
     summary: dict[str, Any] = {
         "trades": count,
         "totals": totals.to_dict(),
@@ -280,10 +383,13 @@ __all__ = [
     "PNL_GROUPS",
     "PnlTotals",
     "build_pnl_fields",
+    "closes_position",
     "cost_fields",
     "is_buy",
+    "is_round_trip",
     "is_sell",
     "open_cost_basis",
+    "position_key",
     "summarize_pnl",
     "trade_cash_flow",
     "trade_gross_pnl",

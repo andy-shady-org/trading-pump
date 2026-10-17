@@ -292,3 +292,15 @@ def test_presets_validation_exceptions():
 
     with pytest.raises(ValueError, match="cluster_trace_depth"):
         resolve_strategy_config("balanced", overrides={"cluster_trace_depth": 0})
+
+
+@pytest.mark.regression("BUG-107")
+def test_require_holder_data_is_off_by_default_and_overridable_from_json() -> None:
+    assert resolve_strategy_config("conservative").require_holder_data is False
+
+    config = TradingBotConfig.from_dict(
+        {"strategy_preset": "conservative", "require_holder_data": True}
+    )
+
+    assert config.require_holder_data is True
+    assert config.to_dict()["require_holder_data"] is True

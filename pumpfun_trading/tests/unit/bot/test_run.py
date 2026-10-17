@@ -33,7 +33,11 @@ from pumpfun_trading.sdk.costs import (
     TOKEN_ACCOUNT_RENT_LAMPORTS,
     TransactionCosts,
 )
-from pumpfun_trading.sdk.execution import TOKEN_PROGRAM_ID_STR, PumpFunExecutionClient
+from pumpfun_trading.sdk.execution import (
+    TOKEN_PROGRAM_ID_STR,
+    NonStandardCurveError,
+    PumpFunExecutionClient,
+)
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.storage.status import build_status_snapshot
 from pumpfun_trading.strategies.copy_trading import TrackedWallet
@@ -53,6 +57,7 @@ from pumpfun_trading.tests.support.factories import (
     make_config,
     make_pool_keys,
 )
+from pumpfun_trading.tests.support.payloads import STANDARD_CURVE_RESERVES
 
 MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 TOKENS = 350_000_000_000
@@ -4206,11 +4211,13 @@ async def test_bot_all_event_handlers_exhaustive(tmp_path: Path):
         bot_status_path=str(tmp_path / "bot_status.json"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
     )
+    # Reserves consistent with the 50 SOL market cap of the first curve update:
+    # paper entries are priced from the curve (BUG-104).
     bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
         return_value={
-            "virtual_token_reserves": 1_000_000_000,
+            "virtual_token_reserves": 600_000_000_000_000,
             "virtual_sol_reserves": 30_000_000_000,
-            "market_cap_sol": 30.0,
+            "market_cap_sol": 50.0,
         }
     )
     bot.execution.get_token_balance = AsyncMock(return_value=1_000_000)  # type: ignore[method-assign]
@@ -4755,3 +4762,75 @@ async def test_handle_new_token_event_market_cap_from_reserves_not_inflated(
     )
 
     assert seen == [pytest.approx(30.0 * 1_000_000_000.0 / 1_073_000_000.0)]
+
+
+# --- BUG-104: paper entries priced from the curve; non-standard curves skipped ----
+
+
+def _paper_bot(tmp_path: Path) -> TradingBot:
+    bot = make_bot(tmp_path, dry_run=True)
+    bot._should_buy = lambda *_a, **_k: True  # type: ignore[method-assign]
+    bot._check_account_equity_guard = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot._validate_balance = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot._resolve_token_name = AsyncMock(return_value="Token")  # type: ignore[method-assign]
+    return bot
+
+
+@pytest.mark.regression("BUG-104")
+async def test_paper_buy_entry_is_priced_from_the_curve_not_the_stream(
+    tmp_path: Path,
+) -> None:
+    bot = _paper_bot(tmp_path)
+    virtual_sol, real_sol = STANDARD_CURVE_RESERVES[0]
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "virtual_sol_reserves": virtual_sol,
+            "virtual_token_reserves": 1_073_000_000_000_000,
+            "real_sol_reserves": real_sol,
+            "market_cap_sol": 27.96,
+        }
+    )
+
+    # The stream's create event claims 55 SOL; the curve says ~27.96 SOL.
+    assert await bot._buy_token(MINT, market_cap_sol=55.0) is True
+
+    entry = bot.active_positions[MINT]["entry_market_cap"]
+    assert entry == pytest.approx(27.96, abs=0.01)
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-104")
+async def test_paper_buy_on_non_standard_curve_opens_no_position(
+    tmp_path: Path,
+) -> None:
+    bot = _paper_bot(tmp_path)
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=NonStandardCurveError("virtual SOL offset 105860 SOL")
+    )
+
+    assert await bot._buy_token(MINT, market_cap_sol=28.0) is False
+
+    assert MINT not in bot.active_positions
+    assert bot._trade_ledger == []
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-104")
+async def test_refresh_ignores_non_standard_curve_and_keeps_stored_price(
+    tmp_path: Path,
+) -> None:
+    bot = _paper_bot(tmp_path)
+    bot.position_manager.record_buy(
+        mint=MINT, token_amount=TOKENS, cost_sol=0.01, entry_market_cap=28.0
+    )
+    bot.active_positions = bot.position_manager.get_all_positions()
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=NonStandardCurveError("virtual SOL offset 105860 SOL")
+    )
+    evaluate = AsyncMock()
+    bot._evaluate_and_execute_exit = evaluate  # type: ignore[method-assign]
+
+    await bot._refresh_active_positions_market_caps()
+
+    evaluate.assert_awaited_once_with(MINT, pytest.approx(28.0))
+    await bot.close()

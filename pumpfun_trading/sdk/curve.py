@@ -32,6 +32,37 @@ Number = Union[int, float]
 INITIAL_VIRTUAL_SOL_LAMPORTS: int = 30_000_000_000
 INITIAL_VIRTUAL_TOKEN_RAW: int = 1_073_000_000_000_000
 TOTAL_TOKEN_SUPPLY_RAW: int = 1_000_000_000_000_000
+CURVE_OFFSET_TOLERANCE: float = 0.01
+
+
+def curve_reserve_anomaly(
+    virtual_sol_reserves: int,
+    virtual_token_reserves: int,
+    real_sol_reserves: int,
+    *,
+    complete: bool = False,
+    tolerance: float = CURVE_OFFSET_TOLERANCE,
+) -> str | None:
+    """Why an active curve's reserves don't match the standard Pump.fun layout.
+
+    On a standard curve ``virtual_sol - real_sol`` is always the 30 SOL
+    initial virtual reserve. A curve variant seen on mainnet reports
+    764-105,860 SOL of virtual reserves with no real SOL and decodes to market
+    caps 25x-3,500x too high (BUG-104), so it must not be priced or traded.
+    Returns ``None`` for a standard curve, and for complete or empty curves
+    (handled elsewhere). The token side was standard on every variant seen.
+    """
+    if complete or virtual_sol_reserves <= 0 or virtual_token_reserves <= 0:
+        return None
+    sol_offset = virtual_sol_reserves - real_sol_reserves
+    if abs(sol_offset - INITIAL_VIRTUAL_SOL_LAMPORTS) > (
+        INITIAL_VIRTUAL_SOL_LAMPORTS * tolerance
+    ):
+        return (
+            f"virtual SOL offset {sol_offset / 1e9:.4f} SOL "
+            f"!= {INITIAL_VIRTUAL_SOL_LAMPORTS / 1e9:.1f} SOL"
+        )
+    return None
 
 
 def calculate_spot_price(

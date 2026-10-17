@@ -14,8 +14,13 @@ from pumpfun_trading.sdk.curve import (
     calculate_sell_price_impact,
     calculate_sell_sol_out,
     calculate_spot_price,
+    curve_reserve_anomaly,
 )
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+from pumpfun_trading.tests.support.payloads import (
+    NON_STANDARD_CURVE_RESERVES,
+    STANDARD_CURVE_RESERVES,
+)
 
 
 def test_spot_price_and_market_cap():
@@ -228,3 +233,53 @@ def test_curve_quotes_apply_fee_bps():
         calculate_sell_sol_out(1_000_000_000, v_tok, v_sol, fee_bps=125)
         == (gross * 9_875) // 10_000
     )
+
+
+# --- BUG-104: non-standard curve variants -----------------------------------------
+
+
+@pytest.mark.regression("BUG-104")
+@pytest.mark.parametrize("virtual_sol, real_sol", NON_STANDARD_CURVE_RESERVES)
+def test_curve_reserve_anomaly_mainnet_variant_is_reported(
+    virtual_sol: int, real_sol: int
+) -> None:
+    reason = curve_reserve_anomaly(virtual_sol, INITIAL_VIRTUAL_TOKEN_RAW, real_sol)
+
+    assert reason is not None
+    assert "virtual SOL offset" in reason
+
+
+@pytest.mark.parametrize(
+    "virtual_sol, real_sol",
+    [*STANDARD_CURVE_RESERVES, (INITIAL_VIRTUAL_SOL_LAMPORTS, 0)],
+)
+def test_curve_reserve_anomaly_standard_curve_passes(
+    virtual_sol: int, real_sol: int
+) -> None:
+    assert (
+        curve_reserve_anomaly(virtual_sol, INITIAL_VIRTUAL_TOKEN_RAW, real_sol) is None
+    )
+
+
+@pytest.mark.parametrize(
+    "virtual_sol, virtual_token, complete",
+    [
+        (105_860_003_350_032, INITIAL_VIRTUAL_TOKEN_RAW, True),
+        (0, INITIAL_VIRTUAL_TOKEN_RAW, False),
+        (105_860_003_350_032, 0, False),
+    ],
+)
+def test_curve_reserve_anomaly_complete_or_empty_curve_is_not_judged(
+    virtual_sol: int, virtual_token: int, complete: bool
+) -> None:
+    assert (
+        curve_reserve_anomaly(virtual_sol, virtual_token, 0, complete=complete) is None
+    )
+
+
+def test_curve_reserve_anomaly_tolerance_bounds_the_offset() -> None:
+    within = INITIAL_VIRTUAL_SOL_LAMPORTS + INITIAL_VIRTUAL_SOL_LAMPORTS // 200
+    beyond = INITIAL_VIRTUAL_SOL_LAMPORTS + INITIAL_VIRTUAL_SOL_LAMPORTS // 50
+
+    assert curve_reserve_anomaly(within, INITIAL_VIRTUAL_TOKEN_RAW, 0) is None
+    assert curve_reserve_anomaly(beyond, INITIAL_VIRTUAL_TOKEN_RAW, 0) is not None

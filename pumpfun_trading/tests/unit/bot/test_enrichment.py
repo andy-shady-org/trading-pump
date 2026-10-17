@@ -316,3 +316,102 @@ def test_24h_launch_count_keeps_zero_and_handles_seconds():
     assert count_launches_last_24h(old, now=now) == 0
     recent = [{"createdAt": now - 60}, {"created_timestamp": (now - 120) * 1000}]
     assert count_launches_last_24h(recent + old, now=now) == 2
+
+
+# --- BUG-107: holder lookups that flap between data and [] ------------------------
+
+_EMPTY_HOLDERS: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "result": {"value": []}}
+
+
+def _socials_api() -> MagicMock:
+    return _api(coin={"twitter": "https://x.com/a", "telegram": "https://t.me/aaa"})
+
+
+@pytest.mark.regression("BUG-107")
+async def test_enrich_retries_empty_holder_answer_until_the_node_has_it() -> None:
+    mint = str(Pubkey.new_unique())
+    client = _execution_client()
+    enricher = TokenEnricher(
+        api_client=_socials_api(), execution_client=client, config=_strict_config()
+    )
+    request = AsyncMock(
+        side_effect=[_EMPTY_HOLDERS, _EMPTY_HOLDERS, _rpc_holders(client, mint)]
+    )
+
+    with patch.object(client.rpc_pool, "request", request):
+        verdict = await enricher.enrich_and_screen(mint, _stream_payload(mint))
+
+    assert request.await_count == 3
+    assert "Holder distribution data unavailable" not in verdict.reasons
+    assert verdict.holder_distribution is not None
+    assert len(verdict.holder_distribution.top_holders) == 6
+    assert enricher.holder_lookup_stats == {"ok_after_retry": 1}
+
+
+@pytest.mark.parametrize(
+    "side_effect, outcome",
+    [
+        (lambda *_a, **_k: _EMPTY_HOLDERS, "empty"),
+        (RuntimeError("HTTP 429"), "error"),
+    ],
+)
+async def test_fetch_largest_holders_gives_up_after_bounded_attempts(
+    side_effect: Any, outcome: str
+) -> None:
+    client = _execution_client()
+    enricher = TokenEnricher(execution_client=client, config=_strict_config())
+    request = AsyncMock(side_effect=side_effect)
+
+    with patch.object(client.rpc_pool, "request", request):
+        holders = await enricher._fetch_largest_holders(str(Pubkey.new_unique()))
+
+    assert holders == []
+    assert request.await_count == 4
+    assert enricher.holder_lookup_stats == {outcome: 1}
+
+
+async def test_fetch_largest_holders_counts_a_timeout() -> None:
+    async def _slow(*_args: Any, **_kwargs: Any) -> Any:
+        await asyncio.sleep(5)
+
+    execution = MagicMock()
+    execution.get_token_largest_accounts = AsyncMock(side_effect=_slow)
+    enricher = TokenEnricher(
+        execution_client=execution,
+        config=_strict_config(),
+        lookup_timeout_seconds=0.01,
+    )
+
+    assert await enricher._fetch_largest_holders("Mint111") == []
+    assert enricher.holder_lookup_stats == {"timeout": 1}
+
+
+@pytest.mark.regression("BUG-107")
+@pytest.mark.parametrize("require_holder_data, passes", [(False, True), (True, False)])
+async def test_require_holder_data_turns_missing_holders_into_a_reject(
+    require_holder_data: bool, passes: bool
+) -> None:
+    mint = str(Pubkey.new_unique())
+    client = _execution_client()
+    config = make_config(
+        dry_run=False,
+        enable_anti_rug_filters=True,
+        enable_cluster_analysis=False,
+        require_social_links=True,
+        min_social_links_count=2,
+        max_acceptable_risk_score=30.0,
+        require_holder_data=require_holder_data,
+    )
+    enricher = TokenEnricher(
+        api_client=_socials_api(), execution_client=client, config=config
+    )
+
+    with patch.object(
+        client.rpc_pool, "request", AsyncMock(return_value=_EMPTY_HOLDERS)
+    ):
+        verdict = await enricher.enrich_and_screen(mint, _stream_payload(mint))
+
+    # Missing holders scores exactly the 30-point threshold (Stage 0 pattern).
+    assert verdict.risk_score == pytest.approx(30.0)
+    assert "Holder distribution data unavailable" in verdict.reasons
+    assert verdict.passed is passes

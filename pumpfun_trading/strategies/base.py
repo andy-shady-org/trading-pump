@@ -57,6 +57,8 @@ class TradingBotConfig:
     max_top5_holder_concentration_pct: float = 0.15
     max_gini_coefficient: float = 0.85
     require_social_links: bool = False
+    # Reject a token outright when no holder data could be read (BUG-107).
+    require_holder_data: bool = False
     min_social_links_count: int = 1
     max_acceptable_risk_score: float = 50.0
     screening_cache_ttl_seconds: int = 60
@@ -200,6 +202,7 @@ class TradingBotConfig:
             "max_top5_holder_concentration_pct": self.max_top5_holder_concentration_pct,
             "max_gini_coefficient": self.max_gini_coefficient,
             "require_social_links": self.require_social_links,
+            "require_holder_data": self.require_holder_data,
             "min_social_links_count": self.min_social_links_count,
             "max_acceptable_risk_score": self.max_acceptable_risk_score,
             "screening_cache_ttl_seconds": self.screening_cache_ttl_seconds,

@@ -28,6 +28,7 @@ from pumpfun_trading.bot.health import (
 from pumpfun_trading.bot.lifecycle import (
     TradingBotState,
     VALID_STATE_TRANSITIONS,
+    settled_state,
 )
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
 from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
@@ -865,8 +866,15 @@ class TradingBot:
             level=logging.INFO,
         )
 
+    def _holder_lookup_stats(self) -> dict[str, int]:
+        stats = getattr(getattr(self, "enricher", None), "holder_lookup_stats", None)
+        return dict(stats) if isinstance(stats, dict) else {}
+
     def _transition_to(self, next_state: TradingBotState, reason: str = "") -> None:
         current = self.state
+        next_state = settled_state(
+            current, next_state, holds_positions=bool(self.active_positions)
+        )
         if current == next_state:
             return
         if current == TradingBotState.SHUTDOWN and next_state != TradingBotState.IDLE:
@@ -1523,6 +1531,8 @@ class TradingBot:
             "recent_events": list(self._recent_events),
             "trade_sequence": self._trade_sequence,
             "pnl_totals": self._pnl_totals.to_dict(),
+            # How often the holder lookup found data while screening (BUG-107).
+            "holder_lookup_stats": self._holder_lookup_stats(),
             "daily_realized_costs_sol": self.daily_equity_tracker.realized_daily_costs_sol,
             "daily_realized_gross_pnl_sol": (
                 self.daily_equity_tracker.realized_daily_gross_pnl_sol
@@ -1758,6 +1768,17 @@ class TradingBot:
                 reason=f"buy_failed {mint} ({exec_res.error})",
             )
             return False
+
+        exec_metadata = getattr(exec_res, "metadata", None)
+        curve_entry_mc = (
+            exec_metadata.get("entry_market_cap_sol")
+            if isinstance(exec_metadata, dict)
+            else None
+        )
+        if isinstance(curve_entry_mc, (int, float)) and curve_entry_mc > 0:
+            # Paper fills are priced from the curve exits read, not the stream
+            # create event (BUG-104).
+            market_cap_sol = float(curve_entry_mc)
 
         trade_id = self._next_trade_id()
         position_id = trade_id

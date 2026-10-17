@@ -183,8 +183,10 @@ def render_pnl_summary(summary: dict[str, Any]) -> None:
         ("Net rent (SOL)", _fmt_sol(totals["rent_sol"])),
         ("Net PnL (SOL)", _fmt_sol(totals["net_pnl_sol"])),
         ("Buys / sells", f"{totals['buys']} / {totals['sells']}"),
-        ("Win rate (net)", f"{totals['win_rate']:.1%}"),
-        ("Expectancy per sell (SOL)", _fmt_sol(totals["expectancy_sol"])),
+        ("Positions closed", str(totals.get("positions_closed", 0))),
+        ("Win rate per position (net)", f"{totals['win_rate']:.1%}"),
+        ("Expectancy per position (SOL)", _fmt_sol(totals["expectancy_sol"])),
+        ("Win rate per sell (detail)", f"{totals.get('sell_win_rate', 0.0):.1%}"),
         ("Costs / gross", "-" if share is None else f"{share:.1%}"),
     ):
         table.add_row(label, value)
@@ -199,14 +201,24 @@ def render_pnl_summary(summary: dict[str, Any]) -> None:
     groups = summary.get("groups")
     if groups:
         breakdown = Table(title=f"By {summary['group_by']}")
-        for column in (summary["group_by"], "Sells", "Gross", "Costs", "Net", "Win"):
+        for column in (
+            summary["group_by"],
+            "Sells",
+            "Positions",
+            "Gross",
+            "Costs",
+            "Net",
+            "Win",
+        ):
             breakdown.add_column(
-                column, justify="left" if column != "Sells" else "right"
+                column,
+                justify="right" if column in ("Sells", "Positions") else "left",
             )
         for key, row in groups.items():
             breakdown.add_row(
                 key,
                 str(row["sells"]),
+                str(row.get("positions_closed", 0)),
                 _fmt_sol(row["gross_pnl_sol"]),
                 _fmt_sol(row["costs_sol"]),
                 _fmt_sol(row["net_pnl_sol"]),

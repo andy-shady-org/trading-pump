@@ -185,3 +185,89 @@ def test_trade_payloads_and_open_cost_basis() -> None:
     assert len(trades) == 5
     basis = open_cost_basis(trades + [{"action": "buy"}])
     assert basis == {"p1": pytest.approx(0.006), "p3": pytest.approx(0.01)}
+
+
+# --- BUG-105: win rate and expectancy per position, not per sell -------------------
+
+
+@pytest.mark.regression("BUG-105")
+def test_flat_exit_with_rent_refund_is_a_losing_position() -> None:
+    # Buy pays ~0.0015 rent + tip; the full exit gets the rent back, so the sell
+    # alone looks profitable while the position lost its fees and tips.
+    trades = [
+        _buy("p1", costs=0.0021),
+        _sell("p1", 0.01, costs=-0.0013, reason="stagnant_curve_timeout (46s)"),
+    ]
+
+    totals = summarize_pnl(trades)["totals"]
+
+    assert totals["sell_win_rate"] == pytest.approx(1.0)
+    assert totals["positions_closed"] == 1
+    assert totals["win_rate"] == 0.0
+    assert totals["expectancy_sol"] == pytest.approx(-0.0008)
+
+
+@pytest.mark.regression("BUG-105")
+def test_tiered_exit_counts_one_position_in_its_first_exit_reason() -> None:
+    trades = [
+        _buy("p1"),
+        _sell(
+            "p1",
+            0.012,
+            cost=0.006,
+            action="partial_sell",
+            reason="take_profit_tier_1 (1.9x >= 1.8x)",
+        ),
+        _sell("p1", 0.003, cost=0.004, reason="trailing_stop_hit (drawdown 12%)"),
+        _buy("p2"),
+    ]
+
+    summary = summarize_pnl(trades, group_by="reason")
+    totals = summary["totals"]
+    groups = summary["groups"]
+
+    assert totals["positions_closed"] == 1
+    assert totals["win_rate"] == pytest.approx(1.0)
+    expected_net = -0.0021 + (0.006 - 0.0001) + (-0.001 - 0.0001)
+    assert totals["expectancy_sol"] == pytest.approx(expected_net)
+    assert groups["take_profit_tier_1"]["positions_closed"] == 1
+    assert groups["trailing_stop_hit"]["positions_closed"] == 0
+    assert groups["entry"]["positions_closed"] == 0
+
+
+@pytest.mark.parametrize(
+    "group_by, closing_group",
+    [("day", "2026-10-17"), ("mint", "Mint-p1"), ("strategy", "default")],
+)
+def test_summarize_pnl_groups_count_each_closed_position_once(
+    group_by: str, closing_group: str
+) -> None:
+    trades = [_buy("p1"), _sell("p1", 0.02, ts=DAY_2)]
+
+    groups = summarize_pnl(trades, group_by=group_by)["groups"]
+
+    assert sum(row["positions_closed"] for row in groups.values()) == 1
+    assert groups[closing_group]["positions_closed"] == 1
+
+
+@pytest.mark.regression("BUG-105")
+def test_pnl_totals_open_position_survives_restart() -> None:
+    totals = PnlTotals()
+    totals.add(_buy("p1", costs=0.0021))
+
+    restored = PnlTotals.from_dict(totals.to_dict())
+    restored.add(_sell("p1", 0.01, costs=-0.0013))
+
+    assert restored.positions_closed == 1
+    assert restored.winning_positions == 0
+    assert restored.closed_net_pnl_sol == pytest.approx(-0.0008)
+    assert restored.open_position_net == {}
+    assert PnlTotals.from_dict({"open_position_net": "bad"}).open_position_net == {}
+
+
+def test_arbitrage_round_trip_is_its_own_closed_position() -> None:
+    totals = PnlTotals()
+    totals.add({"action": "ARBITRAGE", "mint": "M", "net_pnl_sol": 0.02})
+
+    assert totals.positions_closed == 1 and totals.win_rate == 1.0
+    assert totals.sells == 0

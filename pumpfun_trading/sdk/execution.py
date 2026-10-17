@@ -36,6 +36,7 @@ from .curve import (
     calculate_sell_price_impact,
     calculate_sell_sol_out,
     calculate_spot_price,
+    curve_reserve_anomaly,
 )
 from .jito import (
     JITO_BLOCK_ENGINE_ENDPOINTS,
@@ -122,6 +123,10 @@ class TokenProgramUnavailableError(RuntimeError):
 
 class CurveStateUnavailableError(RuntimeError):
     """The bonding curve (and its creator) could not be fetched for a trade."""
+
+
+class NonStandardCurveError(CurveStateUnavailableError):
+    """The curve's reserves don't match the standard Pump.fun layout (BUG-104)."""
 
 
 class PumpFunExecutionClient:
@@ -1017,7 +1022,10 @@ class PumpFunExecutionClient:
             )
         raw_data_b64 = value.get("data", [""])[0]
         raw_bytes = base64.b64decode(raw_data_b64)
-        return self.decode_bonding_curve_data(raw_bytes)
+        state = self.decode_bonding_curve_data(raw_bytes)
+        # Never price a position from a curve that decodes to nonsense.
+        self._reject_non_standard_curve(mint, state)
+        return state
 
     async def _fetch_trade_curve_state(self, mint: str) -> dict[str, Any]:
         """Fetches the bonding curve needed to build a trade.
@@ -1076,6 +1084,20 @@ class PumpFunExecutionClient:
             )
         return v_sol, v_token
 
+    @staticmethod
+    def _reject_non_standard_curve(mint: str, curve_state: dict[str, Any]) -> None:
+        """Refuse to buy into a curve whose reserves fail the layout checks (BUG-104)."""
+        anomaly = curve_reserve_anomaly(
+            int(curve_state.get("virtual_sol_reserves", 0) or 0),
+            int(curve_state.get("virtual_token_reserves", 0) or 0),
+            int(curve_state.get("real_sol_reserves", 0) or 0),
+            complete=bool(curve_state.get("complete", False)),
+        )
+        if anomaly:
+            raise NonStandardCurveError(
+                f"Non-standard bonding curve for {mint}: {anomaly}"
+            )
+
     async def build_buy_tx(
         self,
         mint: str,
@@ -1096,6 +1118,7 @@ class PumpFunExecutionClient:
 
         base_token_prog = await self.get_token_program_for_mint(mint)
         curve_state = await self._fetch_trade_curve_state(mint)
+        self._reject_non_standard_curve(mint, curve_state)
         creator = curve_state["creator"]
         is_mayhem_mode = bool(curve_state.get("is_mayhem_mode", False))
 

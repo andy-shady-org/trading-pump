@@ -48,6 +48,6 @@
       "tier_1_executed": false
     }
   },
-  "state": "monitoring",
+  "state": "holding",
   "wallet_balance_sol": 0.184860359219
 }

@@ -356,7 +356,7 @@ pumpfun-audit \
 ```
 
 #### Recipe 5: Net PnL After Fees, Tips and Rent
-Gross PnL, network and priority fees, Jito tips, token-account rent, net PnL, net win rate and expectancy, broken down by exit reason (add `--json` for machine-readable output):
+Gross PnL, network and priority fees, Jito tips, token-account rent, net PnL, and win rate and expectancy **per closed position** (a position's buy plus all its sells; the per-sell win rate is shown for detail only, since the rent refunded on a full exit makes flat sells look profitable, BUG-105), broken down by exit reason; each position is counted once, under its first exit reason (add `--json` for machine-readable output):
 ```bash
 pumpfun-audit pnl --path data/audit_trail.jsonl --date-from 2026-10-16 --group-by reason
 ```

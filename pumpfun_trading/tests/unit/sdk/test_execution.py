@@ -35,6 +35,7 @@ from pumpfun_trading.sdk.execution import (
     TOKEN_2022_PROGRAM_ID_STR,
     TOKEN_PROGRAM_ID_STR,
     CurveStateUnavailableError,
+    NonStandardCurveError,
     PumpFunExecutionClient,
     TokenBalanceUnavailableError,
     TokenProgramUnavailableError,
@@ -47,6 +48,12 @@ from pumpfun_trading.tests.support.constants import (
     WSOL_MINT,
 )
 from pumpfun_trading.tests.support.factories import make_pool_keys
+from pumpfun_trading.tests.support.payloads import (
+    NON_STANDARD_CURVE_RESERVES,
+    STANDARD_CURVE_RESERVES,
+    account_data_b64,
+    bonding_curve_bytes,
+)
 
 # The real getTransaction cost reader is under test here (see tests/conftest.py).
 USES_REAL_TRANSACTION_COSTS = True
@@ -1927,3 +1934,68 @@ async def test_sdk_execution_extended_coverage():
 
     await client.close()
     await pool.close()
+
+
+# --- BUG-104: non-standard curve variants -----------------------------------------
+
+
+def _curve_account(virtual_sol: int, real_sol: int) -> dict[str, Any]:
+    raw = bonding_curve_bytes(
+        virtual_sol_reserves=virtual_sol,
+        real_sol_reserves=real_sol,
+        creator=str(Pubkey.new_unique()),
+    )
+    return {"result": {"value": {"data": account_data_b64(raw)}}}
+
+
+@pytest.mark.regression("BUG-104")
+@pytest.mark.parametrize("virtual_sol, real_sol", NON_STANDARD_CURVE_RESERVES)
+async def test_get_bonding_curve_state_non_standard_curve_raises(
+    virtual_sol: int, real_sol: int
+) -> None:
+    client = _client()
+    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+        return_value=_curve_account(virtual_sol, real_sol)
+    )
+
+    with pytest.raises(NonStandardCurveError, match="virtual SOL offset"):
+        await client.get_bonding_curve_state(SAMPLE_MINT)
+
+
+@pytest.mark.parametrize("virtual_sol, real_sol", STANDARD_CURVE_RESERVES)
+async def test_get_bonding_curve_state_standard_curve_is_decoded(
+    virtual_sol: int, real_sol: int
+) -> None:
+    client = _client()
+    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+        return_value=_curve_account(virtual_sol, real_sol)
+    )
+
+    state = await client.get_bonding_curve_state(SAMPLE_MINT)
+
+    assert state["virtual_sol_reserves"] == virtual_sol
+    assert state["market_cap_sol"] == pytest.approx(27.96, abs=0.01)
+
+
+@pytest.mark.regression("BUG-104")
+async def test_build_buy_tx_non_standard_curve_refuses_to_build() -> None:
+    client = _client()
+    curve = _curve_state()
+    curve["virtual_sol_reserves"], curve["real_sol_reserves"] = (
+        NON_STANDARD_CURVE_RESERVES[1]
+    )
+    build = AsyncMock(return_value="tx")
+
+    with (
+        patch.object(
+            client,
+            "get_token_program_for_mint",
+            AsyncMock(return_value=Pubkey.from_string(TOKEN_PROGRAM_ID_STR)),
+        ),
+        patch.object(client, "_fetch_trade_curve_state", AsyncMock(return_value=curve)),
+        patch.object(client, "_build_tx_with_instructions", build),
+    ):
+        with pytest.raises(NonStandardCurveError):
+            await client.build_buy_tx(MINT, str(Pubkey.new_unique()), 0.01)
+
+    build.assert_not_awaited()

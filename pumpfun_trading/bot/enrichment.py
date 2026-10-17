@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Per-lookup budget for screening I/O; screening runs inside the trade lock.
 DEFAULT_LOOKUP_TIMEOUT_SECONDS = 2.5
+# getTokenLargestAccounts answers [] for a new mint on some RPC nodes (BUG-107).
+HOLDER_LOOKUP_ATTEMPTS = 4
 # Pump.fun mints have a fixed 1B-token supply (6 decimals).
 PUMP_TOTAL_SUPPLY_UI = 1_000_000_000.0
 _SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -87,6 +89,9 @@ def creator_initial_buy_pct(
 class TokenEnricher:
     """Handles off-chain token metadata enrichment, creator profiling, and anti-rug screening."""
 
+    # Pause between holder lookups that came back empty (BUG-107).
+    holder_retry_delay_seconds: float = 0.25
+
     def __init__(
         self,
         api_client: Optional[PumpFunApiClient] = None,
@@ -104,6 +109,8 @@ class TokenEnricher:
         self.screening_cache = screening_cache or ScreeningCache(
             default_ttl=float(self.config.screening_cache_ttl_seconds)
         )
+        # ok / ok_after_retry / empty / error / timeout counts (BUG-107).
+        self.holder_lookup_stats: dict[str, int] = {}
 
     async def enrich_and_screen(
         self,
@@ -335,20 +342,52 @@ class TokenEnricher:
         }
 
     async def _fetch_largest_holders(self, mint: str) -> list[tuple[str, int]]:
-        """On-chain largest token accounts for the mint, or ``[]`` on failure."""
+        """On-chain largest token accounts for the mint, or ``[]`` on failure.
+
+        ``getTokenLargestAccounts`` on a load-balanced RPC flaps for a brand-new
+        mint: the same mint returns its holders, then ``[]``, then its holders
+        again within seconds. An empty answer therefore means "not indexed on
+        this node yet", not "no holders", and is retried inside the lookup
+        budget (BUG-107). Outcomes are counted in ``holder_lookup_stats``.
+        """
         if not self.execution:
             return []
         try:
-            holders = await asyncio.wait_for(
-                self.execution.get_token_largest_accounts(
-                    mint, timeout_seconds=self.lookup_timeout_seconds
-                ),
+            holders, outcome = await asyncio.wait_for(
+                self._largest_holders_with_retry(mint),
                 timeout=self.lookup_timeout_seconds,
             )
-        except Exception as exc:
-            logger.debug("Largest-holder query for %s failed: %s", mint, exc)
-            return []
-        return holders if isinstance(holders, list) else []
+        except asyncio.TimeoutError:
+            holders, outcome = [], "timeout"
+        self.holder_lookup_stats[outcome] = self.holder_lookup_stats.get(outcome, 0) + 1
+        if not holders:
+            logger.debug("Largest-holder query for %s gave no data (%s)", mint, outcome)
+        return holders
+
+    async def _largest_holders_with_retry(
+        self, mint: str
+    ) -> tuple[list[tuple[str, int]], str]:
+        execution = self.execution
+        if execution is None:  # pragma: no cover - checked by the caller
+            return [], "error"
+        # One slow node must not use up the whole budget.
+        per_call_timeout = max(0.5, self.lookup_timeout_seconds / 2)
+        outcome = "empty"
+        for attempt in range(HOLDER_LOOKUP_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(self.holder_retry_delay_seconds)
+            try:
+                holders = await execution.get_token_largest_accounts(
+                    mint, timeout_seconds=per_call_timeout
+                )
+            except Exception as exc:
+                logger.debug("Largest-holder query for %s failed: %s", mint, exc)
+                outcome = "error"
+                continue
+            if isinstance(holders, list) and holders:
+                return holders, "ok" if attempt == 0 else "ok_after_retry"
+            outcome = "empty"
+        return [], outcome
 
     def _label_curve_account(
         self, mint: str, holders: list[tuple[str, int]]

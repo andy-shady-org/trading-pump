@@ -23,6 +23,7 @@ from pumpfun_trading.sdk.costs import (
     model_transaction_costs,
 )
 from pumpfun_trading.sdk.execution import (
+    NonStandardCurveError,
     PumpFunExecutionClient,
     TokenBalanceUnavailableError,
 )
@@ -608,3 +609,57 @@ async def test_order_executor_retry_and_liquidator():
     )
     all_liq = await liquidator.liquidate_all_positions(reason="panic")
     assert len(all_liq) >= 1
+
+
+# --- BUG-104: paper pricing from the curve, non-standard curves refused -----------
+
+
+@pytest.mark.regression("BUG-104")
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_execute_buy_non_standard_curve_is_refused(dry_run: bool) -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=NonStandardCurveError("virtual SOL offset 105860 SOL")
+        )
+    )
+    executor = _executor(client)
+
+    result = await executor.execute_buy(MINT, 0.01, dry_run=dry_run)
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.startswith("non_standard_curve")
+    client.buy.assert_not_awaited()
+
+
+@pytest.mark.regression("BUG-104")
+async def test_execute_buy_dry_run_reports_curve_entry_market_cap() -> None:
+    client = _client()
+    executor = _executor(client)
+
+    result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    assert result.success
+    assert result.metadata["entry_market_cap_sol"] == pytest.approx(30.0)
+
+
+async def test_execute_buy_dry_run_without_curve_has_no_entry_market_cap() -> None:
+    client = _client(get_bonding_curve_state=AsyncMock(side_effect=RuntimeError("x")))
+    executor = _executor(client)
+
+    result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    assert result.success
+    assert "entry_market_cap_sol" not in result.metadata
+
+
+async def test_execute_sell_non_standard_curve_still_sells_without_quote() -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(side_effect=NonStandardCurveError("bad"))
+    )
+    executor = _executor(client)
+
+    result = await executor.execute_sell(MINT, TOKENS, reason="stop_loss", dry_run=True)
+
+    assert result.success
+    assert result.amount_sol == 0.0

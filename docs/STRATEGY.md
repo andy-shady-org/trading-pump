@@ -306,11 +306,14 @@ Microcap liquidity pools are susceptible to malicious exploits. Every candidate 
   "max_top5_holder_concentration_pct": 0.15,
   "max_gini_coefficient": 0.85,
   "require_social_links": false,
+  "require_holder_data": false,
   "min_social_links_count": 1,
   "max_acceptable_risk_score": 50.0,
   "screening_cache_ttl_seconds": 60
 }
 ```
+
+`require_holder_data: true` rejects a token outright when no holder data could be read (otherwise missing holders adds 30 risk points and the top-5 / Gini checks are skipped). The canary config sets it (BUG-107).
 
 * **`enable_anti_rug_filters`**: Master toggle for heuristic pre-trade screening.
 * **`max_creator_initial_holding_pct`**: Maximum percentage of curve supply creator can hold at inception (e.g. `0.08` = 8%).
