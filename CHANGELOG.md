@@ -81,16 +81,18 @@ Everything merged to `main` since v0.2.0 (PRs #8–#14): Sprint 24C (no more API
 - Test `test_retention_sink_and_manager_edge_branches` failed on Python 3.12/3.13: it mocked `Path.stat` globally, which `Path.glob` uses before 3.14. It now fakes only the measured file's size (found by the new interpreter matrix; test-only change).
 
 ### Release record – v0.2.1 (2026-10-17)
-- Commit: `f7b34f7` (merge of PR #14, `sprint-24d-income-ops` → `main`), plus the `release/v0.2.1` commit that bumps `pyproject.toml` to `0.2.1` and adds this record (no code change). The `v0.2.1` tag goes on the merge of `release/v0.2.1` once CI is green.
+- Commit: `987fd92` (merge of PR #15, `release/v0.2.1` → `main`), tagged `v0.2.1`. Its release commit `552ded6` only bumps `pyproject.toml` to `0.2.1` and adds this record; the code is that of `f7b34f7` (merge of PR #14, `sprint-24d-income-ops`).
 - Merged since v0.2.0: `0ab1ae0` (PR #8, Sprint 24C), `d3f4c77` (PR #9, Sprint 25), `5fdd5bc` (PR #10, Sprint 26), `67969b6` (PR #11, Sprint 27), `1498f37` (PR #12, BUG-104…107), `44b9e27` (PR #13, entry hardening, BUG-108/109), `f7b34f7` (PR #14, Sprint 24D, BUG-110)
 - Release gate: PASS (`nox -s lint mypy package tests-3.12 tests-3.13 tests-3.14`; 3.11 only in CI)
 - Tests: 1,321 collected, all passed; coverage 96.38% (statement + branch)
 - Replay parity: tooling added (Sprint 24C); not yet run on a live capture
-- Mainnet simulation: holder-lookup flapping (BUG-107) and the non-standard curves (BUG-104) checked read-only on mainnet
-- Money path changed (paper pricing, buy refusal on non-standard / non-Pump.fun curves, no re-entry, operator pause), so Stage 0 restarts as a full 72 h run on this tag with an empty `data/`. Recommended canary additions: `"paper_entry_delay_seconds": 1.5`, `"paper_entry_slippage_bps": 300`, `"require_holder_data": true`; `PUMPFUN_BOT_LOG_PATH=data/bot.log` and an alert provider in `.envrc`
-- RUNBOOK §7 pause / sweep / supervisor / degradation drills: to run on paper from a second runtime directory; keep the profit sweep off on a funded wallet until its drill passes
-- Capital stage after this release: 0 (Stage 0 paper pilot to restart on this tag)
-- Stage 0 paper pilot: –
+- Mainnet simulation: holder-lookup flapping (BUG-107) and the non-standard curves (BUG-104) checked read-only on mainnet; pre-start checks on 2026-10-17 (RPC, stream, holder lookups, config load) in the [Stage 0 log](docs/dev/releases/v0.2.1-stage0.md#pre-start-checks--2026-10-17-before-1141)
+- Money path changed (paper pricing, buy refusal on non-standard / non-Pump.fun curves, no re-entry, operator pause), so Stage 0 restarts as a full 72 h run on this tag with an empty `data/`. Applied: `canary.json` has `"paper_entry_delay_seconds": 1.5`, `"paper_entry_slippage_bps": 300`, `"require_holder_data": true`; `.envrc` has `PUMPFUN_BOT_LOG_PATH=data/bot.log`, Slack alerts and a 50,000-lamport Jito tip (was 300,000)
+- RUNBOOK §7 pause / sweep / supervisor / degradation drills: not yet run (to run on paper from a second runtime directory); keep the profit sweep off on a funded wallet until its drill passes
+- Alerts: Slack test alert and "bot started (conservative preset, paper, pid 73499)" received
+- Capital stage after this release: 0
+- Stage 0 paper pilot: **in progress**, started 2026-10-17 11:41:22 (+03:00), 72 h ends 2026-10-20 11:41; log in [`docs/dev/releases/v0.2.1-stage0.md`](docs/dev/releases/v0.2.1-stage0.md). Checkpoint 0 (T + 7 min): 0 exceptions, 0 stream drops, RSS ~80 MB; 24 non-Pump.fun mints rejected, 1 non-standard curve refused, holder data for every screened token (10 of 28 after a retry); 4 positions closed (1 stop-loss, 3 stagnant), net −0.00303 SOL, win rate 25% per position (too few trades to judge). New BUG-111 (Low, lifecycle state during an in-flight buy), open until after the run.
+- Stage 0 result: **FAIL, closed early** at 2026-10-17 13:14 (T + 1 h 33 min). The daily circuit breaker tripped at T + 60 min (10.16% > 10%) and emergency-liquidated 2 positions; final: 34 positions, net −0.022975 SOL (gross −0.018895, fees 0.00068, tips 0.0034), 2 of 34 profitable; 0 exceptions, 0 stream drops, RSS 79 MB. Causes: no trade data for held positions (BUG-112, PumpPortal needs a funded API key for `subscribeTokenTrade`) and launch-time entries with no follow-on buyers (17 of 34 never moved; all 34 back at launch market cap). New BUG-112…115 ([`BUGS.md` §15](docs/dev/BUGS.md#15-stage-0-close-out-on-v021-2026-10-17)). Stage 1 stays blocked
 - Sign-off: –
 
 ## [0.2.0] - 2026-10-16
