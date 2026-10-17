@@ -234,9 +234,11 @@ def build_dashboard(bot: Any) -> Panel:
     health.add_row("API/WS health", "ok" if bot._health_ok else "degraded")
     trade_feed = getattr(bot, "trade_feed_available", None)
     if callable(trade_feed):
-        # PumpPortal refuses token-trade subscriptions without an API key (BUG-112).
+        # Breaker open: PumpPortal refuses token-trade subscriptions, usually
+        # because the API key's wallet ran out of funds (BUG-112, BUG-116).
         health.add_row(
-            "Trade feed", "ok" if trade_feed() else "[bold red]REFUSED[/bold red]"
+            "Trade feed",
+            "ok" if trade_feed() else "[bold red]REFUSED (key funds?)[/bold red]",
         )
     health.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     health.add_row("Stop requested", "yes" if bot._stop_requested else "no")

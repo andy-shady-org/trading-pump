@@ -329,3 +329,24 @@ def test_entry_hardening_keys_default_and_override_from_json() -> None:
     assert config.paper_entry_delay_seconds == 0.0
     assert config.paper_entry_slippage_bps == 5_000
     assert config.to_dict()["paper_entry_slippage_bps"] == 5_000
+
+
+def test_capture_keys_default_and_override_from_json() -> None:
+    default = resolve_strategy_config("conservative")
+    assert default.skip_mayhem_mode is True
+    assert default.trade_feed_probe_seconds == 300.0
+    assert default.paper_starting_balance_sol == 0.0
+
+    config = TradingBotConfig.from_dict(
+        {
+            "strategy_preset": "conservative",
+            "skip_mayhem_mode": False,
+            "trade_feed_probe_seconds": 5,
+            "paper_starting_balance_sol": -1,
+        }
+    )
+
+    assert config.skip_mayhem_mode is False
+    assert config.trade_feed_probe_seconds == 30.0  # floor: don't spam probes
+    assert config.paper_starting_balance_sol == 0.0
+    assert config.to_dict()["skip_mayhem_mode"] is False

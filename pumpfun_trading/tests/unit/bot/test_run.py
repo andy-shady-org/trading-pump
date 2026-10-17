@@ -5665,3 +5665,172 @@ async def test_breaker_trip_counted_once_and_lockout_reports_unlock_time(
     # A lock restored from disk is not counted again.
     assert restored._counted_breaker_lock_at == locked_at
     await restored.close()
+
+
+# --- Trade-feed circuit breaker (BUG-116) -----------------------------------------
+
+
+@pytest.mark.regression("BUG-116")
+async def test_trade_feed_breaker_survives_reconnect_and_closes_on_trade_data(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    bot.event_router.route_ws_message = AsyncMock()  # type: ignore[method-assign]
+    record_event = MagicMock()
+    bot._record_event = record_event  # type: ignore[method-assign]
+
+    await bot._handle_message({"message": "Successfully subscribed to keys."})
+    await bot._handle_message({"message": REFUSAL})
+    assert bot.trade_feed_available() is False
+    trip = [c.args[0] for c in record_event.call_args_list if c.kwargs.get("alert")]
+    assert len(trip) == 1 and "probably run out of funds" in trip[0]
+    assert "run out of funds" in bot._degradation_conditions()["trade_feed"][1]
+
+    ws = MagicMock()
+    ws.send_json = AsyncMock()
+    ws.__aiter__ = MagicMock(return_value=iter([]))
+    ws.__aenter__ = AsyncMock(return_value=ws)
+    ws.__aexit__ = AsyncMock(return_value=False)
+    session = MagicMock()
+    session.ws_connect = MagicMock(return_value=ws)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    async def stop_after_session(*_a: Any) -> None:
+        bot._stop_requested = True
+
+    with (
+        patch("pumpfun_trading.bot.run.aiohttp.ClientSession", return_value=session),
+        patch("pumpfun_trading.bot.run.asyncio.sleep", stop_after_session),
+    ):
+        await bot._run_websocket_stream()
+
+    # A reconnect is no proof of delivery: buys stay blocked, a probe is due.
+    assert bot.trade_feed_available() is False
+    assert bot.trade_feed_breaker.probe_due() is True
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 30.0) is False
+
+    await bot._handle_message({"mint": SAMPLE_PUMP_MINT, "txType": "buy"})
+    assert bot.trade_feed_available() is True
+    recovery = [c.args[0] for c in record_event.call_args_list if c.kwargs.get("alert")]
+    assert len(recovery) == 2 and "CLOSED" in recovery[1]
+    assert bot.get_status_snapshot()["trade_feed_breaker"]["trips"] == 1
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-116")
+async def test_trade_feed_probe_subscribes_then_unsubscribes_probe_mint(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, trade_feed_probe_seconds=60.0)
+    bot._record_event = MagicMock()  # type: ignore[method-assign]
+    bot._handle_server_message(REFUSAL)
+    ws = MagicMock(spec=["send_json"])
+    ws.send_json = AsyncMock()
+    bot._active_ws = ws
+
+    await bot._maybe_probe_trade_feed()
+    ws.send_json.assert_not_awaited()  # not due yet
+
+    bot.trade_feed_breaker.next_probe_at = 0.0
+    bot._last_new_token = "-"
+    await bot._maybe_probe_trade_feed()
+    ws.send_json.assert_not_awaited()  # no mint to probe with yet
+
+    bot._last_new_token = SAMPLE_PUMP_MINT
+    await bot._maybe_probe_trade_feed()
+    ws.send_json.assert_awaited_once_with(
+        {"method": "subscribeTokenTrade", "keys": [SAMPLE_PUMP_MINT]}
+    )
+
+    await bot._handle_message({"message": "Successfully subscribed to keys."}, ws)
+    assert bot.trade_feed_available() is True
+    assert ws.send_json.await_args_list[-1].args[0] == {
+        "method": "unsubscribeTokenTrade",
+        "keys": [SAMPLE_PUMP_MINT],
+    }
+    assert bot.trade_feed_breaker.probe_mint is None
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-116")
+async def test_trade_feed_probe_uses_held_mint_and_keeps_it_subscribed(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    bot._record_event = MagicMock()  # type: ignore[method-assign]
+    bot._handle_server_message(REFUSAL)
+    bot.active_positions["HeldMint"] = {"mint": "HeldMint"}
+    bot.trade_feed_breaker.next_probe_at = 0.0
+    ws = MagicMock(spec=["send_json"])
+    ws.send_json = AsyncMock()
+    bot._active_ws = ws
+
+    await bot._maybe_probe_trade_feed()
+    await bot._handle_message({"message": REFUSAL}, ws)
+
+    assert ws.send_json.await_count == 1  # no unsubscribe of a held mint
+    assert bot.trade_feed_available() is False
+    alerts = [c for c in bot._record_event.call_args_list if c.kwargs.get("alert")]  # type: ignore[attr-defined]
+    assert len(alerts) == 1  # repeat refusals don't re-alert
+    await bot.close()
+
+
+async def test_trade_subscription_send_failure_is_logged_and_counted(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    log = MagicMock()
+    bot._log = log  # type: ignore[method-assign]
+    ws = MagicMock(spec=["send_json"])
+    ws.send_json = AsyncMock(side_effect=ConnectionResetError("gone"))
+
+    await bot._subscribe_to_token_trades(ws, SAMPLE_PUMP_MINT)
+
+    assert bot.trade_feed_breaker.send_failures == 1
+    assert any("could not be sent" in str(c.args[0]) for c in log.call_args_list)
+    await bot.close()
+
+
+# --- Mayhem-mode launches ------------------------------------------------------
+
+
+@pytest.mark.parametrize("skip, screened", [(True, False), (False, True)])
+async def test_mayhem_mode_launch_is_not_screened_unless_allowed(
+    tmp_path: Path, skip: bool, screened: bool
+) -> None:
+    bot = make_bot(tmp_path, skip_mayhem_mode=skip)
+    bot._should_buy = lambda *_a, **_k: True  # type: ignore[method-assign]
+    screen = AsyncMock(
+        return_value=TokenScreeningVerdict(
+            mint=SAMPLE_PUMP_MINT, passed=False, risk_score=90.0
+        )
+    )
+    bot._enrich_and_screen_token = screen  # type: ignore[method-assign]
+
+    await bot._handle_new_token_event(
+        {
+            "mint": SAMPLE_PUMP_MINT,
+            "pool": "pump",
+            "is_mayhem_mode": True,
+            "marketCapSol": 30.0,
+        }
+    )
+
+    assert screen.await_count == (1 if screened else 0)
+    assert bot.get_status_snapshot()["mayhem_rejections"] == (0 if screened else 1)
+    await bot.close()
+
+
+@pytest.mark.parametrize("configured, expected", [(0.0, 0.25), (2.0, 2.0)])
+async def test_paper_starting_balance_is_configurable(
+    tmp_path: Path, configured: float, expected: float
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        reserve_balance_sol=0.15,
+        buy_amount_sol=0.01,
+        paper_starting_balance_sol=configured,
+    )
+    assert bot.wallet_balance_sol == pytest.approx(expected)
+    await bot.close()

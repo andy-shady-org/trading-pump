@@ -774,3 +774,25 @@ def test_paper_entry_slippage_bps_is_clamped(configured: int, applied: int) -> N
     executor.config = MagicMock(paper_entry_slippage_bps=configured)
 
     assert executor._paper_entry_slippage_bps() == applied
+
+
+# --- Mayhem-mode curves are not bought --------------------------------------------
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_execute_buy_on_mayhem_curve_is_refused(dry_run: bool) -> None:
+    client = _client()
+    state = dict(client.get_bonding_curve_state.return_value)
+    client.get_bonding_curve_state = AsyncMock(
+        return_value={**state, "is_mayhem_mode": True}
+    )
+
+    result = await _executor(client).execute_buy(MINT, 0.01, dry_run=dry_run)
+    assert not result.success
+    assert result.error is not None and result.error.startswith("mayhem_mode")
+    client.buy.assert_not_awaited()
+
+    allowed = await _executor(client, skip_mayhem_mode=False).execute_buy(
+        MINT, 0.01, dry_run=True
+    )
+    assert allowed.success

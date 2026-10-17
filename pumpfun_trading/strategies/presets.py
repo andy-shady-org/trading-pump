@@ -490,10 +490,17 @@ def resolve_strategy_config(
         paper_entry_slippage_bps=max(
             0, min(5_000, int(base.get("paper_entry_slippage_bps", 0)))
         ),
+        paper_starting_balance_sol=max(
+            0.0, float(base.get("paper_starting_balance_sol", 0.0))
+        ),
         position_refresh_seconds=max(
             0.0, float(base.get("position_refresh_seconds", 1.0))
         ),
         require_trade_feed=bool(base.get("require_trade_feed", True)),
+        trade_feed_probe_seconds=max(
+            30.0, float(base.get("trade_feed_probe_seconds", 300.0))
+        ),
+        skip_mayhem_mode=bool(base.get("skip_mayhem_mode", True)),
         screening_cache_ttl_seconds=int(base.get("screening_cache_ttl_seconds", 60)),
         enable_momentum_signals=bool(base.get("enable_momentum_signals", True)),
         momentum_window_seconds=int(base.get("momentum_window_seconds", 30)),

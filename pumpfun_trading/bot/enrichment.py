@@ -154,6 +154,19 @@ def non_pump_launch_reason(
     return None
 
 
+def mayhem_mode_reason(token_data: dict[str, Any] | None) -> str | None:
+    """``"mayhem-mode launch"`` when the create event flags mayhem mode, else ``None``.
+
+    In mayhem mode an agent trades the curve after launch, and its virtual SOL
+    reserve drifts off the standard 30 SOL invariant within seconds (46 SOL
+    seen on mainnet), so the bot's curve pricing and exits don't hold for it.
+    """
+    flag = (token_data or {}).get("is_mayhem_mode")
+    if flag is True or (isinstance(flag, str) and flag.strip().lower() == "true"):
+        return "mayhem-mode launch"
+    return None
+
+
 def _round(value: float | None, digits: int = 6) -> float | None:
     return None if value is None else round(float(value), digits)
 

@@ -25,6 +25,7 @@ from pumpfun_trading.sdk.curve import (
 )
 from pumpfun_trading.sdk.execution import (
     PUMP_DEFAULT_FEE_BPS,
+    MayhemModeCurveError,
     NonStandardCurveError,
     NotPumpFunCurveError,
     PumpFunExecutionClient,
@@ -140,7 +141,8 @@ class OrderExecutor:
         """Returns live ``(virtual_sol_lamports, virtual_token_raw)`` or ``None``.
 
         With ``reject_non_standard`` a curve that fails the layout checks raises
-        :class:`NonStandardCurveError` (BUG-104), and a mint without a curve owned
+        :class:`NonStandardCurveError` (BUG-104), a mayhem-mode curve raises
+        :class:`MayhemModeCurveError` unless ``skip_mayhem_mode`` is off, and a mint without a curve owned
         by the Pump.fun program raises :class:`NotPumpFunCurveError` (BUG-108),
         instead of returning ``None``.
         """
@@ -148,6 +150,12 @@ class OrderExecutor:
             return None
         try:
             state = await self.execution.get_bonding_curve_state(mint)
+            if (
+                reject_non_standard
+                and bool(getattr(self.config, "skip_mayhem_mode", True))
+                and state.get("is_mayhem_mode") is True
+            ):
+                raise MayhemModeCurveError(f"curve of {mint} is in mayhem mode")
             v_sol = int(state.get("virtual_sol_reserves", 0))
             v_token = int(state.get("virtual_token_reserves", 0))
         except (NonStandardCurveError, NotPumpFunCurveError) as exc:
@@ -174,11 +182,12 @@ class OrderExecutor:
     ) -> ExecutionResult:
         """A buy refused because the curve is not a standard Pump.fun curve."""
         logger.warning("Skipping buy of %s: %s", mint, exc)
-        kind = (
-            "not_pump_fun"
-            if isinstance(exc, NotPumpFunCurveError)
-            else "non_standard_curve"
-        )
+        if isinstance(exc, NotPumpFunCurveError):
+            kind = "not_pump_fun"
+        elif isinstance(exc, MayhemModeCurveError):
+            kind = "mayhem_mode"
+        else:
+            kind = "non_standard_curve"
         return ExecutionResult(
             success=False,
             mint=mint,

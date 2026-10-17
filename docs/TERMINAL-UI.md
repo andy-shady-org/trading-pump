@@ -120,7 +120,7 @@ Live risk state only; the configured limits above are in the Strategy panel.
 * **`Last message`**: Timestamp latency of incoming stream messages.
 * **`Health timeout`**: Configured health check expiration threshold.
 * **`API/WS health`**: Real-time connection state for REST APIs and streaming WebSockets/gRPC (`ok` or `degraded`).
-* **`Trade feed`**: `ok`, or `REFUSED` when PumpPortal refuses per-token trade subscriptions because the stream URL has no funded API key (BUG-112). While refused, new buys are blocked (`require_trade_feed`) and a degradation alert is sent.
+* **`Trade feed`**: `ok`, or `REFUSED (key funds?)` while the trade-feed circuit breaker is open: PumpPortal refuses per-token trade subscriptions because the stream URL has no API key or its wallet has run out of funds (BUG-112, BUG-116). While open, new buys are blocked (`require_trade_feed`), a probe subscription is sent every `trade_feed_probe_seconds`, and alerts are sent on trip and recovery.
 * **`Risk killed`**: Internal kill-switch validation flag.
 * **`Stop requested`**: Displays `yes` if SIGINT / SIGTERM shutdown has been initiated.
 * **`Last status`**: Internal state machine status code.

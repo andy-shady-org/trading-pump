@@ -21,6 +21,7 @@ from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.alerts import AlertDispatcher
 from pumpfun_trading.bot.enrichment import (
     TokenEnricher,
+    mayhem_mode_reason,
     non_pump_launch_reason,
     screening_snapshot,
 )
@@ -38,6 +39,9 @@ from pumpfun_trading.bot.lifecycle import (
 from pumpfun_trading.bot.operator import OperatorPause
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
 from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
+from pumpfun_trading.bot.trade_feed import TradeFeedBreaker
+from pumpfun_trading.bot.trade_feed import is_confirmation as is_trade_feed_confirmation
+from pumpfun_trading.bot.trade_feed import is_refusal as is_trade_feed_refusal
 from pumpfun_trading.bot.reconcile import (
     ReconciliationStatusReader,
     describe_reconciliation_status,
@@ -277,7 +281,11 @@ class TradingBot:
         self._counted_breaker_lock_at: float | None = None
         # Server notices from the stream (e.g. PumpPortal refusals) by text (BUG-112).
         self._stream_server_messages: dict[str, int] = {}
-        self._trade_feed_refused_at: float | None = None
+        self.trade_feed_breaker = TradeFeedBreaker(
+            probe_interval_seconds=float(
+                getattr(self.config, "trade_feed_probe_seconds", 300.0) or 300.0
+            )
+        )
 
         # Subsystems & Engines
         self.position_manager = PositionManager(self.config)
@@ -322,9 +330,7 @@ class TradingBot:
             )
 
         self.daily_equity_tracker = DailyEquityTracker()
-        self.wallet_balance_sol = float(
-            self.config.reserve_balance_sol + self.config.buy_amount_sol * 10
-        )
+        self.wallet_balance_sol = self._initial_simulated_balance()
         self.screening_cache = ScreeningCache(
             default_ttl=float(self.config.screening_cache_ttl_seconds)
         )
@@ -334,6 +340,7 @@ class TradingBot:
         self._traded_mints: dict[str, float] = {}
         # Stream tokens rejected as not Pump.fun launches, by reason (BUG-108).
         self._non_pump_rejections: dict[str, int] = {}
+        self._mayhem_rejections = 0
         self.console = get_configured_console(file=sys.stdout)
 
         self.geyser_endpoint = geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
@@ -1714,6 +1721,7 @@ class TradingBot:
             "seen_mints": dict(self._seen_mints),
             "traded_mints": dict(self._traded_mints),
             "non_pump_rejections": dict(self._non_pump_rejections),
+            "mayhem_rejections": int(getattr(self, "_mayhem_rejections", 0)),
             "trade_ledger": list(self._trade_ledger),
             "recent_actions": list(self._recent_actions),
             "recent_events": list(self._recent_events),
@@ -1725,6 +1733,7 @@ class TradingBot:
             "daily_summary": self._daily_summary.to_dict(),
             "degraded_conditions": self._degradation.degraded_for(time.monotonic()),
             "trade_feed_available": self.trade_feed_available(),
+            "trade_feed_breaker": self._trade_feed_breaker().to_dict(),
             "stream_server_messages": dict(self._stream_server_messages),
             "profit_sweep": self._sweep_state.to_dict(),
             # How often the holder lookup found data while screening (BUG-107).
@@ -1901,6 +1910,18 @@ class TradingBot:
         except Exception:
             pass
         return None
+
+    def _initial_simulated_balance(self) -> float:
+        """Starting SOL of the simulated (paper/dry-run) wallet.
+
+        Defaults to reserve + 10 buys; ``paper_starting_balance_sol`` raises it
+        for long data-capture runs that would otherwise hit the drawdown
+        breaker within hours. Live runs overwrite it from the chain.
+        """
+        configured = getattr(self.config, "paper_starting_balance_sol", 0.0)
+        if isinstance(configured, (int, float)) and configured > 0:
+            return float(configured)
+        return float(self.config.reserve_balance_sol + self.config.buy_amount_sol * 10)
 
     @contextlib.contextmanager
     def _track_operation(self, kind: str) -> Iterator[None]:
@@ -3610,6 +3631,27 @@ class TradingBot:
                 )
             return
 
+        mayhem = (
+            mayhem_mode_reason(data)
+            if bool(getattr(self.config, "skip_mayhem_mode", True))
+            else None
+        )
+        if mayhem is not None:
+            # Mayhem curves drift off the standard reserves; never screen them.
+            self._mayhem_rejections = getattr(self, "_mayhem_rejections", 0) + 1
+            self._mark_seen(mint)
+            self._last_event = f"mayhem_mode {mint[:8]}"
+            if hasattr(self, "event_logger") and self.event_logger is not None:
+                self.event_logger.emit(
+                    category=EventCategory.SCREENING,
+                    severity=EventSeverity.DEBUG,
+                    event_name="token_rejected_mayhem_mode",
+                    mint=mint,
+                    mint_name=token_name,
+                    data={"reason": mayhem},
+                )
+            return
+
         async with self._trade_lock:
             if mint in self.active_positions or self._is_recently_seen(mint):
                 return
@@ -3870,32 +3912,70 @@ class TradingBot:
         counts[text] = counts.get(text, 0) + 1
         if len(counts) > 50:
             counts.pop(next(iter(counts)))
-        lowered = text.lower()
-        refused = "subscribetokentrade" in lowered and (
-            "api key" in lowered or "only available" in lowered
-        )
-        if refused:
-            already = self._trade_feed_refused_at is not None
-            if not already:
-                self._trade_feed_refused_at = time.monotonic()
+        breaker = self._trade_feed_breaker()
+        if is_trade_feed_refusal(text):
             self._last_status = "degraded: token-trade subscription refused"
-            if not already:
-                notice = (
-                    "ALERT stream refused token-trade subscription: held positions "
-                    "get no trade data. Add a funded PumpPortal API key to "
-                    f"PUMPFUN_STREAM_URL. Server said: {text}"
-                )
+            if breaker.record_refusal(text):
+                # Usually the API key's wallet ran dry; buys stop until a probe works.
+                notice = breaker.trip_message()
                 self._log(notice, level=logging.ERROR)
                 self._record_event(notice, alert=True)
+            else:
+                self._log(f"Stream server message: {text}", level=logging.DEBUG)
             return
         self._log(
             f"Stream server message: {text}",
             level=logging.INFO if first else logging.DEBUG,
         )
+        if is_trade_feed_confirmation(text):
+            self._close_trade_feed_breaker(breaker.record_confirmation())
+
+    def _trade_feed_breaker(self) -> TradeFeedBreaker:
+        breaker: TradeFeedBreaker | None = getattr(self, "trade_feed_breaker", None)
+        if breaker is None:
+            breaker = TradeFeedBreaker()
+            self.trade_feed_breaker = breaker
+        return breaker
+
+    def _close_trade_feed_breaker(self, closed: bool) -> None:
+        if not closed:
+            return
+        notice = self._trade_feed_breaker().recovery_message()
+        self._log(notice, level=logging.WARNING)
+        self._record_event(notice, alert=True)
+        if self._last_status == "degraded: token-trade subscription refused":
+            self._last_status = "monitoring active tokens"
 
     def trade_feed_available(self) -> bool:
-        """False while the stream refuses token-trade subscriptions (BUG-112)."""
-        return getattr(self, "_trade_feed_refused_at", None) is None
+        """False while the trade-feed circuit breaker is open (BUG-112)."""
+        return not self._trade_feed_breaker().is_open
+
+    async def _finish_trade_feed_probe(self, websocket: Any = None) -> None:
+        """Unsubscribes a probe mint once the server has answered it."""
+        breaker = self._trade_feed_breaker()
+        mint = breaker.probe_mint
+        if mint is None or mint in self.active_positions:
+            breaker.take_probe_mint()
+            return
+        breaker.take_probe_mint()
+        await self._unsubscribe_from_token_trades(websocket, mint)
+
+    async def _maybe_probe_trade_feed(self) -> None:
+        """While the breaker is open, re-try a subscription every probe interval."""
+        breaker = self._trade_feed_breaker()
+        if not breaker.probe_due() or self._active_ws is None:
+            return
+        held = list(self.active_positions)
+        mint = held[0] if held else str(self._last_new_token or "")
+        if not held and len(mint) < 32:
+            # No mint to probe with yet ("-" until the first create event).
+            return
+        breaker.start_probe(None if held else mint)
+        self._log(
+            f"Trade-feed breaker open: probing subscribeTokenTrade with {mint[:8]}",
+            level=logging.INFO,
+        )
+        await self._subscribe_to_token_trades(self._active_ws, mint)
 
     async def _handle_message(self, data: Any, websocket: Any = None) -> None:
         if (
@@ -3905,7 +3985,21 @@ class TradingBot:
             and not data.get("txType")
         ):
             self._handle_server_message(data["message"])
+            text = data["message"].lower()
+            if self._trade_feed_breaker().probe_mint and (
+                is_trade_feed_refusal(text) or is_trade_feed_confirmation(text)
+            ):
+                await self._finish_trade_feed_probe(websocket)
             return
+        if (
+            isinstance(data, dict)
+            and data.get("mint")
+            and str(data.get("txType") or "").lower() in {"buy", "sell"}
+        ):
+            # Trade data for a subscribed mint proves the feed delivers.
+            self._close_trade_feed_breaker(
+                self._trade_feed_breaker().record_trade_data()
+            )
         if isinstance(data, dict):
             # Check for Raydium pool keys message
             if "amm_id" in data and "coin_mint" in data:
@@ -3946,8 +4040,13 @@ class TradingBot:
                 await ws.send_str(json.dumps(msg))
             elif hasattr(ws, "send"):
                 await ws.send(json.dumps(msg))
-        except Exception:
-            pass
+        except Exception as exc:
+            # The socket is usually going away; the reconnect resubscribes.
+            self._trade_feed_breaker().record_send_failure()
+            self._log(
+                f"subscribeTokenTrade for {mint[:8]} could not be sent: {exc}",
+                level=logging.WARNING,
+            )
 
     async def _unsubscribe_from_token_trades(
         self, websocket: Any = None, mint: str = ""
@@ -3987,8 +4086,8 @@ class TradingBot:
                         self._last_message_at = time.monotonic()
                         self._circuit_breaker_tripped = False
                         self._stream_consecutive_failures = 0
-                        # A new connection may carry a new API key (BUG-112).
-                        self._trade_feed_refused_at = None
+                        # The breaker stays open across reconnects: only a
+                        # confirmed subscription or trade data closes it.
                         self._last_status = "monitoring active tokens"
                         self._health_ok = True
 
@@ -4005,6 +4104,9 @@ class TradingBot:
                         # Resubscribe to active holding tokens if any
                         for mint in list(self.active_positions.keys()):
                             await self._subscribe_to_token_trades(ws, mint)
+                        if self.trade_feed_breaker.is_open:
+                            # Probe on the first health pass after reconnecting.
+                            self.trade_feed_breaker.next_probe_at = 0.0
 
                         backoff = self.reconnect_delay_seconds
 
@@ -4147,6 +4249,7 @@ class TradingBot:
                 if self._position_refresh_interval() <= 0:
                     await self._refresh_active_positions_market_caps()
                 await self._process_exit_retry_queue()
+                await self._maybe_probe_trade_feed()
                 await self._check_and_enforce_circuit_breaker()
                 self._prune_seen_mints()
                 self._prune_strategy_caches()
@@ -4172,7 +4275,8 @@ class TradingBot:
             ),
             "trade_feed": (
                 not self.trade_feed_available(),
-                "token-trade subscription refused (PumpPortal API key needed)",
+                "token-trade subscription refused: "
+                + self._trade_feed_breaker().likely_cause(),
             ),
         }
         if self.rpc_pool is not None:
