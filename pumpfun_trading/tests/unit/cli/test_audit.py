@@ -174,6 +174,33 @@ def test_reconcile_exit_code_reflects_gap(tmp_path: Path, output: Console) -> No
     assert json.loads(output.export_text())["ok"] is False
 
 
+def test_reconcile_passes_sweep_records_and_prints_them(
+    tmp_path: Path, output: Console
+) -> None:
+    """FEAT-42: audit ``sweep`` records reach the whole-wallet check."""
+    path = _write_audit(tmp_path / "audit.jsonl")
+    sweep = {"signature": "W" * 64, "cash_flow_sol": -0.300005}
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n" + json.dumps({"type": "sweep", "payload": sweep}))
+    report = ReconciliationReport(
+        wallet="W",
+        wallet_balance_sol=0.7,
+        start_balance_sol=1.0,
+        wallet_gap_sol=0.0,
+        swept_sol=0.300005,
+    )
+    run = AsyncMock(return_value=report)
+
+    with patch.object(audit_cli, "_run_reconcile", run):
+        audit_cli.run_audit_cli(
+            _args("reconcile", "--path", str(path), "--wallet", "W", "--no-status-file")
+        )
+
+    assert run.await_args is not None
+    assert run.await_args.args[2] == [sweep]
+    assert "profit sweeps: 0.300005 SOL" in output.export_text()
+
+
 async def test_run_reconcile_uses_rpc_pool_and_closes_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

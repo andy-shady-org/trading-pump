@@ -18,6 +18,7 @@ from pumpfun_trading.bot.audit import (
     summarize_audit_records,
 )
 from pumpfun_trading.bot.pnl import PNL_GROUPS, summarize_pnl, trade_payloads
+from pumpfun_trading.bot.sweep import sweep_payloads
 from pumpfun_trading.bot.reconcile import (
     DEFAULT_TOLERANCE_ABS_SOL,
     DEFAULT_TOLERANCE_PCT,
@@ -246,6 +247,8 @@ def render_reconciliation(report: ReconciliationReport) -> None:
             f"  wallet {report.wallet_balance_sol:.6f} SOL, started "
             f"{report.start_balance_sol:.6f} SOL, unexplained {_fmt_sol(report.wallet_gap_sol)}"
         )
+        if report.swept_sol:
+            console.print(f"  profit sweeps: {report.swept_sol:.6f} SOL (fees incl.)")
     for mint, amount in report.lost_positions.items():
         console.print(f"  [red]lost position[/red] {mint}: {amount} raw tokens")
     for mint in report.phantom_positions:
@@ -264,7 +267,9 @@ def render_reconciliation(report: ReconciliationReport) -> None:
 
 
 async def _run_reconcile(
-    args: argparse.Namespace, trades: list[dict[str, Any]]
+    args: argparse.Namespace,
+    trades: list[dict[str, Any]],
+    sweeps: list[dict[str, Any]] | None = None,
 ) -> ReconciliationReport:
     from pumpfun_trading.infra.rpc_pool import RpcConnectionPool
 
@@ -288,6 +293,7 @@ async def _run_reconcile(
             tolerance_pct=args.tolerance_pct,
             start_balance_sol=args.start_balance,
             check_tokens=not args.no_token_check,
+            sweeps=sweeps or (),
         )
     finally:
         await pool.close()
@@ -364,7 +370,8 @@ def _run_audit_command(
     if not args.wallet:
         console.print("[red]reconcile needs --wallet <pubkey>[/red]")
         raise SystemExit(2)
-    report = asyncio.run(_run_reconcile(args, trades))
+    # Profit sweeps leave the wallet on purpose; the wallet check counts them.
+    report = asyncio.run(_run_reconcile(args, trades, sweep_payloads(records)))
     if not getattr(args, "no_status_file", False):
         status_path = getattr(args, "status_file", None) or reconcile_status_path(
             args.path

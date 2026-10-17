@@ -45,6 +45,30 @@ def test_record_realized_trade_tracks_net_and_costs() -> None:
     assert tracker.realized_daily_costs_sol == pytest.approx(0.0002)
 
 
+def test_record_withdrawal_is_not_a_drawdown_and_never_trips_breaker() -> None:
+    """FEAT-42: sweeping 0.6 of 1.0 SOL out must leave drawdown at zero."""
+    day = datetime.datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
+    tracker = DailyEquityTracker(drawdown_reference_mode="baseline")
+    tracker.initialize_or_rollover(1.0, 0.0, day)
+
+    tracker.record_withdrawal(0.6)
+    tracker.record_withdrawal(-5.0)  # negative amounts are ignored
+
+    assert tracker.starting_equity_sol == pytest.approx(0.4)
+    assert tracker.peak_daily_equity_sol == pytest.approx(0.4)
+    assert tracker.calculate_drawdown(0.4, 0.0, day) == 0.0
+    locked, _ = tracker.evaluate_circuit_breaker(
+        max_daily_drawdown_pct=0.1,
+        emergency_hard_lock_hours=24,
+        current_wallet_balance_sol=0.4,
+        now_timestamp=day.timestamp(),
+        now_utc=day,
+    )
+    assert locked is False
+    tracker.record_withdrawal(10.0)
+    assert (tracker.starting_equity_sol, tracker.peak_daily_equity_sol) == (0.0, 0.0)
+
+
 def test_costs_reset_on_utc_rollover_and_round_trip() -> None:
     tracker = DailyEquityTracker()
     day1 = datetime.datetime(2026, 10, 16, 23, 0, tzinfo=UTC)

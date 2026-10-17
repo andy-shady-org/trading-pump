@@ -88,6 +88,37 @@ def test_risk_panel_shows_last_reconciliation(
     assert expected in text
 
 
+def test_dashboard_shows_operator_pause_and_profit_sweep(tmp_path: Path) -> None:
+    from solders.pubkey import Pubkey
+
+    bot = make_bot(
+        tmp_path,
+        profit_sweep_enabled=True,
+        profit_sweep_destination=str(Pubkey.new_unique()),
+    )
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(bot))
+    text = console.export_text()
+    assert "Buying" in text and "active" in text
+    assert "Profit sweep" in text and "none yet" in text
+
+    bot._operator_pause.pause(reason="drill")
+    bot._sweep_state.record_success(0.25, "sig", 1.0)
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(bot))
+    text = console.export_text()
+
+    assert "PAUSED (drill, 0m)" in text
+    assert "0.2500 SOL in 1" in text
+
+
+def test_dashboard_hides_profit_sweep_when_disabled(tmp_path: Path) -> None:
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(make_bot(tmp_path)))
+
+    assert "Profit sweep" not in console.export_text()
+
+
 def test_reconciliation_row_tolerates_broken_reader() -> None:
     class Broken:
         def reconciliation_status(self) -> dict[str, Any]:

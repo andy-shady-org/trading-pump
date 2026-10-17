@@ -23,11 +23,11 @@ Below is an exact visual ASCII representation of the live dashboard during activ
 │ │ │ Take profit: 200.00%                           ││ Max loss / trade: 0.05 SOL                     ││ Health: ok                                     ││ Health timeout: 10s                              │ │ │
 │ │ │ Stop loss: 85.00%                              ││ Daily drawdown: 20.00%                         ││ Risk killed: no                                ││ API/WS health: ok                                │ │ │
 │ │ │ Max active: 3                                  ││ Reserve balance: 0.10 SOL                      ││ Active positions: 2                            ││ Risk killed: no                                  │ │ │
-│ │ │ Min market cap: 20.00 SOL                      ││ Health timeout: 10s                            ││ Last event: quote received: SolCat             ││ Stop requested: no                               │ │ │
-│ │ │ Dry run: no                                    ││ Risk killed: no                                ││ Status: monitoring                             ││ Last status: monitoring                          │ │ │
-│ │ │ Paper trade: no                                ││ Equity guard: enabled                          ││ Last message: 0.4s ago                         ││ Last event: quote received: SolCat               │ │ │
-│ │ │ Wallet value: 1.4520 SOL                       ││ Daily PnL: +0.2299 SOL                         ││ Stream URL: wss://pumpportal.fun/api/data      ││                                                  │ │ │
-│ │ │ Stagnant timeout: 45.0s                        ││ Circuit breaker: ok                            ││ Geyser endpoint: grpc.solana.xyz:10000         ││                                                  │ │ │
+│ │ │ Min market cap: 20.00 SOL                      ││ Risk killed: no                                ││ Last event: quote received: SolCat             ││ Stop requested: no                               │ │ │
+│ │ │ Dry run: no                                    ││ Equity guard: enabled                          ││ Status: monitoring                             ││ Last status: monitoring                          │ │ │
+│ │ │ Paper trade: no                                ││ Daily PnL: +0.2299 SOL                         ││ Last message: 0.4s ago                         ││ Last event: quote received: SolCat               │ │ │
+│ │ │ Wallet value: 1.4520 SOL                       ││ Circuit breaker: ok                            ││ Stream URL: wss://pumpportal.fun/api/data      ││                                                  │ │ │
+│ │ │ Stagnant timeout: 45.0s                        ││                                                ││ Geyser endpoint: grpc.solana.xyz:10000         ││                                                  │ │ │
 │ │ │                                                ││                                                ││ Audit log: runtime/audit_trail.jsonl           ││                                                  │ │ │
 │ │ │                                                ││                                                ││ Last new token: SolCat                         ││                                                  │ │ │
 │ │ ╰────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯╰───────────────────────────────────────────────────╯ │ │
@@ -101,15 +101,16 @@ The Overview section provides an immediate operational snapshot split across fou
 * **`Max loss / trade`**: Maximum permissible loss on an individual position before forcing emergency exit (e.g. `0.05 SOL`).
 * **`Daily drawdown`**: Maximum daily portfolio drawdown threshold (e.g. `20.00%`).
 * **`Reserve balance`**: Minimum SOL balance reserved in the hot wallet for transaction fees and account rent (e.g. `0.10 SOL`).
-* **`Health timeout`**: Maximum permissible interval in seconds without stream messages before declaring data stale (e.g. `10s`).
 * **`Risk killed`**: Displays `yes` if an emergency risk kill-switch has triggered, or `no` during normal execution.
 * **`Equity guard`**: Status of the pre-trade equity guard (`enabled` for live trading, `dry-run` during simulation).
 * **`Daily PnL`**: Cumulative realized profit/loss for the current UTC trading day (e.g. `+0.2299 SOL` or `+229.9000 µSOL`).
 * **`Circuit breaker`**: Portfolio circuit breaker state: `ok` (healthy) or `LOCKED` (trading halted due to drawdown limit breach).
-* **`Reconciliation`**: Last `pumpfun-audit reconcile` result for this audit trail: `OK (n trades, age)` in green, `GAP (n problem(s), age)` in red, `STALE` when the last OK is older than 36 hours, or `not run`. The bot doesn't reconcile by itself; run the command daily ([`dev/RUNBOOK.md` §5.3](dev/RUNBOOK.md#53-daily-wallet-reconciliation)).
+* **`Reconciliation`**: Last `pumpfun-audit reconcile` result for this audit trail: `OK (n trades, age)` in green, `GAP (n problem(s), age)` in red, `STALE` when the last OK is older than 36 hours, or `not run`. The bot doesn't reconcile by itself; run the command daily ([`dev/RUNBOOK.md` §5.3](dev/RUNBOOK.md#53-daily-wallet-reconciliation)) or on the supervised timer. A new `GAP` result is also sent as an alert.
+* **`Profit sweep`** (only when `profit_sweep_enabled`): total swept to the cold wallet and the number of sweeps (`0.2500 SOL in 1`), `none yet`, or `ERROR (…)` after a failed transfer (FEAT-42, [`dev/RUNBOOK.md` §5.6](dev/RUNBOOK.md#56-profit-sweep-to-a-cold-wallet-feat-42-off-by-default)).
 
 #### C. Bot Status Sub-Panel (`border_style="blue"`)
 * **`State`**: Real-time lifecycle state machine value (`IDLE`, `MONITORING`, `BUYING`, `HOLDING`, `SELLING`, `SHUTDOWN`).
+* **`Buying`**: `active`, or `PAUSED (reason, minutes)` in yellow while the operator pause is on. `kill -USR1 <pid>` toggles it: no new buys or capital rotation, open positions keep being managed. The pause survives restarts ([`dev/RUNBOOK.md` §5.5](dev/RUNBOOK.md#55-operator-pause-and-unattended-alerts-sprint-24d-feat-50)).
 * **`Uptime`**: Elapsed duration since bot startup formatted dynamically (e.g. `04h 12m 30s`, `12m 30s`, `45s`).
 * **`Health`**: High-level health status (`ok` or `degraded`).
 * **`Risk killed`**: Immediate visual indicator if capital protection killed active execution (`yes` / `no`).
@@ -234,10 +235,12 @@ The console interface enforces strict color coding to maximize operational clari
 For 24/7 background operation on remote VPS servers or systemd services where interactive terminal rendering is unnecessary, run with the `--headless` flag:
 
 ```bash
-pumpbot --preset balanced --headless --log-level INFO
+pumpbot --config configs/canary.json --headless
 ```
 
 In headless mode:
 * Rich alternate-screen rendering is completely bypassed.
-* Clean ANSI-stripped log messages are streamed directly to `sys.stderr` and log files (`bot.log`).
+* Clean ANSI-stripped log messages are streamed directly to `sys.stderr` and log files (`bot.log`, or `PUMPFUN_BOT_LOG_PATH`).
 * Full compatibility with systemd journalctl, Grafana Loki, and remote log forwarders.
+* Nobody watches the dashboard, so set an alert provider: the bot alerts on start and stop, on stream / RPC degradation lasting longer than `degradation_alert_minutes`, on a new reconciliation gap, and sends a daily net-PnL summary.
+* Ready-made systemd and launchd templates (restart limits, reconciliation timer) are in `deploy/`; see [`dev/RUNBOOK.md` §8](dev/RUNBOOK.md#8-supervised-deployment-and-hardening-sprint-24d). `pumpbot` exits 1 when its stream loop ends without a shutdown request, so the supervisor restarts it.

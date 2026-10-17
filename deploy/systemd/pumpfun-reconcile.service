@@ -1,0 +1,23 @@
+# One wallet reconciliation run (Sprint 24D). Started by pumpfun-reconcile.timer.
+# Fails (exit 1) on a reconciliation gap; the bot alerts on the stored result.
+
+[Unit]
+Description=pumpbot daily wallet reconciliation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pumpbot
+Group=pumpbot
+WorkingDirectory=/opt/pumpbot/runtime
+Environment=PUMPBOT_RUNTIME_DIR=/opt/pumpbot/runtime
+Environment=PUMPBOT_AUDIT_BIN=/opt/pumpbot/venv/bin/pumpfun-audit
+# Set the trading wallet's public key (never the private key) here.
+Environment=PUMPBOT_WALLET=
+ExecStart=/opt/pumpbot/runtime/pumpfun-reconcile.sh
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pumpbot/runtime

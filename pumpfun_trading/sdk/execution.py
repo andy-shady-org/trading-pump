@@ -1514,6 +1514,27 @@ class PumpFunExecutionClient:
         signature = self.keypair.sign_message(bytes(message))
         return VersionedTransaction.populate(message, [signature])
 
+    async def build_sol_transfer_tx(
+        self, destination: str, lamports: int
+    ) -> VersionedTransaction:
+        """System transfer from the wallet (profit sweep, FEAT-42); no Jito tip."""
+        if int(lamports) <= 0:
+            raise ValueError("Transfer lamports must be positive")
+        target = self._to_pubkey(destination)
+        if target == self.wallet:
+            raise ValueError("Refusing to transfer SOL to the wallet itself")
+        instruction = transfer(
+            TransferParams(
+                from_pubkey=self.wallet, to_pubkey=target, lamports=int(lamports)
+            )
+        )
+        return await self._build_tx_with_instructions([instruction], tip_lamports=0)
+
+    async def transfer_sol(self, destination: str, lamports: int) -> str:
+        """Sends ``lamports`` to ``destination`` over RPC; returns the signature."""
+        tx = await self.build_sol_transfer_tx(destination, lamports)
+        return await self.send_transaction(tx)
+
     async def send_jito_bundle(
         self,
         transactions: list[VersionedTransaction],

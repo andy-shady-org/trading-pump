@@ -64,6 +64,56 @@ def _client() -> PumpFunExecutionClient:
     return PumpFunExecutionClient(private_key_b58=str(Keypair()))
 
 
+async def test_build_sol_transfer_tx_is_a_tipless_system_transfer() -> None:
+    """FEAT-42 profit sweep: compute budget, one system transfer, no Jito tip."""
+    client = _client()
+    client.compute_unit_limit = 200_000
+    client.priority_fee_lamports = 10_000
+    destination = Pubkey.new_unique()
+
+    with patch.object(
+        client,
+        "get_latest_blockhash",
+        AsyncMock(return_value=str(Hash.default())),
+    ):
+        tx = await client.build_sol_transfer_tx(str(destination), 150_000_000)
+
+    message = tx.message
+    keys = list(message.account_keys)
+    programs = [keys[ix.program_id_index] for ix in message.instructions]
+    assert programs.count(Pubkey.from_string(SYSTEM_PROGRAM_ID)) == 1
+    assert len(message.instructions) == 3  # CU limit, CU price, transfer
+    transfer_ix = message.instructions[-1]
+    assert keys[transfer_ix.accounts[1]] == destination
+    assert struct.unpack("<IQ", bytes(transfer_ix.data)) == (2, 150_000_000)
+    assert keys[0] == client.wallet
+
+
+@pytest.mark.parametrize("lamports", [0, -1])
+async def test_build_sol_transfer_tx_rejects_non_positive_amount(lamports: int) -> None:
+    with pytest.raises(ValueError, match="positive"):
+        await _client().build_sol_transfer_tx(str(Pubkey.new_unique()), lamports)
+
+
+async def test_build_sol_transfer_tx_rejects_own_wallet() -> None:
+    client = _client()
+
+    with pytest.raises(ValueError, match="wallet itself"):
+        await client.build_sol_transfer_tx(str(client.wallet), 1_000)
+
+
+async def test_transfer_sol_sends_the_built_transaction() -> None:
+    client = _client()
+    tx = MagicMock()
+    with (
+        patch.object(client, "build_sol_transfer_tx", AsyncMock(return_value=tx)),
+        patch.object(client, "send_transaction", AsyncMock(return_value="Sig")) as send,
+    ):
+        assert await client.transfer_sol("Dest", 5) == "Sig"
+
+    send.assert_awaited_once_with(tx)
+
+
 async def test_get_token_largest_accounts_parses_valid_entries() -> None:
     client = _client()
     response = {

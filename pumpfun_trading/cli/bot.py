@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
-    async def _run_bot() -> None:
+    async def _run_bot() -> bool:
         config = None
         if args.config:
             config = TradingBotConfig.from_file(args.config)
@@ -101,11 +101,16 @@ def main() -> None:
             await bot.start()
         finally:
             await bot.close()
+        return bool(bot._stop_requested)
 
     try:
-        asyncio.run(_run_bot())
+        stopped_on_request = asyncio.run(_run_bot())
     except (KeyboardInterrupt, SystemExit):
-        pass
+        return
+    if stopped_on_request is False:
+        # The stream loop ended on its own: exit non-zero so a supervisor
+        # (systemd / launchd, RUNBOOK §8) restarts the bot (Sprint 24D).
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

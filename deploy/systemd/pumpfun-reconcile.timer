@@ -1,0 +1,16 @@
+# Daily reconciliation shortly before the bot's daily summary (00:00 UTC by
+# default, `daily_summary_hour_utc`), so the summary carries a fresh result.
+#
+# Install:  sudo cp deploy/systemd/pumpfun-reconcile.* /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now pumpfun-reconcile.timer
+
+[Unit]
+Description=Daily pumpbot wallet reconciliation
+
+[Timer]
+OnCalendar=*-*-* 23:40:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

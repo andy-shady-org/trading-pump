@@ -29,6 +29,7 @@ from pumpfun_trading.bot.pnl import (
     open_cost_basis,
     trade_cash_flow,
 )
+from pumpfun_trading.bot.sweep import sweep_cash_flow
 
 LAMPORTS_PER_SOL = 1_000_000_000
 TOKEN_PROGRAM_IDS = (
@@ -77,6 +78,8 @@ class ReconciliationReport:
     wallet_balance_sol: float | None = None
     start_balance_sol: float | None = None
     wallet_gap_sol: float | None = None
+    # SOL moved out by the profit sweep, fees included (FEAT-42).
+    swept_sol: float = 0.0
     problems: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -194,8 +197,13 @@ async def reconcile_wallet(
     start_balance_sol: float | None = None,
     check_tokens: bool = True,
     dust_raw_amount: int = 1,
+    sweeps: Iterable[dict[str, Any]] = (),
 ) -> ReconciliationReport:
-    """Reconciles audit trade records against the wallet on-chain."""
+    """Reconciles audit trade records against the wallet on-chain.
+
+    ``sweeps`` are the audit ``sweep`` records (FEAT-42): SOL the bot moved to
+    the cold wallet on purpose, so the whole-wallet check counts them.
+    """
     trade_list = [t for t in trades if is_buy(t) or is_sell(t)]
     report = ReconciliationReport(wallet=wallet, start_balance_sol=start_balance_sol)
 
@@ -291,6 +299,13 @@ async def reconcile_wallet(
             report.problems.append(f"wallet balance unavailable: {exc}")
         else:
             recorded_total = sum(trade_cash_flow(t) for t in live_trades)
+            live_sweeps = [
+                s
+                for s in sweeps
+                if not s.get("dry_run") and _is_live_signature(s.get("signature"))
+            ]
+            report.swept_sol = -sum(sweep_cash_flow(s) for s in live_sweeps)
+            recorded_total -= report.swept_sol
             report.wallet_gap_sol = (
                 report.wallet_balance_sol - start_balance_sol
             ) - recorded_total

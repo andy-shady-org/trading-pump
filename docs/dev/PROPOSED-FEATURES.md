@@ -25,7 +25,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 | ID | Feature | Class | Priority | Sprint |
 |---|---|---|---|---|
 | FEAT-49 | Net PnL accounting & wallet reconciliation | Income | P1 | 24B |
-| FEAT-50 | Terminal operator pause & daily PnL digest | Income | P1 | 24D |
+| FEAT-50 | Terminal operator pause & daily PnL digest | Income | P1 | 24D (implemented) |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |
@@ -38,7 +38,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-41 | Prometheus / OpenTelemetry exporter + Grafana | Suggested | P2 | after 29 |
-| FEAT-42 | Automated treasury profit sweep to a cold wallet | Income | P2 | 24D |
+| FEAT-42 | Automated treasury profit sweep to a cold wallet | Income | P2 | 24D (implemented, off by default) |
 | FEAT-43 | PnL / tax CSV export and performance reports | Suggested | P2 | after 30 |
 | FEAT-44 | Shadow paper-trading (A/B strategies alongside live) | Suggested | P3 | backlog |
 | FEAT-45 | Interactive Telegram bot (deferred from FEAT-10) | Suggested | P3 | backlog |
@@ -69,6 +69,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Design:** `SIGUSR1` toggles "no new buys, keep managing exits", shown on the dashboard and audited. It is an early slice of the Sprint 29 `PAUSED` state and later becomes a trigger for `BotController.pause()`. A daily digest alert (net PnL, trades, fees + tips, breaker state, reconciliation result) and alerts on prolonged stream/RPC degradation. Documented systemd / launchd unit with restart limits.
 * **Dependencies:** FEAT-49 for the digest numbers.
 * **Impact:** Fewer missed sessions and fewer forced liquidations from full stops; the operator can pause through volatile periods.
+* **Status:** implemented in Sprint 24D (`bot/operator.py`, `bot/supervision.py`, `deploy/`; [`RUNBOOK.md` §5.5, §8](RUNBOOK.md#55-operator-pause-and-unattended-alerts-sprint-24d-feat-50)). The pause persists across restarts; the digest is the difference of the persisted session totals since the previous one. Drills and a 7-day unattended run are still to do.
 
 ---
 
@@ -184,7 +185,8 @@ This document lists candidate features and architectural enhancements for `pumpf
 ### FEAT-42: Automated Treasury Profit Sweep
 * **Class / Priority:** Income · P2 (Sprint 24D) — banks the income that funds the Web UI and keeps the hot wallet at its stage limit
 * **Goal:** Reduce hot-wallet exposure by sweeping realised profit above a floor to a cold wallet.
-* **Design:** Policy in `bot/risk.py` (threshold, floor, cadence); transfer built in `sdk/` with compute-budget instructions; audit events for every sweep; disabled by default.
+* **Design:** Policy in `bot/sweep.py` (floor, minimum, cadence; the floor never drops below `reserve_balance_sol + max_total_exposure_sol + 0.01`); transfer built in `sdk/execution.py` (`transfer_sol`) with compute-budget instructions and no Jito tip; a `sweep` audit record for every sweep; disabled by default.
+* **Status:** implemented in Sprint 24D ([`RUNBOOK.md` §5.6](RUNBOOK.md#56-profit-sweep-to-a-cold-wallet-feat-42-off-by-default)). The breaker treats a sweep as a withdrawal, not a drawdown, and `pumpfun-audit reconcile` counts it. Sweeps all SOL above the floor, not only realised profit: deposits above the floor are swept too. Needs its paper drill before use on a funded wallet.
 
 ### FEAT-43: PnL / Tax Export & Performance Reports
 * **Class / Priority:** Suggested · P2

@@ -161,6 +161,18 @@ class TradingBotConfig:
     max_arbitrage_input_sol: float = 0.50
     min_arbitrage_input_sol: float = 0.01
     arbitrage_jito_tip_profit_share_pct: float = 0.50
+    # Unattended operation (Sprint 24D, FEAT-50): daily summary alert at this UTC
+    # hour, and alerts when the stream/RPC stay degraded this long (0 = off).
+    daily_summary_alert: bool = True
+    daily_summary_hour_utc: int = 0
+    degradation_alert_minutes: float = 5.0
+    # Treasury profit sweep (FEAT-42): off by default. SOL above the floor
+    # (never below reserve + max exposure + a fee buffer) goes to the destination.
+    profit_sweep_enabled: bool = False
+    profit_sweep_destination: str = ""
+    profit_sweep_hot_floor_sol: float = 0.0
+    profit_sweep_min_sol: float = 0.05
+    profit_sweep_interval_seconds: float = 3600.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -298,6 +310,14 @@ class TradingBotConfig:
             "max_arbitrage_input_sol": self.max_arbitrage_input_sol,
             "min_arbitrage_input_sol": self.min_arbitrage_input_sol,
             "arbitrage_jito_tip_profit_share_pct": self.arbitrage_jito_tip_profit_share_pct,
+            "daily_summary_alert": self.daily_summary_alert,
+            "daily_summary_hour_utc": self.daily_summary_hour_utc,
+            "degradation_alert_minutes": self.degradation_alert_minutes,
+            "profit_sweep_enabled": self.profit_sweep_enabled,
+            "profit_sweep_destination": self.profit_sweep_destination,
+            "profit_sweep_hot_floor_sol": self.profit_sweep_hot_floor_sol,
+            "profit_sweep_min_sol": self.profit_sweep_min_sol,
+            "profit_sweep_interval_seconds": self.profit_sweep_interval_seconds,
         }
 
     @classmethod
