@@ -59,6 +59,7 @@ from pumpfun_trading.tests.support.factories import (
     make_bot,
     make_config,
     make_pool_keys,
+    make_position,
 )
 from pumpfun_trading.tests.support.payloads import STANDARD_CURVE_RESERVES
 
@@ -5470,3 +5471,197 @@ async def test_start_and_stop_are_alerted(tmp_path: Path) -> None:
 
     assert any(m.startswith("bot started (") and "buying PAUSED" in m for m in sent)
     assert sent[-1] == "bot stopped (stream loop ended)"
+
+
+REFUSAL = (
+    "'subscribeTokenTrade' and 'subscribeAccountTrade' methods are only available "
+    "when connecting with an API key funded with at least 0.02 SOL."
+)
+
+
+def _lifecycle_fakes(
+    bot: TradingBot, release_buy: asyncio.Event, release_sell: asyncio.Event
+) -> None:
+    """Buy/sell bodies that move the real state machine and block until released."""
+
+    async def fake_buy(mint: str, market_cap_sol: float, **_: Any) -> bool:
+        bot._transition_to(TradingBotState.BUYING, reason=f"buying {mint}")
+        await release_buy.wait()
+        make_position(bot, mint)
+        bot._transition_to(TradingBotState.HOLDING, reason=f"buy_confirmed {mint}")
+        return True
+
+    async def fake_sell(mint: str, **_: Any) -> bool:
+        bot._transition_to(TradingBotState.SELLING, reason=f"selling {mint}")
+        await release_sell.wait()
+        bot.active_positions.pop(mint, None)
+        bot._transition_to(TradingBotState.MONITORING, reason=f"sold {mint}")
+        return True
+
+    bot._buy_token_impl = fake_buy  # type: ignore[method-assign,assignment]
+    bot._sell_token_locked = fake_sell  # type: ignore[method-assign]
+
+
+@pytest.mark.regression("BUG-111")
+@pytest.mark.parametrize("first", ["buy", "sell"])
+async def test_overlapping_buy_and_sell_keep_lifecycle_valid(
+    tmp_path: Path, first: str
+) -> None:
+    bot = make_bot(tmp_path)
+    bot.state = TradingBotState.HOLDING
+    make_position(bot, "HeldMint")
+    release_buy, release_sell = asyncio.Event(), asyncio.Event()
+    _lifecycle_fakes(bot, release_buy, release_sell)
+    log = MagicMock()
+    bot._log = log  # type: ignore[method-assign]
+
+    if first == "buy":
+        buy = asyncio.create_task(bot._buy_token("NewMint", 30.0))
+        await asyncio.sleep(0)
+        sell = asyncio.create_task(bot._sell_token("HeldMint", reason="stagnant"))
+        await asyncio.sleep(0)
+        assert bot.state == TradingBotState.SELLING
+        release_sell.set()
+        await sell
+        # The sell finished first; the buy is still waiting.
+        assert bot.state == TradingBotState.BUYING
+        release_buy.set()
+        assert await buy
+    else:
+        sell = asyncio.create_task(bot._sell_token("HeldMint", reason="stagnant"))
+        await asyncio.sleep(0)
+        buy = asyncio.create_task(bot._buy_token("NewMint", 30.0))
+        await asyncio.sleep(0)
+        assert bot.state == TradingBotState.BUYING
+        release_buy.set()
+        await buy
+        assert bot.state == TradingBotState.SELLING
+        release_sell.set()
+        await sell
+
+    assert bot.state == TradingBotState.HOLDING
+    assert set(bot.active_positions) == {"NewMint"}
+    assert bot._inflight_operations == {"buy": 0, "sell": 0}
+    assert not any("Ignored invalid" in str(c.args[0]) for c in log.call_args_list)
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-112")
+async def test_trade_subscription_refusal_is_logged_alerted_and_blocks_buys(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    route = AsyncMock()
+    bot.event_router.route_ws_message = route  # type: ignore[method-assign]
+    record_event = MagicMock()
+    bot._record_event = record_event  # type: ignore[method-assign]
+    log = MagicMock()
+    bot._log = log  # type: ignore[method-assign]
+
+    await bot._handle_message({"message": "Successfully subscribed to keys."})
+    await bot._handle_message({"message": "Successfully subscribed to keys."})
+    await bot._handle_message({"message": REFUSAL})
+    await bot._handle_message({"message": REFUSAL})
+
+    route.assert_not_awaited()
+    assert bot.trade_feed_available() is False
+    levels = [
+        c.kwargs.get("level")
+        for c in log.call_args_list
+        if "Successfully subscribed" in str(c.args[0])
+    ]
+    assert levels == [logging.INFO, logging.DEBUG]
+    alerts = [c for c in record_event.call_args_list if c.kwargs.get("alert")]
+    assert len(alerts) == 1 and "API key" in alerts[0].args[0]
+    assert bot._last_status == "degraded: token-trade subscription refused"
+
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 30.0) is False
+    assert bot._last_event == "buy blocked: token-trade feed refused"
+    assert bot._degradation_conditions()["trade_feed"][0] is True
+
+    snapshot = bot.get_status_snapshot()
+    assert snapshot["trade_feed_available"] is False
+    assert snapshot["stream_server_messages"][REFUSAL] == 2
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-112")
+async def test_trade_feed_refusal_can_be_allowed_by_config(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, require_trade_feed=False)
+    bot._handle_server_message(REFUSAL)
+    bot._should_buy(SAMPLE_PUMP_MINT, 30.0)
+    assert bot._last_event != "buy blocked: token-trade feed refused"
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-112")
+async def test_position_refresh_loop_reprices_at_configured_interval(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, position_refresh_seconds=0.001)
+    calls = 0
+
+    async def refresh() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("curve read failed")
+        if calls >= 3:
+            bot._stop_requested = True
+
+    bot._refresh_active_positions_market_caps = refresh  # type: ignore[method-assign]
+    await asyncio.wait_for(bot._run_position_refresh_loop(), timeout=5)
+
+    assert calls == 3
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-112")
+@pytest.mark.parametrize("interval, expected", [(0.0, 0.0), ("bad", 0.0), (2, 2.0)])
+async def test_position_refresh_interval_parsing(
+    tmp_path: Path, interval: Any, expected: float
+) -> None:
+    bot = make_bot(tmp_path, position_refresh_seconds=interval)
+    assert bot._position_refresh_interval() == expected
+    refresh = AsyncMock()
+    bot._refresh_active_positions_market_caps = refresh  # type: ignore[method-assign]
+    if expected == 0.0:
+        await bot._run_position_refresh_loop()
+        refresh.assert_not_awaited()
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-114")
+async def test_breaker_trip_counted_once_and_lockout_reports_unlock_time(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        dry_run=False,
+        max_daily_drawdown_pct=0.10,
+        emergency_hard_lock_hours=0.0,
+        drawdown_reference_mode="adaptive_ratchet",
+    )
+    bot.dry_run = True
+    bot.daily_equity_tracker.starting_equity_sol = 0.25
+    bot.daily_equity_tracker.peak_daily_equity_sol = 0.25
+    bot.wallet_balance_sol = 0.2246
+
+    for _ in range(4):
+        assert await bot._check_and_enforce_circuit_breaker() is True
+
+    assert bot._metrics["circuit_breaker_trips"] == 1
+    snapshot = bot.get_status_snapshot()
+    locked_at = snapshot["circuit_breaker_locked_at"]
+    until = snapshot["circuit_breaker_lockout_until"]
+    assert locked_at is not None and until > locked_at
+    assert until % 86_400 == pytest.approx(0.0)
+    assert until - locked_at <= 86_400
+
+    bot._write_status_snapshot()
+    await bot.close()
+    restored = make_bot(tmp_path)
+    restored.safe_startup()
+    # A lock restored from disk is not counted again.
+    assert restored._counted_breaker_lock_at == locked_at
+    await restored.close()

@@ -106,14 +106,18 @@ def build_dashboard(bot: Any) -> Panel:
     else:
         stagnant_str = "n/a"
     strategy.add_row("Stagnant timeout", stagnant_str)
+    # Configured position and loss limits are strategy settings; the Risk panel
+    # shows live risk state.
+    strategy.add_row(
+        "Max total exposure", f"{bot.config.max_total_exposure_sol:.2f} SOL"
+    )
+    strategy.add_row("Max position size", f"{bot.config.max_position_size_sol:.2f} SOL")
+    strategy.add_row("Max loss / trade", f"{bot.config.max_loss_per_trade_sol:.2f} SOL")
+    strategy.add_row("Daily drawdown", f"{bot.config.max_daily_drawdown_pct:.2%}")
 
     risk = Table.grid(expand=True)
     risk.add_column(justify="left")
     risk.add_column(justify="right")
-    risk.add_row("Max total exposure", f"{bot.config.max_total_exposure_sol:.2f} SOL")
-    risk.add_row("Max position size", f"{bot.config.max_position_size_sol:.2f} SOL")
-    risk.add_row("Max loss / trade", f"{bot.config.max_loss_per_trade_sol:.2f} SOL")
-    risk.add_row("Daily drawdown", f"{bot.config.max_daily_drawdown_pct:.2%}")
     risk.add_row("Reserve balance", f"{bot.config.reserve_balance_sol:.2f} SOL")
     risk.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     risk.add_row("Equity guard", "enabled" if not bot.dry_run else "dry-run")
@@ -228,6 +232,12 @@ def build_dashboard(bot: Any) -> Panel:
     )
     health.add_row("Health timeout", f"{bot.config.health_check_timeout_seconds}s")
     health.add_row("API/WS health", "ok" if bot._health_ok else "degraded")
+    trade_feed = getattr(bot, "trade_feed_available", None)
+    if callable(trade_feed):
+        # PumpPortal refuses token-trade subscriptions without an API key (BUG-112).
+        health.add_row(
+            "Trade feed", "ok" if trade_feed() else "[bold red]REFUSED[/bold red]"
+        )
     health.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     health.add_row("Stop requested", "yes" if bot._stop_requested else "no")
     health.add_row("Last status", str(bot._last_status))
@@ -457,9 +467,26 @@ def build_dashboard(bot: Any) -> Panel:
         Panel("\n".join(ledger_lines), title="Trade Ledger", border_style="green"),
     )
 
+    # Coin Polling and Metrics share one row so open positions do not push the
+    # metrics off the bottom of the screen.
+    polling_row = Table.grid(expand=True)
+    polling_row.add_column(ratio=1)
+    polling_row.add_column(ratio=1)
+    polling_height = max(len(runtime.rows), len(metrics_table.rows)) + 2
+    polling_row.add_row(
+        Panel(
+            runtime, title="Coin Polling", border_style="yellow", height=polling_height
+        ),
+        Panel(
+            metrics_table,
+            title="Metrics",
+            border_style="magenta",
+            height=polling_height,
+        ),
+    )
     runtime_group = Group(
         Panel(positions_table, title="Open Positions", border_style="green"),
-        Panel(runtime, title="Coin Polling", border_style="yellow"),
+        polling_row,
     )
 
     return Panel(
@@ -467,7 +494,6 @@ def build_dashboard(bot: Any) -> Panel:
             Panel(overview, title="Overview", border_style="blue"),
             Panel(runtime_group, title="Run Time", border_style="yellow"),
             Panel(audit_group, title="Audit Trail", border_style="magenta"),
-            Panel(metrics_table, title="Metrics", border_style="magenta"),
         ),
         title="Trading Bot",
         border_style="white",

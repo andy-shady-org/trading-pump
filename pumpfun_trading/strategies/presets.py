@@ -490,6 +490,10 @@ def resolve_strategy_config(
         paper_entry_slippage_bps=max(
             0, min(5_000, int(base.get("paper_entry_slippage_bps", 0)))
         ),
+        position_refresh_seconds=max(
+            0.0, float(base.get("position_refresh_seconds", 1.0))
+        ),
+        require_trade_feed=bool(base.get("require_trade_feed", True)),
         screening_cache_ttl_seconds=int(base.get("screening_cache_ttl_seconds", 60)),
         enable_momentum_signals=bool(base.get("enable_momentum_signals", True)),
         momentum_window_seconds=int(base.get("momentum_window_seconds", 30)),

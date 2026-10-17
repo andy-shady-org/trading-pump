@@ -78,7 +78,11 @@ def test_pnl_command_prints_json_summary(tmp_path: Path, output: Console) -> Non
     summary = json.loads(output.export_text())
     assert summary["trades"] == 2
     assert summary["totals"]["net_pnl_sol"] == pytest.approx(0.0028)
-    assert set(summary["groups"]) == {"entry", "trailing_stop_hit"}
+    # The buy leg is booked under the position's exit reason (BUG-115).
+    assert set(summary["groups"]) == {"trailing_stop_hit"}
+    assert summary["groups"]["trailing_stop_hit"]["net_pnl_sol"] == pytest.approx(
+        summary["totals"]["net_pnl_sol"]
+    )
 
 
 def test_pnl_command_renders_tables_and_legacy_warning(

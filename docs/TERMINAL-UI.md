@@ -12,66 +12,57 @@ The Terminal User Interface (`pumpbot`) is an institutional-grade, low-overhead 
 
 The live console utilizes a structured, modular panel hierarchy rendered inside the terminal's alternate screen buffer (`screen=True`).
 
-Below is an exact visual ASCII representation of the live dashboard during active trading execution:
+Below is the dashboard rendered by `ui/dashboard.py` at 150 columns with two open positions (dry run, `balanced` preset). The configured limits sit in the Strategy panel, and Coin Polling and Metrics share one row inside Run Time so open positions don't push the metrics off the screen:
 
 ```
-╭─────────────────────────────────────────────────────────────────── Trading Bot ───────────────────────────────────────────────────────────────────╮
-│ ╭──────────────────────────────────────────────────────────────────── Overview ───────────────────────────────────────────────────────────────────╮ │
-│ │ ╭─────────────────── Strategy ───────────────────╮╭───────────────────── Risk ─────────────────────╮╭────────────────── Bot Status ──────────────────╮╭────────────────── Health Check ──────────────────╮ │ │
-│ │ │ Preset: balanced                               ││ Max total exposure: 5.00 SOL                   ││ State: MONITORING                              ││ Heartbeat: 0.4s ago                              │ │ │
-│ │ │ Buy amount: 0.1000 SOL                         ││ Max position size: 0.50 SOL                    ││ Uptime: 04h 12m 30s                            ││ Last message: 0.4s ago                           │ │ │
-│ │ │ Take profit: 200.00%                           ││ Max loss / trade: 0.05 SOL                     ││ Health: ok                                     ││ Health timeout: 10s                              │ │ │
-│ │ │ Stop loss: 85.00%                              ││ Daily drawdown: 20.00%                         ││ Risk killed: no                                ││ API/WS health: ok                                │ │ │
-│ │ │ Max active: 3                                  ││ Reserve balance: 0.10 SOL                      ││ Active positions: 2                            ││ Risk killed: no                                  │ │ │
-│ │ │ Min market cap: 20.00 SOL                      ││ Risk killed: no                                ││ Last event: quote received: SolCat             ││ Stop requested: no                               │ │ │
-│ │ │ Dry run: no                                    ││ Equity guard: enabled                          ││ Status: monitoring                             ││ Last status: monitoring                          │ │ │
-│ │ │ Paper trade: no                                ││ Daily PnL: +0.2299 SOL                         ││ Last message: 0.4s ago                         ││ Last event: quote received: SolCat               │ │ │
-│ │ │ Wallet value: 1.4520 SOL                       ││ Circuit breaker: ok                            ││ Stream URL: wss://pumpportal.fun/api/data      ││                                                  │ │ │
-│ │ │ Stagnant timeout: 45.0s                        ││                                                ││ Geyser endpoint: grpc.solana.xyz:10000         ││                                                  │ │ │
-│ │ │                                                ││                                                ││ Audit log: runtime/audit_trail.jsonl           ││                                                  │ │ │
-│ │ │                                                ││                                                ││ Last new token: SolCat                         ││                                                  │ │ │
-│ │ ╰────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯╰───────────────────────────────────────────────────╯ │ │
-│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│ ╭──────────────────────────────────────────────────────────────────── Run Time ───────────────────────────────────────────────────────────────────╮ │
-│ │ ╭──────────────────────────────────────────────────────────────── Open Positions ─────────────────────────────────────────────────────────────╮ │ │
-│ │ │ Name               │ Mint        │  Entry MC │ Current MC │ Cost / Spend │ Token Amount │ Unit Token Price │ Perf / PnL │ Reason            │ │ │
-│ │ ├────────────────────┼─────────────┼───────────┼────────────┼──────────────┼──────────────┼──────────────────┼────────────┼───────────────────┤ │ │
-│ │ │ SolCat             │ 7EYnh...    │ 28.50 SOL │  62.10 SOL │   0.1000 SOL │       2.45M  │      0.0408 µSOL │   +117.89% │ TP1_FILLED_MOON   │ │ │
-│ │ │ MoonDog            │ 3xP9k...    │ 18.20 SOL │  22.40 SOL │   0.1000 SOL │       4.10M  │      0.0244 µSOL │    +23.08% │ watch             │ │ │
-│ │ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │
-│ │ ╭────────────────────────────────────────────────────────────────── Coin Polling ──────────────────────────────────────────────────────────────╮ │ │
-│ │ │ Last message: 0.4s ago                                                                                                                      │ │ │
-│ │ │ Last token: SolCat                                                                                                                          │ │ │
-│ │ │ Stream URL: wss://pumpportal.fun/api/data                                                                                                   │ │ │
-│ │ │ Geyser endpoint: grpc.solana.xyz:10000                                                                                                      │ │ │
-│ │ │ Observed: 1,482                                                                                                                             │ │ │
-│ │ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │
-│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│ ╭────────────────────────────────────────────────────────────────── Audit Trail ──────────────────────────────────────────────────────────────────╮ │
-│ │ ╭──────────────────────────────────────────────────────────────────── Events ─────────────────────────────────────────────────────────────────╮ │ │
-│ │ │ • 19:42:10 [RISK] Trailing stop ratcheted to 0.0520 SOL for SolCat (Peak: 0.0620 SOL)                                                        │ │ │
-│ │ │ • 19:42:10 [SELL] Take-profit Tier 1 executed for SolCat (50% sold @ 0.1144 SOL)                                                             │ │ │
-│ │ │ • 19:38:05 [BUY] Entry order confirmed for MoonDog (0.1000 SOL @ 18.20 SOL MC)                                                              │ │ │
-│ │ │ • 19:35:12 [FILTER] Candidate rejected (creator dumped 3 tokens in 24h)                                                                      │ │ │
-│ │ │ • 19:30:00 [HEARTBEAT] System healthy, 2 active positions, slot latency 380ms                                                                │ │ │
-│ │ │ • 19:15:02 [BUY] Entry order confirmed for SolCat (0.1000 SOL @ 28.50 SOL MC)                                                               │ │ │
-│ │ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │
-│ │ ╭───────────────────────────────────────────────────────────────── Trade Ledger ──────────────────────────────────────────────────────────────╮ │ │
-│ │ │ SELL 7EYnh... -> 0.1144 SOL | take_profit_tier_1                                                                                            │ │ │
-│ │ │ BUY  3xP9k... @ 0.0244 µSOL | new_candidate_entry                                                                                           │ │ │
-│ │ │ BUY  7EYnh... @ 0.0408 µSOL | new_candidate_entry                                                                                           │ │ │
-│ │ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │
-│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│ ╭──────────────────────────────────────────────────────────────────── Metrics ────────────────────────────────────────────────────────────────────╮ │
-│ │ buys: 2                                                                                                                                       │ │
-│ │ sells: 1                                                                                                                                      │ │
-│ │ failures: 0                                                                                                                                   │ │
-│ │ retries: 0                                                                                                                                    │ │
-│ │ connection_loss: 0                                                                                                                            │ │
-│ │ stale_data: 0                                                                                                                                 │ │
-│ │ latency avg: 382.4 ms                                                                                                                         │ │
-│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────────── Trading Bot ────────────────────────────────────────────────────────────────────╮
+│ ╭─────────────────────────────────────────────────────────────────── Overview ───────────────────────────────────────────────────────────────────╮ │
+│ │ ╭──────────── Strategy ────────────╮╭────────────── Risk ──────────────╮╭────────── Bot Status ───────────╮╭───────── Health Check ──────────╮ │ │
+│ │ │ Preset                  balanced ││ Reserve balance         0.10 SOL ││ State                      idle ││ Heartbeat              0.0s ago │ │ │
+│ │ │ Buy amount            0.0100 SOL ││ Risk killed                   no ││ Buying                   active ││ Last message           0.0s ago │ │ │
+│ │ │ Take profit              150.00% ││ Equity guard             dry-run ││ Uptime                       0s ││ Health timeout              60s │ │ │
+│ │ │ Stop loss                 85.00% ││ Daily PnL (net)      +0.0000 SOL ││ Health                       ok ││ API/WS health                ok │ │ │
+│ │ │ Max active                     1 ││ Daily PnL (gross)    +0.0000 SOL ││ Risk killed                  no ││ Trade feed                   ok │ │ │
+│ │ │ Min market cap          5.00 SOL ││ Costs today          +0.0000 SOL ││ Active positions              2 ││ Risk killed                  no │ │ │
+│ │ │ Dry run                      yes ││ Session net PnL      +0.0000 SOL ││ Last event      waiting for new ││ Stop requested               no │ │ │
+│ │ │ Paper trade                   no ││ Circuit breaker               ok ││                    token stream ││ Last status        initializing │ │ │
+│ │ │ Wallet value          0.2000 SOL ││ Reconciliation           not run ││ Status             initializing ││ Last event      waiting for new │ │ │
+│ │ │ Stagnant timeout          120.0s ││                                  ││ Last message           0.0s ago ││                    token stream │ │ │
+│ │ │ Max total exposure      0.25 SOL ││                                  ││ Stream URL      wss://pumpport… ││                                 │ │ │
+│ │ │ Max position size       0.05 SOL ││                                  ││ Audit log       data/audit_tr… ││                                 │ │ │
+│ │ │ Max loss / trade        0.02 SOL ││                                  ││ Last new token                - ││                                 │ │ │
+│ │ │ Daily drawdown            20.00% ││                                  ││                                 ││                                 │ │ │
+│ │ ╰──────────────────────────────────╯╰──────────────────────────────────╯╰─────────────────────────────────╯╰─────────────────────────────────╯ │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ ╭─────────────────────────────────────────────────────────────────── Run Time ───────────────────────────────────────────────────────────────────╮ │
+│ │ ╭────────────────────────────────────────────────────────────── Open Positions ──────────────────────────────────────────────────────────────╮ │ │
+│ │ │ ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓ │ │ │
+│ │ │ ┃ Name                ┃ Mint         ┃   Entry MC ┃  Current MC ┃  Cost / Spend ┃  Token Amount ┃ Unit Token Price ┃ Perf / PnL ┃ Reason ┃ │ │ │
+│ │ │ ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━┩ │ │ │
+│ │ │ │ So1CatMint11111111  │ So1CatMi...  │  30.00 SOL │   30.00 SOL │    0.0100 SOL │       350.00B │      0.0286 µSOL │      0.00% │ entry  │ │ │ │
+│ │ │ ├─────────────────────┼──────────────┼────────────┼─────────────┼───────────────┼───────────────┼──────────────────┼────────────┼────────┤ │ │ │
+│ │ │ │ MoonDogMint1111111  │ MoonDogM...  │  30.00 SOL │   30.00 SOL │    0.0100 SOL │       350.00B │      0.0286 µSOL │      0.00% │ entry  │ │ │ │
+│ │ │ └─────────────────────┴──────────────┴────────────┴─────────────┴───────────────┴───────────────┴──────────────────┴────────────┴────────┘ │ │ │
+│ │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │
+│ │ ╭─────────────────────────── Coin Polling ────────────────────────────╮╭────────────────────────────── Metrics ──────────────────────────────╮ │ │
+│ │ │ Last message                                               0.0s ago ││ buys                                                              0 │ │ │
+│ │ │ Last token                                                        - ││ sells                                                             0 │ │ │
+│ │ │ Stream URL                            wss://pumpportal.fun/api/data ││ failures                                                          0 │ │ │
+│ │ │ Observed                                                          0 ││ retries                                                           0 │ │ │
+│ │ │                                                                     ││ connection_loss                                                   0 │ │ │
+│ │ │                                                                     ││ stale_data                                                        0 │ │ │
+│ │ │                                                                     ││ latency avg                                                  0.0 ms │ │ │
+│ │ ╰─────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────────────╯ │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ ╭───────────────────────────────────────────────────────────────── Audit Trail ──────────────────────────────────────────────────────────────────╮ │
+│ │ ╭────────────────────────────────────────────────────────────────── Events ──────────────────────────────────────────────────────────────────╮ │ │
+│ │ │ No events yet.                                                                                                                             │ │ │
+│ │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │
+│ │ ╭─────────────────────────────────────────────────────────────── Trade Ledger ───────────────────────────────────────────────────────────────╮ │ │
+│ │ │ No trades recorded yet.                                                                                                                    │ │ │
+│ │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 ---
@@ -94,12 +85,13 @@ The Overview section provides an immediate operational snapshot split across fou
 * **`Paper trade`**: Indicates whether simulated paper trading balances are being tracked (`yes` / `no`).
 * **`Wallet value`**: Current on-chain or simulated wallet balance in SOL available for trading (e.g. `1.4520 SOL`).
 * **`Stagnant timeout`**: Configured stagnation exit timeout in seconds before closing flat positions without price momentum (e.g. `45.0s` or `120.0s`).
-
-#### B. Risk Sub-Panel (`border_style="red"`)
 * **`Max total exposure`**: Hard cap on total portfolio capital deployed across all open positions in SOL (e.g. `5.00 SOL`).
 * **`Max position size`**: Maximum allowable SOL capital committed to a single token (e.g. `0.50 SOL`).
 * **`Max loss / trade`**: Maximum permissible loss on an individual position before forcing emergency exit (e.g. `0.05 SOL`).
 * **`Daily drawdown`**: Maximum daily portfolio drawdown threshold (e.g. `20.00%`).
+
+#### B. Risk Sub-Panel (`border_style="red"`)
+Live risk state only; the configured limits above are in the Strategy panel.
 * **`Reserve balance`**: Minimum SOL balance reserved in the hot wallet for transaction fees and account rent (e.g. `0.10 SOL`).
 * **`Risk killed`**: Displays `yes` if an emergency risk kill-switch has triggered, or `no` during normal execution.
 * **`Equity guard`**: Status of the pre-trade equity guard (`enabled` for live trading, `dry-run` during simulation).
@@ -128,6 +120,7 @@ The Overview section provides an immediate operational snapshot split across fou
 * **`Last message`**: Timestamp latency of incoming stream messages.
 * **`Health timeout`**: Configured health check expiration threshold.
 * **`API/WS health`**: Real-time connection state for REST APIs and streaming WebSockets/gRPC (`ok` or `degraded`).
+* **`Trade feed`**: `ok`, or `REFUSED` when PumpPortal refuses per-token trade subscriptions because the stream URL has no funded API key (BUG-112). While refused, new buys are blocked (`require_trade_feed`) and a degradation alert is sent.
 * **`Risk killed`**: Internal kill-switch validation flag.
 * **`Stop requested`**: Displays `yes` if SIGINT / SIGTERM shutdown has been initiated.
 * **`Last status`**: Internal state machine status code.
@@ -149,12 +142,24 @@ A real-time table tracking all active open bonding curve positions:
 * **`Perf / PnL`**: Unrealized percentage return based on market cap movement ($(\text{Current MC} - \text{Entry MC}) / \text{Entry MC}$). Color-coded in green (`+117.89%`) or red (`-8.50%`).
 * **`Reason`**: Active strategy trigger or scale-out status (e.g. `watch`, `TP1_FILLED_MOON`, `TRAILING_STOP_ACTIVE`).
 
-#### B. Coin Polling Sub-Panel (`border_style="yellow"`)
+#### B. Coin Polling and Metrics Row
+Coin Polling (left) and Metrics (right) share one row at half the width each, so a long Open Positions table no longer pushes the metrics off the bottom of the screen.
+
+Coin Polling (`border_style="yellow"`):
 * **`Last message`**: Latency of the latest coin stream update.
 * **`Last token`**: Name of the latest token detected on the network.
 * **`Stream URL`**: Active stream endpoint.
 * **`Geyser endpoint`**: Active Yellowstone gRPC endpoint.
 * **`Observed`**: Total count of unique token mints screened by the anti-rug engine during the session.
+
+Metrics (`border_style="magenta"`, right half of the row) shows cumulative counters for the session:
+* **`buys`**: Total number of successfully confirmed buy transactions.
+* **`sells`**: Total number of successfully confirmed sell transactions.
+* **`failures`**: Total count of failed on-chain transactions or rejected Jito bundles.
+* **`retries`**: Number of automated slippage/RPC retry attempts.
+* **`connection_loss`**: Total count of stream disconnection and reconnection events.
+* **`stale_data`**: Count of dropped or expired quotes exceeding health timeout.
+* **`latency avg`**: Rolling average slot latency in milliseconds (e.g. `382.4 ms`).
 
 ---
 
@@ -176,18 +181,6 @@ Displays the **5 most recent buy/sell trade executions**:
 
 ---
 
-### Panel 4: Metrics Panel (Bottom Section)
-Displays cumulative counters across the entire active session:
-* **`buys`**: Total number of successfully confirmed buy transactions.
-* **`sells`**: Total number of successfully confirmed sell transactions.
-* **`failures`**: Total count of failed on-chain transactions or rejected Jito bundles.
-* **`retries`**: Number of automated slippage/RPC retry attempts.
-* **`connection_loss`**: Total count of stream disconnection and reconnection events.
-* **`stale_data`**: Count of dropped or expired quotes exceeding health timeout.
-* **`latency avg`**: Rolling average slot latency in milliseconds (e.g. `382.4 ms`).
-
----
-
 ## 3. Visual Styling & Color Coding Rules
 
 The console interface enforces strict color coding to maximize operational clarity:
@@ -199,7 +192,7 @@ The console interface enforces strict color coding to maximize operational clari
 | **Green** | Open Positions, Trade Ledger, Positive PnL | Active holdings, confirmed trade executions, and profitable returns. |
 | **Blue** | Overview Container, Bot Status Panel | Core lifecycle state machine, uptime tracking, and endpoint status. |
 | **Yellow** | Health Check, Coin Polling, Warnings | Connection heartbeats, stream latency, and non-fatal operational alerts. |
-| **Magenta** | Audit Trail Container, Metrics Panel | Historical auditing, event logs, and cumulative execution counters. |
+| **Magenta** | Audit Trail Container, Metrics | Historical auditing, event logs, and cumulative execution counters. |
 | **White / Bold** | Outer Dashboard Border, Headers | High-level container boundaries and primary screen titles. |
 
 ---

@@ -948,3 +948,33 @@ def test_build_dashboard_position_shows_entry_reason_not_watch(
 
     assert "momentum_spike" in text
     assert "watch" not in text
+
+
+def test_limits_render_in_strategy_panel_and_metrics_beside_polling(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    make_position(bot, "OpenMint")
+    bot._handle_server_message(
+        "'subscribeTokenTrade' and 'subscribeAccountTrade' methods are only "
+        "available when connecting with an API key funded with at least 0.02 SOL."
+    )
+
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(bot))
+    lines = console.export_text().splitlines()
+
+    title = next(line for line in lines if "Strategy" in line and "Risk" in line)
+    risk_column = title.index("Risk")
+    for label in (
+        "Max total exposure",
+        "Max position size",
+        "Max loss / trade",
+        "Daily drawdown",
+    ):
+        rows = [line for line in lines if label in line]
+        assert len(rows) == 1, label
+        assert rows[0].index(label) < risk_column, label
+    # Metrics share the Run Time row with Coin Polling instead of a full-width panel.
+    assert any("Coin Polling" in line and "Metrics" in line for line in lines)
+    assert any("Trade feed" in line and "REFUSED" in line for line in lines)
