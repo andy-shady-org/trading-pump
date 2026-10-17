@@ -1,5 +1,8 @@
 """Unit tests for OrderFlowEngine, sliding window analytics, and velocity Z-score detector."""
 
+import pytest
+
+from pumpfun_trading.strategies.graduation import GraduationEngine
 from pumpfun_trading.strategies.momentum import (
     MomentumSignal,
     OrderFlowEngine,
@@ -373,3 +376,21 @@ def test_order_flow_engine_multi_token_and_cleanup() -> None:
     # Clear all
     engine.clear()
     assert engine.tracked_token_count == 0
+
+
+@pytest.mark.regression("BUG-77")
+def test_order_flow_and_graduation_engines_are_bounded():
+    """BUG-77: trackers are capped by least-recent activity."""
+    flow = OrderFlowEngine(max_tracked_tokens=2)
+    flow.record_trade("a", True, 0.1, "u", timestamp=1.0)
+    flow.record_trade("b", True, 0.1, "u", timestamp=3.0)
+    flow.record_trade("c", True, 0.1, "u", timestamp=2.0)
+    assert flow.tracked_token_count == 2
+    assert "a" not in flow._trackers
+
+    grad = GraduationEngine(max_tracked_candidates=2)
+    grad.update_bonding_curve("a", "c1", 1.0, 31.0, 30.0, timestamp=1.0)
+    grad.update_bonding_curve("b", "c2", 1.0, 31.0, 30.0, timestamp=3.0)
+    grad.update_bonding_curve("c", "c3", 1.0, 31.0, 30.0, timestamp=2.0)
+    assert grad.tracked_candidate_count == 2
+    assert grad.get_candidate("a") is None

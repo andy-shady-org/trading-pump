@@ -1,6 +1,7 @@
 """Unit tests for Raydium instruction serialization, pool decoders, and execution client."""
 
 import base58
+import pytest
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from spl.token.constants import TOKEN_PROGRAM_ID
@@ -21,6 +22,7 @@ from pumpfun_trading.sdk.raydium import (
     parse_raydium_pool_from_tx,
 )
 from pumpfun_trading.strategies.presets import resolve_strategy_config
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT, WSOL_MINT
 from pumpfun_trading.tests.support.factories import make_pool_keys
 
 
@@ -118,6 +120,7 @@ def test_parse_raydium_initialize2_accounts():
     assert parsed_tx.amm_id == keys.amm_id
 
 
+@pytest.mark.regression("BUG-51", "BUG-36")
 async def test_execution_client_raydium_buy_tx():
     kp = Keypair()
     b58_key = base58.b58encode(kp.to_bytes()).decode()
@@ -229,3 +232,75 @@ def test_graduation_presets_and_config():
     d = cfg_bal.to_dict()
     assert d["enable_raydium_migration_sniping"] is True
     assert d["raydium_buy_amount_sol"] == 0.02
+
+
+@pytest.mark.regression("BUG-81")
+def test_raydium_initialize2_reads_pc_mint_from_accounts():
+    # BUG-81
+    accounts = [f"Acct{i}" for i in range(21)]
+    keys = parse_raydium_initialize2_accounts(accounts)
+    assert keys is not None
+    assert keys.pc_mint == "Acct9"
+    assert parse_raydium_initialize2_accounts(accounts, pc_mint="X").pc_mint == "X"
+
+
+def test_raydium_sdk_extended_branches():
+    from pumpfun_trading.sdk.raydium import (
+        calculate_raydium_swap_out,
+        parse_raydium_initialize2_accounts,
+        parse_raydium_pool_from_tx,
+    )
+
+    # Zero & negative inputs
+    assert calculate_raydium_swap_out(0, 1000, 1000) == (0, 0)
+    assert calculate_raydium_swap_out(1000, 0, 1000) == (0, 0)
+    assert calculate_raydium_swap_out(1000, 1000, 0) == (0, 0)
+
+    # Short accounts list (< 18)
+    assert parse_raydium_initialize2_accounts(["acc"] * 10) is None
+
+    # Fallback accounts list (18 accounts)
+    accs_18 = [f"acc_{i}" for i in range(18)]
+    keys_18 = parse_raydium_initialize2_accounts(accs_18, coin_mint=SAMPLE_MINT)
+    assert keys_18 is not None
+    assert keys_18.amm_id == "acc_0"
+    assert keys_18.coin_mint == SAMPLE_MINT
+
+    # parse_raydium_pool_from_tx
+    assert parse_raydium_pool_from_tx("not_a_dict") is None  # type: ignore
+    assert parse_raydium_pool_from_tx({}) is None
+
+    # from direct poolKeys in dict
+    tx_dict = {
+        "poolKeys": {
+            "amm_id": "Amm1",
+            "amm_authority": "Auth1",
+            "amm_open_orders": "Open1",
+            "amm_target_orders": "Target1",
+            "pool_coin_token_account": "Coin1",
+            "pool_pc_token_account": "Pc1",
+            "serum_program_id": "Serum1",
+            "serum_market": "Market1",
+            "serum_bids": "Bids1",
+            "serum_asks": "Asks1",
+            "serum_event_queue": "Queue1",
+            "serum_coin_vault": "CoinV1",
+            "serum_pc_vault": "PcV1",
+            "serum_vault_signer": "Signer1",
+            "coin_mint": SAMPLE_MINT,
+            "pc_mint": WSOL_MINT,
+            "lp_mint": "Lp1",
+        }
+    }
+    parsed_keys = parse_raydium_pool_from_tx(tx_dict)
+    assert parsed_keys is not None
+    assert parsed_keys.amm_id == "Amm1"
+
+    # from accounts in tx dict
+    tx_accs_dict = {
+        "accounts": [f"acc_{i}" for i in range(21)],
+        "mint": SAMPLE_MINT,
+    }
+    parsed_accs = parse_raydium_pool_from_tx(tx_accs_dict)
+    assert parsed_accs is not None
+    assert parsed_accs.amm_id == "acc_4"

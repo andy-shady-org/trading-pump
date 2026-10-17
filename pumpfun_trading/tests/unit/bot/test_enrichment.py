@@ -13,6 +13,7 @@ from solders.pubkey import Pubkey
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.enrichment import (
     TokenEnricher,
+    count_launches_last_24h,
     creator_initial_buy_pct,
     merge_token_data,
 )
@@ -77,6 +78,7 @@ def _api(
     return api
 
 
+@pytest.mark.regression("BUG-95")
 async def test_enrich_stream_payload_fetches_socials_and_chain_holders() -> None:
     mint = str(Pubkey.new_unique())
     client = _execution_client()
@@ -304,3 +306,13 @@ async def test_token_enricher_with_mock_api():
     verdict = await enricher.enrich_and_screen("Mint111")
     assert isinstance(verdict, TokenScreeningVerdict)
     assert verdict.passed
+
+
+@pytest.mark.regression("BUG-58")
+def test_24h_launch_count_keeps_zero_and_handles_seconds():
+    # BUG-58
+    now = 2_000_000_000.0
+    old = [{"created_timestamp": (now - 5 * 86400) * 1000}] * 7
+    assert count_launches_last_24h(old, now=now) == 0
+    recent = [{"createdAt": now - 60}, {"created_timestamp": (now - 120) * 1000}]
+    assert count_launches_last_24h(recent + old, now=now) == 2

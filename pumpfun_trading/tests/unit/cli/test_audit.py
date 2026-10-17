@@ -284,3 +284,49 @@ def test_cli_audit_subcommand(tmp_path):
         ["audit_cli", "--path", str(audit_file), "--summary"],
     ):
         cli_audit.main()
+
+
+def test_audit_cli_price_filters(tmp_path):
+    from unittest.mock import patch
+
+    from pumpfun_trading.cli.audit import build_parser, run_audit_cli
+
+    path = tmp_path / "audit.jsonl"
+    records = [
+        {
+            "timestamp": 1700000000,
+            "type": "trade",
+            "state": "buying",
+            "payload": {
+                "mint": "MintA",
+                "buy_price": 0.005,
+                "action": "buy",
+                "status": "success",
+            },
+        },
+        {
+            "timestamp": 1700000100,
+            "type": "trade",
+            "state": "selling",
+            "payload": {
+                "mint": "MintB",
+                "buy_price": 0.005,
+                "sell_price": 0.015,
+                "action": "sell",
+                "status": "success",
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--path", str(path), "--min-sell-price", "0.010", "--json"]
+    )
+    with patch("pumpfun_trading.cli.audit.console.print") as mock_print:
+        run_audit_cli(args)
+        assert mock_print.called
+        printed_arg = mock_print.call_args[0][0]
+        data = json.loads(printed_arg)
+        assert len(data) == 1
+        assert data[0]["payload"]["mint"] == "MintB"

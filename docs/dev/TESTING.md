@@ -23,14 +23,14 @@ Snapshot at planning time: **65 files** (64 `test_*.py` + `conftest.py`), **~25,
 | # | Finding | Evidence |
 |---|---|---|
 | T1 | Flat layout that does not mirror the source | Everything in `pumpfun_trading/tests/`; no sub-packages; no 1:1 module correspondence. **Sprint 26 Phases 4–6:** 42 legacy files moved, merged or split into `unit/<pkg>/` and `integration/` (§6); the 21 files left in the tests root are the Sprint 27 ones (coverage padding, `_full` / `_regressions` pairs, themed regression files) |
-| T2 | Six coverage-padding files (~7.1k lines) organised by coverage % | `test_coverage_95_comprehensive.py` (3,395 lines), `test_coverage_boost_v2.py` (1,984), `test_coverage_95_plus.py` (930), `test_coverage_95_final_push.py` (380), `test_coverage_boost_final.py` (298), `test_runtime_coverage_boost.py` (151) |
-| T3 | Modules split across duplicate base / `_full` / `_regressions` files | `test_api_client.py` + `test_api_client_full.py`; `test_audit_tool.py` + `test_audit_full.py`; `test_execution_sdk.py` + `test_execution_sdk_full.py`; `test_bot_runtime_full.py` + `test_bot_runtime_regressions.py` |
+| T2 | Six coverage-padding files (~7.1k lines) organised by coverage % | `test_coverage_95_comprehensive.py` (3,395 lines), `test_coverage_boost_v2.py` (1,984), `test_coverage_95_plus.py` (930), `test_coverage_95_final_push.py` (380), `test_coverage_boost_final.py` (298), `test_runtime_coverage_boost.py` (151). **Resolved in Sprint 27:** all six dissolved test by test into the module each test exercises most (§6); per-module coverage unchanged. No test was deleted, because every one still covers lines nothing else does. About 20 grab-bag tests keep coverage-style names (`test_final_coverage_push`, `test_bot_more_branches_push`, …); split them into named behaviour tests when their module is next changed (Sprint 28 extractions first) |
+| T3 | Modules split across duplicate base / `_full` / `_regressions` files | `test_api_client.py` + `test_api_client_full.py`; `test_audit_tool.py` + `test_audit_full.py`; `test_execution_sdk.py` + `test_execution_sdk_full.py`; `test_bot_runtime_full.py` + `test_bot_runtime_regressions.py`. **Resolved in Sprint 27:** merged into `unit/api/test_client.py`, `unit/bot/test_audit.py` (new), `unit/sdk/test_execution.py` and `unit/bot/test_run.py`; clashing helpers were suffixed (e.g. `MINT_LAYOUT`) and duplicate helpers replaced by `support/` (`SAMPLE_MINT`, `WSOL_MINT`, `make_pool_keys`, `make_bot`) |
 | T4 | Almost no shared fixtures; setup copied everywhere | 15 fixtures, one 58-line root `conftest.py`; `TradingBotConfig(` built inline **136** times; private-key constants redefined in **13** files; `make_bot` / `_make_bot`; three `make_*pool_keys` variants (`make_pool_keys`, `make_sample_pool_keys`, `make_test_pool_keys`). **Sprint 26 Phase 2:** `tests/support/` built (§3, §5) and the 16 private-key constants (four different values) replaced by `SAMPLE_PRIVATE_KEY`; the inline configs and old helpers are replaced file by file as later phases move them. **Phase 7:** in `unit/` and `integration/`, 91 of 94 inline configs now use `make_config` (calls that didn't set `dry_run` pass `dry_run=False`, so behaviour is unchanged) and all four pool-key helpers use `make_pool_keys`; `unit/execution/conftest.py` is the first package conftest. The rest (58 inline configs, `make_bot` / `_make_bot`) is in the Sprint 27 files |
-| T5 | Tests coupled to the runtime monolith | **24** files import `pumpfun_trading.bot.run.TradingBot` and reach into private attributes |
-| T6 | Marker noise, no taxonomy | **216** redundant `@pytest.mark.asyncio` although `asyncio_mode = "auto"`; no `unit` / `integration` / `regression` / `slow` markers; no `--strict-markers`; `parametrize` used only twice. **Markers resolved in Sprint 26 Phase 1:** asyncio marks removed, taxonomy registered with `--strict-markers` and applied by directory (§4), `nox -s tests-fast` added. `parametrize` adoption stays with Sprint 27 |
+| T5 | Tests coupled to the runtime monolith | **24** files import `pumpfun_trading.bot.run.TradingBot` and reach into private attributes. **Safety net added in Sprint 27:** `integration/test_golden_replay.py` drives a dry-run bot through its stream entry point (`_handle_message`) for four scenarios and compares every ledger row, the final positions, state and wallet balance with `integration/golden/*.json`; Sprint 28 must keep these unchanged. The private-attribute coupling itself goes away as Sprint 28–29 add public seams |
+| T6 | Marker noise, no taxonomy | **216** redundant `@pytest.mark.asyncio` although `asyncio_mode = "auto"`; no `unit` / `integration` / `regression` / `slow` markers; no `--strict-markers`; `parametrize` used only twice. **Markers resolved in Sprint 26 Phase 1:** asyncio marks removed, taxonomy registered with `--strict-markers` and applied by directory (§4), `nox -s tests-fast` added. `parametrize` adoption stays with Sprint 27. **Sprint 27:** a scan for tests whose bodies differ only in literals found one pair (`unit/ops/test_redact.py`), now parametrized, plus the `format_uptime` assertion table; new tests use `parametrize` for tables (BUG-75, layout guard). Converting assertion tables inside grab-bag tests continues as they are split (T2) |
 | T7 | Non-deterministic / slow tests | `time.sleep` in `test_anti_rug_filters.py`, `test_logging_rotation.py`, `test_ops_retention.py`; `asyncio.run` inside async-mode tests in `test_bugfixes_lifecycle_resilience.py`, `test_cross_venue_arbitrage.py`, `test_market_data_resilience.py`, `test_runtime_coverage_boost.py`; no fake clock. **Resolved in Sprint 26 Phase 3:** all removed; most of the suite's 136 s was real retry backoff on blocked-network lookups, now skipped by the `instant_retry_backoff` fixture in `tests/conftest.py` (full suite ~8 s) |
 | T8 | Tests ship in the wheel | `[tool.setuptools.packages.find] include = ["pumpfun_trading*"]` matches `pumpfun_trading.tests`. **Resolved in Sprint 25:** `packages.find` exclude plus `MANIFEST.in` `prune pumpfun_trading/tests` (the exclude alone still packed tests as package data); checked by `nox -s package` |
-| T9 | Regressions scattered by theme, not BUG ID | `test_*_regressions.py`, `test_bugfixes_*`; no way to check that every resolved bug has a test |
+| T9 | Regressions scattered by theme, not BUG ID | `test_*_regressions.py`, `test_bugfixes_*`; no way to check that every resolved bug has a test. **Resolved in Sprint 27:** 140 tests carry `regression("BUG-xx")` beside the module they guard (IDs taken from each test's docstring, comments or `test_bugNN_` name, plus hand-picked tags and three new tests for BUG-32, BUG-75 and BUG-88); `unit/test_suite_layout.py` fails if a RESOLVED bug in `BUGS.md` has no tagged test (5 known gaps listed, shrink-only) or a tag names an unknown bug (§5 Regressions) |
 
 ---
 
@@ -49,11 +49,16 @@ pumpfun_trading/tests/
 │   └── constants.py       # SAMPLE_PRIVATE_KEY, SAMPLE_RPC_URL, sample mints, initial curve reserves
 ├── unit/                  # 1:1 mirror: unit/<pkg>/test_<module>.py
 │   ├── test_support.py    # tests of support/ itself (round-trips payloads through the real parsers)
+│   ├── test_suite_layout.py  # layout guard + BUG regression-tag check
 │   ├── api/  bot/  cli/  config/  engines/  execution/
 │   ├── infra/  ops/  sdk/  services/  storage/
 │   └── strategies/  streams/  ui/      (each with a package conftest.py)
 ├── integration/           # cross-component flows (bot + streams + execution), replay end-to-end
-└── property/              # Hypothesis: sdk/curve math, streams parsers
+│   ├── test_golden_replay.py  # characterisation tests of TradingBot decisions
+│   └── golden/            # expected decisions per scenario (JSON, reviewed like code)
+└── property/              # Hypothesis (conftest.py: derandomized profile)
+    ├── test_curve.py      # sdk/curve.py: bounds, monotonicity, fees, no-free-money round trip
+    └── test_geyser_parsers.py  # streams/geyser.py: byte round trips, short / foreign buffers
 ```
 
 ### Mirror rule
@@ -63,7 +68,7 @@ pumpfun_trading/tests/
 | `pumpfun_trading/bot/run.py` | `tests/unit/bot/test_run.py` |
 | `pumpfun_trading/strategies/filters.py` | `tests/unit/strategies/test_filters.py` |
 
-A **layout guard test** (Sprint 27, `tests/unit/test_layout.py`) asserts that every non-`__init__` source module has a `unit/` counterpart and that the tests root contains only `conftest.py` and the four directories above. `unit/test_support.py` and the guard itself are the only files allowed directly in `unit/`.
+The **layout guard** (`tests/unit/test_suite_layout.py`, Sprint 27) asserts that every non-`__init__` source module has a `unit/` counterpart, that the tests root holds no `.py` file except `conftest.py`, that every `unit/<pkg>/` has an `__init__.py`, and that no test file has a coverage-style name. `unit/test_support.py` and the guard itself are the only files allowed directly in `unit/`.
 
 ---
 
@@ -133,6 +138,15 @@ Import support code by its full path, e.g. `from pumpfun_trading.tests.support.f
 async def test_geyser_start_without_transport_raises_and_stays_disconnected():
     ...
 ```
+* Put the test in the mirrored file of the module the fix lives in, never in a themed `*_regressions.py` file. One test may name several bugs: `regression("BUG-68", "BUG-69")`.
+* When a bug is marked **RESOLVED** in `BUGS.md`, at least one test must carry its tag; `unit/test_suite_layout.py` reads the tags statically (AST) and fails otherwise. `KNOWN_UNTAGGED` in that file lists the 5 older bugs without a behaviour test (BUG-05, 09, 11, 20, 31) with the reason; it may only shrink.
+* Tags must name a bug in the `BUGS.md` status table; tests for MITIGATED bugs may be tagged too.
+
+### Characterisation (golden) tests
+`integration/test_golden_replay.py` pins what the bot *decides* for fixed message sequences. A failure means a decision changed. If the change is intended, regenerate with `PUMPFUN_UPDATE_GOLDEN=1 pytest pumpfun_trading/tests/integration/test_golden_replay.py` and review the JSON diff in the PR like code. Refactors (Sprint 28) must leave the files unchanged.
+
+### Property tests
+Hypothesis tests live in `property/` and use the `deterministic` profile from `property/conftest.py` (derandomized, no example database), so CI and local runs see the same examples. `HYPOTHESIS_PROFILE=explore` searches with fresh seeds and more examples; turn any failure it finds into a fixed `@example` or a unit regression test.
 
 ---
 
@@ -145,34 +159,34 @@ Actions: **move** (rename/relocate, content unchanged), **split** (spread across
 | `conftest.py` | 58 | – | `conftest.py` (kept) + `support/` | keep, extract helpers | 26 |
 | `test_anti_rug_bot_integration.py` | 319 | 10 | `integration/test_anti_rug_bot.py` | move; **done** (26 / 5) | 26 |
 | `test_anti_rug_filters.py` | 464 | 10 | `unit/strategies/test_filters.py` | move (remove `time.sleep`); **done** (26 / 4a) | 26 |
-| `test_api_client.py` | 91 | 4 | `unit/api/test_client.py` | merge with `_full` | 27 |
-| `test_api_client_full.py` | 134 | 3 | `unit/api/test_client.py` | merge | 27 |
-| `test_audit_tool.py` | 167 | 6 | `unit/bot/test_audit.py` | merge with `test_audit_full.py` | 27 |
-| `test_audit_full.py` | 199 | 4 | `unit/bot/test_audit.py` | merge | 27 |
-| `test_bot_runtime_full.py` | 355 | 7 | `unit/bot/test_run.py` | merge with `_regressions` | 27 |
-| `test_bot_runtime_regressions.py` | 206 | 8 | `unit/bot/test_run.py`, `unit/bot/test_lifecycle.py`, `unit/bot/test_risk.py` | split + tag `regression` | 27 |
+| `test_api_client.py` | 91 | 4 | `unit/api/test_client.py` | merge with `_full`; **done** (27) | 27 |
+| `test_api_client_full.py` | 134 | 3 | `unit/api/test_client.py` | merge; **done** (27) | 27 |
+| `test_audit_tool.py` | 167 | 6 | `unit/bot/test_audit.py`, `unit/cli/test_audit.py` | merge with `test_audit_full.py`; **done** (27) | 27 |
+| `test_audit_full.py` | 199 | 4 | `unit/bot/test_audit.py` | merge; **done** (27) | 27 |
+| `test_bot_runtime_full.py` | 355 | 7 | `unit/bot/test_run.py` | merge with `_regressions`; **done** (27) | 27 |
+| `test_bot_runtime_regressions.py` | 206 | 8 | `unit/bot/test_risk.py`, `unit/bot/test_run.py` | split + tag `regression`; **done** (27) | 27 |
 | `test_bot_subsystems.py` | 152 | 7 | `unit/bot/test_enrichment.py`, `unit/bot/test_persistence.py`, `unit/bot/test_alerts.py` | split; **done** (26 / 6) | 26 |
-| `test_bugfixes_lifecycle_resilience.py` | 284 | 7 | `unit/bot/test_run.py`, `unit/ops/test_logging.py`, `unit/storage/test_status.py` | split + tag `regression` (remove `asyncio.run`) | 27 |
+| `test_bugfixes_lifecycle_resilience.py` | 284 | 7 | `unit/bot/test_run.py`, `unit/ops/test_logging.py` | split + tag `regression` (remove `asyncio.run`); **done** (27) | 27 |
 | `test_capital_displacement.py` | 242 | 4 | `unit/strategies/test_decision.py` (EV evaluator), `unit/bot/test_position_manager.py` (displacement engine), `unit/bot/test_run.py` (bot rotation) | merge; **done** (26 / 6) | 26 |
 | `test_cli_suite.py` | 334 | 7 | `unit/cli/test_main.py`, `unit/cli/test_audit.py`, `unit/cli/test_replay.py`, `unit/cli/test_bot.py` | split; **done** (26 / 6) | 26 |
-| `test_containment_regressions.py` | 118 | 4 | `unit/cli/test_arbitrage.py`, `unit/execution/test_arbitrage.py`, `unit/strategies/test_arbitrage.py` | split + tag `regression` | 27 |
+| `test_containment_regressions.py` | 118 | 4 | `unit/cli/test_arbitrage.py`, `unit/strategies/test_arbitrage.py`, `unit/streams/test_geyser.py` | split + tag `regression`; **done** (27) | 27 |
 | `test_copy_trading.py` | 373 | 9 | `unit/strategies/test_copy_trading.py` | move; **done** (26 / 4a) | 26 |
 | `test_copy_trading_bot_integration.py` | 246 | 5 | `integration/test_copy_trading_bot.py` | move; **done** (26 / 5) | 26 |
-| `test_coverage_95_comprehensive.py` | 3,395 | 50 | module files across `unit/bot`, `unit/cli`, `unit/engines`, `unit/execution`, `unit/ops`, `unit/sdk`, `unit/strategies`, `unit/streams`, `unit/ui` | dissolve | 27 |
-| `test_coverage_95_final_push.py` | 380 | 6 | `unit/api/test_client.py`, `unit/bot/test_audit.py`, `unit/bot/test_run.py`, `unit/sdk/test_execution.py` | dissolve | 27 |
-| `test_coverage_95_plus.py` | 930 | 11 | `unit/api/test_client.py`, `unit/bot/test_lifecycle.py`, `unit/bot/test_run.py`, `unit/cli/*`, `unit/sdk/test_execution.py` | dissolve | 27 |
-| `test_coverage_boost_final.py` | 298 | 6 | `unit/api/test_client.py`, `unit/bot/test_run.py`, `unit/cli/*`, `unit/sdk/test_execution.py` | dissolve | 27 |
-| `test_coverage_boost_v2.py` | 1,984 | 22 | module files across `unit/bot`, `unit/config`, `unit/execution`, `unit/infra`, `unit/sdk`, `unit/strategies`, `unit/streams` | dissolve | 27 |
+| `test_coverage_95_comprehensive.py` | 3,395 | 50 | `unit/bot/test_alerts.py`, `unit/bot/test_audit.py`, `unit/bot/test_position_manager.py`, `unit/bot/test_risk.py`, `unit/bot/test_run.py`, `unit/cli/test_arbitrage.py`, `unit/cli/test_events.py`, `unit/cli/test_main.py`, `unit/engines/test_optimizer.py`, `unit/engines/test_replay.py`, `unit/execution/test_arbitrage.py`, `unit/execution/test_executor.py`, `unit/infra/test_rpc_pool.py`, `unit/ops/test_events.py`, `unit/ops/test_logging.py`, `unit/ops/test_retention.py`, `unit/strategies/test_arbitrage.py`, `unit/strategies/test_cluster.py`, `unit/strategies/test_decision.py`, `unit/strategies/test_graduation.py`, `unit/strategies/test_presets.py`, `unit/ui/test_dashboard.py` | dissolve; **done** (27) | 27 |
+| `test_coverage_95_final_push.py` | 380 | 6 | `unit/api/test_client.py`, `unit/bot/test_audit.py`, `unit/bot/test_run.py`, `unit/sdk/test_execution.py` | dissolve; **done** (27) | 27 |
+| `test_coverage_95_plus.py` | 930 | 11 | `unit/api/test_client.py`, `unit/bot/test_run.py`, `unit/cli/test_main.py`, `unit/execution/test_liquidator.py`, `unit/sdk/test_execution.py` | dissolve; **done** (27) | 27 |
+| `test_coverage_boost_final.py` | 298 | 6 | `unit/api/test_client.py`, `unit/bot/test_run.py`, `unit/cli/test_main.py`, `unit/sdk/test_execution.py` | dissolve; **done** (27) | 27 |
+| `test_coverage_boost_v2.py` | 1,984 | 22 | `unit/api/test_client.py`, `unit/bot/test_alerts.py`, `unit/bot/test_event_router.py`, `unit/bot/test_persistence.py`, `unit/bot/test_position_manager.py`, `unit/bot/test_run.py`, `unit/execution/test_executor.py`, `unit/execution/test_liquidator.py`, `unit/infra/test_rpc_pool.py`, `unit/sdk/test_execution.py`, `unit/sdk/test_raydium.py`, `unit/strategies/test_copy_trading.py`, `unit/strategies/test_graduation.py`, `unit/strategies/test_signal.py` | dissolve; **done** (27) | 27 |
 | `test_cross_venue_arbitrage.py` | 386 | 8 | `unit/strategies/test_arbitrage.py`, `unit/execution/test_arbitrage.py`, `unit/strategies/test_presets.py`, `unit/cli/test_arbitrage.py`, `unit/engines/test_replay.py` (pool-key helper replaced by `make_pool_keys`) | split (remove `asyncio.run`); **done** (26 / 6) | 26 |
-| `test_curve_math.py` | 215 | 7 | `unit/sdk/test_curve.py` (+ `property/test_curve_properties.py`) | move, add properties; **done** (26 / 4a) | 26 / 27 |
+| `test_curve_math.py` | 215 | 7 | `unit/sdk/test_curve.py` (+ `property/test_curve.py`) | move, add properties; **done** (26 / 4a) | 26 / 27 (properties done in 27) |
 | `test_diagnostic_events.py` | 174 | 4 | `unit/ops/test_events.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_dynamic_execution_policy.py` | 245 | 5 | `unit/execution/test_policy.py` | move; **done** (26 / 4a) | 26 |
 | `test_events_cli.py` | 186 | 4 | `unit/cli/test_events.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
-| `test_execution_sdk.py` | 148 | 12 | `unit/sdk/test_execution.py` | merge with `_full` | 27 |
-| `test_execution_sdk_full.py` | 344 | 5 | `unit/sdk/test_execution.py` | merge | 27 |
+| `test_execution_sdk.py` | 148 | 12 | `unit/sdk/test_execution.py` | merge with `_full`; **done** (27) | 27 |
+| `test_execution_sdk_full.py` | 344 | 5 | `unit/sdk/test_execution.py` | merge; **done** (27) | 27 |
 | `test_funding_cluster_and_sybil.py` | 444 | 12 | `unit/strategies/test_cluster.py` | move; **done** (26 / 4a) | 26 |
 | `test_geyser_bot_integration.py` | 600 | 11 | `integration/test_geyser_bot.py` | move; **done** (26 / 5) | 26 |
-| `test_geyser_stream.py` | 534 | 14 | `unit/streams/test_geyser.py` (+ `property/test_geyser_parsers.py`) | move, add properties; **done** (26 / 4a) | 26 / 27 |
+| `test_geyser_stream.py` | 534 | 14 | `unit/streams/test_geyser.py` (+ `property/test_geyser_parsers.py`) | move, add properties; **done** (26 / 4a) | 26 / 27 (properties done in 27) |
 | `test_graduation_bot_integration.py` | 197 | 5 | `integration/test_graduation_bot.py` | move; **done** (26 / 5) | 26 |
 | `test_graduation_harvester.py` | 258 | 5 | `unit/strategies/test_graduation.py`, `unit/strategies/test_exits.py` | split; **done** (26 / 6) | 26 |
 | `test_jito_execution_integration.py` | 358 | 14 | `integration/test_jito_execution.py` | move; **done** (26 / 5) | 26 |
@@ -186,10 +200,10 @@ Actions: **move** (rename/relocate, content unchanged), **split** (spread across
 | `test_ops_retention.py` | 134 | 6 | `unit/ops/test_retention.py` | move (remove `time.sleep`); **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_order_executor.py` | 518 | 15 | `unit/execution/test_executor.py`, `unit/execution/test_liquidator.py` (shared fixtures in `unit/execution/conftest.py`), `unit/bot/test_run.py` | split; **done** (26 / 6) | 26 |
 | `test_order_flow_momentum.py` | 375 | 12 | `unit/strategies/test_momentum.py` | move; **done** (26 / 4a) | 26 |
-| `test_persistence_cache_regressions.py` | 143 | 6 | `unit/bot/test_persistence.py`, `unit/storage/test_status.py`, `unit/strategies/test_filters.py` | split + tag `regression` | 27 |
+| `test_persistence_cache_regressions.py` | 143 | 6 | `unit/config/test_env.py`, `unit/storage/test_status.py`, `unit/strategies/test_filters.py`, `unit/strategies/test_momentum.py`, `unit/strategies/test_risk_validation.py` | split + tag `regression`; **done** (27) | 27 |
 | `test_portfolio_circuit_breaker.py` | 702 | 14 | `unit/bot/test_risk.py`; preset test → `unit/strategies/test_presets.py` | merge; **done** (26 / 6) | 26 |
 | `test_position_manager.py` | 414 | 12 | `unit/bot/test_position_manager.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
-| `test_pump_instruction_layout.py` | 208 | 6 | `unit/sdk/test_execution.py` | merge | 27 |
+| `test_pump_instruction_layout.py` | 208 | 6 | `unit/sdk/test_execution.py` | merge; **done** (27) | 27 |
 | `test_raydium_execution.py` | 258 | 5 | `unit/sdk/test_raydium.py` | move; **done** (26 / 4a) | 26 |
 | `test_raydium_graduation.py` | 230 | 5 | `unit/strategies/test_graduation.py` (local pool-key helper replaced by `make_pool_keys`) | merge; **done** (26 / 6) | 26 |
 | `test_replay_engine.py` | 443 | 9 | `unit/engines/test_replay.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
@@ -197,18 +211,18 @@ Actions: **move** (rename/relocate, content unchanged), **split** (spread across
 | `test_risk_health_execution.py` | 440 | 8 | `unit/bot/test_risk.py`, `unit/bot/test_health.py`, `unit/bot/test_lifecycle.py`, `unit/execution/test_builder.py`, `unit/strategies/test_risk_validation.py` | split; **done** (26 / 6) | 26 |
 | `test_rpc_pool.py` | 360 | 11 | `unit/infra/test_rpc_pool.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_rpc_pool_bot_integration.py` | 175 | 3 | `integration/test_rpc_pool_bot.py` | move; **done** (26 / 5) | 26 |
-| `test_runtime_coverage_boost.py` | 151 | 5 | `unit/config/test_env.py`, `unit/ops/test_logging.py`, `unit/services/test_market_data.py` | dissolve (remove `asyncio.run`) | 27 |
-| `test_sdk_contract_regressions.py` | 321 | 17 | `unit/sdk/test_curve.py`, `unit/sdk/test_execution.py`, `unit/sdk/test_jito.py`, `unit/infra/test_rpc_pool.py`, `unit/api/test_client.py` | split + tag `regression` | 27 |
-| `test_strategy_data_regressions.py` | 122 | 9 | `unit/strategies/test_filters.py`, `unit/strategies/test_cluster.py`, `unit/bot/test_enrichment.py`, `unit/execution/test_liquidator.py` | split + tag `regression` | 27 |
+| `test_runtime_coverage_boost.py` | 151 | 5 | `unit/config/test_env.py`, `unit/ops/test_logging.py`, `unit/services/test_market_data.py` | dissolve (remove `asyncio.run`); **done** (27) | 27 |
+| `test_sdk_contract_regressions.py` | 321 | 17 | `unit/api/test_client.py`, `unit/infra/test_rpc_pool.py`, `unit/sdk/test_curve.py`, `unit/sdk/test_execution.py`, `unit/sdk/test_jito.py` | split + tag `regression`; **done** (27) | 27 |
+| `test_strategy_data_regressions.py` | 122 | 9 | `unit/bot/test_enrichment.py`, `unit/bot/test_position_manager.py`, `unit/execution/test_liquidator.py`, `unit/sdk/test_raydium.py`, `unit/services/test_market_data.py`, `unit/strategies/test_cluster.py`, `unit/strategies/test_filters.py` | split + tag `regression`; **done** (27) | 27 |
 | `test_strategy_modularity.py` | 401 | 10 | `unit/strategies/test_signal.py`, `test_risk_validation.py`, `test_decision.py`, `test_base.py`, `test_presets.py`; `unit/config/test_env.py`; `unit/services/test_market_data.py` | split; **done** (26 / 6) | 26 |
 | `test_strategy_optimizer.py` | 583 | 14 | `unit/engines/test_optimizer.py` | move; **done** (26 / 4b, merged into the existing file) | 26 |
 | `test_strategy_safety.py` | 353 | 10 | `unit/bot/test_strategy.py` | move; **done** (26 / 4a) | 26 |
-| `test_tooling_regressions.py` | 216 | 9 | `unit/cli/test_main.py`, `unit/cli/test_record.py`, `unit/cli/test_replay.py`, `unit/ops/test_retention.py` | split + tag `regression` | 27 |
+| `test_tooling_regressions.py` | 216 | 9 | `unit/cli/test_events.py`, `unit/cli/test_record.py`, `unit/cli/test_replay.py`, `unit/engines/test_replay.py`, `unit/ops/test_retention.py` | split + tag `regression`; **done** (27) | 27 |
 | `test_trailing_and_tiered_exits.py` | 739 | 22 | `unit/strategies/test_exits.py`, `unit/strategies/test_presets.py`, `unit/bot/test_risk.py`, `unit/bot/test_run.py` | split; **done** (26 / 6) | 26 |
 | `test_ui_and_storage.py` | 753 | 11 | `unit/ui/test_dashboard.py`, `unit/storage/test_status.py` | split; **done** (26 / 6) | 26 |
 
 ### Modules without a dedicated test file today
-`unit/strategies/test_base.py` and `unit/strategies/test_decision.py` were created in Sprint 26 Phase 6. Still to create in Sprint 27 (the layout guard requires them): `unit/bot/test_event_router.py`, `unit/cli/test_optimize.py`. Their tests currently live inside coverage-padding files and move here when those are dissolved.
+None. `unit/strategies/test_base.py` and `test_decision.py` were created in Sprint 26 Phase 6; `unit/bot/test_event_router.py` (from `test_coverage_boost_v2.py`) and `unit/cli/test_optimize.py` (moved out of `unit/engines/test_optimizer.py`) in Sprint 27. The layout guard (§3) now fails on any new source module without a mirrored test file.
 
 ---
 
@@ -235,4 +249,5 @@ For **every** migration batch (one source package per PR):
 | `pytest pumpfun_trading/tests/unit/sdk/test_jito.py` | One module |
 | `pytest -m regression` | All bug regressions |
 | `pytest -m integration` | Cross-component flows only |
-| `pytest -m property` | Hypothesis property tests |
+| `pytest -m property` | Hypothesis property tests (`HYPOTHESIS_PROFILE=explore` for a wider random search) |
+| `PUMPFUN_UPDATE_GOLDEN=1 pytest pumpfun_trading/tests/integration/test_golden_replay.py` | Regenerate golden decisions after an intended behaviour change |

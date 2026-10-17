@@ -17,6 +17,11 @@ from pumpfun_trading.bot.position_manager import (
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.decision import PositionEvEvaluator
 from pumpfun_trading.strategies.exits import ExitAction, PositionExitState
+from pumpfun_trading.strategies.filters import (
+    DevWalletProfile,
+    evaluate_token_heuristics,
+)
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT
 from pumpfun_trading.tests.support.factories import make_config
 
 MINT = "MintAAA111"
@@ -692,6 +697,7 @@ def test_position_manager_serialization_restoration(base_config: TradingBotConfi
     assert pm2["Mint1"]["peak_market_cap"] == 45.0
 
 
+@pytest.mark.regression("BUG-16")
 def test_position_manager_evaluate_exit_stagnant_timeout(base_config: TradingBotConfig):
     """BUG-16: PositionManager must trigger stagnant timeout exit when market cap is flat."""
     pm = PositionManager(base_config)
@@ -759,6 +765,7 @@ def test_position_dataclass_fraction_and_effective_cost():
     assert pos_zero.effective_cost_sol == 0.05
 
 
+@pytest.mark.regression("BUG-21")
 def test_position_manager_partial_exit_valuation_and_pnl(
     base_config: TradingBotConfig,
 ):
@@ -905,3 +912,166 @@ def test_capital_displacement_engine_rules():
     assert dec_displace.target_mint == "StrongCand"
     assert dec_displace.ev_delta > 0.05
     assert dec_displace.reason == "positive_ev_displacement"
+
+
+@pytest.mark.regression("BUG-65")
+def test_position_from_dict_keeps_zero_remaining():
+    # BUG-65
+    pos = Position.from_dict(
+        "M", {"initial_token_amount": 500, "remaining_token_amount": 0, "dry_run": True}
+    )
+    assert pos.remaining_token_amount == 0
+    assert pos.initial_token_amount == 500
+
+
+@pytest.mark.regression("BUG-43")
+def test_record_sell_pre_grad_tier_does_not_touch_take_profit_ladder():
+    # BUG-43 at the PositionManager level
+    manager = PositionManager(make_config(dry_run=True))
+    manager.record_buy(
+        mint="M", token_amount=1_000, cost_sol=0.01, entry_market_cap=30.0
+    )
+    closed, remaining = manager.record_sell(
+        "M", sold_tokens=300, target_tier="pre_grad_1", is_partial=True
+    )
+    pos = manager.get_position("M")
+    assert not closed and remaining == 700
+    assert pos is not None
+    assert pos["tier_1_executed"] is False
+    assert pos["executed_pre_grad_tranches"] == [0]
+    manager.clear_pending_exit("M", "tier_1")
+    manager.clear_pending_exit("missing", 1)
+
+
+def test_position_dataclass_and_manager_edge_cases():
+    pos = Position(
+        mint=SAMPLE_MINT,
+        name="TestCoin",
+        entry_market_cap=0.0,
+        current_market_cap=10.0,
+        peak_market_cap=15.0,
+        initial_token_amount=1000,
+        remaining_token_amount=1000,
+    )
+    # Zero entry mc properties
+    assert pos.performance == 1.0
+    assert pos.peak_performance == 1.0
+
+    # Setter
+    pos.token_amount = 500
+    assert pos.remaining_token_amount == 500
+    assert pos.token_amount == 500
+
+    cfg = make_config(dry_run=True, buy_amount_sol=0.05)
+    pm = PositionManager(cfg)
+
+    # Magic methods & container methods
+    assert len(pm) == 0
+    assert pm.count() == 0
+    assert list(pm.keys()) == []
+    assert list(pm.values()) == []
+    assert list(pm.items()) == []
+    assert list(pm) == []
+
+    # get_exit_state and evaluate_exit on non-existent mint
+    assert pm.get_exit_state("non_existent") is None
+    assert pm.evaluate_exit("non_existent") is None
+    assert pm.calculate_unrealized_pnl("non_existent") == 0.0
+
+    # record sell on non-existent
+    closed, rem = pm.record_sell("non_existent", 100)
+    assert closed is True
+    assert rem == 0
+
+    # Update price on non-existent
+    entry, curr, peak = pm.update_price("non_existent", 25.0)
+    assert entry == 0.0
+    assert curr == 25.0
+    assert peak == 25.0
+
+    # Add position and test setter/getters
+    pm["MintA"] = {
+        "name": "TokenA",
+        "entry_market_cap": 0.0,  # test zero entry mc branch
+        "current_market_cap": 0.0,
+        "peak_market_cap": 0.0,
+        "token_amount": 1000,
+        "remaining_token_amount": 1000,
+        "cost_sol": 0.05,
+    }
+    assert "MintA" in pm
+    assert pm["MintA"]["name"] == "TokenA"
+    assert len(pm) == 1
+    assert pm.count() == 1
+    assert list(pm.keys()) == ["MintA"]
+    assert len(list(pm.values())) == 1
+    assert len(list(pm.items())) == 1
+    assert list(pm) == ["MintA"]
+
+    # Price update with entry_mc <= 0
+    entry, curr, peak = pm.update_price("MintA", 50.0)
+    assert entry == 50.0
+    assert curr == 50.0
+    assert peak == 50.0
+
+    # calculate unrealized pnl when entry_mc <= 0
+    pm["MintA"]["entry_market_cap"] = 0.0
+    assert pm.calculate_unrealized_pnl("MintA") == 0.0
+
+    # calculate total open value with entry_mc <= 0
+    val = pm.calculate_total_open_value()
+    assert val == 0.05
+
+    # restore from dict with invalid structure
+    pm.restore_from_dict({"Invalid": "not_a_dict"})
+    assert "Invalid" not in pm
+
+
+def test_position_manager_and_filters_deep():
+    from pumpfun_trading.strategies.filters import (
+        evaluate_creator_holdings,
+        evaluate_dev_wallet,
+    )
+
+    pm = PositionManager(config=make_config(dry_run=False))
+
+    # Position operations
+    pm.record_buy("m_test", token_amount=100_000, cost_sol=0.01, entry_market_cap=30.0)
+    assert pm.has_position("m_test") is True
+    assert len(pm.get_all_positions()) == 1
+    assert pm.calculate_total_open_value() > 0.0
+
+    # Partial sell
+    pm.record_sell("m_test", sold_tokens=50_000, proceeds_sol=0.01, is_partial=True)
+    pos = pm.get_position("m_test")
+    assert pos["remaining_token_amount"] == 50_000
+
+    # Update price and check peak
+    pm.update_price("m_test", 60.0)
+    assert pm.get_position("m_test")["peak_market_cap"] == 60.0
+
+    # Remove position
+    pm.remove_position("m_test")
+    assert pm.has_position("m_test") is False
+    assert pm.get_position("m_test") is None
+
+    # Filter heuristics
+
+    dev_prof = DevWalletProfile(
+        creator_address="dev1", tokens_launched_24h=10, rug_history_count=1
+    )
+    passed_dev, pen_dev, _ = evaluate_dev_wallet(dev_prof, max_24h_launches=5)
+    assert passed_dev is False
+
+    passed_holdings, pen_holdings, _ = evaluate_creator_holdings(0.25, max_pct=0.08)
+    assert passed_holdings is False
+
+    verdict_heuristics = evaluate_token_heuristics(
+        config=make_config(dry_run=False),
+        mint="m_clean",
+        metadata={"name": "TestToken", "symbol": "TEST"},
+        dev_profile=DevWalletProfile(
+            creator_address="dev_clean", tokens_launched_24h=1
+        ),
+    )
+    assert verdict_heuristics.passed is True

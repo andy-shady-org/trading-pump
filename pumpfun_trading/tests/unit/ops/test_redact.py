@@ -59,12 +59,13 @@ def test_redact_url_masks_only_credentials(url: str | None, expected: str) -> No
     assert redact_url(url) == expected
 
 
-def test_redact_url_without_host_returned_unchanged() -> None:
-    assert redact_url("file:///tmp/x?token=1") == "file:///tmp/x?token=1"
-
-
-def test_redact_url_unparseable_returned_unchanged() -> None:
-    assert redact_url("http://[::1") == "http://[::1"
+@pytest.mark.parametrize(
+    "url",
+    ["file:///tmp/x?token=1", "http://[::1"],
+    ids=["without_host", "unparseable"],
+)
+def test_redact_url_without_host_or_unparseable_returned_unchanged(url: str) -> None:
+    assert redact_url(url) == url
 
 
 def test_redact_url_masks_pubkey_length_segment_that_is_not_a_pubkey() -> None:

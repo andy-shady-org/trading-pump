@@ -17,6 +17,7 @@ from pumpfun_trading.strategies.filters import (
     passes_anti_rug_screening,
 )
 from pumpfun_trading.strategies.presets import resolve_strategy_config
+from pumpfun_trading.tests.support.factories import make_config
 from pumpfun_trading.tests.support.fakes import FakeClock
 
 
@@ -465,3 +466,49 @@ def test_trading_strategy_screen_token_integration():
         screening_verdict=failed_verdict,
     )
     assert not ineligible
+
+
+@pytest.mark.regression("BUG-77")
+def test_screening_cache_is_bounded():
+    """BUG-77: the screening cache evicts the oldest entry at capacity."""
+    cache = ScreeningCache(default_ttl=60.0, max_entries=2)
+    verdict = TokenScreeningVerdict(mint="m", passed=True, risk_score=0.0)
+    for mint in ("a", "b", "c"):
+        cache.set(mint, verdict)
+    assert cache.size() == 2
+    assert cache.get("a") is None and cache.get("c") is verdict
+    cache.set("d", verdict, ttl=-1.0)
+    cache.set("e", verdict)
+    assert cache.size() == 2
+
+
+@pytest.mark.regression("BUG-56")
+def test_gini_above_configured_cap_is_hard_reject():
+    # BUG-56: 0.85 < G <= 0.95 used to be a soft penalty only
+    holders = [("whale", 1_000_000)] + [(f"w{i}", 1) for i in range(9)]
+    dist = HolderDistribution(top_holders=holders)
+    assert 0.85 < dist.compute_gini_coefficient() <= 0.95
+    passed, _, reasons = evaluate_holder_distribution(dist, max_gini=0.85)
+    assert passed is False
+    assert any("Gini" in r for r in reasons)
+
+
+@pytest.mark.regression("BUG-57")
+def test_missing_dev_and_holder_data_fails_closed():
+    # BUG-57
+    config = make_config(
+        dry_run=False, enable_anti_rug_filters=True, require_social_links=False
+    )
+    verdict = evaluate_token_heuristics(config, "NoDataMint", use_cache=False)
+    assert verdict.passed is False
+    assert verdict.flags["missing_dev_data"] is True
+    assert verdict.flags["missing_holder_data"] is True
+
+    partial = evaluate_token_heuristics(
+        config,
+        "PartialMint",
+        dev_profile=DevWalletProfile(creator_address="Dev1"),
+        use_cache=False,
+    )
+    assert partial.passed is True
+    assert partial.flags["missing_holder_data"] is True

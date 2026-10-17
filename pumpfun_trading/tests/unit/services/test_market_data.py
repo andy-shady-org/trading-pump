@@ -1,3 +1,7 @@
+import asyncio
+
+import pytest
+
 from pumpfun_trading.services.market_data import MarketDataService, ResilienceState
 
 
@@ -73,3 +77,73 @@ async def test_market_data_service_handles_failures_and_fallbacks():
     assert resilience.consecutive_failures == 1
     resilience.record_success()
     assert resilience.last_error is None
+
+
+@pytest.mark.regression("BUG-80")
+async def test_missing_market_cap_is_zero_not_thirty():
+    # BUG-80
+    assert await MarketDataService().get_market_cap_sol({}) == 0.0
+
+
+async def test_market_data_service_fallback_and_resilience_paths():
+    class AsyncClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_coin(self, mint: str):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary")
+            return {"displayName": "Recovered Token", "marketCapSol": 21.5}
+
+        async def get_coin_info(self, mint: str):
+            return {"displayName": "Recovered Token"}
+
+    service = MarketDataService(AsyncClient())
+    assert await service.get_market_cap_sol({"market_cap": "8.25"}) == 8.25
+    assert await service.get_market_cap_sol({}) == 0.0
+    assert await service.get_token_name({"name": "  Token  "}) == "Token"
+    assert await service.get_token_name({}) is None
+
+    fallback_result = await service.fetch_with_fallback(
+        [("get_coin", [("mint", "abc")]), ("get_coin_info", [("mint", "abc")])],
+        timeout=0.1,
+        fallback_value={"name": "fallback"},
+    )
+    assert fallback_result == {"displayName": "Recovered Token"}
+
+    resilience = ResilienceState()
+    resilience.record_failure("temporary")
+    assert resilience.last_error == "temporary"
+    assert resilience.consecutive_failures == 1
+    resilience.record_success()
+    assert resilience.last_error is None
+    assert resilience.consecutive_failures == 0
+
+    assert (
+        service.is_data_fresh(
+            last_seen_at=asyncio.get_running_loop().time(), max_age_seconds=0
+        )
+        is False
+    )
+    assert service.is_data_fresh(last_seen_at=None, max_age_seconds=30) is False
+
+
+async def test_market_data_service_handles_missing_client_and_invalid_data():
+    service = MarketDataService(api_client=None)
+    assert await service.fetch_with_fallback(
+        [], fallback_value={"name": "fallback"}
+    ) == {"name": "fallback"}
+
+    class BrokenClient:
+        async def nope(self):
+            return {}
+
+    broken = MarketDataService(BrokenClient())
+    assert await broken.fetch_with_fallback(
+        [("missing_method", None)],
+        fallback_value={"name": "fallback"},
+    ) == {"name": "fallback"}
+
+    assert await service.get_market_cap_sol({"marketCapSol": "bad"}) == 0.0
+    assert await service.get_token_name({"tokenName": "  "}) is None

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import datetime
+import time
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pumpfun_trading.bot.position_manager import PositionManager
 from pumpfun_trading.bot.risk import (
     CircuitBreakerAction,
     DailyEquityTracker,
@@ -16,6 +19,13 @@ from pumpfun_trading.bot.risk import (
     check_risk_limits,
     evaluate_portfolio_circuit_breaker,
     track_position_peak,
+)
+from pumpfun_trading.bot.run import TradingBot
+from pumpfun_trading.strategies.filters import TokenScreeningVerdict
+from pumpfun_trading.streams.geyser import (
+    BondingCurveStateUpdate,
+    CompleteEventUpdate,
+    TradeEventUpdate,
 )
 from pumpfun_trading.tests.support.factories import make_config
 
@@ -123,6 +133,7 @@ def test_equity_updates_and_drawdown_calculation():
     assert pytest.approx(dd, 0.001) == 0.15
 
 
+@pytest.mark.regression("BUG-12")
 def test_drawdown_calculation_with_low_baseline_high_peak():
     """
     Regression test for BUG-12: Small starting baseline (0.20 SOL) with large peak (37.3841 SOL).
@@ -316,6 +327,7 @@ def test_evaluate_portfolio_circuit_breaker_with_bot_mock():
     assert check_daily_drawdown(bot) is False
 
 
+@pytest.mark.regression("BUG-15")
 def test_circuit_breaker_realistic_pumpfun_lifecycle():
     """
     Regression test for BUG-15:
@@ -382,6 +394,7 @@ def test_circuit_breaker_realistic_pumpfun_lifecycle():
     assert bot.daily_equity_tracker.circuit_breaker_engaged is False
 
 
+@pytest.mark.regression("BUG-21")
 def test_circuit_breaker_partial_exit_lifecycle():
     """
     Regression test for BUG-21:
@@ -390,7 +403,6 @@ def test_circuit_breaker_partial_exit_lifecycle():
     preventing over-inflation of peak equity and avoiding false drawdown spikes when the
     remainder is subsequently closed.
     """
-    from pumpfun_trading.bot.position_manager import PositionManager
 
     class MockBot:
         def __init__(self):
@@ -455,9 +467,6 @@ def test_circuit_breaker_partial_exit_lifecycle():
 
 async def test_trading_bot_circuit_breaker_liquidates_and_locks(tmp_path):
     from unittest.mock import MagicMock
-
-    from pumpfun_trading.bot.run import TradingBot
-    from pumpfun_trading.streams.geyser import BondingCurveStateUpdate
 
     status_file = tmp_path / "status.json"
     audit_file = tmp_path / "audit.jsonl"
@@ -566,7 +575,6 @@ async def test_trading_bot_circuit_breaker_liquidates_and_locks(tmp_path):
 
 
 async def test_trading_bot_circuit_breaker_snapshot_persistence_and_restore(tmp_path):
-    from pumpfun_trading.bot.run import TradingBot
 
     status_file = tmp_path / "status.json"
     audit_file = tmp_path / "audit.jsonl"
@@ -612,9 +620,6 @@ async def test_trading_bot_circuit_breaker_snapshot_persistence_and_restore(tmp_
 async def test_trading_bot_trade_event_triggers_circuit_breaker():
     from unittest.mock import MagicMock
 
-    from pumpfun_trading.bot.run import TradingBot
-    from pumpfun_trading.streams.geyser import TradeEventUpdate
-
     config = make_config(
         max_daily_drawdown_pct=0.15,
         emergency_hard_lock_hours=24.0,
@@ -657,11 +662,11 @@ async def test_trading_bot_trade_event_triggers_circuit_breaker():
     assert bot.daily_equity_tracker.circuit_breaker_engaged
 
 
+@pytest.mark.regression("BUG-44")
 async def test_circuit_breaker_edge_cases_and_liquidation_branches():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import MagicMock
 
     from pumpfun_trading.bot.run import TradingBot
-    from pumpfun_trading.streams.geyser import CompleteEventUpdate
 
     config = make_config(
         max_daily_drawdown_pct=0.15,
@@ -718,7 +723,6 @@ async def test_circuit_breaker_edge_cases_and_liquidation_branches():
     bot._stop_requested = False
 
     # 5. _handle_bonding_curve_state_update candidate buy success branch
-    from pumpfun_trading.strategies.filters import TokenScreeningVerdict
     from pumpfun_trading.streams.geyser import BondingCurveStateUpdate
 
     mint_candidate = "BuyCandidate11111111111111111111111111111"
@@ -983,7 +987,6 @@ def test_evaluate_portfolio_circuit_breaker_integration() -> None:
 
 
 async def test_bot_circuit_breaker_two_tier_actions() -> None:
-    from pumpfun_trading.bot.run import TradingBot
 
     bot = TradingBot(
         private_key_b58="3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLyKfmogN5328W5REGLxmGfV5nCeqvE8j5Fh8n2xJvTfH24x9C8eZ56Tz",
@@ -1037,13 +1040,13 @@ async def test_bot_circuit_breaker_two_tier_actions() -> None:
     assert bot._risk_killed is True
 
 
+@pytest.mark.regression("BUG-30")
 async def test_dry_run_simulated_cash_flow_and_circuit_breaker_resilience() -> None:
     """
     Validates BUG-30 fix:
     - In dry_run mode, buying decrements wallet_balance_sol and selling increments wallet_balance_sol.
     - Prevents false-positive circuit breaker trips after profitable runner trades.
     """
-    from pumpfun_trading.bot.run import TradingBot
 
     bot = TradingBot(
         private_key_b58="3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLyKfmogN5328W5REGLxmGfV5nCeqvE8j5Fh8n2xJvTfH24x9C8eZ56Tz",
@@ -1217,6 +1220,7 @@ def test_risk_limits_checks():
     assert "concentration cap reached" in bot._last_event
 
 
+@pytest.mark.regression("BUG-14")
 def test_risk_limits_realistic_market_cap_and_fallbacks():
     """
     Regression test for BUG-14:
@@ -1310,6 +1314,7 @@ def test_risk_limits_realistic_market_cap_and_fallbacks():
     assert "concentration cap reached" in bot._last_event
 
 
+@pytest.mark.regression("BUG-22")
 def test_risk_limits_proposed_trade_concentration_cap_rejection():
     """
     Regression test for BUG-22:
@@ -1429,3 +1434,302 @@ def test_daily_drawdown_and_trade_loss():
     }
     assert not check_loss_per_trade(bot, mint="MintPos")
     assert "trade loss" in bot._last_event
+
+
+MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
+
+
+MINT_2 = "So11111111111111111111111111111111111111112"
+
+
+@pytest.mark.regression("BUG-47")
+def test_daily_rollover_releases_latched_breaker():
+    """BUG-47: a lock taken late on day 1 clears at the next UTC date."""
+    tracker = DailyEquityTracker()
+    day1 = datetime.datetime(2026, 10, 15, 23, 0, tzinfo=datetime.timezone.utc)
+    tracker.initialize_or_rollover(1.0, 0.0, day1)
+    tracker.realized_daily_pnl_sol = -0.5
+    tracker.circuit_breaker_engaged = True
+    tracker.locked_at_timestamp = day1.timestamp()
+    tracker.lock_reason = "locked"
+
+    locked, _ = tracker.evaluate_circuit_breaker(
+        max_daily_drawdown_pct=0.2,
+        emergency_hard_lock_hours=24,
+        current_wallet_balance_sol=0.5,
+        now_timestamp=day1.timestamp() + 600,
+        now_utc=day1 + datetime.timedelta(minutes=10),
+    )
+    assert locked is True
+
+    day2 = day1 + datetime.timedelta(hours=2)
+    locked, _ = tracker.evaluate_circuit_breaker(
+        max_daily_drawdown_pct=0.2,
+        emergency_hard_lock_hours=24,
+        current_wallet_balance_sol=0.5,
+        now_timestamp=day2.timestamp(),
+        now_utc=day2,
+    )
+    assert locked is False
+    assert tracker.circuit_breaker_engaged is False
+    assert tracker.locked_at_timestamp is None
+    assert tracker.realized_daily_pnl_sol == 0.0
+    assert tracker.starting_equity_sol == pytest.approx(0.5)
+
+
+def _risk_bot(**config):
+    return SimpleNamespace(
+        config=SimpleNamespace(**config), active_positions={}, _last_event=""
+    )
+
+
+@pytest.mark.regression("BUG-70")
+def test_loss_per_trade_compares_sol_and_handles_zero_buy_amount():
+    """BUG-70: the cap fires on SOL lost and never divides by buy_amount_sol."""
+    bot = _risk_bot(max_loss_per_trade_sol=0.005, buy_amount_sol=0.0)
+    bot.active_positions[MINT] = {"cost_sol": 0.01, "entry_market_cap": 30.0}
+    assert check_loss_per_trade(bot, mint=MINT, current_market_cap=27.0) is True
+    assert check_loss_per_trade(bot, mint=MINT, current_market_cap=12.0) is False
+    assert "trade loss" in bot._last_event
+
+
+@pytest.mark.regression("BUG-71")
+def test_exposure_scaled_by_remaining_fraction():
+    """BUG-71: partially sold positions only count their remaining cost."""
+    bot = _risk_bot(
+        buy_amount_sol=0.05,
+        max_total_exposure_sol=0.25,
+        max_position_size_sol=0.1,
+        max_token_concentration_pct=0.5,
+    )
+    positions = {
+        MINT: {
+            "cost_sol": 0.2,
+            "initial_token_amount": 1_000,
+            "remaining_token_amount": 500,
+        }
+    }
+    assert check_risk_limits(
+        bot, mint=MINT_2, proposed_entry_sol=0.05, current_positions=positions
+    )
+
+
+def test_daily_equity_tracker_modes_and_resets():
+    # Baseline mode
+    tracker_base = DailyEquityTracker(
+        starting_equity_sol=1.0,
+        drawdown_reference_mode="baseline",
+    )
+    is_locked, reason = tracker_base.evaluate_circuit_breaker(
+        current_wallet_balance_sol=0.75,
+        max_daily_drawdown_pct=0.20,
+        emergency_hard_lock_hours=24.0,
+    )
+    assert is_locked is True
+    assert (
+        tracker_base.circuit_breaker_action == CircuitBreakerAction.EMERGENCY_LIQUIDATE
+    )
+
+    # Trailing HWM mode
+    tracker_hwm = DailyEquityTracker(
+        starting_equity_sol=1.0,
+        drawdown_reference_mode="trailing_hwm",
+    )
+    tracker_hwm.update_valuation(2.0, 0.0)
+    is_locked_hwm, _ = tracker_hwm.evaluate_circuit_breaker(
+        current_wallet_balance_sol=1.5,
+        max_daily_drawdown_pct=0.20,
+        emergency_hard_lock_hours=24.0,
+    )
+    assert is_locked_hwm is True
+    assert (
+        tracker_hwm.circuit_breaker_action == CircuitBreakerAction.EMERGENCY_LIQUIDATE
+    )
+
+    # Lock expiration check
+    now = time.time()
+    tracker_hwm.locked_at_timestamp = now - 7200.0  # 2 hours ago
+    is_locked_after, _ = tracker_hwm.evaluate_circuit_breaker(
+        current_wallet_balance_sol=1.5,
+        max_daily_drawdown_pct=0.20,
+        emergency_hard_lock_hours=1.0,  # 1 hour lock
+        now_timestamp=now,
+    )
+    assert is_locked_after is False  # Unlocked
+
+    # Reset circuit breaker
+    tracker_hwm.circuit_breaker_engaged = True
+    tracker_hwm.circuit_breaker_action = CircuitBreakerAction.EMERGENCY_LIQUIDATE
+    tracker_hwm.reset_circuit_breaker(force=True, new_baseline_sol=1.5)
+    assert tracker_hwm.circuit_breaker_engaged is False
+    assert tracker_hwm.starting_equity_sol == 1.5
+
+    # Serializations
+    d = tracker_hwm.to_dict()
+    assert d["starting_equity_sol"] == 1.5
+    restored = DailyEquityTracker.from_dict(d)
+    assert restored.starting_equity_sol == 1.5
+
+
+def test_daily_equity_tracker_midnight_and_profit_run_zone():
+    tracker = DailyEquityTracker(
+        starting_equity_sol=1.0,
+        drawdown_reference_mode="adaptive_ratchet",
+        profit_drawdown_tolerance_pct=0.35,
+        profit_ratchet_ratio=0.50,
+    )
+
+    # 1. Realized trade raises baseline
+    tracker.record_realized_trade(0.50)
+    assert tracker.effective_baseline_sol == 1.25
+
+    # 2. Update valuation in profit run zone
+    tracker.update_valuation(1.80, 0.20)
+    assert tracker.peak_daily_equity_sol == 2.00
+
+    # 3. Pullback within profit tolerance (2.0 -> 1.50 = 25% retracement < 35%)
+    is_locked, _ = tracker.evaluate_circuit_breaker(
+        current_wallet_balance_sol=1.50,
+        max_daily_drawdown_pct=0.20,
+        emergency_hard_lock_hours=24.0,
+    )
+    assert is_locked is False
+    assert tracker.circuit_breaker_action == CircuitBreakerAction.NONE
+
+    # 4. Pullback exceeding profit tolerance (2.0 -> 1.20 = 40% retracement > 35%)
+    is_locked_breach, reason = tracker.evaluate_circuit_breaker(
+        current_wallet_balance_sol=1.20,
+        max_daily_drawdown_pct=0.20,
+        emergency_hard_lock_hours=24.0,
+    )
+    assert is_locked_breach is True
+    assert tracker.circuit_breaker_action == CircuitBreakerAction.HALT_NEW_BUYS
+    assert "profit run retracement" in reason
+
+    # 5. Midnight rollover resets tracking
+    import datetime
+
+    tomorrow_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+        days=2
+    )
+    tracker.update_valuation(
+        1.50,
+        0.0,
+        now_utc=tomorrow_dt,
+    )
+    assert tracker.starting_equity_sol == 1.50
+    assert tracker.realized_daily_pnl_sol == 0.0
+
+
+def test_risk_helpers_and_limits():
+    from pumpfun_trading.bot.risk import (
+        _extract_position_cost,
+        _extract_position_fraction,
+        check_daily_drawdown,
+        check_loss_per_trade,
+        check_risk_limits,
+        track_position_peak,
+    )
+
+    # Object-based position extraction
+    class DummyPos:
+        def __init__(self, cost_sol=0.01, init_tokens=1000, rem_tokens=500):
+            self.cost_sol = cost_sol
+            self.initial_token_amount = init_tokens
+            self.remaining_token_amount = rem_tokens
+            self.entry_market_cap = 30.0
+            self.current_market_cap = 30.0
+            self.peak_market_cap = 30.0
+
+    pos_obj = DummyPos(cost_sol=0.02, init_tokens=1000, rem_tokens=800)
+    assert _extract_position_cost(pos_obj) == 0.02
+    assert _extract_position_fraction(pos_obj) == 0.8
+    assert _extract_position_cost("invalid_type", default_cost=0.05) == 0.05
+    assert _extract_position_fraction("invalid_type") == 1.0
+
+    # check_risk_limits branches
+    mock_bot = MagicMock()
+    mock_bot.config.max_total_exposure_sol = 0.05
+    mock_bot.config.max_position_size_sol = 0.03
+    mock_bot.config.max_token_concentration_pct = 0.50
+    mock_bot.config.buy_amount_sol = 0.01
+
+    positions = {
+        "m1": {
+            "cost_sol": 0.02,
+            "initial_token_amount": 1000,
+            "remaining_token_amount": 1000,
+        },
+        "m2": {
+            "cost_sol": 0.02,
+            "initial_token_amount": 1000,
+            "remaining_token_amount": 1000,
+        },
+    }
+
+    # Exposure exceeded (0.04 + 0.02 > 0.05)
+    assert (
+        check_risk_limits(
+            mock_bot, mint="m3", proposed_entry_sol=0.02, current_positions=positions
+        )
+        is False
+    )
+
+    # Position cap exceeded (0.04 > 0.03)
+    assert (
+        check_risk_limits(
+            mock_bot, mint="m3", proposed_entry_sol=0.04, current_positions={}
+        )
+        is False
+    )
+
+    # Mint already active
+    assert (
+        check_risk_limits(
+            mock_bot, mint="m1", proposed_entry_sol=0.01, current_positions=positions
+        )
+        is False
+    )
+
+    # Concentration cap exceeded
+    mock_bot.config.max_total_exposure_sol = 0.10
+    mock_bot.config.max_token_concentration_pct = 0.30
+    assert (
+        check_risk_limits(
+            mock_bot, mint="m3", proposed_entry_sol=0.04, current_positions={}
+        )
+        is False
+    )
+
+    # check_daily_drawdown without tracker
+    mock_bot.daily_equity_tracker = None
+    mock_bot.active_positions = {}
+    assert check_daily_drawdown(mock_bot) is True
+
+    mock_bot.active_positions = {"m1": {"cost_sol": 0.0, "initial_token_amount": 0}}
+    assert check_daily_drawdown(mock_bot) is True
+
+    mock_bot.active_positions = {
+        "m1": {
+            "cost_sol": 0.01,
+            "initial_token_amount": 1000,
+            "remaining_token_amount": 1000,
+            "entry_market_cap": 30.0,
+            "current_market_cap": 15.0,
+        }
+    }
+    mock_bot.config.max_daily_drawdown_pct = 0.20
+    assert check_daily_drawdown(mock_bot) is False
+
+    # check_loss_per_trade
+    mock_bot.config.max_loss_per_trade_sol = 0.002
+    mock_bot.config.buy_amount_sol = 0.01
+    assert check_loss_per_trade(mock_bot, mint="non_existent") is True
+    assert check_loss_per_trade(mock_bot, mint="m1", current_market_cap=10.0) is False
+
+    # track_position_peak
+    assert (
+        track_position_peak(mock_bot, mint="non_existent", current_market_cap=50.0)
+        == 50.0
+    )
+    assert track_position_peak(mock_bot, mint="m1", current_market_cap=60.0) == 60.0

@@ -9,14 +9,22 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from pumpfun_trading.cli.events import filter_diagnostic_events, load_diagnostic_events
 from pumpfun_trading.ops.events import (
     DiagnosticEvent,
     DiagnosticEventLogger,
     EventCategory,
     EventSeverity,
+)
+from pumpfun_trading.ops.retention import (
+    LogRetentionManager,
+    RetentionPolicy,
+    RotatedFileSink,
+    compress_file_to_gzip,
 )
 
 
@@ -351,6 +359,7 @@ async def test_flush_and_close_queue_and_handle_errors_are_swallowed(
     assert events._running is False
 
 
+@pytest.mark.regression("BUG-98")
 def test_emit_unknown_enabled_category_falls_back_instead_of_raising(
     tmp_path: Path,
 ) -> None:
@@ -525,3 +534,242 @@ async def test_diagnostic_event_logger_backpressure_drop() -> None:
         assert logger.get_stats()["dropped_events"] == 5
 
         await logger.flush_and_close()
+
+
+def test_events_cli_deserialization_and_filtering():
+    raw_dict = {
+        "timestamp_ns": 1_000_000_000,
+        "iso_timestamp": "2026-10-15T12:00:00Z",
+        "category": "INVALID_CAT",
+        "severity": "INVALID_SEV",
+        "event_name": "test_event",
+        "mint": "mint123",
+        "mint_name": "TestToken",
+        "latency_ms": 1.25,
+        "data": {"k": "v"},
+        "error_message": None,
+    }
+    evt = DiagnosticEvent.from_dict(raw_dict)
+    assert evt.category == EventCategory.LIFECYCLE
+    assert evt.severity == EventSeverity.INFO
+
+    # String initialization
+    evt2 = DiagnosticEvent(
+        category="screening", severity="warning", event_name="bad_token"
+    )
+    assert evt2.category == EventCategory.SCREENING
+    assert evt2.severity == EventSeverity.WARNING
+
+    # to_dict / from_dict symmetry
+    d = evt2.to_dict()
+    assert d["category"] == "screening"
+    assert d["severity"] == "warning"
+
+
+async def test_diagnostic_event_logger_lifecycle_and_edge_cases(tmp_path: Path):
+    log_file = tmp_path / "events_test.jsonl"
+    logger = DiagnosticEventLogger(
+        output_path=log_file,
+        max_queue_size=5,
+        batch_size=2,
+        flush_interval_seconds=0.1,
+    )
+    await logger.start()
+
+    # Double start is no-op
+    await logger.start()
+
+    # Emit normal
+    assert logger.emit(category=EventCategory.LIFECYCLE, event_name="e1") is True
+    assert logger.emit(category=EventCategory.SCREENING, event_name="e2") is True
+    assert logger.emit(category=EventCategory.STRATEGY, event_name="e3") is True
+    assert logger.emit(category=EventCategory.EXECUTION, event_name="e4") is True
+    assert logger.emit(category=EventCategory.RISK, event_name="e5") is True
+
+    # Fill queue and test drop and critical priority replacement
+    logger.emit(category=EventCategory.RISK, event_name="e6")
+    logger.emit(
+        category=EventCategory.RISK,
+        severity=EventSeverity.CRITICAL,
+        event_name="critical_alert",
+    )
+
+    stats = logger.get_stats()
+    assert stats["total_emitted"] >= 5
+
+    await asyncio.sleep(0.25)
+    await logger.flush_and_close()
+
+    # Double close is no-op
+    await logger.flush_and_close()
+
+    assert log_file.exists()
+    events = load_diagnostic_events(log_file)
+    assert len(events) >= 2
+
+
+async def test_ops_events_and_retention_deep_branches(tmp_path: Path):
+    # 1. Disabled logger and disabled categories
+    disabled_logger = DiagnosticEventLogger(enabled=False)
+    assert disabled_logger.emit(event_name="noop") is False
+    await disabled_logger.start()
+    await disabled_logger.flush_and_close()
+
+    # Filtered categories
+    filtered_logger = DiagnosticEventLogger(
+        output_path=tmp_path / "filtered.jsonl",
+        enabled_categories={EventCategory.STRATEGY},
+    )
+    assert filtered_logger.is_category_enabled(EventCategory.RISK) is False
+    assert filtered_logger.is_category_enabled("strategy") is True
+    assert (
+        filtered_logger.emit(category=EventCategory.RISK, event_name="drop_me") is False
+    )
+
+    evt_obj = DiagnosticEvent(category=EventCategory.RISK, event_name="drop_obj")
+    assert filtered_logger.emit(evt_obj) is False
+
+    # 2. Worker batch flush when file is None or throws
+    logger_flusher = DiagnosticEventLogger(
+        output_path=tmp_path / "flusher.jsonl",
+        batch_size=1,
+        flush_interval_seconds=0.01,
+    )
+    await logger_flusher.start()
+    logger_flusher._file_handle = None  # simulate closed file handle during write
+    logger_flusher._write_batch([DiagnosticEvent(event_name="dummy")])
+    await logger_flusher.flush_and_close()
+
+    # 3. Quota-based retention pruning with total_max_bytes
+    retention_dir = tmp_path / "retention_quota"
+    retention_dir.mkdir()
+    policy = RetentionPolicy(
+        max_bytes=100,
+        max_files=5,
+        total_max_bytes=150,
+        compress_archives=False,
+    )
+    mgr = LogRetentionManager(
+        retention_dir, policy=policy, file_patterns=("*.log", "*.log.*")
+    )
+
+    # Create files that exceed total_max_bytes
+    for i in range(5):
+        f = retention_dir / f"test.log.{i}"
+        f.write_text("x" * 50, encoding="utf-8")
+
+    pruned = mgr.prune_expired()
+    assert len(pruned) >= 2
+    assert mgr.get_storage_stats()["total_bytes"] <= 150
+
+    # 4. compress_uncompressed_archives
+    uncomp_log = retention_dir / "audit.jsonl.1"
+    uncomp_log.write_text("line 1\nline 2\n", encoding="utf-8")
+    comp_results = mgr.compress_uncompressed_archives()
+    assert len(comp_results) >= 1
+    assert comp_results[0].name.endswith(".gz")
+
+    # 5. Shifting rotated files when destination already exists
+    sink_path = retention_dir / "sink_shift.log"
+    sink = RotatedFileSink(sink_path, policy=policy)
+    # Pre-create destination files
+    (retention_dir / "sink_shift.log.1").write_text("old1", encoding="utf-8")
+    (retention_dir / "sink_shift.log.2").write_text("old2", encoding="utf-8")
+    sink.write_batch(["new line 1\n", "new line 2\n" * 10])
+    sink.rotate_now()
+    sink.close()
+
+
+def test_retention_and_events_exhaustive(tmp_path: Path):
+
+    # 1. Zero-byte compression
+    zero_file = tmp_path / "zero_src.log"
+    zero_file.write_text("", encoding="utf-8")
+    assert compress_file_to_gzip(zero_file) == zero_file
+
+    # 2. filter_diagnostic_events
+    e1 = DiagnosticEvent(
+        category=EventCategory.SCREENING,
+        severity=EventSeverity.INFO,
+        mint="mint1",
+        event_name="pass",
+    )
+    e2 = DiagnosticEvent(
+        category=EventCategory.RISK,
+        severity=EventSeverity.ERROR,
+        mint="mint2",
+        event_name="stop_loss",
+        error_message="loss",
+    )
+    e3 = DiagnosticEvent(
+        category=EventCategory.EXECUTION,
+        severity=EventSeverity.CRITICAL,
+        mint="mint3",
+        event_name="timeout",
+    )
+
+    all_e = [e1, e2, e3]
+    assert len(filter_diagnostic_events(all_e, mint="mint1")) == 1
+    assert len(filter_diagnostic_events(all_e, category=EventCategory.RISK)) == 1
+    assert len(filter_diagnostic_events(all_e, severity=EventSeverity.ERROR)) == 1
+    assert len(filter_diagnostic_events(all_e, event_name="timeout")) == 1
+    assert len(filter_diagnostic_events(all_e, errors_only=True)) == 2
+    assert len(filter_diagnostic_events(all_e, limit=1)) == 1
+
+    # 3. Retention policy max_bytes <= 0
+    p_zero = RetentionPolicy(max_bytes=0)
+    sink_zero = RotatedFileSink(tmp_path / "zero.log", policy=p_zero)
+    sink_zero.write_batch([])
+    assert sink_zero.rotate_if_needed() is False
+    sink_zero.close()
+
+    # 4. Retention rotate when base file does not exist
+    sink_no_base = RotatedFileSink(
+        tmp_path / "no_base.log", policy=RetentionPolicy(max_bytes=100)
+    )
+    (tmp_path / "no_base.log").unlink(missing_ok=True)
+    assert sink_no_base.rotate_now() is False
+    sink_no_base.close()
+
+
+async def test_ops_events_logger_and_properties_deep(tmp_path: Path):
+    evt = DiagnosticEvent(
+        category=EventCategory.RISK,
+        severity=EventSeverity.CRITICAL,
+        event_name="circuit_breaker",
+        mint="CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump",
+        mint_name="TestToken",
+        latency_ms=2.5,
+        data={"pnl": 0.5},
+        error_message="drawdown exceeded",
+    )
+    d = evt.to_dict()
+    assert d["event_name"] == "circuit_breaker"
+    assert d["mint"] == "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump"
+    assert d["error_message"] == "drawdown exceeded"
+
+    log_file = tmp_path / "diag_deep.jsonl"
+    logger = DiagnosticEventLogger(output_path=log_file, max_queue_size=2)
+    await logger.start()
+
+    logger.emit(
+        category=EventCategory.SCREENING, severity=EventSeverity.INFO, event_name="e1"
+    )
+    logger.emit(
+        category=EventCategory.SCREENING, severity=EventSeverity.INFO, event_name="e2"
+    )
+    logger.emit(
+        category=EventCategory.SCREENING, severity=EventSeverity.INFO, event_name="e3"
+    )
+    logger.emit(
+        category=EventCategory.RISK,
+        severity=EventSeverity.CRITICAL,
+        event_name="crit_e4",
+    )
+
+    logger._queue = MagicMock()
+    logger._queue.put_nowait.side_effect = asyncio.QueueFull()
+    assert logger.emit(category=EventCategory.EXECUTION, event_name="drop_q") is False
+
+    logger._consumer_task = None
+    await logger.flush_and_close()

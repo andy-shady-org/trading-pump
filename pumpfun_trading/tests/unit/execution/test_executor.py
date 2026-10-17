@@ -8,8 +8,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
 
+from pumpfun_trading.bot.position_manager import PositionManager
 from pumpfun_trading.execution.executor import OrderExecutor
+from pumpfun_trading.execution.liquidator import OrderLiquidator
+from pumpfun_trading.execution.policy import AdaptiveExecutionPolicy
 from pumpfun_trading.sdk.costs import (
     COST_SOURCE_MODELLED,
     COST_SOURCE_TRANSACTION_META,
@@ -17,10 +22,14 @@ from pumpfun_trading.sdk.costs import (
     TransactionCosts,
     model_transaction_costs,
 )
-from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+from pumpfun_trading.sdk.execution import (
+    PumpFunExecutionClient,
+    TokenBalanceUnavailableError,
+)
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.strategies.base import TradingBotConfig
-from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT
+from pumpfun_trading.tests.support.factories import make_config, make_pool_keys
 
 MINT = "Mint111"
 TOKENS = 500_000
@@ -274,6 +283,7 @@ async def test_order_executor_dry_run():
     assert sell_res_lamports.amount_sol == pytest.approx(0.05)
 
 
+@pytest.mark.regression("BUG-49")
 async def test_order_executor_live_buy(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -321,6 +331,7 @@ async def test_order_executor_buy_confirmation_failed(
     assert res.error == "buy_confirmation_failed"
 
 
+@pytest.mark.regression("BUG-48")
 async def test_order_executor_live_sell(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -377,6 +388,7 @@ async def test_order_executor_raydium(
     assert sell_res.signature == "RaydiumSignature111"
 
 
+@pytest.mark.regression("BUG-73")
 async def test_buy_confirmation_timeout_with_tokens_received_is_success(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -395,11 +407,11 @@ async def test_buy_confirmation_timeout_with_tokens_received_is_success(
     }
 
 
+@pytest.mark.regression("BUG-49", "BUG-73")
 async def test_buy_unreadable_pre_balance_falls_back_to_pre_trade_quote(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
     """BUG-49/73: an unreadable balance never counts the whole ATA as the fill."""
-    from pumpfun_trading.sdk.execution import TokenBalanceUnavailableError
 
     mock_exec_client.get_token_balance = AsyncMock(
         side_effect=TokenBalanceUnavailableError("rpc down")
@@ -414,6 +426,7 @@ async def test_buy_unreadable_pre_balance_falls_back_to_pre_trade_quote(
     assert res.metadata["fill_source"] == "pre_trade_quote"
 
 
+@pytest.mark.regression("BUG-48")
 async def test_sell_proceeds_come_from_sol_balance_delta(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -427,6 +440,7 @@ async def test_sell_proceeds_come_from_sol_balance_delta(
     assert res.metadata["proceeds_source"] == "sol_balance_delta"
 
 
+@pytest.mark.regression("BUG-73")
 async def test_sell_confirmation_timeout_rechecks_token_balance(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -445,6 +459,7 @@ async def test_sell_confirmation_timeout_rechecks_token_balance(
     assert res_failed.error == "sell_confirmation_failed"
 
 
+@pytest.mark.regression("BUG-50")
 async def test_raydium_buy_records_token_balance_delta(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -463,6 +478,7 @@ async def test_raydium_buy_records_token_balance_delta(
     assert sell.amount_sol == pytest.approx(0.05)
 
 
+@pytest.mark.regression("BUG-52")
 async def test_dynamic_slippage_uses_live_reserves_and_real_notional(
     mock_exec_client: MagicMock, base_config: TradingBotConfig
 ):
@@ -483,3 +499,112 @@ async def test_dynamic_slippage_uses_live_reserves_and_real_notional(
     assert sell_kwargs.kwargs["is_buy"] is False
     assert sell_kwargs.args[1] == pytest.approx(0.0148, rel=0.01)
     assert len(policy.get_estimator("Mint111").get_observations()) == 2
+
+
+async def test_order_executor_raydium_and_exceptions():
+    exec_client = MagicMock(spec=PumpFunExecutionClient)
+    executor = OrderExecutor(execution_client=exec_client, dry_run=False)
+
+    # Buy exception
+    exec_client.get_bonding_curve_pda.return_value = (Pubkey.default(), 255)
+    exec_client.buy = AsyncMock(side_effect=RuntimeError("RPC Buy timeout"))
+    res = await executor.execute_buy(SAMPLE_MINT, 0.05)
+    assert res.success is False
+    assert "buy_failed" in (res.error or "")
+
+    pool_keys = make_pool_keys(unique=False)
+
+    # Raydium buy dry run
+    executor_dry = OrderExecutor(execution_client=exec_client, dry_run=True)
+    res_dry = await executor_dry.execute_raydium_buy(SAMPLE_MINT, pool_keys, 0.05)
+    assert res_dry.success is True
+    assert res_dry.dry_run is True
+
+    # Raydium buy swap exception
+    exec_client.swap_raydium = AsyncMock(
+        side_effect=RuntimeError("Raydium pool locked")
+    )
+    res_ray_err = await executor.execute_raydium_buy(SAMPLE_MINT, pool_keys, 0.05)
+    assert res_ray_err.success is False
+    assert "raydium_buy_failed" in (res_ray_err.error or "")
+
+    # Raydium buy empty signature
+    exec_client.swap_raydium = AsyncMock(return_value="")
+    res_no_sig = await executor.execute_raydium_buy(SAMPLE_MINT, pool_keys, 0.05)
+    assert res_no_sig.success is False
+    assert res_no_sig.error == "raydium_buy_signature_missing"
+
+    # Raydium buy confirmation failure
+    exec_client.swap_raydium = AsyncMock(return_value="sig_ray_123")
+    exec_client.confirm_transaction = AsyncMock(return_value=False)
+    res_no_conf = await executor.execute_raydium_buy(SAMPLE_MINT, pool_keys, 0.05)
+    assert res_no_conf.success is False
+    assert res_no_conf.error == "raydium_buy_confirmation_failed"
+
+    # Raydium sell dry run
+    res_sell_dry = await executor_dry.execute_raydium_sell(SAMPLE_MINT, pool_keys, 1000)
+    assert res_sell_dry.success is True
+    assert res_sell_dry.dry_run is True
+
+    # Raydium sell swap exception
+    exec_client.swap_raydium = AsyncMock(side_effect=RuntimeError("Slippage exceeded"))
+    res_sell_err = await executor.execute_raydium_sell(SAMPLE_MINT, pool_keys, 1000)
+    assert res_sell_err.success is False
+    assert "raydium_sell_failed" in (res_sell_err.error or "")
+
+    # Raydium sell signature missing
+    exec_client.swap_raydium = AsyncMock(return_value="")
+    res_sell_no_sig = await executor.execute_raydium_sell(SAMPLE_MINT, pool_keys, 1000)
+    assert res_sell_no_sig.success is False
+    assert res_sell_no_sig.error == "raydium_sell_signature_missing"
+
+
+async def test_order_executor_retry_and_liquidator():
+    mock_client = MagicMock(spec=PumpFunExecutionClient)
+    mock_client.wallet = Keypair().pubkey()
+    mock_client.get_token_balance = AsyncMock(return_value=1_000_000)
+    mock_client.get_bonding_curve_pda.return_value = (
+        "11111111111111111111111111111111",
+        255,
+    )
+    mock_client.default_slippage_bps = 250
+    mock_client.calculate_sell_sol_output = MagicMock(return_value=10_000_000)
+    mock_client.get_bonding_curve_state = AsyncMock(
+        return_value={
+            "virtual_token_reserves": 1_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+        }
+    )
+    mock_client.sell = AsyncMock(return_value="sig_sell")
+    mock_client.confirm_transaction = AsyncMock(return_value=True)
+
+    policy = AdaptiveExecutionPolicy()
+    executor = OrderExecutor(
+        execution_client=mock_client,
+        execution_policy=policy,
+        dry_run=False,
+    )
+
+    # Live buy and sell
+    res_buy = await executor.execute_buy("mint_buy", 0.01, dry_run=True)
+    assert res_buy.success is True
+
+    res_sell = await executor.execute_sell("mint_sell", 1_000_000, dry_run=False)
+    assert res_sell.success is True
+
+    # Liquidator
+
+    pos_mgr = PositionManager(config=make_config(dry_run=False))
+    pos_mgr.record_buy(
+        "mint_liq", token_amount=1_000_000, cost_sol=0.01, entry_market_cap=30.0
+    )
+    liquidator = OrderLiquidator(executor=executor, position_manager=pos_mgr)
+    res_liq = await liquidator.liquidate_position("mint_liq", reason="emergency_stop")
+    assert res_liq is True
+
+    # Liquidate all
+    pos_mgr.record_buy(
+        "mint_liq_2", token_amount=1_000_000, cost_sol=0.01, entry_market_cap=30.0
+    )
+    all_liq = await liquidator.liquidate_all_positions(reason="panic")
+    assert len(all_liq) >= 1

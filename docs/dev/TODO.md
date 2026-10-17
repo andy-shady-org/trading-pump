@@ -427,7 +427,7 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Add tests for multi-RPC latency scoring, health checks, failover routing, and broadcast deduplication
 - [x] Add tests for daily equity baseline tracking, drawdown limits, and portfolio emergency lock triggers
 - [ ] Add tests for Telegram command authentication and FastAPI/WebSocket status streaming — superseded, see Sprints 32–33 and FEAT-45
-- [ ] Restructure the suite to mirror the source tree with shared `support/` factories — see Sprints 26–27 and [`TESTING.md`](TESTING.md) *(Sprint 26 done: 42 legacy files moved or split; 21 Sprint 27 files left)*
+- [x] Restructure the suite to mirror the source tree with shared `support/` factories — see Sprints 26–27 and [`TESTING.md`](TESTING.md) *(Sprint 26: 42 legacy files moved or split; Sprint 27: the last 21 dissolved; guarded by `unit/test_suite_layout.py`)*
 - [ ] Add unit and mock integration tests for asynchronous stream recording, batch flushing, and replay dataset schema compliance (FEAT-21)
 
 ### `pumpfun_trading/streams/` (Geyser & On-Chain Event Ingestion)
@@ -829,14 +829,25 @@ Phases 1–3 come first because they make every later move cheaper (factories to
 - **Acceptance:** collected test count unchanged (`pytest --collect-only -q`; 1,004 legacy tests plus the 33 `support/` tests from Phase 2), coverage ≥ 95%, suite runtime not slower than the 138 s baseline (Phase 3 target under 30 s: met, ~8 s). **Met:** 1,040 = 1,004 + 33 `support/` tests + 3 BUG-103 regression tests (`unit/bot/test_recorder.py`); coverage 96.30% with no module below its baseline; ~8 s on 3.12–3.14
 
 ### Sprint 27: Test Consolidation (T2, T3, T5, T9) — see [`TESTING.md`](TESTING.md)
-- [ ] Dissolve the six coverage-padding files (`test_coverage_95_*.py`, `test_coverage_boost_*.py`, `test_runtime_coverage_boost.py`) into their module tests; delete tests that only assert trivia and replace them with behaviour tests
-- [ ] Merge base / `_full` / `_regressions` pairs (`api_client`, `audit`, `execution_sdk`, `bot_runtime`)
-- [ ] Tag regressions `@pytest.mark.regression("BUG-xx")` beside the guarded module; add a check that every resolved BUG in `BUGS.md` has ≥ 1 tagged test
-- [ ] Convert repeated cases to `parametrize`
-- [ ] Add `hypothesis` to the `[dev]` extra and Hypothesis property tests for `sdk/curve.py` and the `streams/geyser.py` parsers (`tests/property/`)
-- [ ] Add characterisation (golden replay) tests pinning `TradingBot` decisions through public entry points (T5 safety net for Sprint 28)
-- [ ] Add the layout guard test (every source module has a `unit/` counterpart)
-- **Acceptance:** no file in the tests root except `conftest.py`; 1:1 mirror verified; coverage ≥ 95%
+Branch: `sprint-27-test-consolidation`. Test-only sprint (plus `hypothesis` in the `[dev]` extra). Baseline: 1,040 tests, coverage 96.30%.
+
+| Phase | Scope | How | Status |
+|---|---|---|---|
+| 1 | Tag regressions in place (before any move, so the marks travel with the tests) | Script: BUG IDs from docstrings, comments, section headers and `test_bugNN_` names | Done: 119 tests tagged in 31 files |
+| 2 | Dissolve / merge / split the 21 legacy files | Scripted AST split (Sprint 26 tool) with a per-test target plan: the module each test exercises most, plus overrides; clashing helpers suffixed, duplicates replaced by `support/` | Done: tests root holds only `conftest.py`; coverage per module unchanged |
+| 3 | Layout guard + BUG tag check, missing mirrors, extra tags and regression tests | `unit/test_suite_layout.py`; `unit/cli/test_optimize.py`; tags for 9 more bugs; new BUG-32 / 75 / 88 tests | Done: 5 known gaps left (shrink-only list) |
+| 4 | Hypothesis property tests | `tests/property/` (curve maths, Geyser parsers), derandomized profile | Done: 16 properties |
+| 5 | Golden replay characterisation tests | `integration/test_golden_replay.py` + `integration/golden/*.json` | Done: 4 scenarios |
+| 6 | `parametrize`, docs | Literal-only duplicate scan; TESTING / TODO / CHANGELOG / BUGS / AGENTS | Done |
+
+- [x] Dissolve the six coverage-padding files (`test_coverage_95_*.py`, `test_coverage_boost_*.py`, `test_runtime_coverage_boost.py`) into their module tests; delete tests that only assert trivia and replace them with behaviour tests *(dissolved test by test; none deleted, since every one still covers lines nothing else does. ~20 grab-bag tests keep coverage-style function names and are split into behaviour tests when their module is next changed, Sprint 28 extractions first)*
+- [x] Merge base / `_full` / `_regressions` pairs (`api_client`, `audit`, `execution_sdk`, `bot_runtime`)
+- [x] Tag regressions `@pytest.mark.regression("BUG-xx")` beside the guarded module; add a check that every resolved BUG in `BUGS.md` has ≥ 1 tagged test
+- [x] Convert repeated cases to `parametrize` *(the only literal-only duplicate pair and the `format_uptime` table; assertion tables inside grab-bag tests follow when those are split)*
+- [x] Add `hypothesis` to the `[dev]` extra and Hypothesis property tests for `sdk/curve.py` and the `streams/geyser.py` parsers (`tests/property/`)
+- [x] Add characterisation (golden replay) tests pinning `TradingBot` decisions through public entry points (T5 safety net for Sprint 28)
+- [x] Add the layout guard test (every source module has a `unit/` counterpart) *(`unit/test_suite_layout.py`)*
+- **Acceptance:** no file in the tests root except `conftest.py`; 1:1 mirror verified; coverage ≥ 95%. **Met:** 1,139 tests (1,040 + 99 new), coverage 96.30% with no module changed, green on 3.12–3.14; layout guard and BUG tag check pass
 
 ### Sprint 28: Runtime Decomposition II (R1, R6, R7)
 - [ ] `bot/factory.py`: composition root extracted from `TradingBot.__init__`

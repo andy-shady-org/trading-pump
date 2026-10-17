@@ -1,5 +1,7 @@
 """Unit and integration tests for On-Chain Funding Cluster Graph & Sybil Wash-Trading Detector (FEAT-26)."""
 
+import time
+
 import pytest
 
 from pumpfun_trading.config.env import get_runtime_env
@@ -444,3 +446,69 @@ def test_evaluate_cluster_heuristics_detailed_branches():
         reasons=["Minor wash"],
     )
     assert sybil_soft.to_dict()["wash_volume_ratio"] == 0.15
+
+
+@pytest.mark.regression("BUG-79")
+def test_empty_wash_window_means_no_wash_activity():
+    # BUG-79: stale trades must not be analysed as if they were recent
+    detector = SybilWashTradingDetector(time_window_seconds=300.0)
+    churn = [
+        {"user": "A", "is_buy": i % 2 == 0, "sol_amount": 1.0, "timestamp": 10.0}
+        for i in range(8)
+    ]
+    verdict = detector.analyze_trades(churn, now=1_000_000.0)
+    assert verdict.is_wash_trading is False
+    assert verdict.total_volume_sol == 0.0
+
+
+def test_cluster_graph_and_sybil_detector_edge_cases():
+    graph = FundingClusterGraph(total_supply=1_000_000_000)
+
+    # Empty address check
+    with pytest.raises(ValueError, match="Wallet address cannot be empty"):
+        graph.add_wallet("   ")
+
+    # Add and update node
+    n1 = graph.add_wallet("wallet_a", token_balance=50_000_000)
+    assert n1.token_balance == 50_000_000
+    n1_updated = graph.add_wallet(
+        "wallet_a", token_balance=100_000_000, is_creator=True
+    )
+    assert n1_updated.token_balance == 100_000_000
+    assert n1_updated.is_creator is True
+
+    # Self funding link ignored
+    graph.add_funding_link("wallet_a", "wallet_a")
+    assert "wallet_a" not in graph.adj_list.get("wallet_a", [])
+
+    # Cycle in funding links
+    graph.add_funding_link("w1", "w2")
+    graph.add_funding_link("w2", "w3")
+    graph.add_funding_link("w3", "w1")
+    root, depth = graph.find_root_ancestor("w1")
+    assert depth <= 10
+
+    # Sybil wash trading detection on ping pong and churn
+    detector = SybilWashTradingDetector(time_window_seconds=60.0, max_wash_ratio=0.15)
+    now = time.time()
+    trades = [
+        {"user": "u1", "is_buy": True, "sol_amount": 1.0, "timestamp": now - 10},
+        {"user": "u2", "is_buy": False, "sol_amount": 1.0, "timestamp": now - 9},
+        {"user": "u1", "is_buy": True, "sol_amount": 1.0, "timestamp": now - 8},
+        {"user": "u2", "is_buy": False, "sol_amount": 1.0, "timestamp": now - 7},
+        {"user": "u1", "is_buy": True, "sol_amount": 1.0, "timestamp": now - 6},
+        {"user": "u2", "is_buy": False, "sol_amount": 1.0, "timestamp": now - 5},
+    ]
+    verdict = detector.analyze_trades(trades, cluster_graph=graph, now=now)
+    assert verdict.sybil_trade_count > 0
+
+    # Empty trades
+    v_empty = detector.analyze_trades([])
+    assert v_empty.is_wash_trading is False
+
+    # Cluster analyzer full evaluation
+    analyzer = FundingClusterAnalyzer(
+        max_cluster_concentration_pct=0.20, max_single_cluster_pct=0.15
+    )
+    eval_res = analyzer.evaluate("mint123", graph, trades=trades, now=now)
+    assert eval_res.mint == "mint123"

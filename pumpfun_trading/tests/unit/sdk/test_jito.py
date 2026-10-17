@@ -257,6 +257,7 @@ def test_jito_client_build_tip_instruction():
         client.build_tip_instruction(SAMPLE_PAYER_PUBKEY, 0)
 
 
+@pytest.mark.regression("BUG-02")
 async def test_jito_client_send_bundle_validation():
     client = JitoClient()
 
@@ -494,3 +495,52 @@ async def test_jito_client_additional_edge_cases():
             "target_id", timeout_seconds=1.0
         )
         assert res.bundle_id == "target_id"
+
+
+@pytest.mark.regression("BUG-53")
+def test_jito_confirmed_bundle_with_error_is_failed_not_landed():
+    status = JitoBundleStatus(
+        bundle_id="b",
+        status="Landed",
+        confirmation_status="confirmed",
+        err={"Err": {"InstructionError": [2, {"Custom": 6002}]}},
+    )
+    assert status.is_failed and not status.is_landed
+
+
+@pytest.mark.regression("BUG-53")
+def test_jito_ok_null_err_counts_as_landed():
+    status = JitoBundleStatus(
+        bundle_id="b",
+        status="Landed",
+        confirmation_status="finalized",
+        err={"Ok": None},
+    )
+    assert status.is_landed and not status.is_failed
+
+
+@pytest.mark.regression("BUG-53")
+async def test_jito_get_bundle_statuses_parses_ok_and_err():
+    from pumpfun_trading.sdk.jito import JitoClient
+
+    jito = JitoClient()
+    jito._send_json_rpc = AsyncMock(
+        return_value={
+            "value": [
+                {
+                    "bundle_id": "a",
+                    "confirmation_status": "confirmed",
+                    "err": {"Ok": None},
+                },
+                {
+                    "bundle_id": "b",
+                    "confirmation_status": "confirmed",
+                    "err": {"Err": 1},
+                },
+            ]
+        }
+    )
+    ok, bad = await jito.get_bundle_statuses(["a", "b"])
+    assert ok.status == "Landed" and ok.is_landed
+    assert bad.status == "Failed" and not bad.is_landed
+    await jito.close()

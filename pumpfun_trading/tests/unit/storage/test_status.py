@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import json
+import os
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from pumpfun_trading.bot.lifecycle import TradingBotState
+from pumpfun_trading.bot.persistence import StatusPersistenceManager, atomic_write_json
 from pumpfun_trading.storage.status import (
     build_status_snapshot,
     safe_read_status_snapshot,
@@ -70,3 +76,34 @@ def test_build_status_snapshot():
     assert "timestamp" in snapshot
     assert snapshot["active_positions"] == {"Mint1": {}}
     assert snapshot["trade_sequence"] == 1
+
+
+@pytest.mark.regression("BUG-72", "BUG-94")
+def test_storage_write_is_atomic_and_cleans_temp_on_failure(tmp_path):
+    """BUG-72/94: writes go through a temp file that never lingers."""
+    path = tmp_path / "sub" / "status.json"
+    write_status_snapshot(str(path), {"a": 1})
+    assert json.loads(path.read_text()) == {"a": 1}
+
+    with patch("pumpfun_trading.bot.persistence.os.replace", side_effect=OSError):
+        with pytest.raises(OSError):
+            atomic_write_json(str(path), {"a": 2})
+    assert json.loads(path.read_text()) == {"a": 1}
+    assert os.listdir(path.parent) == ["status.json"]
+
+    manager = StatusPersistenceManager(bot_status_path=str(path))
+    with patch("pumpfun_trading.bot.persistence.json.dump", side_effect=TypeError):
+        assert manager.write_status_snapshot({"bad": 1}) is False
+    assert os.listdir(path.parent) == ["status.json"]
+
+
+@pytest.mark.regression("BUG-72")
+def test_storage_snapshot_omits_monotonic_clock():
+    """BUG-72: `_last_message_at` is a monotonic value and is not persisted."""
+    bot = SimpleNamespace(
+        state="idle",
+        get_status_snapshot=lambda: {"active_positions": {}},
+        _metrics_snapshot=lambda: {},
+        _last_message_at=12345.0,
+    )
+    assert "last_message_at" not in build_status_snapshot(bot)

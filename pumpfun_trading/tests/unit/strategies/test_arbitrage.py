@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
-import pytest
+import time
+from unittest.mock import MagicMock
 
+import pytest
+from solders.instruction import Instruction
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
+
+from pumpfun_trading.execution.arbitrage import AtomicArbitrageBuilder
+from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.strategies.arbitrage import (
+    ArbitrageOpportunity,
     CrossVenueDisparityMonitor,
     MempoolBackrunEngine,
     OptimalArbitrageCalculator,
@@ -196,3 +206,142 @@ def test_mempool_backrun_engine() -> None:
     assert whale_opp is not None
     assert whale_opp.direction == "raydium_to_pump"
     assert whale_opp.is_profitable
+
+
+MINT = "CzLSujWBLFsSjncfkh59rQD4ETecfgzWrmAyHiVpump"
+
+
+def _builder() -> tuple[AtomicArbitrageBuilder, MagicMock]:
+    kp = Keypair()
+    ix = Instruction(program_id=Pubkey.default(), data=b"", accounts=[])
+    client = MagicMock(spec=PumpFunExecutionClient)
+    client.wallet = kp.pubkey()
+    client._to_pubkey = lambda s: Pubkey.from_string(s) if isinstance(s, str) else s
+    client.get_bonding_curve_pda.return_value = (str(Pubkey.default()), 255)
+    for name in (
+        "build_set_compute_unit_limit_instruction",
+        "build_set_compute_unit_price_instruction",
+        "build_buy_instruction",
+        "build_sell_instruction",
+        "build_raydium_swap_instruction",
+        "build_jito_tip_instruction",
+        "_wsol_close_instruction",
+    ):
+        getattr(client, name).return_value = ix
+    client._wsol_open_instructions.return_value = [ix]
+    return AtomicArbitrageBuilder(client), client
+
+
+def _opp(direction: str) -> ArbitrageOpportunity:
+    keys = MagicMock(spec=RaydiumPoolKeys)
+    keys.pc_mint = "So11111111111111111111111111111111111111112"
+    return ArbitrageOpportunity(
+        mint=MINT,
+        direction=direction,
+        pump_spot_price=1.0,
+        raydium_spot_price=1.1,
+        spread_pct=0.1,
+        optimal_input_sol=0.5,
+        expected_output_sol=0.55,
+        gross_profit_sol=0.05,
+        estimated_fees_sol=0.0,
+        estimated_jito_tip_sol=0.0,
+        net_profit_sol=0.05,
+        timestamp=time.time(),
+        pool_keys=keys,
+        leg1_min_amount_out=1_000,
+        leg2_min_amount_out=2_000,
+    )
+
+
+@pytest.mark.regression("BUG-37")
+def test_arbitrage_raydium_leg_directions():
+    """BUG-37: Raydium legs swap between WSOL and token ATAs, never ATA -> same ATA."""
+    builder, client = _builder()
+
+    builder.build_arbitrage_instructions(_opp("pump_to_raydium"))
+    kwargs = client.build_raydium_swap_instruction.call_args.kwargs
+    assert kwargs["is_buy"] is False
+    assert "user_source_token_account" not in kwargs
+    assert client._wsol_open_instructions.call_args.args[1] == 0
+    client._wsol_close_instruction.assert_called()
+
+    builder.build_arbitrage_instructions(_opp("raydium_to_pump"))
+    kwargs = client.build_raydium_swap_instruction.call_args.kwargs
+    assert kwargs["is_buy"] is True
+    assert client._wsol_open_instructions.call_args.args[1] == 500_000_000
+
+
+@pytest.mark.regression("BUG-59")
+def test_arbitrage_opportunity_unverified_by_default():
+    """BUG-59: opportunities are unverified unless reserves were read on-chain."""
+    assert _opp("pump_to_raydium").reserves_verified is False
+
+
+def test_arbitrage_math_and_backrun_edge_cases():
+    calc = OptimalArbitrageCalculator()
+
+    # Zero or invalid reserves
+    assert calc.calculate_optimal_input(0, 100, 100, 100, "pump_to_raydium") == (
+        0.0,
+        0.0,
+    )
+    assert calc.calculate_optimal_input(100, 100, 100, 100, "invalid_dir") == (0.0, 0.0)
+
+    # Input <= 0 in simulation
+    sim_zero = calc.simulate_arbitrage_trade(
+        100, 100, 100, 100, "pump_to_raydium", input_sol=0.0
+    )
+    assert sim_zero["net_profit_sol"] == 0.0
+
+    monitor = CrossVenueDisparityMonitor(
+        calculator=calc, min_arbitrage_spread_pct=0.01, min_arbitrage_profit_sol=0.001
+    )
+
+    # Spread rejection
+    res_rejected = monitor.evaluate_spread(
+        mint="mint123",
+        pump_virtual_sol=30_000_000_000,
+        pump_virtual_token=1_000_000_000_000_000,
+        raydium_sol_reserve=30_000_000_000,
+        raydium_token_reserve=1_000_000_000_000_000,
+    )
+    assert res_rejected is None
+
+    # Mempool backrunner
+    backrunner = MempoolBackrunEngine(
+        disparity_monitor=monitor, whale_sol_threshold=1.0
+    )
+    assert (
+        backrunner.evaluate_whale_transaction("mint123", True, 0.0, 100, 100, 100, 100)
+        is None
+    )
+    assert (
+        backrunner.evaluate_whale_transaction(
+            "mint123", True, 0.05, 30_000_000_000, 1_000_000_000_000_000, 100, 100
+        )
+        is None
+    )
+
+    # Whale buy and sell triggers
+    w_buy = backrunner.evaluate_whale_transaction(
+        mint="mint123",
+        is_buy=True,
+        trade_sol=3.0,
+        pump_virtual_sol=30_000_000_000,
+        pump_virtual_token=1_000_000_000_000_000,
+        raydium_sol_reserve=80_000_000_000,
+        raydium_token_reserve=150_000_000_000_000,
+    )
+    assert w_buy is not None
+
+    w_sell = backrunner.evaluate_whale_transaction(
+        mint="mint123",
+        is_buy=False,
+        trade_sol=3.0,
+        pump_virtual_sol=80_000_000_000,
+        pump_virtual_token=150_000_000_000_000,
+        raydium_sol_reserve=30_000_000_000,
+        raydium_token_reserve=1_000_000_000_000_000,
+    )
+    assert w_sell is not None

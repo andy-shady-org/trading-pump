@@ -225,3 +225,70 @@ def test_strategy_config_and_presets_integration() -> None:
     agg = resolve_strategy_config("aggressive")
     assert agg.enable_cross_venue_arbitrage is True
     assert agg.min_arbitrage_spread_pct == 0.010
+
+
+def test_presets_validation_exceptions():
+    # buy_amount_sol <= 0
+    with pytest.raises(ValueError, match="buy_amount_sol"):
+        resolve_strategy_config("balanced", overrides={"buy_amount_sol": 0.0})
+
+    # stop_loss >= take_profit
+    with pytest.raises(ValueError, match="stop_loss must be less than take_profit"):
+        resolve_strategy_config(
+            "balanced", overrides={"stop_loss": 2.5, "take_profit": 2.0}
+        )
+
+    # max_active_positions < 1
+    with pytest.raises(ValueError, match="max_active_positions"):
+        resolve_strategy_config("balanced", overrides={"max_active_positions": 0})
+
+    # stagnant_timeout_seconds <= 0
+    with pytest.raises(ValueError, match="stagnant_timeout_seconds"):
+        resolve_strategy_config("balanced", overrides={"stagnant_timeout_seconds": 0.0})
+
+    # max_hold_time_seconds <= 0
+    with pytest.raises(ValueError, match="max_hold_time_seconds"):
+        resolve_strategy_config("balanced", overrides={"max_hold_time_seconds": 0.0})
+
+    # invalid drawdown_reference_mode
+    with pytest.raises(ValueError, match="Invalid drawdown_reference_mode"):
+        resolve_strategy_config(
+            "balanced", overrides={"drawdown_reference_mode": "invalid_mode"}
+        )
+
+    # profit_ratchet_ratio out of bounds
+    with pytest.raises(ValueError, match="profit_ratchet_ratio"):
+        resolve_strategy_config("balanced", overrides={"profit_ratchet_ratio": 1.5})
+
+    # profit_drawdown_tolerance_pct out of bounds
+    with pytest.raises(ValueError, match="profit_drawdown_tolerance_pct"):
+        resolve_strategy_config(
+            "balanced", overrides={"profit_drawdown_tolerance_pct": 0.0}
+        )
+
+    # invalid log_rotation_type
+    with pytest.raises(ValueError, match="Invalid log_rotation_type"):
+        resolve_strategy_config(
+            "balanced", overrides={"log_rotation_type": "invalid_rot"}
+        )
+
+    # invalid slippage bounds
+    with pytest.raises(ValueError, match="Invalid slippage bounds"):
+        resolve_strategy_config(
+            "balanced", overrides={"min_slippage_bps": 500, "max_slippage_bps": 200}
+        )
+
+    # cluster concentration bounds
+    with pytest.raises(ValueError, match="max_cluster_concentration_pct"):
+        resolve_strategy_config(
+            "balanced", overrides={"max_cluster_concentration_pct": -0.1}
+        )
+
+    with pytest.raises(ValueError, match="max_single_cluster_pct"):
+        resolve_strategy_config("balanced", overrides={"max_single_cluster_pct": 1.5})
+
+    with pytest.raises(ValueError, match="max_sybil_wash_ratio"):
+        resolve_strategy_config("balanced", overrides={"max_sybil_wash_ratio": -0.5})
+
+    with pytest.raises(ValueError, match="cluster_trace_depth"):
+        resolve_strategy_config("balanced", overrides={"cluster_trace_depth": 0})
