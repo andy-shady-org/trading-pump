@@ -118,6 +118,11 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-108** | High | Entry screening / Execution | **RESOLVED** | Tokens from other launchpads (PumpPortal `pool` ≠ `pump`, mints without the `…pump` suffix) are rejected before screening; buys require a bonding curve that exists and is owned by the Pump.fun program (`NotPumpFunCurveError`), in paper mode too |
 | **BUG-109** | Medium | Entry / Position lifecycle | **RESOLVED** | Every bought mint is kept in `traded_mints` (persisted, capped at 10,000); a mint whose position is closed is never bought again unless `allow_mint_reentry` is set |
 | **BUG-110** | Medium | Alerts / Event loop | **RESOLVED** | Webhook alerts sent from the running bot are delivered in a worker thread (`asyncio.to_thread`) instead of a blocking `urlopen` (up to 10 s) on the trading loop; shutdown waits up to 5 s for alerts in flight |
+| **BUG-111** | Low | Lifecycle | **OPEN** | A sell that starts while a buy is in flight (paper entry delay) hits a rejected `BUYING → SELLING` transition, and its completion sets `MONITORING` under the in-flight buy; state and audit trail wrong for about a second, money and accounting unaffected |
+| **BUG-112** | High | Streams / Exits | **OPEN** | PumpPortal refuses `subscribeTokenTrade` without a funded API key and the refusal message is dropped, so held positions get no trade data: exits only see the price on the 5 s curve poll, order flow is empty and captures hold no market trades |
+| **BUG-113** | Medium | Screening | **OPEN** | The creator is taken from the API record before the stream's `traderPublicKey`; when the API returns the system program `1111…1111`, the serial-launcher and rug-history checks run against nothing (10% of screened tokens) |
+| **BUG-114** | Low | Risk / Telemetry | **OPEN** | `circuit_breaker_trips` grows every 5 s while the breaker stays locked (394 for one trip), and `circuit_breaker_lockout_until` holds the lock time, not the unlock time |
+| **BUG-115** | Low | Audit / Reporting | **OPEN** | `pumpfun-audit pnl --group-by reason` books every buy's costs (rent, tip, fee) on an `entry` row, so each exit reason shows a positive net while the positions lost money |
 
 ---
 
@@ -944,3 +949,49 @@ Found while wiring the daily summary and degradation alerts. Fixed on `sprint-24
 * **Impact:** with alerts on, every alert froze stream ingestion, exit evaluation and the exit retry queue for the webhook's round trip (100 ms to 10 s on a slow or unreachable webhook). That breaks the Local Norm on never blocking the streaming loop and delays exits on the money path.
 * **Resolution:** inside a running loop `_send_alert` schedules `AlertDispatcher.send_alert_async` (the webhook call runs in a worker thread) as a tracked task and returns at once; outside a loop it still sends synchronously. `start()` waits up to 5 s (`_flush_alerts`) for alerts in flight after the final `bot stopped` alert, so the last alerts are not cancelled by `asyncio.run`.
 * **Verification:** `tests/unit/bot/test_run.py` (`regression("BUG-110")`): with a webhook that blocks until released, `_record_event` returns while the delivery is still pending, and `_flush_alerts` completes it once released.
+
+## 14. Stage 0 Pilot on v0.2.1 (2026-10-17)
+
+Found in the first minutes of the v0.2.1 Stage 0 run ([`releases/v0.2.1-stage0.md`](releases/v0.2.1-stage0.md)). Left open during the run, because a fix would restart the 72 h clock.
+
+### BUG-111: A Sell During an In-Flight Buy Breaks the Lifecycle State [OPEN]
+* **Location:** `pumpfun_trading/bot/lifecycle.py` (`VALID_STATE_TRANSITIONS`, `settled_state`), `pumpfun_trading/bot/run.py` (sell and buy state transitions)
+* **Description:** the bot has one lifecycle state but runs a buy and an exit of another position at the same time. With `paper_entry_delay_seconds` 1.5, a buy stays in `BUYING` for about 1.6 s, and twice in the first 7 minutes a stagnant exit of the open position started inside that window. `BUYING → SELLING` isn't a valid transition, so it was rejected with `Ignored invalid state transition from TradingBotState.BUYING to TradingBotState.SELLING`. The sell then completed from `BUYING` and settled in `MONITORING`, because at that moment no position was open (the in-flight buy isn't recorded yet); the buy then moved `MONITORING → HOLDING`. BUG-106 fixed the `HOLDING → BUYING` half of the same problem.
+* **Impact:** low. Both positions were tracked, sold and booked correctly. For about a second the dashboard state, `bot_status.json` `state` and the audit trail's state transitions are wrong, and the warning adds log noise. A live buy waits for confirmation, so the overlap will happen there too.
+* **Workaround:** none needed; ignore the warning when it sits between a `buying …` and a `buy_confirmed …` record.
+* **Fix (planned):** allow `BUYING → SELLING` and `SELLING → BUYING`, and make `settled_state` count operations in flight (pending buys as well as open positions), so a finishing sell settles in `BUYING` while a buy is still running. Longer term, Sprint 29's typed state model should report per-operation states instead of one global state.
+* **Verification (planned):** `tests/unit/bot/test_lifecycle.py` and `tests/unit/bot/test_run.py` (`regression("BUG-111")`): an exit that starts and finishes during a buy's entry delay logs no invalid transition and leaves the bot in `BUYING`, then `HOLDING`.
+
+## 15. Stage 0 Close-out on v0.2.1 (2026-10-17)
+
+Found when the v0.2.1 Stage 0 run was closed after its circuit breaker tripped at T + 60 min ([`releases/v0.2.1-stage0.md`](releases/v0.2.1-stage0.md#close-out--2026-10-17-1314-t--1-h-33-min)).
+
+### BUG-112: Token-Trade Subscription Silently Refused [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`_subscribe_to_token_trades`, `_handle_message`, `_run_health_loop`), `pumpfun_trading/bot/event_router.py`
+* **Description:** after a buy the bot sends `subscribeTokenTrade` for the mint. PumpPortal only serves that method to connections opened with an API key whose linked wallet holds at least 0.02 SOL (metered at 0.01 SOL per 10,000 messages); otherwise it replies `{"message": "'subscribeTokenTrade' and 'subscribeAccountTrade' methods are only available when connecting with an API key funded with at least 0.02 SOL."}`. That reply has no `mint`, so `_handle_trade_update` returns and nothing is logged. Checked after the run: 3 subscriptions, 0 trade messages, 3 refusals.
+* **Impact:** high. Exits run only on the curve read every 5 s in the health loop, so the 10% stop-loss filled at −12.5% to −14.7% gross; the order-flow and momentum engines receive no trades; replay captures contain no market trades for held mints, so replay cannot evaluate exits and `--compare-audit` compares nothing. The v0.2.0 run had the same gap.
+* **Workaround:** add a funded PumpPortal API key to `PUMPFUN_STREAM_URL` (`wss://pumpportal.fun/api/data?api-key=…`; `ops/redact.py` masks it).
+* **Fix (planned):** log and count PumpPortal `message` replies; mark the stream degraded and alert when a trade subscription is refused; poll held curves every `position_refresh_seconds` (default 1 s) in their own task instead of the 5 s health loop; document the API key in `ENVIRONMENTAL-VARIABLES.md`.
+* **Verification (planned):** `tests/unit/bot/test_run.py` (`regression("BUG-112")`): a refusal message is logged, counted and alerted; held positions are re-priced at the configured interval with no trade messages.
+
+### BUG-113: Creator Resolved To The System Program [OPEN]
+* **Location:** `pumpfun_trading/bot/enrichment.py` (`TokenEnricher.enrich_and_screen`, creator lookup)
+* **Description:** the creator is read as `creator or user or creatorAddress or dev_wallet or traderPublicKey` from the merged record, and the API record's `creator` comes first. For some new mints the API returns `11111111111111111111111111111111`, which is truthy, so the stream's real `traderPublicKey` is never used and the creator history lookup asks about the system program. 34 of 333 screened tokens had this creator; 4 of them passed.
+* **Impact:** medium. The serial-launcher (the second most common reject) and rug-history checks are skipped for about 10% of tokens.
+* **Fix (planned):** ignore the system program and empty values, prefer the stream's `traderPublicKey`, and add a `creator_unknown` penalty (or reject) when no creator can be resolved.
+* **Verification (planned):** `tests/unit/bot/test_enrichment.py` (`regression("BUG-113")`): an API record with the system-program creator falls back to `traderPublicKey`; no creator at all adds the penalty.
+
+### BUG-114: Breaker Trip Counter And Lockout Field Misreport [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`_check_and_enforce_circuit_breaker`, status snapshot)
+* **Description:** `_record_metric("circuit_breaker_trips")` runs on every 5 s health-loop pass while the breaker is engaged, so one trip showed as 394. `circuit_breaker_lockout_until` is filled from `locked_at_timestamp`, the time the lock began.
+* **Impact:** low; telemetry and the dashboard only. A daily summary or Web UI view would report hundreds of trips.
+* **Fix (planned):** count a trip only on the transition into the locked state; report the real unlock time (the next 00:00 UTC reset) as `circuit_breaker_lockout_until` and keep `locked_at` separately.
+* **Verification (planned):** `tests/unit/bot/test_run.py` (`regression("BUG-114")`): several health-loop passes while locked record one trip and a lockout time at the next UTC midnight.
+
+### BUG-115: Per-Reason PnL Shows Profitable Exits For Losing Positions [OPEN]
+* **Location:** `pumpfun_trading/bot/pnl.py` (grouping), `pumpfun_trading/cli/audit.py` (`pnl --group-by reason`)
+* **Description:** the buy record carries the position's rent, tip and fee, and the sell carries the rent refund. Grouping by reason puts each buy under an `entry` row, so in the v0.2.1 run every exit reason showed a positive net (stagnant +0.023 SOL) while the positions lost 0.023 SOL in total.
+* **Impact:** low; reporting only (totals and per-position win rate are correct). It invites tuning in the wrong direction.
+* **Fix (planned):** attribute the buy leg to the position's first exit reason, so each row's net is the net of its positions; drop the `entry` row for closed positions.
+* **Verification (planned):** `tests/unit/bot/test_pnl.py` and `tests/unit/cli/test_audit.py` (`regression("BUG-115")`): per-reason nets sum to the closed net PnL.
+
