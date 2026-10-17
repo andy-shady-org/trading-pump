@@ -8,7 +8,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Sprint 24C of the Terminal Income Track (merged as `0ab1ae0`, PR #8): no more API keys on disk, and backtests that run the live sizing, exits and costs. Sprint 25 (branch `sprint-25-packaging-hygiene`): packaging and repository hygiene; no runtime behaviour change.
+## [0.2.1] - 2026-10-17
+
+Everything merged to `main` since v0.2.0 (PRs #8–#14): Sprint 24C (no more API keys on disk; backtests that run the live sizing, exits and costs), Sprint 25 (packaging and repository hygiene), Sprints 26–27 (test restructure), the Stage 0 fixes BUG-104…109 and entry hardening, and Sprint 24D (unattended operation). This is the build the restarted Stage 0 paper pilot runs on.
 
 ### Security
 - BUG-102: new `ops/redact.py` (`redact_url`, `redact_text`) masks credentials in URLs (`?api-key=`, `token`, `user:pass@`, key-like path segments; Solana addresses are kept). Applied to the RPC pool telemetry and config dicts (`bot_status.json`), `TradingBotConfig.to_dict` (`stream_url`, `api_base_url`, `rpc_endpoints`), every `bot.log` line, dashboard events and alerts, and `events.jsonl`. Raw URLs stay in memory for requests.
@@ -19,13 +21,13 @@ Sprint 24C of the Terminal Income Track (merged as `0ab1ae0`, PR #8): no more AP
 - `engines/parity.py` and `pumpfun-replay --compare-audit AUDIT` (`--parity-tolerance-sol`, `--parity-tolerance-pct`): replay-vs-live parity report, exit code 1 outside the tolerance.
 - `pumpfun-replay` flags `--simple-exits`, `--no-costs`, `--tip-lamports`, `--priority-fee-lamports`.
 
-### Added (Stage 0 entry hardening, branch `fix/stage0-entry-hardening`)
+### Added (Stage 0 entry hardening, PR #13)
 - Paper latency penalty: `paper_entry_delay_seconds` waits and re-reads the curve before a paper fill, and `paper_entry_slippage_bps` (0–5,000) gives fewer tokens and a higher entry market cap. Both default to 0; the fill's `metadata` records them.
 - Screening data in captures: with `--record-replay`, each screened token adds an `event: "screening"` record (social links, holder count, top-5 share, Gini, creator holding and launch history, verdict, reasons, latency). Replay skips these records; they are input for per-filter attribution.
 - `PUMPFUN_BOT_LOG_PATH` sets where `bot.log` is written (it was documented in runtime setups but never read, so the log always landed in the working directory). It beats the config's `log_file`; `none`/`off` disables the file. Tests now write `bot.log` to their temp directory instead of the repo root.
 - New config keys: `require_pump_mint_suffix`, `allow_mint_reentry`, `paper_entry_delay_seconds`, `paper_entry_slippage_bps`.
 
-### Added (Sprint 24D: unattended operation, branch `sprint-24d-income-ops`)
+### Added (Sprint 24D: unattended operation, PR #14)
 - Operator pause (FEAT-50): `SIGUSR1` toggles "no new buys, keep managing exits" (`bot/operator.py`; `TradingBot.pause_buying` / `resume_buying`). Capital rotation is blocked too. The state is saved in `bot_status.json` (`operator_pause`, `buying_paused`) and survives restarts; each change is an `operator_pause` audit record and an alert; the dashboard shows a `Buying` row. `bot_status.json` now carries the process `pid`.
 - Unattended alerts (`bot/supervision.py`): a daily summary at `daily_summary_hour_utc` (default 00:00 UTC; net / gross PnL, fees, tips, rent, trades, win rate, expectancy, breaker, drawdown, reconciliation, buying state; also a `daily_summary` audit record), one alert when the stream or RPC pool stays degraded longer than `degradation_alert_minutes` (default 5) plus one on recovery, one alert per new reconciliation `GAP`, and `bot started` / `bot stopped` alerts.
 - Profit sweep (FEAT-42, off by default): `profit_sweep_enabled`, `profit_sweep_destination`, `profit_sweep_hot_floor_sol`, `profit_sweep_min_sol`, `profit_sweep_interval_seconds` (`bot/sweep.py`, `PumpFunExecutionClient.transfer_sol`). Moves SOL above a floor (never below `reserve_balance_sol + max_total_exposure_sol + 0.01`) to a cold wallet under the trade lock; `sweep` audit records; the breaker baseline drops by the amount (`DailyEquityTracker.record_withdrawal`); paper / dry-run simulate it; the bot refuses to start on an invalid sweep config. `pumpfun-audit reconcile` counts live sweeps in the whole-wallet check (`swept_sol`).
@@ -40,7 +42,7 @@ Sprint 24C of the Terminal Income Track (merged as `0ab1ae0`, PR #8): no more AP
 - `pumpfun-optimize`: trials run live-fidelity replay with costs (fitness is net), start with `reserve_balance_sol + 2 × max_total_exposure_sol` of cash instead of 100 SOL, and the search space includes the tier, moonbag, trailing-stop and timeout parameters again.
 - A config exported by `pumpfun-optimize` masks credentials in its URLs.
 
-### Build and packaging (Sprint 25: R8, R9, T8)
+### Build and packaging (Sprint 25: R8, R9, T8, PR #9)
 - Removed the unused `requests` runtime dependency.
 - Classifiers: `Framework :: Django` and `Development Status :: 5 - Production/Stable` replaced by `Framework :: AsyncIO` and `Development Status :: 3 - Alpha` (0.x, live capital gate not passed); financial audience/topic classifiers added. `Private :: Do Not Upload` kept.
 - New optional extras for the planned platform work, unused by the terminal bot: `[web]` (FastAPI, Uvicorn), `[db]` (SQLAlchemy async, Alembic, asyncpg, aiosqlite), `[geyser]` (grpcio, protobuf).
@@ -50,14 +52,14 @@ Sprint 24C of the Terminal Income Track (merged as `0ab1ae0`, PR #8): no more AP
 - `.gitignore` covers runtime artifacts (`bot.log*`, `cov.json`, audit/reconcile/replay files, `data/`, `incidents/`, `test-data/`, `.envrc`); stale bytecode of the retired root `audit`/`bot`/`cli`/`replay` modules removed.
 - `CONTRIBUTING.md`: release section rewritten for private tags only.
 
-### Tests (Sprint 26: T1, T4, T6, T7, branch `sprint-26-test-foundation`)
+### Tests (Sprint 26: T1, T4, T6, T7, PR #10)
 - Phase 1: pytest runs with `--strict-markers`; markers `unit`, `integration`, `property`, `regression(bug_id)` and `slow` are registered. `unit` / `integration` / `property` are applied by location in `tests/conftest.py` (951 unit, 53 integration today). The 216 redundant `@pytest.mark.asyncio` marks are gone (`asyncio_mode = "auto"`). New `nox -s tests-fast` (`-m "not slow and not integration"`, no coverage gate, not run by default). Test-only change: 1004 tests, coverage 96.29%, no module below its baseline.
 - Phase 2: shared test support package `pumpfun_trading/tests/support/`: `constants.py` (`SAMPLE_PRIVATE_KEY`, sample mints, initial curve reserves), `factories.py` (`make_config`, `make_bot`, `make_position`, `make_pool_keys`), `fakes.py` (`FakeClock`, `FakeRpc`, `FakeJito`, `FakeAlertSink`) and `payloads.py` (curve account, trade / complete event and buy / sell instruction bytes), covered by 33 tests in `tests/unit/test_support.py` that round-trip the payloads through the real parsers. The 16 test files that defined their own private key (four different values) now import `SAMPLE_PRIVATE_KEY`. Test-only change: 1037 tests (1004 + 33), coverage 96.29%, no module below its baseline.
 - Phase 3 (T7): the suite runs in ~8 s instead of ~136 s. The time was retry backoff, not the bot: with the network blocked, every unmocked Pump.fun API or RPC lookup retried with real waits (~3.5 s and ~0.7 s per call). New autouse fixture `instant_retry_backoff` (`tests/conftest.py`) skips only the sleeps inside `PumpFunApiClient.request` and `RpcConnectionPool.request`; retries still run and the RPC health-loop interval is untouched (`USES_REAL_RETRY_BACKOFF = True` opts a module out). `time.sleep` removed from `test_anti_rug_filters.py` (`FakeClock`), `test_ops_retention.py` (joins the compression thread, and now checks a `.gz` archive exists) and `test_logging_rotation.py` (rollover made due instead of waiting 1.1 s, and now checks the rotated file); nested `asyncio.run` replaced by `await` in 4 files; the record-CLI polling test runs on `FakeClock`. Test-only change: 1,040 tests, coverage 96.30%, no module below its baseline.
 - Phases 4a/4b (T1): 20 legacy flat test files now live in the mirrored layout. 4a renamed 12 unchanged (e.g. `test_jito_sdk.py` → `unit/sdk/test_jito.py`, `test_geyser_stream.py` → `unit/streams/test_geyser.py`; new `unit/strategies/`, `unit/streams/`, `unit/services/` packages). 4b merged 8 into the mirrored file that already existed (e.g. `test_rpc_pool.py` → `unit/infra/test_rpc_pool.py`, `test_ops_cli.py` → `unit/cli/test_main.py`). Test-only change: 1,040 tests, coverage 96.30%, no module below its baseline.
 - Phases 5–7 (T1, T4): the 7 `*_integration.py` files moved to the new `tests/integration/` package, and the 15 mixed legacy files were split test by test into the mirrored module files (e.g. `test_risk_health_execution.py` → `unit/bot/test_risk.py`, `test_health.py`, `test_lifecycle.py`, `unit/execution/test_builder.py`, `unit/strategies/test_risk_validation.py`). New mirrored files for `bot/alerts`, `bot/persistence`, `bot/health`, `bot/lifecycle`, `cli/bot`, `cli/replay`, `cli/arbitrage`, `config/env`, `engines/generators`, `execution/liquidator`, `execution/builder`, `execution/arbitrage`, `ops/monitoring`, `storage/status` and seven `strategies/` modules; shared executor fixtures in `unit/execution/conftest.py`. 91 inline `TradingBotConfig(...)` calls in the moved files now use `make_config` (behaviour-identical: `dry_run=False` stated where it wasn't set) and four local pool-key helpers use `make_pool_keys`. The interim `*_integration.py` marker rule was removed from `conftest.py`. Test-only change: 1,040 tests (986 unit, 54 integration), coverage 96.30%, no module below its baseline; 21 legacy flat files remain for Sprint 27.
 
-### Tests (Sprint 27: T2, T3, T5, T6, T9, branch `sprint-27-test-consolidation`)
+### Tests (Sprint 27: T2, T3, T5, T6, T9, PR #11)
 - The last 21 legacy flat files are gone: the six coverage-padding files were dissolved and the `_full` / `_regressions` pairs and themed regression files merged or split test by test into their mirrored module files (new `unit/bot/test_audit.py`, `unit/bot/test_event_router.py`, `unit/cli/test_optimize.py`). The tests root now holds only `conftest.py`. Per-module coverage unchanged; no test deleted. Duplicate local helpers replaced by `support/` (`SAMPLE_MINT`, `WSOL_MINT`, `make_pool_keys`, `make_bot`) and 57 more inline `TradingBotConfig(...)` calls by `make_config`.
 - Regression tags (T9): 140 tests carry `@pytest.mark.regression("BUG-xx")`; new tests for BUG-32 (custom config fields survive `TradingBot.__init__`), BUG-75 (market cap from UI-unit and raw reserves, parametrized) and BUG-88 (dashboard shows `entry_reason`). `unit/test_suite_layout.py` fails if a RESOLVED bug in `BUGS.md` has no tagged test (5 older bugs listed as known gaps, shrink-only) or a tag names an unknown bug.
 - Layout guard: the same file checks that every source module has `unit/<pkg>/test_<module>.py`, that the tests root holds only `conftest.py`, that every `unit/<pkg>/` has an `__init__.py`, and that no file has a coverage-style name.
@@ -78,15 +80,18 @@ Sprint 24C of the Terminal Income Track (merged as `0ab1ae0`, PR #8): no more AP
 - **BUG-103:** `ReplayRecorder.close()` could lose the last batch on shutdown. It cancelled the flush worker while that batch, already taken off the queue, was waiting for its `asyncio.to_thread` write; the cancel also cancelled the write if the thread hadn't started it yet, or closed the sink under a running write. The write is now shielded and finished (and counted) before the cancel is honoured, so `--record-replay` captures and `pumpfun-recorder` keep every record up to shutdown. Found by `unit/cli/test_record.py::test_harvester_websocket_feed_closed_runs_until_duration` failing on Python 3.11 in CI; regression tests in `unit/bot/test_recorder.py`.
 - Test `test_retention_sink_and_manager_edge_branches` failed on Python 3.12/3.13: it mocked `Path.stat` globally, which `Path.glob` uses before 3.14. It now fakes only the measured file's size (found by the new interpreter matrix; test-only change).
 
-### Release record – Unreleased
-- Sprint 24D (branch `sprint-24d-income-ops`): operator pause, unattended alerts, profit sweep (off by default), `deploy/` templates, BUG-110; 1,321 tests, coverage 96.38%, green on 3.12, 3.13, 3.14; ruff, black, mypy clean. Touches the entry gate (pause) and, only when enabled, wallet transfers. Needs the RUNBOOK §7 pause / sweep / supervisor drills on paper before Stage 1
-- Stage 0 fixes (branch `fix/stage0-bugs-104-107`): BUG-104…107 fixed; 1,183 tests, coverage 96.30%, green on 3.12, 3.13, 3.14. Money path changed (paper pricing, buy refusal on non-standard curves), so the next Stage 0 is a full 72 h run on a new tag with an empty `data/`.
-- Entry hardening (branch `fix/stage0-entry-hardening`): BUG-108, BUG-109, paper latency penalty, screening records; 1,218 tests, coverage 96.29%, green on 3.12, 3.13, 3.14. Money path changed (which tokens are bought, paper fills), so it needs a full 72 h Stage 0
-- Commit: – (Sprint 24C merged as `0ab1ae0`; Sprint 25 on branch `sprint-25-packaging-hygiene`, not merged)
-- Release gate: PASS (`nox -s lint mypy tests package`; `tests` green on 3.12, 3.13 and 3.14 locally, 3.11 only in CI)
-- Tests: 1004 collected, all passed; coverage 96.29% (statement + branch)
-- Replay parity: tooling added; not yet run on a live capture
-- Capital stage after this release: unchanged (0). BUG-102 touches logging/telemetry only; the trading path is unchanged, so a 24h Stage 0 re-run is enough
+### Release record – v0.2.1 (2026-10-17)
+- Commit: `f7b34f7` (merge of PR #14, `sprint-24d-income-ops` → `main`), plus the `release/v0.2.1` commit that bumps `pyproject.toml` to `0.2.1` and adds this record (no code change). The `v0.2.1` tag goes on the merge of `release/v0.2.1` once CI is green.
+- Merged since v0.2.0: `0ab1ae0` (PR #8, Sprint 24C), `d3f4c77` (PR #9, Sprint 25), `5fdd5bc` (PR #10, Sprint 26), `67969b6` (PR #11, Sprint 27), `1498f37` (PR #12, BUG-104…107), `44b9e27` (PR #13, entry hardening, BUG-108/109), `f7b34f7` (PR #14, Sprint 24D, BUG-110)
+- Release gate: PASS (`nox -s lint mypy package tests-3.12 tests-3.13 tests-3.14`; 3.11 only in CI)
+- Tests: 1,321 collected, all passed; coverage 96.38% (statement + branch)
+- Replay parity: tooling added (Sprint 24C); not yet run on a live capture
+- Mainnet simulation: holder-lookup flapping (BUG-107) and the non-standard curves (BUG-104) checked read-only on mainnet
+- Money path changed (paper pricing, buy refusal on non-standard / non-Pump.fun curves, no re-entry, operator pause), so Stage 0 restarts as a full 72 h run on this tag with an empty `data/`. Recommended canary additions: `"paper_entry_delay_seconds": 1.5`, `"paper_entry_slippage_bps": 300`, `"require_holder_data": true`; `PUMPFUN_BOT_LOG_PATH=data/bot.log` and an alert provider in `.envrc`
+- RUNBOOK §7 pause / sweep / supervisor / degradation drills: to run on paper from a second runtime directory; keep the profit sweep off on a funded wallet until its drill passes
+- Capital stage after this release: 0 (Stage 0 paper pilot to restart on this tag)
+- Stage 0 paper pilot: –
+- Sign-off: –
 
 ## [0.2.0] - 2026-10-16
 
@@ -181,7 +186,8 @@ First tagged build (`v0.0.1-alpha` points at the same commit). Baseline for the 
 - Capital stage after this release: 0
 - Sign-off: –
 
-[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/andy-shady-org/pumpfun-trading/tree/v0.1.0
