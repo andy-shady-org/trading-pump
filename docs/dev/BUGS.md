@@ -125,6 +125,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-115** | Low | Audit / Reporting | **RESOLVED** | `pumpfun-audit pnl --group-by reason` books every buy's costs (rent, tip, fee) on an `entry` row, so each exit reason shows a positive net while the positions lost money |
 | **BUG-116** | High | Streams / Trade feed | **RESOLVED** | A refused `subscribeTokenTrade` was cleared by any reconnect, so buys resumed blind while the PumpPortal API key was still unfunded; now a trade-feed circuit breaker stays open until a probe subscription is confirmed or trade data arrives, and its alert names the likely cause (the key's wallet ran out of funds) |
 | **BUG-117** | High | Config / Streams | **RESOLVED** | A `strategy_preset` config filled in the public PumpPortal URL, which beat `PUMPFUN_STREAM_URL`, so the funded API key was never sent and every `subscribeTokenTrade` was refused while the alert blamed the key's funds |
+| **BUG-118** | Medium | Security / UI | **RESOLVED** | The dashboard's Coin Polling and Bot Status panels printed the raw stream URL, so the PumpPortal `?api-key=` was shown on screen; the key now lives in its own `PUMPFUN_STREAM_API_KEY` |
 
 ---
 
@@ -1024,3 +1025,15 @@ Found in the first minute of the v0.2.2 24 h capture run: the trade-feed breaker
 * **Impact:** high: no trade data for held positions and buys blocked by `require_trade_feed`, with a misleading "add funds" message. The pre-run key check passed because it connected with the env URL directly, not through the bot's config.
 * **Resolution:** the public PumpPortal URL and the `http://127.0.0.1:10000` sentinel are both placeholders: an env URL now beats them, and any other config URL still beats the env. `TradeFeedBreaker.stream_has_api_key` records whether the PumpPortal URL in use has an `api-key`; without one the bot logs a warning at stream start, and the breaker's alert, `likely_cause` and `bot_status.json` → `trade_feed_breaker.stream_has_api_key` say the URL carries no key instead of blaming funds.
 * **Verification:** `tests/unit/bot/test_run.py` and `tests/unit/bot/test_trade_feed.py` (`regression("BUG-117")`): a preset config plus the keyed env URL connects with the key, a different config URL still wins, no env keeps the public URL and the alert names the missing key; `stream_url_has_api_key` table. Loading the runtime `capture.json` with the runtime `.envrc` now gives `wss://pumpportal.fun/api/data?api-key=***`.
+
+## 18. Stream API Key On The Dashboard (2026-10-17)
+
+Seen on the dashboard during the v0.2.3 capture run, right after the BUG-117 fix started sending the key.
+
+### BUG-118: Coin Polling Panel Shows The PumpPortal API Key [RESOLVED]
+* **Location:** `pumpfun_trading/ui/dashboard.py` (`Stream URL` rows in the Coin Polling and Bot Status panels), `pumpfun_trading/bot/run.py` (`TradingBot.stream_url`), `PUMPFUN_STREAM_URL`
+* **Description:** the only way to give the bot a PumpPortal key was `PUMPFUN_STREAM_URL=wss://pumpportal.fun/api/data?api-key=…`. The bot kept that URL as `stream_url` and the dashboard printed it with `bot.stream_url`, without the BUG-102 redaction that logs, status files and alerts get. Once BUG-117 made the keyed env URL win, the key was on screen in full.
+* **Impact:** medium: anyone who sees the terminal, a screenshot or a screen share gets a key that spends the linked wallet's SOL (PumpPortal meters trade messages against it). No wallet key is exposed.
+* **Workaround:** none needed after the fix; before it, don't share the dashboard and rotate the key if it was shown.
+* **Resolution:** the key is a separate secret, `PUMPFUN_STREAM_API_KEY`. `TradingBot.stream_url` (and `config.stream_url`) is always key-free, and the key is only joined to the URL in `_stream_connect_url()` at `ws_connect` time, and only for `pumpportal.fun` hosts, so it is never sent to another provider (`bot/trade_feed.py`: `split_stream_api_key`, `stream_connect_url`). A key still embedded in `PUMPFUN_STREAM_URL` is split out and used, with a start-up warning to move it. The dashboard also passes the stream and Geyser URLs through `redact_url` as a second guard. `sanitize_env_for_logging` masks the new variable (its name contains `KEY`).
+* **Verification:** `regression("BUG-118")` tests: `unit/ui/test_dashboard.py` (no key on the rendered dashboard with the new variable, with a legacy keyed URL, or with a key set straight on `stream_url`), `unit/bot/test_trade_feed.py` (`split_stream_api_key` and `stream_connect_url` tables, no key for other hosts), `unit/bot/test_run.py` (`ws_connect` gets the keyed URL while logs and the status snapshot never contain the key; a legacy keyed URL is split out with a warning).

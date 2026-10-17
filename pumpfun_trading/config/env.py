@@ -119,6 +119,7 @@ def get_runtime_env(**overrides: Any) -> dict[str, Any]:
         or os.getenv("SOLANA_RPC_URLS"),
         "PUMPFUN_STREAM_URL": os.getenv("PUMPFUN_STREAM_URL")
         or os.getenv("PUMPFUN_WS_URL"),
+        "PUMPFUN_STREAM_API_KEY": os.getenv("PUMPFUN_STREAM_API_KEY"),
         "PUMPFUN_GEYSER_ENDPOINT": os.getenv("PUMPFUN_GEYSER_ENDPOINT"),
         "PUMPFUN_GEYSER_X_TOKEN": os.getenv("PUMPFUN_GEYSER_X_TOKEN")
         or os.getenv("PUMPFUN_GEYSER_TOKEN"),

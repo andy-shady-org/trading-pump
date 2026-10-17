@@ -131,7 +131,8 @@ Terminal operators configure the bot using a `.env` file in the project root or 
 | `PUMPFUN_RPC_URL` | `HELIUS_RPC_URL` | **Yes** | `https://api.mainnet-beta.solana.com` | Primary Solana JSON-RPC HTTP endpoint. |
 | `PUMPFUN_RPC_URLS` | `SOLANA_RPC_URLS` | Optional | `None` | Comma-separated secondary/failover Solana RPC endpoints for dynamic load balancing. |
 | `PUMPFUN_GEYSER_ENDPOINT` | — | **Required\*** | `None` | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market data ingestion. |
-| `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | **Required\*** | `wss://pumpportal.fun/api/data` | WebSocket streaming endpoint for event-driven market data ingestion. |
+| `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | **Required\*** | `wss://pumpportal.fun/api/data` | WebSocket streaming endpoint for event-driven market data ingestion. Keep it key-free. |
+| `PUMPFUN_STREAM_API_KEY` | — | **Yes** (PumpPortal trading) | `None` | PumpPortal API key, sent only when connecting to `pumpportal.fun`; never shown on the dashboard (BUG-118). |
 | `PUMPFUN_USE_JITO` | — | Optional | `true` | Enables private mempool bundle routing via Jito Block Engine to prevent sandwich attacks. |
 | `PUMPFUN_BASE_BUY_SOL` | `PUMPFUN_BUY_AMOUNT_SOL` | Optional | `0.1` | Base buy allocation per trade in SOL. |
 | `PUMPFUN_STRATEGY_PRESET` | `PUMPFUN_PRESET` | Optional | `balanced` | Preconfigured strategy profile: `conservative`, `balanced`, or `aggressive`. |

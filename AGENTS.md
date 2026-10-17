@@ -61,6 +61,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[STREAMS] A Reconnect Is Not A Fix:** BUG-116 cleared the trade-feed refusal on every reconnect, so buys resumed blind while the key's wallet was still empty. Close a feed breaker only on proof of delivery (a confirmed subscription or data), probe while it is open, and name the likely cause (metered API key out of funds) in the alert.
 - **[ENTRY] Mayhem Curves Break The Invariant:** mayhem-mode curves drifted to 46 SOL virtual reserve 2 s after launch. Skip `is_mayhem_mode` tokens (`skip_mayhem_mode`) unless their pricing is modelled.
 - **[CONFIG] Defaults Are Not Choices:** a preset filled in the public PumpPortal URL, which beat the keyed `PUMPFUN_STREAM_URL` (BUG-117). Never let a filled-in default outrank an env override; check precedence by loading the real runtime config + env through `TradingBot`, not by testing the env value on its own.
+- **[SECURITY] Secrets Are Not Part Of A URL:** the dashboard printed `stream_url` with the PumpPortal `?api-key=` in it (BUG-118). Keep provider keys in their own env variable (`PUMPFUN_STREAM_API_KEY`), keep displayed/stored URLs key-free, join the key only at connect time, and pass any URL a UI renders through `redact_url`.
 
 
 ## Project Overview

@@ -42,6 +42,8 @@ from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
 from pumpfun_trading.bot.trade_feed import (
     PUMPPORTAL_PUBLIC_STREAM_URL,
     TradeFeedBreaker,
+    split_stream_api_key,
+    stream_connect_url,
     stream_url_has_api_key,
 )
 from pumpfun_trading.bot.trade_feed import is_confirmation as is_trade_feed_confirmation
@@ -211,6 +213,16 @@ class TradingBot:
             effective_stream_url = env_stream_url
         elif base.stream_url:
             effective_stream_url = base.stream_url
+        # The PumpPortal API key lives in PUMPFUN_STREAM_API_KEY, never in the
+        # stream URL the bot keeps, logs and displays (BUG-118). A key still
+        # embedded as ``?api-key=`` is split out and used, with a warning.
+        effective_stream_url, embedded_stream_key = split_stream_api_key(
+            str(effective_stream_url or "")
+        )
+        self._stream_api_key: str | None = (
+            os.getenv("PUMPFUN_STREAM_API_KEY") or ""
+        ).strip() or embedded_stream_key
+        self._stream_key_in_url = embedded_stream_key is not None
 
         self.config = replace(
             base,
@@ -295,7 +307,7 @@ class TradingBot:
             probe_interval_seconds=float(
                 getattr(self.config, "trade_feed_probe_seconds", 300.0) or 300.0
             ),
-            stream_has_api_key=stream_url_has_api_key(self.stream_url),
+            stream_has_api_key=stream_url_has_api_key(self._stream_connect_url()),
         )
 
         # Subsystems & Engines
@@ -4080,13 +4092,25 @@ class TradingBot:
         except Exception:
             pass
 
+    def _stream_connect_url(self) -> str:
+        """Stream URL with the PumpPortal key added; never log or display it."""
+        return stream_connect_url(
+            self.stream_url, getattr(self, "_stream_api_key", None)
+        )
+
     async def _run_websocket_stream(self) -> None:
         """Connects to the WebSocket endpoint and ingests real-time events."""
         backoff = self.reconnect_delay_seconds
         if self.trade_feed_breaker.stream_has_api_key is False:
             self._log(
-                "PumpPortal stream URL has no api-key: subscribeTokenTrade will "
-                "be refused. Export PUMPFUN_STREAM_URL with ?api-key=… (BUG-117).",
+                "PumpPortal stream has no API key: subscribeTokenTrade will be "
+                "refused. Export PUMPFUN_STREAM_API_KEY (BUG-117, BUG-118).",
+                level=logging.WARNING,
+            )
+        if getattr(self, "_stream_key_in_url", False):
+            self._log(
+                "PUMPFUN_STREAM_URL carries ?api-key=; move the key to "
+                "PUMPFUN_STREAM_API_KEY and keep the URL key-free (BUG-118).",
                 level=logging.WARNING,
             )
         while not self._stop_requested:
@@ -4094,7 +4118,7 @@ class TradingBot:
                 self._log(f"Connecting to WebSocket stream at {self.stream_url}...")
                 timeout = aiohttp.ClientTimeout(total=None, sock_read=60.0)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.ws_connect(self.stream_url) as ws:
+                    async with session.ws_connect(self._stream_connect_url()) as ws:
                         self._active_ws = ws
                         self._log(f"Connected to WebSocket stream at {self.stream_url}")
                         self._record_event(

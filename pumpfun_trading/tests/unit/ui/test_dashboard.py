@@ -978,3 +978,51 @@ def test_limits_render_in_strategy_panel_and_metrics_beside_polling(
     # Metrics share the Run Time row with Coin Polling instead of a full-width panel.
     assert any("Coin Polling" in line and "Metrics" in line for line in lines)
     assert any("Trade feed" in line and "REFUSED" in line for line in lines)
+
+
+@pytest.mark.regression("BUG-118")
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"PUMPFUN_STREAM_API_KEY": "secret-stream-key"},
+        # Legacy: the key still embedded in the URL is split out, not shown.
+        {
+            "PUMPFUN_STREAM_URL": "wss://pumpportal.fun/api/data?api-key=secret-stream-key"
+        },
+    ],
+)
+def test_coin_polling_panel_never_shows_stream_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: dict[str, str]
+) -> None:
+    monkeypatch.setenv("PUMPFUN_STREAM_URL", "wss://pumpportal.fun/api/data")
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        config=make_config(dry_run=True),
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        verbose=False,
+    )
+
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(bot))
+    text = console.export_text()
+
+    assert "wss://pumpportal.fun/api/data" in text
+    assert "secret-stream-key" not in text
+    assert "api-key" not in text
+
+
+@pytest.mark.regression("BUG-118")
+def test_dashboard_masks_a_key_set_directly_on_the_stream_url(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    bot.stream_url = "wss://feed.test/ws?api-key=secret-stream-key"
+
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(bot))
+    text = console.export_text()
+
+    assert "wss://feed.test/ws" in text
+    assert "secret-stream-key" not in text

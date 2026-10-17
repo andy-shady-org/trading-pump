@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 PUMPPORTAL_PUBLIC_STREAM_URL = "wss://pumpportal.fun/api/data"
 
@@ -36,9 +36,55 @@ def stream_url_has_api_key(url: str | None) -> bool | None:
     if not (parts.hostname or "").endswith("pumpportal.fun"):
         return None
     return any(
-        key.lower().replace("_", "-") == "api-key" and bool(value)
-        for key, value in parse_qsl(parts.query)
+        _is_api_key_param(key) and bool(value) for key, value in parse_qsl(parts.query)
     )
+
+
+def _is_api_key_param(name: str) -> bool:
+    return name.lower().replace("_", "-") == "api-key"
+
+
+def _is_pumpportal(parts: Any) -> bool:
+    return (parts.hostname or "").endswith("pumpportal.fun")
+
+
+def split_stream_api_key(url: str | None) -> tuple[str, str | None]:
+    """Splits ``api-key`` out of a PumpPortal stream URL (BUG-118).
+
+    Returns the URL without the key, which is safe to display, and the key (or
+    None). Other hosts and unparseable URLs come back unchanged.
+    """
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text, None
+    if not _is_pumpportal(parts) or not parts.query:
+        return text, None
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    keys = [value for name, value in pairs if _is_api_key_param(name)]
+    if not keys:
+        return text, None
+    kept = [(name, value) for name, value in pairs if not _is_api_key_param(name)]
+    clean = urlunsplit(parts._replace(query=urlencode(kept)))
+    return clean, next((key for key in keys if key), None)
+
+
+def stream_connect_url(url: str | None, api_key: str | None) -> str:
+    """The URL to connect with: ``url`` plus ``api-key`` for PumpPortal hosts.
+
+    The key is only ever added for ``pumpportal.fun``, so it never leaks to a
+    different stream provider. Never log or display the result.
+    """
+    clean, embedded = split_stream_api_key(url)
+    key = (api_key or "").strip() or embedded
+    if not key:
+        return clean
+    parts = urlsplit(clean)
+    if not _is_pumpportal(parts):
+        return clean
+    pairs = parse_qsl(parts.query, keep_blank_values=True) + [("api-key", key)]
+    return urlunsplit(parts._replace(query=urlencode(pairs)))
 
 
 def is_refusal(text: str) -> bool:
@@ -131,9 +177,8 @@ class TradeFeedBreaker:
     def likely_cause(self) -> str:
         if self.stream_has_api_key is False:
             return (
-                "the stream URL the bot connected with carries no api-key: "
-                "check that PUMPFUN_STREAM_URL is exported with ?api-key=… "
-                "and that the config's stream_url does not override it"
+                "the bot connected to PumpPortal without an api-key: check "
+                "that PUMPFUN_STREAM_API_KEY is exported"
             )
         if self.confirmed_before_trip:
             return (
@@ -149,8 +194,8 @@ class TradeFeedBreaker:
         return (
             "ALERT trade-feed circuit breaker OPEN: the stream refused a "
             f"token-trade subscription. Most likely {self.likely_cause()}. "
-            f"{FUNDING_REQUIREMENT}; top it up (or add a funded API key to "
-            "PUMPFUN_STREAM_URL). New buys are blocked and held positions are "
+            f"{FUNDING_REQUIREMENT}; top it up (or export a funded key as "
+            "PUMPFUN_STREAM_API_KEY). New buys are blocked and held positions are "
             "priced from the curve only until a probe subscription succeeds. "
             f"Server said: {self.last_refusal}"
         )

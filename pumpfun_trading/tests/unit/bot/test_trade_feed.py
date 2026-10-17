@@ -8,6 +8,8 @@ from pumpfun_trading.bot.trade_feed import (
     TradeFeedBreaker,
     is_confirmation,
     is_refusal,
+    split_stream_api_key,
+    stream_connect_url,
     stream_url_has_api_key,
 )
 
@@ -121,3 +123,65 @@ def test_to_dict_reports_state() -> None:
 )
 def test_stream_url_has_api_key(url: str | None, expected: bool | None) -> None:
     assert stream_url_has_api_key(url) is expected
+
+
+@pytest.mark.regression("BUG-118")
+@pytest.mark.parametrize(
+    "url, clean, key",
+    [
+        (
+            "wss://pumpportal.fun/api/data?api-key=abc",
+            "wss://pumpportal.fun/api/data",
+            "abc",
+        ),
+        (
+            "wss://pumpportal.fun/api/data?x=1&api_key=abc",
+            "wss://pumpportal.fun/api/data?x=1",
+            "abc",
+        ),
+        (
+            "wss://pumpportal.fun/api/data?api-key=",
+            "wss://pumpportal.fun/api/data",
+            None,
+        ),
+        ("wss://pumpportal.fun/api/data", "wss://pumpportal.fun/api/data", None),
+        (
+            "wss://other.test/feed?api-key=abc",
+            "wss://other.test/feed?api-key=abc",
+            None,
+        ),
+        (None, "", None),
+        ("http://[::1", "http://[::1", None),
+    ],
+)
+def test_split_stream_api_key(url: str | None, clean: str, key: str | None) -> None:
+    assert split_stream_api_key(url) == (clean, key)
+
+
+@pytest.mark.regression("BUG-118")
+@pytest.mark.parametrize(
+    "url, api_key, expected",
+    [
+        (
+            "wss://pumpportal.fun/api/data",
+            "k1",
+            "wss://pumpportal.fun/api/data?api-key=k1",
+        ),
+        # The separate key wins over one left in the URL.
+        (
+            "wss://pumpportal.fun/api/data?api-key=old",
+            "k1",
+            "wss://pumpportal.fun/api/data?api-key=k1",
+        ),
+        (
+            "wss://pumpportal.fun/api/data?api-key=old",
+            None,
+            "wss://pumpportal.fun/api/data?api-key=old",
+        ),
+        ("wss://pumpportal.fun/api/data", " ", "wss://pumpportal.fun/api/data"),
+        # The PumpPortal key is never sent to another provider.
+        ("wss://other.test/feed", "k1", "wss://other.test/feed"),
+    ],
+)
+def test_stream_connect_url(url: str, api_key: str | None, expected: str) -> None:
+    assert stream_connect_url(url, api_key) == expected

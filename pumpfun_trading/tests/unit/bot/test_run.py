@@ -5868,7 +5868,9 @@ def test_init_preset_stream_url_does_not_hide_env_api_key(
         audit_log_path=str(tmp_path / "audit.jsonl"),
         verbose=False,
     )
-    assert bot.stream_url == expected
+    # The key is kept apart from the displayed URL (BUG-118) but still sent.
+    assert bot.stream_url == expected.split("?")[0]
+    assert bot._stream_connect_url() == expected
     if "pumpportal" in expected:
         assert bot.trade_feed_breaker.stream_has_api_key is True
 
@@ -5891,10 +5893,80 @@ def test_init_preset_without_env_keeps_public_url_and_warns_no_key(
     breaker = bot.trade_feed_breaker
     assert breaker.stream_has_api_key is False
     breaker.record_refusal("subscribeTokenTrade only available with an API key")
-    assert "carries no api-key" in breaker.likely_cause()
+    assert "without an api-key" in breaker.likely_cause()
+    assert "PUMPFUN_STREAM_API_KEY" in breaker.likely_cause()
 
 
 def _config_from_dict(data: dict[str, Any]) -> Any:
     from pumpfun_trading.strategies.base import TradingBotConfig
 
     return TradingBotConfig.from_dict(data)
+
+
+@pytest.mark.regression("BUG-118")
+async def test_websocket_connects_with_separate_api_key_but_never_logs_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PUMPFUN_STREAM_URL", "wss://pumpportal.fun/api/data")
+    monkeypatch.setenv("PUMPFUN_STREAM_API_KEY", "secret-stream-key")
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        config=_config_from_dict({"strategy_preset": "conservative"}),
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        verbose=False,
+    )
+    assert bot.stream_url == "wss://pumpportal.fun/api/data"
+    assert bot.config.stream_url == "wss://pumpportal.fun/api/data"
+    assert bot.trade_feed_breaker.stream_has_api_key is True
+    connected: list[str] = []
+
+    class _Session:
+        async def __aenter__(self) -> _Session:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def ws_connect(self, url: str) -> Any:
+            connected.append(url)
+            bot._stop_requested = True
+            raise RuntimeError("closed")
+
+    logged: list[str] = []
+    bot._log = lambda message, **_kw: logged.append(str(message))  # type: ignore[method-assign]
+    with patch("aiohttp.ClientSession", return_value=_Session()):
+        await bot._run_websocket_stream()
+
+    assert connected == ["wss://pumpportal.fun/api/data?api-key=secret-stream-key"]
+    assert any("wss://pumpportal.fun/api/data" in line for line in logged)
+    assert not any("secret-stream-key" in line for line in logged)
+    assert "secret-stream-key" not in json.dumps(bot.get_status_snapshot(), default=str)
+
+
+@pytest.mark.regression("BUG-118")
+async def test_key_left_in_stream_url_is_split_out_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "PUMPFUN_STREAM_URL", "wss://pumpportal.fun/api/data?api-key=legacy-key"
+    )
+    bot = TradingBot(
+        private_key_b58=SAMPLE_PRIVATE_KEY,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        config=_config_from_dict({"strategy_preset": "conservative"}),
+        bot_status_path=str(tmp_path / "status.json"),
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        verbose=False,
+    )
+    assert bot.stream_url == "wss://pumpportal.fun/api/data"
+    assert bot._stream_connect_url().endswith("?api-key=legacy-key")
+
+    logged: list[str] = []
+    bot._log = lambda message, **_kw: logged.append(str(message))  # type: ignore[method-assign]
+    bot._stop_requested = True
+    await bot._run_websocket_stream()
+    assert any("move the key to PUMPFUN_STREAM_API_KEY" in line for line in logged)
+    assert not any("legacy-key" in line for line in logged)

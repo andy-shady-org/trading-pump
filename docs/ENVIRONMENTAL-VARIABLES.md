@@ -40,6 +40,7 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_RPC_URL`](#pumpfun_rpc_url) | `HELIUS_RPC_URL` | String (URL) | **Yes** | `https://api.mainnet-beta.solana.com` | Networking |
 | [`PUMPFUN_RPC_URLS`](#pumpfun_rpc_urls) | `SOLANA_RPC_URLS` | String (CSV) | Optional | `None` | Networking |
 | [`PUMPFUN_STREAM_URL`](#pumpfun_stream_url) | `PUMPFUN_WS_URL` | String (URL) | **Required\*** | `wss://pumpportal.fun/api/data` | Streaming |
+| [`PUMPFUN_STREAM_API_KEY`](#pumpfun_stream_api_key) | — | String (secret) | **Yes** (trading on PumpPortal) | `None` | Streaming |
 | [`PUMPFUN_GEYSER_ENDPOINT`](#pumpfun_geyser_endpoint) | — | String (URL) | **Required\*** | `None` | Streaming |
 | [`PUMPFUN_GEYSER_X_TOKEN`](#pumpfun_geyser_x_token) | `PUMPFUN_GEYSER_TOKEN` | String | Optional | `None` | Streaming |
 | [`PUMPFUN_STREAM_MAX_RETRIES`](#pumpfun_stream_max_retries) | `PUMPFUN_WS_MAX_RETRIES` | Integer | Optional | `5` | Streaming |
@@ -153,8 +154,16 @@ The table below summarizes every supported environment variable, its recognized 
 * **Required:** Required if `PUMPFUN_GEYSER_ENDPOINT` is omitted
 * **Default:** `wss://pumpportal.fun/api/data`
 * **Description:** WebSocket streaming endpoint (e.g. PumpPortal public trade feed) used for event-driven market tracking when Geyser gRPC is unavailable.
-* **Example:** `PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data?api-key=<key>"`
-* **PumpPortal API key (required for trading):** without `?api-key=`, PumpPortal serves new-token events but refuses `subscribeTokenTrade`, so held positions get no trade data (BUG-112). The key's linked wallet must hold at least 0.02 SOL; PumpPortal meters trade messages against it. The first refusal opens the trade-feed circuit breaker: one alert (saying the key's wallet has probably run out of funds when the key had worked earlier in the run), `Trade feed: REFUSED (key funds?)` on the dashboard, and with `require_trade_feed` (default `true`) no new buys. A reconnect does not close it; the bot probes a subscription every `trade_feed_probe_seconds` (default 300 s) and resumes buying, with a recovery alert, once PumpPortal confirms it or trade data arrives. Keep the key's wallet topped up (BUG-116). The key is masked in every log, status file and alert (`ops/redact.py`).
+* **Example:** `PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"`
+* **Keep it key-free:** put the PumpPortal key in [`PUMPFUN_STREAM_API_KEY`](#pumpfun_stream_api_key), not in this URL. The URL is shown on the dashboard. A URL that still carries `?api-key=` works: the bot splits the key out, uses it, and logs a warning to move it (BUG-118).
+* **PumpPortal API key (required for trading):** without a key, PumpPortal serves new-token events but refuses `subscribeTokenTrade`, so held positions get no trade data (BUG-112). The key's linked wallet must hold at least 0.02 SOL; PumpPortal meters trade messages against it. The first refusal opens the trade-feed circuit breaker: one alert (saying the key's wallet has probably run out of funds when the key had worked earlier in the run), `Trade feed: REFUSED (key funds?)` on the dashboard, and with `require_trade_feed` (default `true`) no new buys. A reconnect does not close it; the bot probes a subscription every `trade_feed_probe_seconds` (default 300 s) and resumes buying, with a recovery alert, once PumpPortal confirms it or trade data arrives. Keep the key's wallet topped up (BUG-116). The key is masked in every log, status file and alert (`ops/redact.py`).
+
+#### `PUMPFUN_STREAM_API_KEY`
+* **Type:** String (secret)
+* **Required:** Yes for trading on PumpPortal (held positions need `subscribeTokenTrade`)
+* **Default:** `None`
+* **Description:** PumpPortal API key. The bot adds it as `api-key` only when it connects, and only to a `pumpportal.fun` stream URL, so it never reaches another provider and never appears in `stream_url`, the dashboard, logs, status files, events or alerts (BUG-118). It overrides a key left in `PUMPFUN_STREAM_URL`. Keep it in `.envrc` (`chmod 600`) and `export` it.
+* **Example:** `export PUMPFUN_STREAM_API_KEY="<pumpportal-api-key>"`
 
 #### `PUMPFUN_STREAM_MAX_RETRIES`
 * **Fallback Alias:** `PUMPFUN_WS_MAX_RETRIES`

@@ -30,7 +30,7 @@ All variables are documented in [`../ENVIRONMENTAL-VARIABLES.md`](../ENVIRONMENT
 
 - The wallet is a **dedicated hot wallet** holding only the capital allowed for the current stage ([`RELEASE-GATE.md` §3.1](RELEASE-GATE.md#31-stages)). Profits above that are moved to a cold wallet by hand, or by the profit sweep (§5.6, FEAT-42) once it has passed its drill.
 - `PUMPFUN_PRIVATE_KEY` comes from `.envrc` or a secret manager, never from a tracked file; `.envrc` is `chmod 600` (`stat -f "%Sp %N" .envrc` shows `-rw-------`).
-- `PUMPFUN_RPC_URL` (and `PUMPFUN_RPC_URLS` if pooling) and `PUMPFUN_STREAM_URL` are set. Without a stream URL the bot connects to the offline stub `http://127.0.0.1:10000` and sees no market events. Do not rely on `PUMPFUN_GEYSER_ENDPOINT` yet: without a real gRPC transport it falls back to WebSocket (BUG-55, FEAT-39).
+- `PUMPFUN_RPC_URL` (and `PUMPFUN_RPC_URLS` if pooling), `PUMPFUN_STREAM_URL` (key-free) and `PUMPFUN_STREAM_API_KEY` are set. Without a stream URL the bot connects to the offline stub `http://127.0.0.1:10000` and sees no market events. Do not rely on `PUMPFUN_GEYSER_ENDPOINT` yet: without a real gRPC transport it falls back to WebSocket (BUG-55, FEAT-39).
 - The config keeps the features listed in [`RELEASE-GATE.md` §3.5](RELEASE-GATE.md#35-features-that-must-stay-off-until-proven) disabled.
 - `PUMPFUN_ALERT_PROVIDER` is set only when its webhook/token secrets are present; send a test alert. Unattended runs depend on alerts: the bot alerts on start and stop, after `degradation_alert_minutes` (default 5) of stream or RPC degradation, on a new reconciliation gap and with the daily summary (§5.5).
 - The release you are about to run is a tagged version that passed the release gate.
@@ -152,7 +152,7 @@ PumpPortal meters token-trade data against the API key's linked wallet (0.01 SOL
 - dashboard `Trade feed: REFUSED (key funds?)`, `bot_status.json` → `trade_feed_breaker.open: true`;
 - no new buys (`require_trade_feed`); held positions keep exiting on the 1 s curve refresh.
 
-**Action:** top up the PumpPortal key's wallet (keep well above 0.02 SOL; a busy run uses roughly 0.01 SOL per 10,000 trade messages). No restart is needed: the bot sends a probe subscription every `trade_feed_probe_seconds` (default 300 s) and, once PumpPortal confirms it or trade data arrives, closes the breaker, sends `trade-feed circuit breaker CLOSED` and resumes buying. A reconnect alone never closes it. If the key itself changed, update `PUMPFUN_STREAM_URL` and restart.
+**Action:** top up the PumpPortal key's wallet (keep well above 0.02 SOL; a busy run uses roughly 0.01 SOL per 10,000 trade messages). No restart is needed: the bot sends a probe subscription every `trade_feed_probe_seconds` (default 300 s) and, once PumpPortal confirms it or trade data arrives, closes the breaker, sends `trade-feed circuit breaker CLOSED` and resumes buying. A reconnect alone never closes it. If the key itself changed, update `PUMPFUN_STREAM_API_KEY` and restart.
 
 ```bash
 jq '.trade_feed_breaker' data/bot_status.json
@@ -234,7 +234,7 @@ Run these in paper mode before Stage 1 and after any release that touches lifecy
 | Profit sweep | Paper instance with `profit_sweep_enabled`, a test destination and a paper wallet above the floor | One `sweep` audit record and alert; paper wallet at the floor minus the fee; no circuit-breaker trip; nothing swept below the floor |
 | Supervisor restart | Under systemd / launchd (§8), `kill -9` the bot process | Restarted within the restart delay; `bot started` alert; snapshot restored; pause state kept |
 | Degradation alert | Stream drill above for longer than `degradation_alert_minutes` | One `ALERT stream degraded` and one `RECOVERED stream` alert |
-| Trade-feed breaker | Paper instance with `PUMPFUN_STREAM_URL` without `?api-key=` (or an empty-wallet key), until the first buy | One `trade-feed circuit breaker OPEN` alert naming the key's funds; no new buys; `trade_feed_breaker.open` true; still open after a reconnect |
+| Trade-feed breaker | Paper instance without `PUMPFUN_STREAM_API_KEY` (or with an empty-wallet key), until the first buy | One `trade-feed circuit breaker OPEN` alert naming the key's funds; no new buys; `trade_feed_breaker.open` true; still open after a reconnect |
 
 ## 8. Supervised deployment and hardening (Sprint 24D)
 
