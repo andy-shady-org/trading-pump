@@ -117,6 +117,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-107** | Medium | Screening / Enrichment | **RESOLVED** | Empty `getTokenLargestAccounts` answers (RPC index flapping) are retried within the lookup budget; outcomes counted in `holder_lookup_stats`; `require_holder_data` makes missing holders a hard reject |
 | **BUG-108** | High | Entry screening / Execution | **RESOLVED** | Tokens from other launchpads (PumpPortal `pool` ≠ `pump`, mints without the `…pump` suffix) are rejected before screening; buys require a bonding curve that exists and is owned by the Pump.fun program (`NotPumpFunCurveError`), in paper mode too |
 | **BUG-109** | Medium | Entry / Position lifecycle | **RESOLVED** | Every bought mint is kept in `traded_mints` (persisted, capped at 10,000); a mint whose position is closed is never bought again unless `allow_mint_reentry` is set |
+| **BUG-110** | Medium | Alerts / Event loop | **RESOLVED** | Webhook alerts sent from the running bot are delivered in a worker thread (`asyncio.to_thread`) instead of a blocking `urlopen` (up to 10 s) on the trading loop; shutdown waits up to 5 s for alerts in flight |
 
 ---
 
@@ -932,3 +933,14 @@ Found in the v0.2.0 Stage 0 checkpoint-1 data ([`releases/v0.2.0-stage0.md`](rel
 * **Impact:** repeat entries into tokens that already failed the exit rules, and doubled exposure to one creator's token.
 * **Resolution:** every filled buy adds the mint to `_traded_mints` (wall-clock time, oldest first, capped at `TRADED_MINTS_LIMIT` = 10,000), saved in `bot_status.json` → `traded_mints` and restored on start; older snapshots seed it from the trade ledger and open positions. `_should_buy` rejects a traded mint that has no open position, so adding to an open position (`max_positions_per_mint` > 1) still works. New config key `allow_mint_reentry` (default `false`) turns the guard off.
 * **Verification:** `tests/unit/bot/test_run.py` (`regression("BUG-109")`): a closed mint is refused after the seen-mints cache is cleared, a paper buy marks the mint, the set survives a restart, old snapshots seed it, the cap drops the oldest, and `allow_mint_reentry` allows it.
+
+## 13. Sprint 24D: Unattended Operation (2026-10-17)
+
+Found while wiring the daily summary and degradation alerts. Fixed on `sprint-24d-income-ops`.
+
+### BUG-110: Alerts Block the Trading Event Loop [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_send_alert`, called from `_record_event`), `pumpfun_trading/bot/alerts.py` (`AlertDispatcher.send_alert`)
+* **Description:** `_send_alert` called the synchronous `AlertDispatcher.send_alert`, which does a `urllib.request.urlopen` with a 10 s timeout. `_record_event` alerts by default, including on every buy (`bought momentum …`), circuit-breaker change and state change, so each alert stopped the asyncio loop until the webhook answered. No alert provider was configured in Stage 0, so it never showed; it would have from the first run with Slack set up.
+* **Impact:** with alerts on, every alert froze stream ingestion, exit evaluation and the exit retry queue for the webhook's round trip (100 ms to 10 s on a slow or unreachable webhook). That breaks the Local Norm on never blocking the streaming loop and delays exits on the money path.
+* **Resolution:** inside a running loop `_send_alert` schedules `AlertDispatcher.send_alert_async` (the webhook call runs in a worker thread) as a tracked task and returns at once; outside a loop it still sends synchronously. `start()` waits up to 5 s (`_flush_alerts`) for alerts in flight after the final `bot stopped` alert, so the last alerts are not cancelled by `asyncio.run`.
+* **Verification:** `tests/unit/bot/test_run.py` (`regression("BUG-110")`): with a webhook that blocks until released, `_record_event` returns while the delivery is still pending, and `_flush_alerts` completes it once released.

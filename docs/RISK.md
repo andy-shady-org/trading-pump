@@ -80,6 +80,11 @@ $$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \
 | **`HALT_NEW_BUYS`** | Profit Run Zone retracement exceeds `profit_drawdown_tolerance_pct` | Soft-halts new token entries; existing positions remain active and are managed by trailing stops. |
 | **`EMERGENCY_LIQUIDATE`** | Principal loss exceeds `max_daily_drawdown_pct` | Dispatches immediate market sell orders across all open positions, engages 24-hour lockout, and emits critical webhook alerts. |
 
+### D. Operator Pause and Profit Sweep (Sprint 24D, FEAT-50 / FEAT-42)
+
+* **Operator pause:** `SIGUSR1` is a manual `HALT_NEW_BUYS`: no new entries or capital rotation, while exits, the exit retry queue and the breaker keep running. It is checked first in the entry gate, survives restarts and is audited ([`dev/RUNBOOK.md` §5.5](dev/RUNBOOK.md#55-operator-pause-and-unattended-alerts-sprint-24d-feat-50)).
+* **Profit sweep (off by default):** SOL above a hot-wallet floor goes to a cold wallet, so a compromised hot wallet can only lose its working capital. The floor is never below `reserve_balance_sol + max_total_exposure_sol + 0.01 SOL`. A sweep lowers the breaker's starting and peak equity by the amount (`record_withdrawal`), so it never counts as drawdown; its fee is a booked cost ([`dev/RUNBOOK.md` §5.6](dev/RUNBOOK.md#56-profit-sweep-to-a-cold-wallet-feat-42-off-by-default)).
+
 ---
 
 ## 4. Toxic MEV Elimination & Private Mempool Routing (FEAT-02)
@@ -142,6 +147,12 @@ When network congestion or sudden volatility causes a sell transaction to fail:
 | `max_cluster_concentration_pct` | `25.0` | Percent | Maximum supply fraction held by multi-wallet insider clusters (FEAT-26). |
 | `max_single_cluster_pct` | `20.0` | Percent | Maximum supply fraction held by any single funding cluster (FEAT-26). |
 | `max_sybil_wash_ratio` | `20.0` | Percent | Maximum volume churn ratio before triggering sybil wash reject (FEAT-26). |
+| `profit_sweep_enabled` | `false` | Bool | Sweep SOL above the floor to `profit_sweep_destination` (FEAT-42). |
+| `profit_sweep_hot_floor_sol` | `0.0` | SOL | Hot-wallet floor; raised to `reserve + max exposure + 0.01` if lower. |
+| `profit_sweep_min_sol` | `0.05` | SOL | Smallest excess worth a transfer. |
+| `profit_sweep_interval_seconds` | `3600` | Seconds | How often the sweep is checked. |
+| `degradation_alert_minutes` | `5.0` | Minutes | Stream / RPC degradation lasting this long is alerted (`0` = off). |
+| `daily_summary_alert` / `daily_summary_hour_utc` | `true` / `0` | Bool / Hour | Daily net-PnL summary alert and its UTC hour. |
 
 ---
 

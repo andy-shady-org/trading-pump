@@ -162,12 +162,24 @@ pumpfun bot [OPTIONS]
 | `--stop-loss` | Float | Preset Default | Stop-loss price floor multiplier (e.g. `0.85` = -15%). |
 | `--min-market-cap-sol` | Float | Preset Default | Minimum bonding curve market cap in SOL before buying. |
 | `--min-balance-sol` | Float | `0.10` | Minimum wallet SOL reserve buffer required to trade. |
-| `--slippage-bps` | Integer | `250` | Maximum entry slippage tolerance in basis points (`250` = 2.5%). |
 | `--dry-run` | Flag | `false` | Ingests live data and runs full logic without broadcasting transactions. |
 | `--paper-trade` | Flag | `false` | Runs simulated paper trading with mock balances. |
 | `--headless` | Flag | `false` | Disables interactive terminal UI; emits structured logs (ideal for VPS services). |
 | `--config` | File Path | `None` | Path to custom JSON strategy and risk configuration file. |
 | `--record-replay` | File Path | `None` | Asynchronously logs market quotes and trades to `.jsonl` for replay backtesting. |
+
+Entry slippage is not a flag: set `PUMPFUN_SLIPPAGE_BPS` or the config's slippage keys ([`ENVIRONMENTAL-VARIABLES.md`](ENVIRONMENTAL-VARIABLES.md)).
+
+### Signals & Exit Codes (Sprint 24D)
+
+| Signal / code | Effect |
+| :--- | :--- |
+| `SIGINT` / `SIGTERM` | Graceful shutdown: final snapshot, audit records and a `bot stopped` alert; exit code `0`. |
+| `SIGUSR1` | Toggles the operator pause: no new buys or capital rotation, open positions keep being managed. Survives restarts. `kill -USR1 "$(jq .pid data/bot_status.json)"` |
+| exit `1` | The stream loop ended without a shutdown request, so a supervisor (systemd / launchd) restarts the bot. |
+| startup `ValueError` | `profit_sweep_enabled` with a missing or invalid `profit_sweep_destination` (or the trading wallet itself); the bot refuses to start. |
+
+Supervisor templates and the alerts an unattended bot sends are in [`dev/RUNBOOK.md` §5.5 and §8](dev/RUNBOOK.md#8-supervised-deployment-and-hardening-sprint-24d).
 
 ### Execution Examples & Recipes
 
@@ -193,12 +205,14 @@ pumpbot \
 ```
 
 #### Recipe 4: Headless Background VPS Deployment
-Run the bot headlessly inside a systemd service or background tmux session:
+Run the bot headlessly inside a systemd service or background tmux session (templates: `deploy/systemd/pumpbot.service`, `deploy/launchd/com.pumpfun.pumpbot.plist`):
 ```bash
 pumpbot \
-  --preset conservative \
   --headless \
   --config configs/production.json
+
+# Pause new buys (exits keep running); send again to resume
+systemctl kill -s USR1 pumpbot
 ```
 
 ---
@@ -363,7 +377,7 @@ pumpfun-audit pnl --path data/audit_trail.jsonl --date-from 2026-10-16 --group-b
 Records written before Sprint 24B have no cost fields (`cost_source: none`); the report flags how many.
 
 #### Recipe 6: Reconcile the Wallet Against the Audit Trail
-Compares every live trade signature's on-chain SOL change with the recorded `cash_flow_sol`, lists closed positions that still hold tokens and open positions that hold none, and (with `--start-balance`) the whole-wallet change. Exits with code 1 when a gap exceeds max(0.002 SOL, 5%). The result is also stored in `reconcile_status.json` next to the audit trail, which the running bot's dashboard shows as `Reconciliation`:
+Compares every live trade signature's on-chain SOL change with the recorded `cash_flow_sol`, lists closed positions that still hold tokens and open positions that hold none, and (with `--start-balance`) the whole-wallet change. Live profit sweeps (audit `sweep` records, FEAT-42) count in the whole-wallet check and are printed as `profit sweeps`. Exits with code 1 when a gap exceeds max(0.002 SOL, 5%). The result is also stored in `reconcile_status.json` next to the audit trail, which the running bot's dashboard shows as `Reconciliation` and alerts on when it is a new `GAP`. `deploy/systemd/pumpfun-reconcile.timer` runs it daily under systemd:
 ```bash
 pumpfun-audit reconcile --path data/audit_trail.jsonl --wallet <wallet-pubkey> \
   --date-from 2026-10-16 --start-balance 0.30

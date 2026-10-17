@@ -7,6 +7,8 @@ import asyncio
 import json
 import logging
 import os
+import signal
+import threading
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -5040,3 +5042,431 @@ async def test_bot_log_path_off_writes_no_application_log(
     )
     assert not (tmp_path / "bot.log").exists()
     await bot.close()
+
+
+# --- Sprint 24D: operator pause, unattended alerts, profit sweep ---------------
+
+COLD_WALLET = str(Pubkey.new_unique())
+
+
+def _audit_records(tmp_path: Path, record_type: str) -> list[dict[str, Any]]:
+    path = tmp_path / "audit.jsonl"
+    if not path.exists():
+        return []
+    entries = [json.loads(line) for line in path.read_text().splitlines()]
+    return [e["payload"] for e in entries if e.get("type") == record_type]
+
+
+def _alerting_bot(tmp_path: Path, **config: Any) -> tuple[TradingBot, list[str]]:
+    bot = make_bot(tmp_path, **config)
+    sent: list[str] = []
+    bot.alert_enabled = True
+    bot._send_alert = sent.append  # type: ignore[method-assign, assignment]
+    return bot, sent
+
+
+async def test_pause_buying_blocks_buys_and_rotation_until_resumed(
+    tmp_path: Path,
+) -> None:
+    bot, sent = _alerting_bot(tmp_path)
+    health = MagicMock(return_value=False)
+    bot._health_ok_for_trading = health  # type: ignore[method-assign]
+    bot._sell_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    assert bot.pause_buying(reason="drill", source="test") is True
+    assert bot.pause_buying() is False
+
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 50.0) is False
+    assert bot._last_event == "buying paused"
+    health.assert_not_called()
+    rotated = await bot._evaluate_and_trigger_displacement(
+        candidate_mint=SAMPLE_PUMP_MINT, market_cap_sol=50.0
+    )
+    assert rotated is False
+    bot._sell_token.assert_not_awaited()
+    assert sent == ["buying paused (drill, via test)"]
+    paused_record = _audit_records(tmp_path, "operator_pause")[-1]
+    assert (paused_record["paused"], paused_record["reason"]) == (True, "drill")
+
+    assert bot.resume_buying(source="test") is True
+    assert bot.resume_buying() is False
+    bot._should_buy(SAMPLE_PUMP_MINT, 50.0)
+    health.assert_called_once_with()
+    assert sent[-1] == "buying resumed (via test)"
+    assert _audit_records(tmp_path, "operator_pause")[-1]["paused"] is False
+
+
+async def test_pause_buying_keeps_managing_open_positions(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    bot._operator_pause.pause()
+    bot.active_positions[SAMPLE_PUMP_MINT] = {"current_market_cap": 40.0}
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={"market_cap_sol": 33.0}
+    )
+    exits = AsyncMock()
+    bot._evaluate_and_execute_exit = exits  # type: ignore[method-assign]
+
+    await bot._refresh_active_positions_market_caps()
+
+    exits.assert_awaited_once_with(SAMPLE_PUMP_MINT, 33.0)
+
+
+def test_pause_state_survives_restart_and_is_in_status(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    bot.pause_buying(reason="maintenance")
+
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["buying_paused"] is True
+    assert status["operator_pause"]["reason"] == "maintenance"
+    assert status["pid"] == os.getpid()
+
+    restarted = make_bot(tmp_path)
+    assert restarted.buying_paused is True
+    assert restarted._operator_pause.reason == "maintenance"
+
+
+def test_toggle_buying_pause_flips_and_reports_state(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+
+    assert bot.toggle_buying_pause() is True
+    assert bot._operator_pause.source == "SIGUSR1"
+    assert bot.toggle_buying_pause() is False
+    assert "buying resumed (via SIGUSR1)" in bot._last_status
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signal")
+async def test_sigusr1_toggles_pause_through_event_loop(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    loop = asyncio.get_running_loop()
+    bot._register_pause_signal()
+    try:
+        os.kill(os.getpid(), signal.SIGUSR1)
+        for _ in range(50):
+            if bot.buying_paused:
+                break
+            await asyncio.sleep(0)
+        assert bot.buying_paused is True
+    finally:
+        loop.remove_signal_handler(signal.SIGUSR1)
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signal")
+def test_sigusr1_without_loop_falls_back_to_signal_module(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    previous = signal.getsignal(signal.SIGUSR1)
+    try:
+        bot._register_pause_signal()
+        os.kill(os.getpid(), signal.SIGUSR1)
+        assert bot.buying_paused is True
+    finally:
+        signal.signal(signal.SIGUSR1, previous)
+
+
+@pytest.mark.regression("BUG-110")
+async def test_send_alert_inside_event_loop_never_blocks_on_the_webhook(
+    tmp_path: Path,
+) -> None:
+    from pumpfun_trading.bot.alerts import AlertDispatcher
+
+    bot = make_bot(tmp_path)
+    bot.alerts = AlertDispatcher(
+        provider="slack", slack_webhook_url="https://hooks.slack.test/T/B/x"
+    )
+    bot.alert_enabled = True
+    release = threading.Event()
+    delivered: list[bool] = []
+
+    def _slow_webhook(*_a: Any, **_k: Any) -> MagicMock:
+        release.wait(5)
+        delivered.append(True)
+        return MagicMock()
+
+    with patch("urllib.request.urlopen", side_effect=_slow_webhook) as urlopen:
+        bot._record_event("bought momentum Mint1234")
+        # The webhook is still in flight, yet the trading loop already moved on.
+        assert delivered == []
+        assert len(bot._alert_tasks) == 1
+        release.set()
+        await bot._flush_alerts()
+
+    assert delivered == [True]
+    urlopen.assert_called_once()
+    assert not bot._alert_tasks
+
+
+async def test_flush_alerts_without_pending_tasks_returns(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+
+    await bot._flush_alerts()
+
+    assert not bot._alert_tasks
+
+
+async def test_supervision_alerts_on_long_stream_outage_then_recovery(
+    tmp_path: Path,
+) -> None:
+    bot, sent = _alerting_bot(tmp_path, daily_summary_alert=False)
+    bot.rpc_pool = None
+    bot._circuit_breaker_tripped = True
+    bot._last_status = "degraded: stream circuit breaker active"
+    bot._degradation.update("stream", True, now=time.monotonic() - 400.0)
+
+    await bot._run_supervision()
+
+    assert len(sent) == 1
+    assert sent[0].startswith("ALERT stream degraded for 6m: degraded: stream")
+    await bot._run_supervision()
+    assert len(sent) == 1
+
+    bot._circuit_breaker_tripped = False
+    bot._last_message_at = time.monotonic()
+    await bot._run_supervision()
+    assert sent[-1] == "RECOVERED stream after 6m"
+
+
+def test_degradation_conditions_flags_rpc_pool_with_no_healthy_endpoint(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    pool = MagicMock()
+    pool.get_telemetry.return_value = {"total_endpoints": 2, "healthy_endpoints": 0}
+    bot.rpc_pool = pool
+    bot._last_message_at = time.monotonic()
+
+    conditions = bot._degradation_conditions()
+
+    assert conditions["rpc"] == (True, "0/2 RPC endpoints healthy")
+    assert conditions["stream"][0] is False
+
+
+async def test_supervision_alerts_once_on_new_reconciliation_gap(
+    tmp_path: Path,
+) -> None:
+    bot, sent = _alerting_bot(tmp_path, daily_summary_alert=False)
+    bot.rpc_pool = None
+    bot._last_message_at = time.monotonic()
+    gap = {"checked_at": 10.0, "ok": False, "wallet": "W", "problems": ["1 lost"]}
+    bot.reconciliation_status = lambda: gap  # type: ignore[method-assign]
+
+    await bot._run_supervision()
+    await bot._run_supervision()
+
+    assert sent == ["ALERT reconciliation GAP for W: 1 lost"]
+
+
+async def test_supervision_sends_daily_summary_once_per_day(tmp_path: Path) -> None:
+    from pumpfun_trading.bot.supervision import DailySummarySchedule
+
+    bot, sent = _alerting_bot(tmp_path)
+    bot.rpc_pool = None
+    bot._last_message_at = time.monotonic()
+    bot._pnl_totals.add(
+        {
+            "action": "sell",
+            "net_pnl_sol": 0.004,
+            "gross_pnl_sol": 0.005,
+            "costs_sol": 0.001,
+            "tip_sol": 0.0006,
+            "mint": "M",
+            "position_id": "p1",
+        }
+    )
+    bot._daily_summary = DailySummarySchedule(
+        hour_utc=0, last_sent_date="2000-01-01", period_start=time.time() - 3_600
+    )
+
+    await bot._run_supervision()
+    await bot._run_supervision()
+
+    assert len(sent) == 1
+    summary = sent[0]
+    assert summary.startswith("pumpbot daily summary (dry run)")
+    assert "Net PnL: +0.0040 SOL" in summary
+    assert "Buying: active" in summary
+    assert _audit_records(tmp_path, "daily_summary")[0]["text"] == summary
+    assert bot._daily_summary.period_totals(bot._pnl_totals).sells == 0
+
+
+async def test_supervision_daily_summary_disabled_sends_nothing(
+    tmp_path: Path,
+) -> None:
+    bot, sent = _alerting_bot(tmp_path, daily_summary_alert=False)
+    bot.rpc_pool = None
+    bot._last_message_at = time.monotonic()
+
+    await bot._run_supervision()
+
+    assert sent == []
+    assert bot._daily_summary.period_start is None
+
+
+def test_daily_summary_text_reports_locked_breaker(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, paper_trade=True)
+    bot.paper_trade = True
+    bot.daily_equity_tracker.circuit_breaker_engaged = True
+    bot.daily_equity_tracker.lock_reason = "drawdown 12% > 10%"
+
+    text = bot._daily_summary_text(time.time())
+
+    assert "(paper)" in text
+    assert "Breaker: LOCKED (drawdown 12% > 10%)" in text
+
+
+def _sweep_bot(tmp_path: Path, *, dry_run: bool) -> TradingBot:
+    bot = make_bot(
+        tmp_path,
+        dry_run=dry_run,
+        profit_sweep_enabled=True,
+        profit_sweep_destination=COLD_WALLET,
+        reserve_balance_sol=0.1,
+        max_total_exposure_sol=0.03,
+        profit_sweep_min_sol=0.05,
+    )
+    bot._send_alert = MagicMock()  # type: ignore[method-assign]
+    bot.alert_enabled = True
+    return bot
+
+
+def test_profit_sweep_misconfigured_fails_fast(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="profit_sweep_destination is not set"):
+        make_bot(tmp_path, profit_sweep_enabled=True)
+
+
+async def test_profit_sweep_paper_moves_excess_and_keeps_breaker_quiet(
+    tmp_path: Path,
+) -> None:
+    bot = _sweep_bot(tmp_path, dry_run=True)
+    bot.wallet_balance_sol = 0.5
+    tracker = bot.daily_equity_tracker
+    tracker.initialize_or_rollover(0.5)
+
+    swept = await bot.run_profit_sweep()
+
+    assert swept == pytest.approx(0.36)
+    assert bot.wallet_balance_sol == pytest.approx(0.14 - 0.000005)
+    assert tracker.calculate_drawdown(bot.wallet_balance_sol, 0.0) < 0.001
+    assert tracker.realized_daily_costs_sol == pytest.approx(0.000005)
+    record = _audit_records(tmp_path, "sweep")[0]
+    assert record["dry_run"] is True
+    assert record["destination"] == COLD_WALLET
+    assert record["cash_flow_sol"] == pytest.approx(-0.360005)
+    assert record["signature"] == "dry_run_sweep_000001"
+    assert bot._sweep_state.sweeps == 1
+    message = bot._send_alert.call_args.args[0]  # type: ignore[attr-defined]
+    assert message.startswith("profit sweep: 0.3600 SOL to ")
+    assert "(simulated)" in message
+
+
+async def test_profit_sweep_below_floor_moves_nothing(tmp_path: Path) -> None:
+    bot = _sweep_bot(tmp_path, dry_run=True)
+    bot.wallet_balance_sol = 0.16
+
+    assert await bot.run_profit_sweep() == 0.0
+    assert _audit_records(tmp_path, "sweep") == []
+    assert bot.wallet_balance_sol == 0.16
+
+
+async def test_profit_sweep_live_transfers_and_books_chain_fee(
+    tmp_path: Path,
+) -> None:
+    bot = _sweep_bot(tmp_path, dry_run=False)
+    bot.execution.get_balance_sol = AsyncMock(return_value=0.5)  # type: ignore[method-assign]
+    transfer = AsyncMock(return_value="SweepSig" + "1" * 80)
+    bot.execution.transfer_sol = transfer  # type: ignore[method-assign]
+    bot.execution.confirm_transaction = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot.execution.get_transaction_costs = AsyncMock(  # type: ignore[method-assign]
+        return_value=TransactionCosts(
+            network_fee_lamports=5_000,
+            priority_fee_lamports=1_000,
+            source=COST_SOURCE_TRANSACTION_META,
+        )
+    )
+
+    swept = await bot.run_profit_sweep()
+
+    assert swept == pytest.approx(0.36)
+    transfer.assert_awaited_once_with(COLD_WALLET, 360_000_000)
+    record = _audit_records(tmp_path, "sweep")[0]
+    assert record["fee_sol"] == pytest.approx(0.000006)
+    assert record["cost_source"] == COST_SOURCE_TRANSACTION_META
+    assert record["dry_run"] is False
+    assert bot.wallet_balance_sol == pytest.approx(0.5 - 0.36 - 0.000006)
+
+
+@pytest.mark.parametrize(
+    ("transfer", "confirmed", "error"),
+    [
+        (AsyncMock(side_effect=RuntimeError("rpc down")), True, "rpc down"),
+        (AsyncMock(return_value="Sig" + "2" * 80), False, "not confirmed"),
+    ],
+)
+async def test_profit_sweep_live_failure_alerts_and_books_nothing(
+    tmp_path: Path, transfer: AsyncMock, confirmed: bool, error: str
+) -> None:
+    bot = _sweep_bot(tmp_path, dry_run=False)
+    bot.execution.get_balance_sol = AsyncMock(return_value=0.5)  # type: ignore[method-assign]
+    bot.execution.transfer_sol = transfer  # type: ignore[method-assign]
+    bot.execution.confirm_transaction = AsyncMock(return_value=confirmed)  # type: ignore[method-assign]
+
+    assert await bot.run_profit_sweep() == 0.0
+    assert error in bot._sweep_state.last_error
+    assert _audit_records(tmp_path, "sweep") == []
+    message = bot._send_alert.call_args.args[0]  # type: ignore[attr-defined]
+    assert message.startswith("ALERT profit sweep failed")
+
+
+async def test_profit_sweep_live_balance_unavailable_is_skipped(
+    tmp_path: Path,
+) -> None:
+    bot = _sweep_bot(tmp_path, dry_run=False)
+    bot.execution.get_balance_sol = AsyncMock(side_effect=RuntimeError("429"))  # type: ignore[method-assign]
+
+    assert await bot.run_profit_sweep() == 0.0
+    assert bot._sweep_state.last_error == "balance unavailable: 429"
+
+
+async def test_maybe_run_profit_sweep_respects_interval_and_switch(
+    tmp_path: Path,
+) -> None:
+    bot = _sweep_bot(tmp_path, dry_run=True)
+    sweep = AsyncMock(return_value=0.0)
+    bot.run_profit_sweep = sweep  # type: ignore[method-assign]
+
+    await bot._maybe_run_profit_sweep()
+    await bot._maybe_run_profit_sweep()
+    assert sweep.await_count == 1
+
+    bot._sweep_state.last_check_at = time.time() - 3_601
+    await bot._maybe_run_profit_sweep()
+    assert sweep.await_count == 2
+
+    bot.config = make_config(profit_sweep_enabled=False)
+    bot._sweep_state.last_check_at = None
+    await bot._maybe_run_profit_sweep()
+    assert sweep.await_count == 2
+
+
+def test_profit_sweep_state_survives_restart(tmp_path: Path) -> None:
+    bot = _sweep_bot(tmp_path, dry_run=True)
+    bot._sweep_state.record_success(0.2, "dry_run_sweep_000001", 1.0)
+    bot._write_status_snapshot()
+
+    restarted = _sweep_bot(tmp_path, dry_run=True)
+
+    assert restarted._sweep_state.total_swept_sol == pytest.approx(0.2)
+    assert restarted._sweep_state.sweeps == 1
+
+
+async def test_start_and_stop_are_alerted(tmp_path: Path) -> None:
+    bot = _startable_bot(tmp_path)
+    sent: list[str] = []
+    bot.alert_enabled = True
+    bot._send_alert = sent.append  # type: ignore[method-assign, assignment]
+    bot.pause_buying(reason="pre-start")
+    bot.geyser_client = _ListenGeyser([])  # type: ignore[assignment]
+    bot.rpc_pool = None
+
+    await bot.start()
+
+    assert any(m.startswith("bot started (") and "buying PAUSED" in m for m in sent)
+    assert sent[-1] == "bot stopped (stream loop ended)"

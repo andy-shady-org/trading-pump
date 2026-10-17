@@ -173,6 +173,39 @@ async def test_reconcile_flags_gaps_lost_and_phantom_positions() -> None:
     assert report.to_dict()["wallet"] == WALLET
 
 
+async def test_reconcile_wallet_check_counts_live_profit_sweeps() -> None:
+    """FEAT-42: SOL swept to the cold wallet is not an unexplained wallet change."""
+    deltas = {SIG_BUY: -12_200_000, SIG_SELL: 13_500_000, SIG_OPEN: -12_100_000}
+    swept_lamports = 300_005_000
+    sweeps = [
+        {"signature": "W" * 64, "cash_flow_sol": -0.300005},
+        {"signature": "dry_run_sweep_000001", "cash_flow_sol": -5.0, "dry_run": True},
+    ]
+    balance = 1_000_000_000 - 10_800_000 - swept_lamports
+
+    without = await reconcile_wallet(
+        _trades(),
+        wallet=WALLET,
+        rpc=FakeRpc(deltas, tokens={"MintB": 1}, balance_lamports=balance),
+        start_balance_sol=1.0,
+        dust_raw_amount=0,
+    )
+    report = await reconcile_wallet(
+        _trades(),
+        wallet=WALLET,
+        rpc=FakeRpc(deltas, tokens={"MintB": 1}, balance_lamports=balance),
+        start_balance_sol=1.0,
+        dust_raw_amount=0,
+        sweeps=sweeps,
+    )
+
+    assert not without.ok
+    assert without.wallet_gap_sol == pytest.approx(-0.300005)
+    assert report.ok, report.problems
+    assert report.swept_sol == pytest.approx(0.300005)
+    assert report.wallet_gap_sol == pytest.approx(0.0, abs=1e-9)
+
+
 async def test_reconcile_reports_rpc_failures_without_raising() -> None:
     rpc = FakeRpc({SIG_BUY: -1, SIG_SELL: 1, SIG_OPEN: -1}, token_error=True)
     rpc.failed = {SIG_SELL}

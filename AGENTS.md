@@ -55,6 +55,8 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[RPC] Empty Is Not Zero:** `getTokenLargestAccounts` on a load-balanced RPC flaps for new mints (2, 0, 2, 0 accounts within 6 s), which hid holders for 67% of Stage 0 buys (BUG-107). Treat an empty index-backed answer as "not yet indexed": retry inside the lookup budget, count outcomes, and never score it as "no holders".
 - **[TESTS] Strip The Operator Shell:** An exported `PUMPFUN_JITO_TIP_LAMPORTS` from `.envrc` changed golden-replay costs locally. `tests/conftest.py` deletes every ambient `PUMPFUN_*` variable per test; set what a test needs with `monkeypatch.setenv`, and read `PUMPFUN_UPDATE_GOLDEN` at import time only.
 - **[ENTRY] Trust The Program, Not The Feed:** PumpPortal's create feed carries other launchpads; Stage 0 bought 263 non-Pump.fun mints, USDC included (BUG-108). Buy only when the curve PDA exists and is owned by the Pump.fun program, never let a missing curve fall through to a simulated paper fill, and never re-buy a closed mint (BUG-109). Test new-token flows with `SAMPLE_PUMP_MINT` or set `require_pump_mint_suffix=False`.
+- **[ASYNC] Alerts Are I/O Too:** `_send_alert` ran a blocking `urlopen` (10 s timeout) on the trading loop for every alerted event, buys included (BUG-110). Never call a sync network client from loop code; dispatch with `asyncio.to_thread` / a tracked task, and flush (bounded) before `asyncio.run` exits. Test it with a webhook that blocks until released, not with timings.
+- **[OPS] Withdrawals Are Not Drawdowns:** A profit sweep lowers wallet equity on purpose. Anything that moves SOL out must call `DailyEquityTracker.record_withdrawal` and write a `sweep` audit record that `reconcile` counts, or the breaker trips and the wallet check shows a gap (FEAT-42).
 
 
 ## Project Overview
@@ -90,6 +92,7 @@ pumpfun-trading/
 │       ├── unit/         # 1:1 mirror of the source: unit/<pkg>/test_<module>.py
 │       ├── integration/  # cross-component flows and replay end-to-end
 │       └── property/     # Hypothesis property tests (curve math, parsers)
+└── deploy/           # Operator supervisor templates: systemd unit + reconcile timer, launchd agent, wrapper scripts (RUNBOOK §8)
 ```
 
 > The migration finished in Sprint 27: the tests root holds only `conftest.py`, and `tests/unit/test_suite_layout.py` fails on a source module without a mirrored test, a coverage-named file, or a RESOLVED bug in `docs/dev/BUGS.md` without a `@pytest.mark.regression("BUG-xx")` test. `integration/test_golden_replay.py` pins bot decisions (regenerate with `PUMPFUN_UPDATE_GOLDEN=1` only for an intended change).
@@ -124,7 +127,7 @@ Internal engineering documentation for maintainers, contributors, and SRE:
 * [**`docs/dev/DOCUMENTATION-PLAN.md`**](docs/dev/DOCUMENTATION-PLAN.md): Documentation gap analysis, Zensical / Material docs-site plan, and styling conventions.
 * [**`docs/dev/BUGS.md`**](docs/dev/BUGS.md): Bug tracker, root cause analyses, and resolution verification matrix.
 * [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Candidate architectural proposals, alpha enhancement ideas, and unscheduled feature backlog.
-* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook: runtime layout, paper pilot, incident drills, wallet reconciliation, incident response and rollback.
+* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook: runtime layout, paper pilot, incident drills, wallet reconciliation, operator pause, unattended alerts, profit sweep, supervised deployment, incident response and rollback.
 * [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Per-release checklist, staged live capital gate (paper → canary → scale-up), hosted security gate, and versioning policy.
 
 ---
@@ -161,7 +164,7 @@ Internal engineering documentation for maintainers, contributors, and SRE:
 
 The package exposes dedicated, high-performance CLI entry points:
 
-* `pumpbot`: Start the live trading bot runtime (with `--preset`, `--headless`, `--dry-run` flags).
+* `pumpbot`: Start the live trading bot runtime (with `--preset`, `--headless`, `--dry-run` flags). `SIGUSR1` toggles the operator pause (no new buys, exits continue); exit code 1 means the stream loop ended without a shutdown request.
 * `pumpfun-replay`: Run historical market replays, strategy backtests, and trade simulations from recorded JSONL datasets.
 * `pumpfun-recorder`: Harvest live market streams, generate synthetic scenarios, or export token trades to replay files.
 * `pumpfun-audit`: Query, filter, and inspect structured JSONL audit trails with Rich table rendering.

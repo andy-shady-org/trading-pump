@@ -162,11 +162,14 @@ Execute live trading with real-time alternate-screen console monitoring:
 # Launch with balanced preset and live Rich dashboard
 pumpbot --preset balanced
 
-# Launch with conservative preset in headless mode (suitable for background systemd services)
-pumpbot --preset conservative --headless --log-level INFO
+# Launch from a config in headless mode (systemd / launchd templates in deploy/)
+pumpbot --config configs/canary.json --headless
 
-# Launch with custom buy size and aggressive strategy
-pumpbot --preset aggressive --buy-sol 0.25 --slippage-bps 350
+# Launch with custom buy size and aggressive strategy (slippage: PUMPFUN_SLIPPAGE_BPS)
+pumpbot --preset aggressive --buy-amount-sol 0.25
+
+# Pause new buys without stopping (open positions keep being managed); again to resume
+kill -USR1 "$(jq .pid data/bot_status.json)"
 ```
 
 ### Workflow 2: Dry-Run Paper Trading

@@ -34,10 +34,12 @@ from pumpfun_trading.bot.lifecycle import (
     VALID_STATE_TRANSITIONS,
     settled_state,
 )
+from pumpfun_trading.bot.operator import OperatorPause
 from pumpfun_trading.bot.persistence import StatusPersistenceManager
 from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
 from pumpfun_trading.bot.reconcile import (
     ReconciliationStatusReader,
+    describe_reconciliation_status,
     reconcile_status_path,
 )
 from pumpfun_trading.bot.position_manager import (
@@ -45,6 +47,18 @@ from pumpfun_trading.bot.position_manager import (
     PositionManager,
 )
 from pumpfun_trading.bot.recorder import ReplayRecorder
+from pumpfun_trading.bot.supervision import (
+    DailySummarySchedule,
+    DegradationMonitor,
+    ReconcileGapWatcher,
+    format_daily_summary,
+)
+from pumpfun_trading.bot.sweep import (
+    SweepState,
+    effective_sweep_floor,
+    plan_sweep,
+    validate_sweep_config,
+)
 from pumpfun_trading.bot.risk import (
     CircuitBreakerAction,
     DailyEquityTracker,
@@ -99,7 +113,7 @@ from pumpfun_trading.sdk.costs import (
     TransactionCosts,
     model_transaction_costs,
 )
-from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS
+from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -422,6 +436,21 @@ class TradingBot:
             telegram_chat_id=self.alert_telegram_chat_id,
         )
         self.alert_enabled = self.alerts.enabled
+        # Webhook deliveries in flight; never awaited on the trading path (BUG-110).
+        self._alert_tasks: set[asyncio.Task[bool]] = set()
+
+        # Unattended operation (Sprint 24D): operator pause, daily summary,
+        # degradation alerts and the profit sweep. Restored by safe_startup().
+        self._operator_pause = OperatorPause()
+        self._daily_summary = DailySummarySchedule(
+            hour_utc=int(getattr(self.config, "daily_summary_hour_utc", 0)) % 24
+        )
+        degradation_minutes = getattr(self.config, "degradation_alert_minutes", 5.0)
+        self._degradation = DegradationMonitor(
+            threshold_seconds=max(0.0, float(degradation_minutes)) * 60.0
+        )
+        self._reconcile_watcher = ReconcileGapWatcher()
+        self._sweep_state = SweepState()
 
         # Primary env names with documented aliases (BUG-87).
         self.bot_status_path = (
@@ -635,6 +664,12 @@ class TradingBot:
         self._migrating_mints: set[str] = set()
         self._raydium_exit_pools: dict[str, RaydiumPoolKeys] = {}
         self._config = self.config
+        sweep_problems = validate_sweep_config(
+            self.config, self.execution.get_wallet_pubkey()
+        )
+        if sweep_problems:
+            # Fail fast: a misconfigured sweep must never move funds (FEAT-42).
+            raise ValueError("profit sweep misconfigured: " + "; ".join(sweep_problems))
         self.safe_startup()
 
     @property
@@ -711,7 +746,62 @@ class TradingBot:
     def _send_alert(self, message: str) -> None:
         if not self.alert_enabled:
             return
-        self.alerts.send_alert(message)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.alerts.send_alert(message)
+            return
+        # A webhook call blocks for up to 10 s; never on the trading loop (BUG-110).
+        task = loop.create_task(self.alerts.send_alert_async(message))
+        tasks = getattr(self, "_alert_tasks", None)
+        if tasks is None:
+            tasks = self._alert_tasks = set()
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    async def _flush_alerts(self, timeout_seconds: float = 5.0) -> None:
+        """Waits (bounded) for alerts still being delivered, e.g. on shutdown."""
+        pending = list(getattr(self, "_alert_tasks", ()) or ())
+        if pending:
+            await asyncio.wait(pending, timeout=timeout_seconds)
+
+    @property
+    def buying_paused(self) -> bool:
+        pause = getattr(self, "_operator_pause", None)
+        return bool(pause is not None and pause.paused)
+
+    def pause_buying(self, reason: str = "operator", source: str = "api") -> bool:
+        """No new buys; open positions keep being managed (Sprint 24D, FEAT-50)."""
+        if not self._operator_pause.pause(reason=reason, source=source):
+            return False
+        self._on_pause_change(f"buying paused ({reason}, via {source})")
+        return True
+
+    def resume_buying(self, source: str = "api") -> bool:
+        if not self._operator_pause.resume(source=source):
+            return False
+        self._on_pause_change(f"buying resumed (via {source})")
+        return True
+
+    def toggle_buying_pause(self, source: str = "SIGUSR1") -> bool:
+        """``SIGUSR1`` handler; returns the new paused state."""
+        if self.buying_paused:
+            self.resume_buying(source=source)
+        else:
+            self.pause_buying(reason="operator signal", source=source)
+        return self.buying_paused
+
+    def _on_pause_change(self, message: str) -> None:
+        self._log(message, level=logging.WARNING)
+        self._last_status = message
+        self._record_event(message, alert=True)
+        self._write_audit_record(
+            "operator_pause",
+            {
+                **self._operator_pause.to_dict(),
+                "open_positions": len(self.active_positions),
+            },
+        )
 
     def _write_status_snapshot(self) -> None:
         if not self.bot_status_path:
@@ -732,6 +822,8 @@ class TradingBot:
                 "alert_provider": self.alert_provider,
                 "alert_enabled": self.alert_enabled,
                 "reconciliation": self.reconciliation_status(),
+                # So `kill -USR1 <pid>` can find the process (Sprint 24D).
+                "pid": os.getpid(),
             }
         )
         self.persistence.write_status_snapshot(snapshot)
@@ -859,6 +951,12 @@ class TradingBot:
         pnl_totals = snapshot.get("pnl_totals")
         if isinstance(pnl_totals, dict):
             self._pnl_totals = PnlTotals.from_dict(pnl_totals)
+        # A supervisor restart must never resume buying on its own (Sprint 24D).
+        self._operator_pause = OperatorPause.from_dict(snapshot.get("operator_pause"))
+        self._daily_summary = DailySummarySchedule.from_dict(
+            snapshot.get("daily_summary"), hour_utc=self._daily_summary.hour_utc
+        )
+        self._sweep_state = SweepState.from_dict(snapshot.get("profit_sweep"))
 
         equity_tracker_data = snapshot.get("daily_equity_tracker")
         if isinstance(equity_tracker_data, dict):
@@ -1050,6 +1148,26 @@ class TradingBot:
                 signal.signal(sig, lambda *_: self.request_shutdown())
             except (ValueError, OSError):
                 pass
+        self._register_pause_signal()
+
+    def _register_pause_signal(self) -> None:
+        """``SIGUSR1`` toggles the operator pause (POSIX only; Sprint 24D)."""
+        sigusr1 = getattr(signal, "SIGUSR1", None)
+        if sigusr1 is None:
+            return
+        try:
+            # Through the loop, so the handler runs as a normal callback and may
+            # schedule alert tasks safely.
+            asyncio.get_running_loop().add_signal_handler(
+                sigusr1, self.toggle_buying_pause
+            )
+            return
+        except (RuntimeError, NotImplementedError, ValueError, OSError):
+            pass
+        try:
+            signal.signal(sigusr1, lambda *_: self.toggle_buying_pause())
+        except (ValueError, OSError):
+            pass
 
     def _prune_strategy_caches(self) -> None:
         """Evict stale per-mint screening, order-flow and graduation state (BUG-77)."""
@@ -1579,6 +1697,12 @@ class TradingBot:
             "recent_events": list(self._recent_events),
             "trade_sequence": self._trade_sequence,
             "pnl_totals": self._pnl_totals.to_dict(),
+            # Unattended operation (Sprint 24D): pause, summary, degradation, sweep.
+            "buying_paused": self.buying_paused,
+            "operator_pause": self._operator_pause.to_dict(),
+            "daily_summary": self._daily_summary.to_dict(),
+            "degraded_conditions": self._degradation.degraded_for(time.monotonic()),
+            "profit_sweep": self._sweep_state.to_dict(),
             # How often the holder lookup found data while screening (BUG-107).
             "holder_lookup_stats": self._holder_lookup_stats(),
             "daily_realized_costs_sol": self.daily_equity_tracker.realized_daily_costs_sol,
@@ -1691,6 +1815,10 @@ class TradingBot:
         screening_verdict: TokenScreeningVerdict | None = None,
         proposed_entry_sol: float | None = None,
     ) -> bool:
+        if self.buying_paused:
+            # Operator pause: exits keep running, nothing new is opened (Sprint 24D).
+            self._last_event = "buying paused"
+            return False
         if not self._health_ok_for_trading():
             return False
         if self._is_recently_seen(mint):
@@ -2041,6 +2169,9 @@ class TradingBot:
     ) -> bool:
         """Evaluate if an incoming breakout candidate should displace the weakest active holding."""
         if not getattr(self.config, "enable_capital_rotation", True):
+            return False
+        if self.buying_paused:
+            # Rotation sells to buy; while paused it would sell and then not buy.
             return False
 
         if candidate_mint in self.active_positions:
@@ -3835,12 +3966,197 @@ class TradingBot:
                 await self._check_and_enforce_circuit_breaker()
                 self._prune_seen_mints()
                 self._prune_strategy_caches()
+                await self._run_supervision()
+                await self._maybe_run_profit_sweep()
                 self._write_status_snapshot()
                 await self._run_retention_prune()
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 self._log(f"Health loop exception: {exc}", level=logging.DEBUG)
+
+    def _degradation_conditions(self) -> dict[str, tuple[bool, str]]:
+        """Conditions watched by the degradation alert: name -> (degraded, detail)."""
+        silent_for = time.monotonic() - self._last_message_at
+        stream_down = bool(self._circuit_breaker_tripped) or (
+            silent_for > float(self.config.health_check_timeout_seconds)
+        )
+        conditions = {
+            "stream": (
+                stream_down,
+                f"{self._last_status}; no message for {int(silent_for)}s",
+            )
+        }
+        if self.rpc_pool is not None:
+            telemetry = self.rpc_pool.get_telemetry()
+            total = int(telemetry.get("total_endpoints") or 0)
+            healthy = int(telemetry.get("healthy_endpoints") or 0)
+            conditions["rpc"] = (
+                total > 0 and healthy == 0,
+                f"{healthy}/{total} RPC endpoints healthy",
+            )
+        return conditions
+
+    def _daily_summary_text(self, now: float) -> str:
+        tracker = self.daily_equity_tracker
+        open_val = self.position_manager.calculate_total_open_value()
+        breaker = "LOCKED" if tracker.circuit_breaker_engaged else "clear"
+        if tracker.circuit_breaker_engaged and tracker.lock_reason:
+            breaker = f"LOCKED ({tracker.lock_reason[:80]})"
+        return format_daily_summary(
+            mode=(
+                "paper" if self.paper_trade else ("dry run" if self.dry_run else "live")
+            ),
+            now=now,
+            period_start=self._daily_summary.period_start,
+            period=self._daily_summary.period_totals(self._pnl_totals),
+            session=self._pnl_totals,
+            wallet_balance_sol=float(self.wallet_balance_sol),
+            open_positions=len(self.active_positions),
+            breaker=breaker,
+            drawdown_pct=tracker.calculate_drawdown(self.wallet_balance_sol, open_val),
+            reconciliation=describe_reconciliation_status(self.reconciliation_status()),
+            buying=self._operator_pause.describe(),
+            health="ok" if self._health_ok else "degraded",
+            swept_sol=self._sweep_state.total_swept_sol,
+        )
+
+    async def _run_supervision(self) -> None:
+        """Daily summary, degradation and reconciliation-gap alerts (Sprint 24D)."""
+        now_wall = time.time()
+        now_mono = time.monotonic()
+        for name, (degraded, detail) in self._degradation_conditions().items():
+            message = self._degradation.update(
+                name, degraded, now=now_mono, detail=detail
+            )
+            if message:
+                self._log(message, level=logging.WARNING)
+                self._record_event(message, alert=True)
+
+        gap = self._reconcile_watcher.check(self.reconciliation_status())
+        if gap:
+            self._log(gap, level=logging.WARNING)
+            self._record_event(gap, alert=True)
+
+        if not getattr(self.config, "daily_summary_alert", True):
+            return
+        self._daily_summary.prime(self._pnl_totals, now_wall)
+        if not self._daily_summary.due(now_wall):
+            return
+        summary = self._daily_summary_text(now_wall)
+        self._daily_summary.mark_sent(self._pnl_totals, now_wall)
+        self._log(summary)
+        self._record_event("daily summary sent", alert=False)
+        self._send_alert(summary)
+        self._write_audit_record("daily_summary", {"text": summary})
+
+    async def _maybe_run_profit_sweep(self) -> None:
+        """Runs the profit sweep when enabled and due (FEAT-42)."""
+        if not getattr(self.config, "profit_sweep_enabled", False):
+            return
+        now = time.time()
+        last = self._sweep_state.last_check_at
+        interval = float(self.config.profit_sweep_interval_seconds)
+        if last is not None and now - last < interval:
+            return
+        self._sweep_state.last_check_at = now
+        await self.run_profit_sweep()
+
+    async def run_profit_sweep(self) -> float:
+        """Moves SOL above the hot-wallet floor to the cold wallet; returns SOL swept.
+
+        Runs under the trade lock, so no buy can spend the balance meanwhile. Paper
+        and dry-run modes simulate the transfer against the paper wallet.
+        """
+        destination = str(self.config.profit_sweep_destination).strip()
+        async with self._trade_lock:
+            simulated = bool(self.dry_run or self.paper_trade)
+            try:
+                balance = (
+                    float(self.wallet_balance_sol)
+                    if simulated
+                    else float(await self.execution.get_balance_sol())
+                )
+            except Exception as exc:
+                self._sweep_state.last_error = f"balance unavailable: {exc}"
+                self._log(f"Profit sweep skipped: {exc}", level=logging.WARNING)
+                return 0.0
+            plan = plan_sweep(
+                balance_sol=balance,
+                floor_sol=effective_sweep_floor(self.config),
+                min_sweep_sol=float(self.config.profit_sweep_min_sol),
+            )
+            if plan.lamports <= 0:
+                self._log(
+                    f"Profit sweep: nothing to move ({plan.skip_reason}; balance "
+                    f"{balance:.4f}, floor {plan.floor_sol:.4f} SOL)",
+                    level=logging.DEBUG,
+                )
+                return 0.0
+            fee_sol = BASE_FEE_LAMPORTS_PER_SIGNATURE / 1_000_000_000
+            cost_source = "modelled"
+            if simulated:
+                signature = f"dry_run_sweep_{self._sweep_state.sweeps + 1:06d}"
+                self.wallet_balance_sol = max(
+                    0.0, float(self.wallet_balance_sol) - plan.amount_sol - fee_sol
+                )
+            else:
+                try:
+                    signature = await self.execution.transfer_sol(
+                        destination, plan.lamports
+                    )
+                    confirmed = await self.execution.confirm_transaction(signature)
+                except Exception as exc:
+                    confirmed, signature = False, ""
+                    error = str(exc)
+                else:
+                    error = "" if confirmed else f"not confirmed: {signature}"
+                if not confirmed:
+                    self._sweep_state.last_error = error
+                    message = f"ALERT profit sweep failed: {error}"
+                    self._log(message, level=logging.ERROR)
+                    self._record_event(message, alert=True)
+                    return 0.0
+                try:
+                    # Only the fee is read; no token account is involved.
+                    costs = await asyncio.wait_for(
+                        self.execution.get_transaction_costs(
+                            signature, WSOL_MINT_STR, is_buy=False
+                        ),
+                        timeout=8.0,
+                    )
+                except Exception:
+                    costs = None
+                if isinstance(costs, TransactionCosts):
+                    fee_sol = costs.fee_sol + costs.priority_fee_sol
+                    cost_source = costs.source
+                self.wallet_balance_sol = max(0.0, balance - plan.amount_sol - fee_sol)
+
+            # A withdrawal is not a drawdown; the fee is a real cost.
+            self.daily_equity_tracker.record_withdrawal(plan.amount_sol)
+            self.daily_equity_tracker.record_realized_trade(-fee_sol, fee_sol)
+            self._sweep_state.record_success(plan.amount_sol, signature, time.time())
+            self._write_audit_record(
+                "sweep",
+                {
+                    "signature": signature,
+                    "destination": destination,
+                    "amount_sol": plan.amount_sol,
+                    "fee_sol": fee_sol,
+                    "cost_source": cost_source,
+                    "cash_flow_sol": -(plan.amount_sol + fee_sol),
+                    "balance_before_sol": balance,
+                    "floor_sol": plan.floor_sol,
+                    "dry_run": simulated,
+                },
+            )
+            message = (
+                f"profit sweep: {plan.amount_sol:.4f} SOL to {destination[:4]}…"
+                f"{destination[-4:]} ({'simulated' if simulated else signature})"
+            )
+            self._log(message)
+            self._record_event(message, alert=True)
+            return plan.amount_sol
 
     async def _run_retention_prune(self) -> None:
         """Periodic background evaluation of disk retention quotas and archive pruning."""
@@ -3899,9 +4215,12 @@ class TradingBot:
         self._last_message_at = time.monotonic()
         self._last_health_check = time.monotonic()
 
+        # Alerted, so a supervisor restart is visible to an unattended operator.
         self._record_event(
-            f"bot started ({self.config.strategy_preset} preset, {'paper' if self.paper_trade else 'live'})",
-            alert=False,
+            f"bot started ({self.config.strategy_preset} preset, "
+            f"{'paper' if self.paper_trade else 'live'}, pid {os.getpid()}"
+            f"{', buying PAUSED' if self.buying_paused else ''})",
+            alert=True,
         )
         if hasattr(self, "event_logger") and self.event_logger is not None:
             self.event_logger.emit(
@@ -4026,6 +4345,12 @@ class TradingBot:
             await self._close_http_clients()
             if self.state != TradingBotState.SHUTDOWN:
                 self._transition_to(TradingBotState.SHUTDOWN, reason="bot_terminated")
+            stop_reason = (
+                "shutdown requested" if self._stop_requested else "stream loop ended"
+            )
+            self._record_event(f"bot stopped ({stop_reason})", alert=True)
+            # Deliver the last alerts before asyncio.run() cancels pending tasks.
+            await self._flush_alerts()
 
     def run(self) -> None:
         """Synchronous runner entrypoint."""

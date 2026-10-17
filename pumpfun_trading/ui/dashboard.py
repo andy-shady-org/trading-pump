@@ -7,8 +7,10 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
 
+from pumpfun_trading.bot.operator import OperatorPause
 from pumpfun_trading.bot.pnl import PnlTotals
 from pumpfun_trading.bot.reconcile import describe_reconciliation_status
+from pumpfun_trading.bot.sweep import SweepState
 
 
 def format_sol_amount(value: float) -> str:
@@ -113,7 +115,6 @@ def build_dashboard(bot: Any) -> Panel:
     risk.add_row("Max loss / trade", f"{bot.config.max_loss_per_trade_sol:.2f} SOL")
     risk.add_row("Daily drawdown", f"{bot.config.max_daily_drawdown_pct:.2%}")
     risk.add_row("Reserve balance", f"{bot.config.reserve_balance_sol:.2f} SOL")
-    risk.add_row("Health timeout", f"{bot.config.health_check_timeout_seconds}s")
     risk.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     risk.add_row("Equity guard", "enabled" if not bot.dry_run else "dry-run")
 
@@ -140,6 +141,11 @@ def build_dashboard(bot: Any) -> Panel:
         breaker_status = "LOCKED" if tracker.circuit_breaker_engaged else "ok"
         risk.add_row("Circuit breaker", breaker_status)
         risk.add_row("Reconciliation", _reconciliation_text(bot))
+        sweep = getattr(bot, "_sweep_state", None)
+        if getattr(bot.config, "profit_sweep_enabled", False) is True and isinstance(
+            sweep, SweepState
+        ):
+            risk.add_row("Profit sweep", sweep.describe())
     else:
         risk.add_row("", "")
         risk.add_row("", "")
@@ -175,6 +181,13 @@ def build_dashboard(bot: Any) -> Panel:
     bot_status.add_column(justify="left")
     bot_status.add_column(justify="right")
     bot_status.add_row("State", str(bot.state.value))
+    pause = getattr(bot, "_operator_pause", None)
+    if isinstance(pause, OperatorPause):
+        # Operator pause (SIGUSR1, Sprint 24D): exits continue, no new buys.
+        buying = pause.describe()
+        bot_status.add_row(
+            "Buying", f"[bold yellow]{buying}[/bold yellow]" if pause.paused else buying
+        )
     bot_status.add_row("Uptime", uptime_str)
     bot_status.add_row("Health", "ok" if bot._health_ok else "degraded")
     bot_status.add_row("Risk killed", "yes" if bot._risk_killed else "no")

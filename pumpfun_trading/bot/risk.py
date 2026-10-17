@@ -133,6 +133,16 @@ class DailyEquityTracker:
         self.realized_daily_costs_sol += float(costs_sol)
         return self.realized_daily_pnl_sol
 
+    def record_withdrawal(self, amount_sol: float) -> None:
+        """SOL moved out of the wallet on purpose (profit sweep, FEAT-42).
+
+        Lowers the starting and peak equity by the same amount, so the drawdown
+        and baseline checks see no loss from it.
+        """
+        amount = max(0.0, float(amount_sol))
+        self.starting_equity_sol = max(0.0, self.starting_equity_sol - amount)
+        self.peak_daily_equity_sol = max(0.0, self.peak_daily_equity_sol - amount)
+
     def calculate_drawdown(
         self,
         current_wallet_balance_sol: float,
