@@ -20,10 +20,12 @@ from pumpfun_trading.sdk.curve import (
     INITIAL_VIRTUAL_SOL_LAMPORTS,
     INITIAL_VIRTUAL_TOKEN_RAW,
     calculate_buy_tokens_out,
+    calculate_market_cap_sol,
     calculate_sell_sol_out,
 )
 from pumpfun_trading.sdk.execution import (
     PUMP_DEFAULT_FEE_BPS,
+    NonStandardCurveError,
     PumpFunExecutionClient,
 )
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
@@ -131,14 +133,25 @@ class OrderExecutor:
         fee = getattr(self.execution, "pump_fee_bps", PUMP_DEFAULT_FEE_BPS)
         return fee if isinstance(fee, int) else PUMP_DEFAULT_FEE_BPS
 
-    async def _fetch_curve_reserves(self, mint: str) -> tuple[int, int] | None:
-        """Returns live ``(virtual_sol_lamports, virtual_token_raw)`` or ``None``."""
+    async def _fetch_curve_reserves(
+        self, mint: str, *, reject_non_standard: bool = False
+    ) -> tuple[int, int] | None:
+        """Returns live ``(virtual_sol_lamports, virtual_token_raw)`` or ``None``.
+
+        With ``reject_non_standard`` a curve that fails the layout checks raises
+        :class:`NonStandardCurveError` instead of returning ``None`` (BUG-104).
+        """
         if self.execution is None:
             return None
         try:
             state = await self.execution.get_bonding_curve_state(mint)
             v_sol = int(state.get("virtual_sol_reserves", 0))
             v_token = int(state.get("virtual_token_reserves", 0))
+        except NonStandardCurveError as exc:
+            if reject_non_standard:
+                raise
+            logger.debug("Curve reserves unavailable for %s: %s", mint, exc)
+            return None
         except Exception as exc:
             logger.debug("Curve reserves unavailable for %s: %s", mint, exc)
             return None
@@ -280,7 +293,19 @@ class OrderExecutor:
     ) -> ExecutionResult:
         is_dry_run = self.dry_run if dry_run is None else dry_run
 
-        reserves = await self._fetch_curve_reserves(mint)
+        try:
+            reserves = await self._fetch_curve_reserves(mint, reject_non_standard=True)
+        except NonStandardCurveError as exc:
+            logger.warning("Skipping buy of %s: %s", mint, exc)
+            return ExecutionResult(
+                success=False,
+                mint=mint,
+                is_buy=True,
+                amount_sol=amount_sol,
+                reason=reason,
+                error=f"non_standard_curve: {exc}",
+                dry_run=is_dry_run,
+            )
         resolved_slippage = slippage_bps
         dynamic_params: DynamicSlippageResult | None = None
         if resolved_slippage is None and getattr(
@@ -308,6 +333,12 @@ class OrderExecutor:
                 simulated_token_amount = 100_000_000
 
             dry_signature = f"dry_run_buy_{mint[:8]}_{int(time.time())}"
+            metadata: dict[str, Any] = {}
+            if reserves is not None:
+                # Paper entries are priced from the same curve as exits (BUG-104).
+                metadata["entry_market_cap_sol"] = calculate_market_cap_sol(
+                    reserves[0], reserves[1]
+                )
             return ExecutionResult(
                 success=True,
                 signature=dry_signature,
@@ -317,6 +348,7 @@ class OrderExecutor:
                 token_amount=simulated_token_amount,
                 reason=reason,
                 dry_run=True,
+                metadata=metadata,
                 # A fresh position pays the token-account rent (FEAT-49).
                 costs=self._model_costs(
                     rent_lamports=TOKEN_ACCOUNT_RENT_LAMPORTS,

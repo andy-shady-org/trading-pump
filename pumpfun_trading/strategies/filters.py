@@ -539,6 +539,9 @@ def evaluate_token_heuristics(
         total_risk_score += MISSING_SCREENING_DATA_PENALTY
         all_reasons.append("Holder distribution data unavailable")
         flags["missing_holder_data"] = True
+        if getattr(config, "require_holder_data", False):
+            # Without holders the top-5 and Gini checks cannot run (BUG-107).
+            hard_failed = True
 
     # 1. Dev wallet profiling
     dev_pass, dev_penalty, dev_reasons = evaluate_dev_wallet(

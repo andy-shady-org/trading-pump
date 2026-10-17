@@ -36,6 +36,21 @@ SAMPLE_CURVE = WSOL_MINT
 SAMPLE_TIMESTAMP = 1_728_600_000
 
 
+NON_STANDARD_CURVE_RESERVES: tuple[tuple[int, int], ...] = (
+    (8_233_357_569_630, 10),  # CEb8KGYB...pump, decoded to 7,673 SOL market cap
+    (105_860_003_350_032, 0),  # 8CucYF88..., decoded to 98,658 SOL market cap
+)
+"""``(virtual_sol, real_sol)`` lamports of mainnet curves that broke paper
+pricing in the v0.2.0 Stage 0 pilot (BUG-104); both had the standard
+``virtual_token_reserves`` of 1.073e15 and ``real_token_reserves`` of 7.931e14."""
+
+STANDARD_CURVE_RESERVES: tuple[tuple[int, int], ...] = (
+    (30_001_716_240, 1_716_240),  # 4vfQCJJ1..., traded once
+    (30_000_016_102, 16_102),  # bbrxy2Ke...
+)
+"""``(virtual_sol, real_sol)`` lamports of standard mainnet curves (same pilot)."""
+
+
 def _pubkey_bytes(value: str) -> bytes:
     return bytes(Pubkey.from_string(value))
 

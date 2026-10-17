@@ -101,6 +101,21 @@ def test_pnl_command_renders_tables_and_legacy_warning(
     assert "Net PnL" in out and "no cost data" in out and "By day" in out
 
 
+@pytest.mark.regression("BUG-105")
+def test_pnl_command_labels_win_rate_per_position(
+    tmp_path: Path, output: Console
+) -> None:
+    path = _write_audit(tmp_path / "audit.jsonl")
+
+    audit_cli.run_audit_cli(_args("pnl", "--path", str(path), "--group-by", "reason"))
+
+    out = output.export_text()
+    assert "Win rate per position (net)" in out
+    assert "Expectancy per position (SOL)" in out
+    assert "Win rate per sell (detail)" in out
+    assert "Positions" in out
+
+
 def test_unified_cli_keeps_its_command_dest() -> None:
     args = _build_parser().parse_args(
         ["audit", "reconcile", "--path", "x", "--wallet", "W"]
