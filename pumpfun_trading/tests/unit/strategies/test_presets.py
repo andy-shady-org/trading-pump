@@ -350,3 +350,16 @@ def test_capture_keys_default_and_override_from_json() -> None:
     assert config.trade_feed_probe_seconds == 30.0  # floor: don't spam probes
     assert config.paper_starting_balance_sol == 0.0
     assert config.to_dict()["skip_mayhem_mode"] is False
+
+
+def test_min_holder_count_defaults_off_and_loads_from_json() -> None:
+    assert resolve_strategy_config("conservative").min_holder_count == 0
+
+    config = TradingBotConfig.from_dict(
+        {"strategy_preset": "conservative", "min_holder_count": 6}
+    )
+
+    assert config.min_holder_count == 6
+    assert config.to_dict()["min_holder_count"] == 6
+    negative = TradingBotConfig.from_dict({"min_holder_count": -3})
+    assert negative.min_holder_count == 0

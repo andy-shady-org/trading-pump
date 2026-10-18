@@ -43,6 +43,7 @@ from pumpfun_trading.sdk.execution import (
 from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.storage.status import build_status_snapshot
 from pumpfun_trading.strategies.copy_trading import TrackedWallet
+from pumpfun_trading.strategies.exits import ExitAction
 from pumpfun_trading.strategies.momentum import MomentumSignal
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
@@ -5970,3 +5971,91 @@ async def test_key_left_in_stream_url_is_split_out_with_a_warning(
     await bot._run_websocket_stream()
     assert any("move the key to PUMPFUN_STREAM_API_KEY" in line for line in logged)
     assert not any("legacy-key" in line for line in logged)
+
+
+class _RecordingWebSocket:
+    """Minimal PumpPortal socket that records the JSON messages it is sent."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+    async def send_json(self, message: dict[str, Any]) -> None:
+        self.sent.append(message)
+
+
+@pytest.mark.regression("BUG-120")
+@pytest.mark.parametrize(
+    ("closes_position", "sold", "expected_unsubscribes"),
+    [
+        (True, True, 1),  # full exit: subscription stops
+        (False, True, 0),  # partial exit: still held, keep the feed
+        (False, False, 0),  # failed sell: still held, keep the feed
+    ],
+)
+async def test_sell_token_unsubscribes_only_when_the_position_closes(
+    tmp_path: Path, closes_position: bool, sold: bool, expected_unsubscribes: int
+) -> None:
+    bot = make_bot(tmp_path)
+    ws = _RecordingWebSocket()
+    bot._active_ws = ws
+    mint = SAMPLE_PUMP_MINT
+    bot.active_positions[mint] = {"mint": mint, "token_amount": 1_000}
+
+    async def fake_locked(m: str, **_: Any) -> bool:
+        if closes_position:
+            bot.active_positions.pop(m, None)
+        return sold
+
+    bot._sell_token_locked = fake_locked  # type: ignore[method-assign, assignment]
+
+    assert await bot._sell_token(mint, reason="stagnant_curve_timeout") is sold
+
+    unsubscribes = [m for m in ws.sent if m["method"] == "unsubscribeTokenTrade"]
+    assert len(unsubscribes) == expected_unsubscribes
+    if expected_unsubscribes:
+        assert unsubscribes[0]["keys"] == [mint]
+
+
+@pytest.mark.regression("BUG-120")
+async def test_sell_token_for_unheld_mint_sends_nothing(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    ws = _RecordingWebSocket()
+    bot._active_ws = ws
+
+    assert await bot._sell_token(SAMPLE_PUMP_MINT) is False
+    assert ws.sent == []
+
+
+@pytest.mark.regression("BUG-120")
+async def test_exit_without_websocket_argument_still_unsubscribes(
+    tmp_path: Path,
+) -> None:
+    # The 1 s position refresh loop calls the exit stack without a websocket;
+    # before the fix only the trade-message path unsubscribed.
+    bot = make_bot(tmp_path)
+    ws = _RecordingWebSocket()
+    bot._active_ws = ws
+    mint = SAMPLE_PUMP_MINT
+    bot.active_positions[mint] = {"mint": mint, "token_amount": 1_000}
+    bot.position_manager.update_price = MagicMock(  # type: ignore[method-assign]
+        return_value=(30.0, 25.0, 30.0)
+    )
+    bot.position_manager.evaluate_exit = MagicMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(
+            action=ExitAction.FULL_EXIT,
+            exit_type="stop_loss",
+            reason="stop_loss_hit",
+            target_tier=None,
+            sell_tokens=1_000,
+            sell_fraction=1.0,
+        )
+    )
+
+    async def fake_locked(m: str, **_: Any) -> bool:
+        bot.active_positions.pop(m, None)
+        return True
+
+    bot._sell_token_locked = fake_locked  # type: ignore[method-assign, assignment]
+
+    assert await bot._evaluate_and_execute_exit(mint, 25.0) is True
+    assert ws.sent == [{"method": "unsubscribeTokenTrade", "keys": [mint]}]

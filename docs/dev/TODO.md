@@ -739,6 +739,11 @@ The bot can trade live, but there is no evidence yet that it is profitable after
   - [ ] Keep `max_daily_drawdown_pct` 0.10, the screen and the exit stack unchanged in `canary.json`; do not tune exits until a capture with market trades exists
   - [x] BUG-114 / BUG-115 (Low, telemetry and reporting) and BUG-111
   - [ ] Then a tagged build, a 24 h **capture run** (paper, not counted as Stage 0, breaker raised in a separate `configs/capture.json`) to record trade flow, tune the entry confirmation by replay, freeze `canary.json`, and only then a new 72 h Stage 0 *(`capture.json` validated 2026-10-17: canary settings plus `paper_trade: true`, `paper_starting_balance_sol` 2.0, `max_daily_drawdown_pct` 0.5, 5 positions / 0.05 SOL exposure, `stagnant_timeout_seconds` 120; procedure in [`RUNBOOK.md` §6.2](RUNBOOK.md#62-24-h-capture-run))*
+- [x] 24 h capture run on v0.2.3 (2026-10-17/18): operations clean, trade feed delivered; strategy −0.579 SOL net over 1,675 positions (10.3% profitable). Losses come from buying tokens no one else buys; exit timing barely matters in replay. Found BUG-119 (parity ignored live buy costs) and BUG-120 (subscriptions kept after exits)
+  - [x] **BUG-119 / BUG-120** fixed on `fix/capture-findings-parity-unsubscribe`
+  - [x] **`min_holder_count`** screening key (default off). Replay of the capture: `6` gives +0.026 SOL over ~229 positions, positive in both halves of the day; the 10 s / ≥ 5-buyer entry confirmation gives about the same and costs latency
+  - [ ] Second 24 h capture (unchanged filters) to test `min_holder_count: 6` on data it was not picked from; only if it stays positive in replay put it in `canary.json`, then the 72 h Stage 0
+  - [ ] Test a lower or zero Jito tip on paper/live landing: tips are 83% of the separately listed costs at 0.01 SOL
 - [ ] Stage 1: live canary on a dedicated hot wallet with the canary config (0.01 SOL buys, ≤ 2 positions, 10% daily drawdown; arbitrage, back-running, pre-graduation harvesting, Raydium sniping and copy trading off)
 - [ ] Daily wallet reconciliation (on-chain Δ SOL vs audit realized PnL) logged for every canary day ([`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-reconciliation))
 - [ ] Log every discrepancy or failure in `BUGS.md`; fix before continuing

@@ -480,6 +480,7 @@ def resolve_strategy_config(
         max_gini_coefficient=float(base.get("max_gini_coefficient", 0.85)),
         require_social_links=bool(base.get("require_social_links", False)),
         require_holder_data=bool(base.get("require_holder_data", False)),
+        min_holder_count=max(0, int(base.get("min_holder_count", 0) or 0)),
         min_social_links_count=int(base.get("min_social_links_count", 0)),
         max_acceptable_risk_score=float(base.get("max_acceptable_risk_score", 50.0)),
         require_pump_mint_suffix=bool(base.get("require_pump_mint_suffix", True)),

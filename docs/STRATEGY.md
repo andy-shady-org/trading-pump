@@ -307,6 +307,7 @@ Microcap liquidity pools are susceptible to malicious exploits. Every candidate 
   "max_gini_coefficient": 0.85,
   "require_social_links": false,
   "require_holder_data": false,
+  "min_holder_count": 0,
   "require_pump_mint_suffix": true,
   "allow_mint_reentry": false,
   "min_social_links_count": 1,
@@ -316,6 +317,8 @@ Microcap liquidity pools are susceptible to malicious exploits. Every candidate 
 ```
 
 `require_holder_data: true` rejects a token outright when no holder data could be read (otherwise missing holders adds 30 risk points and the top-5 / Gini checks are skipped). The canary config sets it (BUG-107).
+
+`min_holder_count` (default `0`, off) rejects a token with fewer holder accounts than this at screening (`Too few holders`). It counts the accounts `getTokenLargestAccounts` returned, bonding curve included (at most 20), which is the `holder_count` field of the `screening` records in a replay capture, so thresholds tested by replay carry over unchanged. In the v0.2.3 24 h capture, `6` was the only entry filter that was net positive after costs in both halves of the day; treat that as a hypothesis until a second capture confirms it.
 
 `require_pump_mint_suffix` (default `true`) skips stream tokens whose mint doesn't end in `pump`; tokens that PumpPortal tags with another launchpad `pool` are always skipped, and every buy needs a bonding curve owned by the Pump.fun program (BUG-108). `allow_mint_reentry` (default `false`) controls whether a mint whose position was closed may be bought again (BUG-109).
 

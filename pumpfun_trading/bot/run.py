@@ -2434,8 +2434,6 @@ class TradingBot:
                 )
                 if success:
                     self._exit_retry_queue.pop(mint, None)
-                    if websocket:
-                        await self._unsubscribe_from_token_trades(websocket, mint)
 
     async def reconcile_onchain_positions(self) -> dict[str, Any]:
         return await self._reconcile_positions_on_startup()
@@ -2543,9 +2541,10 @@ class TradingBot:
         retry_count: int = 0,
     ) -> bool:
         """Sell under a per-mint lock so concurrent exits cannot overlap (BUG-41)."""
+        held = mint in self.active_positions
         async with self._mint_lock(mint):
             with self._track_operation("sell"):
-                return await self._sell_token_locked(
+                sold = await self._sell_token_locked(
                     mint,
                     sell_amount_tokens=sell_amount_tokens,
                     sell_fraction=sell_fraction,
@@ -2554,6 +2553,12 @@ class TradingBot:
                     slippage_bps=slippage_bps,
                     retry_count=retry_count,
                 )
+        # Every path that closes a position (exit stack, retry queue, copy-trade
+        # mirror, breaker liquidation, rotation) ends here, so this is where the
+        # trade subscription stops; PumpPortal bills per message (BUG-120).
+        if held and mint not in self.active_positions:
+            await self._unsubscribe_from_token_trades(None, mint)
+        return sold
 
     async def _sell_token_locked(
         self,
@@ -2930,8 +2935,6 @@ class TradingBot:
                 reason=exit_decision.reason,
                 target_tier=exit_decision.target_tier,
             )
-            if sold and websocket:
-                await self._unsubscribe_from_token_trades(websocket, mint)
             return sold
 
         return False
@@ -3851,8 +3854,6 @@ class TradingBot:
                 await self._sell_token(
                     mint, reason=f"copy_trade_mirror_exit_{wallet_label}"
                 )
-                if websocket:
-                    await self._unsubscribe_from_token_trades(websocket, mint)
                 return
 
             await self._evaluate_and_execute_exit(

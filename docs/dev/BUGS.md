@@ -126,6 +126,8 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-116** | High | Streams / Trade feed | **RESOLVED** | A refused `subscribeTokenTrade` was cleared by any reconnect, so buys resumed blind while the PumpPortal API key was still unfunded; now a trade-feed circuit breaker stays open until a probe subscription is confirmed or trade data arrives, and its alert names the likely cause (the key's wallet ran out of funds) |
 | **BUG-117** | High | Config / Streams | **RESOLVED** | A `strategy_preset` config filled in the public PumpPortal URL, which beat `PUMPFUN_STREAM_URL`, so the funded API key was never sent and every `subscribeTokenTrade` was refused while the alert blamed the key's funds |
 | **BUG-118** | Medium | Security / UI | **RESOLVED** | The dashboard's Coin Polling and Bot Status panels printed the raw stream URL, so the PumpPortal `?api-key=` was shown on screen; the key now lives in its own `PUMPFUN_STREAM_API_KEY` |
+| **BUG-119** | Medium | Replay / Parity | **RESOLVED** | `pumpfun-replay --compare-audit` summed only live sell records, so the fee, tip and rent booked on each live buy were left out: the 24 h capture showed live +2.06 SOL against a real −0.579 SOL |
+| **BUG-120** | Medium | Streams / Cost | **RESOLVED** | Trade subscriptions were only cancelled when an exit ran from the trade-message path; exits from the 1 s refresh loop, retry queue and other paths left them open, so 538 exited mints kept streaming (54% of all trade messages, billed by PumpPortal) |
 
 ---
 
@@ -1037,3 +1039,21 @@ Seen on the dashboard during the v0.2.3 capture run, right after the BUG-117 fix
 * **Workaround:** none needed after the fix; before it, don't share the dashboard and rotate the key if it was shown.
 * **Resolution:** the key is a separate secret, `PUMPFUN_STREAM_API_KEY`. `TradingBot.stream_url` (and `config.stream_url`) is always key-free, and the key is only joined to the URL in `_stream_connect_url()` at `ws_connect` time, and only for `pumpportal.fun` hosts, so it is never sent to another provider (`bot/trade_feed.py`: `split_stream_api_key`, `stream_connect_url`). A key still embedded in `PUMPFUN_STREAM_URL` is split out and used, with a start-up warning to move it. The dashboard also passes the stream and Geyser URLs through `redact_url` as a second guard. `sanitize_env_for_logging` masks the new variable (its name contains `KEY`).
 * **Verification:** `regression("BUG-118")` tests: `unit/ui/test_dashboard.py` (no key on the rendered dashboard with the new variable, with a legacy keyed URL, or with a key set straight on `stream_url`), `unit/bot/test_trade_feed.py` (`split_stream_api_key` and `stream_connect_url` tables, no key for other hosts), `unit/bot/test_run.py` (`ws_connect` gets the keyed URL while logs and the status snapshot never contain the key; a legacy keyed URL is split out with a warning).
+
+## 19. 24 h Capture Findings (2026-10-18)
+
+Found while analysing the v0.2.3 24 h capture run (`runtime/capture/`).
+
+### BUG-119: Parity Check Ignores Live Buy-Side Costs [RESOLVED]
+* **Location:** `pumpfun_trading/engines/parity.py` (`_collect`)
+* **Description:** the live side of `compare_replay_to_audit` added up `trade_net_pnl` for sell records only. Since FEAT-49 a live buy books its own fee, Jito tip and token-account rent as a negative `net_pnl_sol` on the buy record, while replay sells already carry the buy-side costs. The live total therefore left out every buy's costs.
+* **Impact:** medium: the replay-vs-live check reported live +2.06 SOL for a run that lost 0.579 SOL, flagged a 2.8 SOL "gap" and made replay look far too pessimistic. No trading decision used it.
+* **Resolution:** `_collect` adds the net of every buy and sell record on both sides (replay buys book 0). Mint status, entry and exit counts are unchanged.
+* **Verification:** `regression("BUG-119")` in `tests/unit/engines/test_parity.py`: live buys with and without a `net_pnl_sol` field are netted, and a replay that matches live exactly gives a zero gap. On the capture the corrected live figure for mints bought on both sides is −0.561 SOL against replay −0.757 SOL.
+
+### BUG-120: Trade Subscriptions Outlive Their Positions [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_sell_token`, `_evaluate_and_execute_exit`, `_process_exit_retry_queue`, the copy-trade mirror exit)
+* **Description:** `unsubscribeTokenTrade` was only sent `if sold and websocket`, and five of the six exit call sites (the 1 s position refresh loop, curve updates, retry queue, breaker liquidation) passed no websocket. `_unsubscribe_from_token_trades` could have fallen back to the live socket but was never called.
+* **Impact:** medium: 538 of 1,676 exited mints kept streaming trades for hours (median 12 min, p90 73 min after the exit), 54% of all trade messages. PumpPortal bills the key's wallet per message, and the subscription list grew all day.
+* **Resolution:** `_sell_token` unsubscribes (through the active socket) whenever the call closed a held position, so every exit path is covered; the per-call-site unsubscribes are gone so nothing is sent twice. Partial and failed sells keep the subscription.
+* **Verification:** `regression("BUG-120")` in `tests/unit/bot/test_run.py`: full exit unsubscribes once, partial and failed sells don't, an unheld mint sends nothing, and an exit from the refresh-loop path (no websocket argument) still unsubscribes.

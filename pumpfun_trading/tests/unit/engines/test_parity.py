@@ -99,6 +99,34 @@ def test_compare_relative_tolerance_scales_with_live_pnl() -> None:
     assert report["within_tolerance"] is True
 
 
+@pytest.mark.regression("BUG-119")
+def test_compare_counts_live_buy_costs_in_net_pnl() -> None:
+    # Live buys carry their fee, tip and rent as a negative net; replay sells
+    # already include the buy-side costs and replay buys book 0.
+    live = [
+        {"mint": "A", "action": "buy", "costs_sol": 0.0016, "net_pnl_sol": -0.0016},
+        _live("A", "sell", 0.0010, "stop_loss_hit (85% <= 90%)"),
+        {"mint": "B", "action": "buy", "costs_sol": 0.0016},  # no net field
+        _live("B", "sell", 0.0004, "stagnant_curve_timeout (…)"),
+    ]
+    replay = [
+        _replayed("A", "buy"),
+        _replayed("A", "sell", -0.0006, "stop_loss"),
+        _replayed("B", "buy"),
+        _replayed("B", "sell", -0.0012, "stagnant_timeout"),
+    ]
+
+    report = compare_replay_to_audit(replay, live, tolerance_sol=0.0001)
+
+    rows = {row["mint"]: row for row in report["mints"]}
+    assert rows["A"]["live_net_pnl_sol"] == pytest.approx(-0.0006)
+    assert rows["B"]["live_net_pnl_sol"] == pytest.approx(-0.0012)
+    assert report["live_net_pnl_sol"] == pytest.approx(-0.0018)
+    assert report["gap_sol"] == pytest.approx(0.0)
+    assert report["within_tolerance"] is True
+    assert rows["A"]["live_buys"] == 1 and rows["A"]["live_exits"] == ["stop_loss"]
+
+
 def test_compare_marks_mints_without_entries() -> None:
     report = compare_replay_to_audit([_replayed("A", "quote")], [])
 

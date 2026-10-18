@@ -11,11 +11,16 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 ### Security
 - BUG-118: the dashboard's Coin Polling and Bot Status panels showed the PumpPortal API key inside the stream URL. The key now has its own variable, `PUMPFUN_STREAM_API_KEY`; `stream_url` stays key-free and the key is only added when connecting to `pumpportal.fun`. A key still in `PUMPFUN_STREAM_URL` is split out and used, with a warning. The dashboard also redacts the stream and Geyser URLs.
 
+### Added
+- Config key `min_holder_count` (default `0`, off): screening rejects a token with fewer holder accounts than this (`Too few holders`, flag `too_few_holders`). It counts the accounts `getTokenLargestAccounts` returned, bonding curve included, the same number as `holder_count` in replay captures. In the 24 h capture, buying only tokens with more than 5 (`min_holder_count: 6`) was the only filter that was net positive in replay in both halves of the day (+0.026 SOL over ~229 positions); it still needs confirming on a second capture.
+
 ### Changed
 - New environment variable `PUMPFUN_STREAM_API_KEY`. Move the key out of `PUMPFUN_STREAM_URL` (`?api-key=` still works, with a warning).
 
 ### Fixed
 - BUG-117: a `strategy_preset` config filled in the public PumpPortal URL, which beat `PUMPFUN_STREAM_URL`, so the API key was never sent and the trade-feed breaker blamed the key's funds. An env URL now beats that placeholder; a PumpPortal URL without `api-key` logs a warning, and the breaker alert and `trade_feed_breaker.stream_has_api_key` in `bot_status.json` name the missing key.
+- BUG-119: `pumpfun-replay --compare-audit` left the costs booked on live buys out of the live total, so a losing run looked profitable (+2.06 SOL against a real −0.579 SOL). Both sides now net every buy and sell record.
+- BUG-120: trade subscriptions were only cancelled on exits from the trade-message path, so most exited mints kept streaming (54% of the capture's trade messages, billed by PumpPortal). `_sell_token` now unsubscribes whenever it closes a position.
 
 ## [0.2.2] - 2026-10-17
 

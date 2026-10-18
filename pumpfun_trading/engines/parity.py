@@ -55,13 +55,19 @@ def _collect(
         if not mint:
             continue
         side = sides.setdefault(mint, _MintSide())
-        if is_sell(trade):
+        selling = is_sell(trade)
+        if not selling and not is_buy(trade):
+            continue
+        # Live buys book their own costs (fee, tip, rent) as a negative net on
+        # the buy record; replay sells already carry them. Summing every
+        # buy and sell record keeps both sides net of all costs (BUG-119).
+        side.net_pnl_sol += (
+            float(trade.get(net_key) or 0.0) if net_key else trade_net_pnl(trade)
+        )
+        if selling:
             side.sells += 1
-            side.net_pnl_sol += (
-                float(trade.get(net_key) or 0.0) if net_key else trade_net_pnl(trade)
-            )
             side.exit_reasons.append(normalise_exit_reason(trade.get("reason")))
-        elif is_buy(trade):
+        else:
             side.buys += 1
     return sides
 
