@@ -271,6 +271,15 @@ class GraduationTracker:
 
         return (float(overall_velocity), float(acceleration))
 
+    def sample_count(
+        self, window_seconds: float = 30.0, current_time: Optional[float] = None
+    ) -> int:
+        """Reserve readings inside the acceleration window (polled curves, FEAT-53)."""
+        now = float(current_time if current_time is not None else time.time())
+        cutoff = now - max(1.0, float(window_seconds))
+        # Distinct times: a new tracker records its first reading twice.
+        return len({t for t, _ in self._history if t >= cutoff})
+
     def classify_trajectory(
         self, current_time: Optional[float] = None, unique_buyers: int = 1
     ) -> GraduationTrajectory:
@@ -569,8 +578,14 @@ class GraduationEngine:
         min_acceleration: float = 0.0,
         current_time: Optional[float] = None,
         unique_buyers: int = 1,
+        min_samples: int = 0,
     ) -> GraduationSignal:
-        """Evaluate pre-graduation acceleration harvesting entry signal."""
+        """Evaluate pre-graduation acceleration harvesting entry signal.
+
+        ``min_samples`` requires that many reserve readings in the 30 s
+        acceleration window, so a curve polled once or twice (acceleration 0 by
+        construction) cannot pass ``min_acceleration`` 0 by default (FEAT-53).
+        """
         tracker = self._trackers.get(mint)
         if tracker is None:
             return GraduationSignal(
@@ -619,6 +634,18 @@ class GraduationEngine:
                 market_cap_sol=cand.market_cap_sol,
                 real_sol_reserves=cand.real_sol_reserves,
                 reason=f"progress_outside_window ({cand.progress_pct:.1f}% not in [{min_progress_pct:.1f}%, {max_progress_pct:.1f}%])",
+                trajectory=trajectory,
+            )
+
+        samples = tracker.sample_count(current_time=current_time)
+        if samples < int(min_samples):
+            return GraduationSignal(
+                triggered=False,
+                mint=mint,
+                stage="pre_graduation",
+                market_cap_sol=cand.market_cap_sol,
+                real_sol_reserves=cand.real_sol_reserves,
+                reason=f"insufficient_history ({samples} < {int(min_samples)} readings)",
                 trajectory=trajectory,
             )
 

@@ -83,6 +83,46 @@ class MomentumSignal:
         }
 
 
+@dataclass(slots=True)
+class WatchEntry:
+    """A screened launch watched for follow-on demand before any buy (FEAT-51).
+
+    ``start_real_sol`` is the curve's real SOL reserve when first seen (the watch
+    call or the first poll); growth is measured from it.
+    """
+
+    mint: str
+    created_at: float
+    watched_at: float
+    start_real_sol: float | None = None
+    last_real_sol: float | None = None
+    market_cap_sol: float = 0.0
+    creator: str | None = None
+    subscribed: bool = False
+    screening_verdict: Any = None
+    last_polled_at: float = 0.0
+
+    @property
+    def sol_growth(self) -> float:
+        """Real SOL reserve growth since the mint was first seen."""
+        if self.start_real_sol is None or self.last_real_sol is None:
+            return 0.0
+        return float(self.last_real_sol) - float(self.start_real_sol)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mint": self.mint,
+            "created_at": self.created_at,
+            "watched_at": self.watched_at,
+            "start_real_sol": self.start_real_sol,
+            "last_real_sol": self.last_real_sol,
+            "sol_growth": round(self.sol_growth, 6),
+            "market_cap_sol": self.market_cap_sol,
+            "creator": self.creator,
+            "subscribed": self.subscribed,
+        }
+
+
 class TokenOrderFlowTracker:
     """Maintains rolling trade history and calculates order flow metrics for a single token."""
 
@@ -127,8 +167,13 @@ class TokenOrderFlowTracker:
         self,
         window_seconds: int = 30,
         current_time: Optional[float] = None,
+        exclude_users: Optional[frozenset[str]] = None,
     ) -> WindowMetrics:
-        """Compute rolling order flow metrics over the specified window in seconds."""
+        """Compute rolling order flow metrics over the specified window in seconds.
+
+        Trades by ``exclude_users`` (the creator, the bot's own wallet) are left
+        out, so the numbers measure demand from other wallets only.
+        """
         now = float(
             current_time
             if current_time is not None
@@ -147,6 +192,8 @@ class TokenOrderFlowTracker:
         for trade in reversed(self.trades):
             if trade.timestamp < cutoff:
                 break
+            if exclude_users and trade.user in exclude_users:
+                continue
             trade_count += 1
             if trade.is_buy:
                 buy_count += 1
@@ -249,6 +296,7 @@ class TokenOrderFlowTracker:
         token_creation_timestamp: Optional[float] = None,
         max_token_age_seconds: Optional[int] = None,
         current_time: Optional[float] = None,
+        exclude_users: Optional[frozenset[str]] = None,
     ) -> MomentumSignal:
         """Evaluate whether token order flow meets momentum breakout entry criteria."""
         now = float(
@@ -258,7 +306,9 @@ class TokenOrderFlowTracker:
         )
 
         metrics = self.get_window_metrics(
-            window_seconds=window_seconds, current_time=now
+            window_seconds=window_seconds,
+            current_time=now,
+            exclude_users=exclude_users,
         )
         z_score = self.get_velocity_z_score(
             window_seconds=window_seconds,
@@ -339,6 +389,11 @@ class OrderFlowEngine:
         self.recent_token_ttl_seconds = recent_token_ttl_seconds
         self.max_tracked_tokens = max(1, int(max_tracked_tokens))
         self._trackers: dict[str, TokenOrderFlowTracker] = {}
+        # Watch list for confirmed entries (FEAT-51); insertion order = age.
+        self.max_watch_mints = 300
+        self._watch: dict[str, WatchEntry] = {}
+        # Mints dropped to make room, so the runtime can unsubscribe them.
+        self._watch_evicted: list[WatchEntry] = []
 
     @property
     def tracked_token_count(self) -> int:
@@ -434,6 +489,7 @@ class OrderFlowEngine:
         token_creation_timestamp: Optional[float] = None,
         max_token_age_seconds: Optional[int] = None,
         current_time: Optional[float] = None,
+        exclude_users: Optional[frozenset[str]] = None,
     ) -> MomentumSignal:
         """Evaluate momentum breakout criteria for a token."""
         tracker = self._trackers.get(mint)
@@ -473,6 +529,7 @@ class OrderFlowEngine:
             token_creation_timestamp=token_creation_timestamp,
             max_token_age_seconds=max_token_age_seconds,
             current_time=current_time,
+            exclude_users=exclude_users,
         )
 
     def cleanup_inactive_tokens(
@@ -499,6 +556,136 @@ class OrderFlowEngine:
         """Clear all tracked tokens."""
         self._trackers.clear()
 
+    # -- Watch list (FEAT-51) -------------------------------------------------
+
+    @property
+    def watch_count(self) -> int:
+        """Number of watched mints."""
+        return len(self._watch)
+
+    @property
+    def watch_subscribed_count(self) -> int:
+        """Watched mints that hold a (billed) trade subscription."""
+        return sum(1 for entry in self._watch.values() if entry.subscribed)
+
+    def is_watched(self, mint: str) -> bool:
+        return mint in self._watch
+
+    def get_watch(self, mint: str) -> WatchEntry | None:
+        return self._watch.get(mint)
+
+    def watched_mints(self) -> list[str]:
+        """Watched mints, oldest first."""
+        return list(self._watch)
+
+    def watch(
+        self,
+        mint: str,
+        *,
+        created_at: float,
+        creator: str | None = None,
+        verdict: Any = None,
+        now: Optional[float] = None,
+        real_sol: float | None = None,
+        market_cap_sol: float = 0.0,
+    ) -> WatchEntry:
+        """Add a screened launch to the watch list (idempotent).
+
+        When the list is full the oldest unsubscribed entry is evicted (the oldest
+        entry if all are subscribed); evicted entries are kept for
+        :meth:`drain_watch_evictions` so their subscriptions can be cancelled.
+        """
+        existing = self._watch.get(mint)
+        if existing is not None:
+            return existing
+        ts = float(now if now is not None else time.time())
+        limit = max(1, int(self.max_watch_mints))
+        while len(self._watch) >= limit:
+            victim = next(
+                (m for m, e in self._watch.items() if not e.subscribed),
+                next(iter(self._watch)),
+            )
+            self._watch_evicted.append(self._watch.pop(victim))
+        entry = WatchEntry(
+            mint=mint,
+            created_at=float(created_at),
+            watched_at=ts,
+            start_real_sol=None if real_sol is None else float(real_sol),
+            last_real_sol=None if real_sol is None else float(real_sol),
+            market_cap_sol=float(market_cap_sol or 0.0),
+            creator=creator,
+            screening_verdict=verdict,
+        )
+        self._watch[mint] = entry
+        return entry
+
+    def update_watch_curve(
+        self,
+        mint: str,
+        *,
+        real_sol: float,
+        market_cap_sol: float,
+        now: Optional[float] = None,
+    ) -> WatchEntry | None:
+        """Record a polled curve reading for a watched mint."""
+        entry = self._watch.get(mint)
+        if entry is None:
+            return None
+        if entry.start_real_sol is None:
+            entry.start_real_sol = float(real_sol)
+        entry.last_real_sol = float(real_sol)
+        entry.market_cap_sol = float(market_cap_sol)
+        entry.last_polled_at = float(now if now is not None else time.time())
+        return entry
+
+    def promotable(self, *, min_sol_growth: float, budget: int) -> list[str]:
+        """Unsubscribed mints whose curve grew enough, fastest growth first,
+        limited to the free subscription slots out of ``budget``."""
+        free = max(0, int(budget) - self.watch_subscribed_count)
+        if free <= 0:
+            return []
+        candidates = [
+            entry
+            for entry in self._watch.values()
+            if not entry.subscribed
+            and entry.start_real_sol is not None
+            and entry.sol_growth >= float(min_sol_growth)
+        ]
+        candidates.sort(key=lambda e: e.sol_growth, reverse=True)
+        return [entry.mint for entry in candidates[:free]]
+
+    def mark_watch_subscribed(self, mint: str, subscribed: bool = True) -> None:
+        entry = self._watch.get(mint)
+        if entry is not None:
+            entry.subscribed = bool(subscribed)
+
+    def unwatch(self, mint: str) -> WatchEntry | None:
+        """Remove a mint from the watch list (bought, rejected or expired)."""
+        return self._watch.pop(mint, None)
+
+    def expire_watch(self, *, ttl: float, now: Optional[float] = None) -> list[str]:
+        """Drop entries watched longer than ``ttl`` seconds; returns their mints.
+
+        Expired entries that held a subscription are also queued for
+        :meth:`drain_watch_evictions`.
+        """
+        ts = float(now if now is not None else time.time())
+        expired = [
+            mint
+            for mint, entry in self._watch.items()
+            if ts - entry.watched_at > float(ttl)
+        ]
+        for mint in expired:
+            entry = self._watch.pop(mint)
+            if entry.subscribed:
+                self._watch_evicted.append(entry)
+        return expired
+
+    def drain_watch_evictions(self) -> list[WatchEntry]:
+        """Entries removed by eviction or expiry since the last call."""
+        drained, self._watch_evicted = self._watch_evicted, []
+        return drained
+
 
 __all__ = [
     "TradeRecord",
@@ -506,4 +693,5 @@ __all__ = [
     "MomentumSignal",
     "TokenOrderFlowTracker",
     "OrderFlowEngine",
+    "WatchEntry",
 ]

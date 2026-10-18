@@ -734,7 +734,7 @@ The bot can trade live, but there is no evidence yet that it is profitable after
   - [x] **BUG-116, trade-feed circuit breaker:** a refusal opens a breaker that survives reconnects, blocks buys, alerts that the key's wallet has probably run out of funds, probes every `trade_feed_probe_seconds` and closes on a confirmed subscription or trade data *(branch `feat/mayhem-filter-trade-feed-breaker`)*
   - [x] **Mayhem-mode filter:** `skip_mayhem_mode` (default `true`) rejects `is_mayhem_mode` create events before screening and refuses buys on mayhem curves; mainnet mayhem curves drift off the 30 SOL reserve invariant within seconds *(same branch)*
   - [x] **BUG-113:** resolve the creator from `traderPublicKey` when the API returns the system program; penalise an unknown creator
-  - [ ] **Entry confirmation (new):** stop buying at the create event. Put passed tokens on a watch list, subscribe to their trades and buy only if, within a window (for example 20 s), at least N distinct non-creator wallets buy, net buy inflow reaches X SOL and the market cap is above the launch level. Window, N and X are config keys, chosen from a capture with trade data, not guessed
+  - [ ] **Entry confirmation (new) — moved to Phase 4c Sprints 24F/24G** ([`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)): stop buying at the create event. Put passed tokens on a watch list, subscribe to their trades and buy only if, within a window (for example 20 s), at least N distinct non-creator wallets buy, net buy inflow reaches X SOL and the market cap is above the launch level. Window, N and X are config keys, chosen from a capture with trade data, not guessed
   - [x] Paper cost model: lower `paper_entry_slippage_bps` from 300 to about 100, because `paper_entry_delay_seconds` already re-reads the curve; keep the delay *(set in `canary.json` and `capture.json`)*
   - [ ] Keep `max_daily_drawdown_pct` 0.10, the screen and the exit stack unchanged in `canary.json`; do not tune exits until a capture with market trades exists
   - [x] BUG-114 / BUG-115 (Low, telemetry and reporting) and BUG-111
@@ -805,6 +805,72 @@ Branch: `sprint-24d-income-ops`. New code sits in small modules (`bot/operator.p
 - [ ] Run the new drills in paper mode: operator pause, profit sweep, supervisor restart, degradation alert ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills))
 - [ ] Optional, if latency is shown to cost entries: FEAT-39 Yellowstone gRPC transport (isolated in `streams/`). *Not started:* the v0.2.x Stage 0 data does not yet show slow entries costing money; decide on the clean Stage 0 / first canary capture
 - **Acceptance:** 7 days unattended at the current capital stage with no manual restarts; pause and sweep exercised in drills ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills)). *Status:* code and templates done; the 7-day run and drills need the next tagged build
+
+## Phase 4c: Strategy Pivot (income track, ahead of Phase 5)
+
+The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% profitable)** and the v0.2.1 Stage 0 failed after 34 positions: buying at the create event buys tokens no one else buys. Phase 4c replaces launch sniping with **confirmed momentum** plus a **pre-graduation lane** fed by a cheap RPC curve poller. Rationale, cost model and go/no-go rules: [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md). Branch `strategy-pivot-momentum`. Launch sniping stays available as `entry_mode: "launch"` (default), so the golden replay is unchanged.
+
+| Sprint | Priority | Goal | Money path? | Exit gate |
+|---|---|---|---|---|
+| 24E | P0 – first, no code risk | Branch, pivot doc, TODO / FEAT / gate docs, tip experiment plan | No | Docs reviewed |
+| 24F | P0 – unlocks everything | Watch list, batch curve poller, promotion and subscription budget (FEAT-51) | Entry gate only | Paper run: watch list bounded, messages ≤ budget, no loop stalls |
+| 24G | P0 – the income change | Momentum confirmation entry, exit tuning, cost guard, replay support (FEAT-52) | Yes | Replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0 |
+| 24H | P1 – second lane | Pre-graduation lane via the poller (FEAT-53), Stage 1 canary at 0.02 SOL with a lower tip | Yes | Lane positive in 72 h paper; Stage 1 criteria |
+| 24I | P2 – after 24H | Smart-wallet discovery, copy simulation, reviewed wallet list used as momentum evidence (FEAT-54) | Entry evidence only; no copy lane | Our simulated copy PnL net > 0 on an unseen capture; momentum + wallet evidence beats momentum alone in replay and a 72 h paper run |
+
+### Sprint 24E: Branch & Strategy Pivot Documentation
+- [x] Branch `strategy-pivot-momentum` from `main`
+- [x] [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md): evidence, new strategy, cost model at 0.02 SOL, sprints and go/no-go
+- [x] FEAT-51/52/53 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md); pivot section in [`docs/STRATEGY.md`](../STRATEGY.md); canary at 0.02 SOL / `entry_mode: confirmed` in [`RELEASE-GATE.md` §3.3](RELEASE-GATE.md#33-stage-1--live-canary-configuration); CHANGELOG Unreleased entry; AGENTS.md learning
+- [ ] Tip experiment on paper/landing: 0 / 25k / 50k lamports
+
+### Sprint 24F: Watch List & Batch Curve Poller (FEAT-51)
+- [x] `entry_mode`, `watch_*` config keys with validation (`strategies/base.py`)
+- [x] `WatchEntry` and `OrderFlowEngine.watch / update_watch_curve / promotable / unwatch / expire_watch` (bounded, TTL) (`strategies/momentum.py`)
+- [x] `PumpFunExecutionClient.get_bonding_curve_states` (`getMultipleAccounts`, chunks of 100, BUG-104/108 checks) (`sdk/execution.py`)
+- [x] Confirmed mode watches instead of buying; `_watch_poll_loop` feeds `GraduationEngine` and the watch list; promotion subscribes within `watch_max_trade_subscriptions`; expiry unsubscribes (`bot/run.py`)
+- [x] Watch list size and subscribed mints in the status snapshot and dashboard
+- **Acceptance:** paper run with a bounded watch list, trade messages within budget, no loop stalls *(code and unit tests done: `unit/strategies/test_momentum.py`, `unit/sdk/test_execution.py`, `unit/bot/test_run.py`, `unit/ui/test_dashboard.py`, `unit/strategies/test_presets.py`; paper run pending)*
+
+### Sprint 24G: Momentum Confirmation Entry & Exit Tuning (FEAT-52)
+- [x] Token-age window and market-cap band in `generate_momentum_buy_signal`
+- [x] Subscribed watched mints evaluated in `_handle_trade_update`; `_should_buy` + cost guard (`max_entry_cost_share_pct`); buys tagged `strategy=momentum` with `entry_metrics`; creator and own wallet excluded from the buyer count *(tests: `unit/bot/test_run.py`, `integration/test_confirmed_entry_bot.py`)*
+- [x] Buy-flow stagnation exit (`stagnant_min_buy_sol`) and break-even ratchet (`strategies/exits.py`)
+- [x] `momentum` preset
+- [x] Replay models watch → confirm → buy (`entries_from: confirmed`, `watch_stats`); optimizer search space gains the watch, band and momentum-exit keys for a confirmed base config *(tests: `unit/engines/test_replay.py`, `unit/engines/test_optimizer.py`)*
+- [x] Tune on the v0.2.3 capture (time split): `configs/canary.json` +0.086 SOL / 62 positions on the tuning half, +0.023 SOL / 70 on the held-out half, +0.132 SOL / 132 over 24 h at a 25k-lamport tip ([`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log)); `configs/capture.json` written
+- [ ] Confirm on a second capture recorded with `configs/capture.json` (the v0.2.3 capture only has trade flow for mints the launch-mode bot bought); only then the 72 h Stage 0
+- **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
+
+### Sprint 24H: Pre-Graduation Lane via the RPC Poller (FEAT-53)
+- [x] Pre-graduation entry extracted into `_maybe_buy_pre_graduation`, called from the Geyser handler and the poller; buys tagged `strategy=pre_graduation` with `entry_metrics` (progress, acceleration)
+- [x] Acceleration from the polled curve history: a polled entry needs `PRE_GRADUATION_MIN_POLLED_SAMPLES` (4) readings in the 30 s window (`GraduationTracker.sample_count`, `min_samples`); held confirmed positions keep their curve progress fresh from the refresh loop; in confirmed mode the last tranche sells the whole remainder before `complete` *(tests: `unit/strategies/test_graduation.py`, `unit/strategies/test_exits.py`, `unit/bot/test_run.py`)*
+- [x] `enable_pre_graduation_harvesting` off in `configs/canary.json` until a 72 h paper run passes (`RELEASE-GATE.md` §3.5)
+- [x] `RUNBOOK.md` §6.3: capture → replay gate → Stage 0 → Stage 1 at 0.02 SOL, the tip experiment and the pre-graduation paper pilot
+- [ ] 72 h paper pilot of the pre-graduation lane; Stage 1 canary
+- **Acceptance:** lane positive in a 72 h paper pilot; Stage 1: ≥ 100 trades, net > 0, reconciled
+
+### Sprint 24I: Smart-Wallet Discovery & Reviewed Watch List (FEAT-54)
+Starts after 24H. Needs at least two captures recorded with `configs/capture.json` (trade flow for watched mints): one to find wallets, a later one to test them. Wallets are **never** added to live copy trading automatically: high win rate is not net profit, a wide scan finds lucky wallets, and our copy fills later and at a worse price than the wallet ([`STRATEGY-PIVOT.md` §2.4](STRATEGY-PIVOT.md#24-lane-3--reviewed-smart-wallets-feat-54-p2)).
+
+| Phase | Scope | Touches money path? |
+|---|---|---|
+| 1 | Offline wallet scorer on captures; candidate file | No (tooling) |
+| 2 | Copy simulation with our delay and costs; train/test by capture | No (replay) |
+| 3 | Reviewed tracked list; tracked-wallet buys as momentum evidence | Entry evidence only |
+| 4 | Rolling per-wallet kill switch and exposure cap; reporting | Entry gate only |
+| 5 | Optional `strategy=copy` lane via `subscribeAccountTrade` | Yes; only after phases 1–4 pass |
+
+- [ ] **Scorer:** `pumpfun-audit wallets --capture <jsonl>` (logic in a library module, CLI only delegates) ranks wallets by net SOL after modelled costs (`engines/costs.py`), closed trades, distinct tokens, average / worst return and hold time; win rate is shown, never ranked on alone. Minimums: `wallet_min_closed_trades` (100), `wallet_min_distinct_tokens`, `wallet_min_net_sol`
+- [ ] **Rejects:** buys in the first slots after create (snipers / bundles), wallets in the creator's funding cluster (`strategies/filters.py` Sybil checks), round-trip / wash patterns, wallets active on fewer than N days; each reject counted by reason
+- [ ] **Copy simulation:** replay each candidate's buys with our delay (`copy_entry_delay_slots`, default 2) and the live exit stack; keep a wallet only if **our** copied PnL is net positive on a later capture not used to find it. Survivors go to `wallets_candidates.json` with their metrics
+- [ ] **Reviewed list:** an operator moves candidates to `tracked_wallets.json` (`WalletRegistry` loads it); nothing writes to it automatically. `RUNBOOK.md` gets the review checklist
+- [ ] **Momentum evidence:** a tracked wallet's buy on a watched, subscribed mint lowers the distinct-buyer requirement by `momentum_tracked_wallet_bonus` (default 0 = off); it never skips the age / market-cap band, `_should_buy` or the cost guard. Influenced buys record `entry_metrics.tracked_wallets`; replay models the same rule
+- [ ] **Kill switch and cap:** disable a wallet when its rolling net PnL over the last `wallet_rolling_window` (20) influenced positions is below zero; `wallet_max_exposure_sol` caps SOL at risk per wallet; both audited and alerted
+- [ ] **Reporting:** `pumpfun-audit pnl --group-by wallet` for influenced positions; dashboard shows tracked / disabled wallet counts
+- [ ] Tests in the mirrored layout: `unit/strategies/test_copy_trading.py`, `unit/strategies/test_momentum.py`, `unit/engines/test_replay.py`, `unit/cli/test_audit.py`, `unit/bot/test_run.py`; no network calls
+- [ ] Optional phase 5, only after the acceptance below: stand-alone `strategy=copy` lane on `subscribeAccountTrade` with its own subscription budget and the BUG-116 breaker; `enable_copy_trading` stays off in the canary until it passes its own 72 h paper run (`RELEASE-GATE.md` §3.5)
+- **Acceptance:** on a capture not used for discovery, our simulated copy PnL of the reviewed wallets is net > 0, and momentum with wallet evidence beats momentum alone in replay and in a 72 h paper run (`pumpfun-audit pnl --group-by strategy`); if not, leave `momentum_tracked_wallet_bonus` at 0 and record the result in `STRATEGY-PIVOT.md` §6
 
 ## Phase 5: Platform Refactor (required before the Web UI)
 

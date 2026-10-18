@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -363,3 +364,103 @@ def test_min_holder_count_defaults_off_and_loads_from_json() -> None:
     assert config.to_dict()["min_holder_count"] == 6
     negative = TradingBotConfig.from_dict({"min_holder_count": -3})
     assert negative.min_holder_count == 0
+
+
+def test_entry_mode_defaults_to_launch_and_loads_watch_keys() -> None:
+    default = resolve_strategy_config("balanced")
+    assert default.entry_mode == "launch"
+    assert default.watch_max_mints == 300
+
+    config = TradingBotConfig.from_dict(
+        {
+            "strategy_preset": "conservative",
+            "entry_mode": " Confirmed ",
+            "watch_ttl_seconds": 300,
+            "watch_max_mints": 50,
+            "watch_poll_interval_seconds": 1.5,
+            "watch_promote_min_sol_growth": 2.0,
+            "watch_max_trade_subscriptions": 10,
+        }
+    )
+
+    assert config.entry_mode == "confirmed"
+    data = config.to_dict()
+    assert data["watch_ttl_seconds"] == 300.0
+    assert data["watch_max_mints"] == 50
+    assert data["watch_poll_interval_seconds"] == 1.5
+    assert data["watch_promote_min_sol_growth"] == 2.0
+    assert data["watch_max_trade_subscriptions"] == 10
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"entry_mode": "snipe"}, "entry_mode"),
+        ({"watch_ttl_seconds": 0}, "watch_ttl_seconds"),
+        ({"watch_max_mints": 0}, "watch_max_mints"),
+        ({"watch_poll_interval_seconds": 0.01}, "watch_poll_interval_seconds"),
+        ({"watch_promote_min_sol_growth": -1}, "watch_promote_min_sol_growth"),
+        ({"watch_max_trade_subscriptions": -1}, "watch_max_trade_subscriptions"),
+    ],
+)
+def test_invalid_watch_settings_fail_fast(
+    override: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        resolve_strategy_config("balanced", overrides=override)
+
+
+def test_momentum_preset_uses_confirmed_entries_at_canary_size() -> None:
+    config = resolve_strategy_config("momentum")
+
+    assert config.strategy_preset == "momentum"
+    assert config.entry_mode == "confirmed"
+    assert config.buy_amount_sol == 0.02
+    assert config.min_market_cap_sol < config.momentum_max_market_cap_sol
+    assert config.momentum_min_token_age_seconds == 20.0
+    assert config.stagnant_min_buy_sol == 0.1
+    # One position must fit the inherited caps, or the preset never buys.
+    assert config.buy_amount_sol <= (
+        config.max_token_concentration_pct * config.max_total_exposure_sol
+    )
+    # Unproven lanes stay off (RELEASE-GATE.md 3.5).
+    assert config.enable_pre_graduation_harvesting is False
+    assert config.enable_copy_trading is False
+    assert config.enable_cross_venue_arbitrage is False
+
+
+def test_momentum_preset_matches_the_tuned_canary_config() -> None:
+    canary = json.loads(
+        (Path(__file__).parents[4] / "configs" / "canary.json").read_text()
+    )
+    preset = resolve_strategy_config("momentum")
+    for key in (
+        "entry_mode",
+        "buy_amount_sol",
+        "watch_promote_min_sol_growth",
+        "momentum_min_unique_buyers",
+        "momentum_min_net_inflow_sol",
+        "momentum_min_token_age_seconds",
+        "min_market_cap_sol",
+        "momentum_max_market_cap_sol",
+        "max_token_concentration_pct",
+    ):
+        assert getattr(preset, key) == canary[key], key
+    assert canary["enable_pre_graduation_harvesting"] is False
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"momentum_max_market_cap_sol": 30.0}, "momentum_max_market_cap_sol"),
+        ({"momentum_min_token_age_seconds": 900.0}, "momentum_min_token_age_seconds"),
+        ({"breakeven_buffer_pct": 0.3}, "breakeven_buffer_pct"),
+    ],
+)
+def test_invalid_momentum_band_fails_fast_in_confirmed_mode(
+    override: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        resolve_strategy_config("momentum", overrides=override)
+    # The band is not validated for launch entries.
+    resolve_strategy_config("momentum", overrides={**override, "entry_mode": "launch"})

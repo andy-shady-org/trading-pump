@@ -64,3 +64,21 @@ def test_from_env_explicit_values_win() -> None:
     assert model.tip_lamports == 0
     assert model.priority_fee_lamports == 7
     assert model.close_token_account_on_full_exit is False
+
+
+@pytest.mark.parametrize(
+    ("close", "tip", "expected_lamports"),
+    [
+        (True, 100_000, 2 * (5_000 + 100_000)),  # rent refunded by the closing sell
+        (True, 0, 2 * 5_000),
+        (False, 25_000, 2 * (5_000 + 25_000) + TOKEN_ACCOUNT_RENT_LAMPORTS),
+    ],
+)
+def test_round_trip_fixed_costs_cover_both_legs_and_unrefunded_rent(
+    close: bool, tip: int, expected_lamports: int
+) -> None:
+    model = ReplayCostModel(tip_lamports=tip, close_token_account_on_full_exit=close)
+
+    assert model.round_trip_fixed_costs_sol() == pytest.approx(
+        expected_lamports / 1_000_000_000
+    )

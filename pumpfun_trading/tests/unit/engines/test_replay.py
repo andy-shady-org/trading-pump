@@ -1077,3 +1077,155 @@ def test_paper_trading_all_features_simulation():
 
     res = engine.run(snapshots)
     assert res is not None
+
+
+# -- Confirmed entries (FEAT-52) ------------------------------------------------
+
+CREATOR = "CreatorWallet"
+
+
+def _confirmed_config(**overrides: Any) -> TradingBotConfig:
+    from pumpfun_trading.strategies.presets import resolve_strategy_config
+
+    values: dict[str, Any] = {
+        "momentum_min_token_age_seconds": 20.0,
+        "momentum_min_unique_buyers": 3,
+        "momentum_min_net_inflow_sol": 0.5,
+        "momentum_min_buy_ratio": 1.5,
+        "momentum_min_z_score": 0.0,
+        "watch_promote_min_sol_growth": 1.0,
+        "watch_max_trade_subscriptions": 5,
+    }
+    values.update(overrides)
+    return resolve_strategy_config("momentum", overrides=values)
+
+
+def _create(mint: str, ts: float, mc: float = 28.0) -> dict[str, Any]:
+    return {"timestamp": ts, "mint": mint, "market_cap_sol": mc, "signal": "buy"}
+
+
+def _screen(mint: str, ts: float, passed: bool = True) -> dict[str, Any]:
+    return {
+        "timestamp": ts,
+        "mint": mint,
+        "event": "screening",
+        "screening": {"passed": passed, "creator": CREATOR},
+    }
+
+
+def _market_trade(
+    mint: str, ts: float, mc: float, user: str, sol: float = 0.5, buy: bool = True
+) -> dict[str, Any]:
+    return {
+        "timestamp": ts,
+        "mint": mint,
+        "market_cap_sol": mc,
+        "is_buy": buy,
+        "sol_amount": sol,
+        "user": user,
+        "signal": "buy" if buy else "sell",
+    }
+
+
+def _confirming_flow(mint: str, start: float, mc: float = 45.0) -> list[dict[str, Any]]:
+    # The first trade only promotes (live, trades arrive after the subscription);
+    # the creator's buy never counts as demand.
+    rows = [_market_trade(mint, start, mc, "Promoter")]
+    rows.append(_market_trade(mint, start + 1, mc, CREATOR, sol=3.0))
+    rows += [_market_trade(mint, start + 2 + i, mc, f"Buyer{i}") for i in range(4)]
+    return rows
+
+
+def _confirmed_engine(cfg: TradingBotConfig, **kwargs: Any) -> PaperTradingEngine:
+    return PaperTradingEngine(
+        initial_cash=2.0,
+        strategy_config=cfg,
+        live_fidelity=True,
+        max_positions=cfg.max_active_positions,
+        **kwargs,
+    )
+
+
+def test_confirmed_replay_watches_then_buys_on_follow_on_demand() -> None:
+    cfg = _confirmed_config()
+    snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)] + _confirming_flow(
+        MINT_A, 30.0
+    )
+    summary = _confirmed_engine(cfg).run(snaps)
+
+    buys = [t for t in summary["trades"] if t["action"] == "buy"]
+    assert len(buys) == 1
+    buy = buys[0]
+    assert buy["reason"] == "momentum_confirmed"
+    assert buy["strategy"] == "momentum"
+    assert buy["timestamp"] == 34.0  # third non-creator buyer after promotion
+    assert buy["entry_metrics"]["unique_buyers"] == 3
+    assert buy["entry_metrics"]["token_age_seconds"] == 34.0
+    assert summary["entries_from"] == "confirmed"
+    assert summary["watch_stats"]["watched"] == 1
+    assert summary["watch_stats"]["promoted"] == 1
+    assert summary["watch_stats"]["confirmed"] == 1
+
+
+def test_confirmed_replay_skips_rejected_young_and_out_of_band_tokens() -> None:
+    cfg = _confirmed_config(momentum_max_market_cap_sol=70.0)
+    snaps = (
+        [_create(MINT_A, 0.0), _screen(MINT_A, 0.5, passed=False)]
+        + _confirming_flow(MINT_A, 30.0)
+        + [_create(MINT_B, 0.0)]
+        + _confirming_flow(MINT_B, 1.0)  # strong flow, but only a few seconds old
+        + [_create("MintC", 0.0)]
+        + _confirming_flow("MintC", 40.0, mc=80.0)  # above the band
+    )
+    snaps.sort(key=lambda s: float(s["timestamp"]))
+    summary = _confirmed_engine(cfg).run(snaps)
+
+    assert [t for t in summary["trades"] if t["action"] == "buy"] == []
+    assert summary["watch_stats"]["screen_rejected"] == 1
+
+
+def test_confirmed_replay_respects_ttl_budget_and_cost_guard() -> None:
+    cfg = _confirmed_config(watch_ttl_seconds=10.0)
+    summary = _confirmed_engine(cfg).run(
+        [_create(MINT_A, 0.0)] + _confirming_flow(MINT_A, 30.0)
+    )
+    assert summary["buy_count"] == 0
+    assert summary["watch_stats"]["expired"] == 1
+
+    cfg = _confirmed_config(watch_max_trade_subscriptions=1)
+    snaps = [_create(MINT_A, 0.0), _create(MINT_B, 0.0)]
+    snaps += [
+        _market_trade(MINT_A, 25.0, 45.0, "P"),
+        _market_trade(MINT_B, 26.0, 45.0, "P"),
+    ]
+    summary = _confirmed_engine(cfg).run(snaps)
+    assert summary["watch_stats"]["promoted"] == 1
+    assert summary["watch_stats"]["budget_full"] == 1
+
+    cfg = _confirmed_config(buy_amount_sol=0.002, max_entry_cost_share_pct=0.10)
+    summary = _confirmed_engine(
+        cfg, cost_model=ReplayCostModel(tip_lamports=100_000)
+    ).run([_create(MINT_A, 0.0)] + _confirming_flow(MINT_A, 30.0))
+    assert summary["buy_count"] == 0
+    assert summary["watch_stats"]["cost_guard_refused"] >= 1
+
+
+def test_confirmed_replay_exits_on_buy_flow_stagnation() -> None:
+    cfg = _confirmed_config(stagnant_timeout_seconds=35.0, stagnant_min_buy_sol=0.1)
+    snaps = [_create(MINT_A, 0.0)] + _confirming_flow(MINT_A, 30.0)
+    # Small buys and the creator keep the price moving but are not demand.
+    snaps += [
+        _market_trade(MINT_A, 40.0 + i * 5, 45.0 + i, "Dust", sol=0.01)
+        for i in range(8)
+    ]
+    snaps.append(_market_trade(MINT_A, 80.0, 52.0, CREATOR, sol=1.0))
+    summary = _confirmed_engine(cfg).run(snaps)
+
+    sells = [t for t in summary["trades"] if t["action"] == "sell"]
+    assert [t["reason"] for t in sells] == ["stagnant_buy_flow"]
+    assert sells[0]["timestamp"] == 70.0
+
+
+def test_confirmed_entry_mode_requires_live_fidelity() -> None:
+    with pytest.raises(ValueError, match="live_fidelity"):
+        PaperTradingEngine(entry_mode="confirmed")

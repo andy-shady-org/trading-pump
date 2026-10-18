@@ -449,6 +449,30 @@ def build_default_strategy_search_space(
             )
         )
 
+    # 5. Confirmed entries (FEAT-51/52): watch promotion, entry band and the
+    # momentum exits. Only searched when the base config replays that path.
+    if getattr(cfg, "entry_mode", "launch") == "confirmed":
+        for name, low, high, step, fallback in (
+            ("watch_promote_min_sol_growth", 0.0, 10.0, 0.5, 1.5),
+            ("momentum_min_net_inflow_sol", 0.0, 5.0, 0.25, 0.5),
+            ("momentum_min_token_age_seconds", 0.0, 300.0, 10.0, 60.0),
+            ("min_market_cap_sol", 28.0, 60.0, 1.0, 35.0),
+            # Ranges keep the band and ratchet valid for any combination.
+            ("momentum_max_market_cap_sol", 65.0, 85.0, 5.0, 75.0),
+            ("stagnant_min_buy_sol", 0.0, 1.0, 0.05, 0.1),
+            ("breakeven_ratchet_activation_pct", 0.1, 1.0, 0.05, 0.25),
+        ):
+            default = float(getattr(cfg, name, fallback))
+            space.add_parameter(
+                FloatParam(
+                    name=name,
+                    min_val=low,
+                    max_val=high,
+                    step=step,
+                    default=min(high, max(low, default)),
+                )
+            )
+
     return space
 
 

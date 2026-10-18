@@ -106,6 +106,7 @@ from pumpfun_trading.execution.builder import build_execution_client
 from pumpfun_trading.execution.executor import OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool, RpcPoolConfig
+from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.ops.events import (
     DiagnosticEventLogger,
     EventCategory,
@@ -141,6 +142,9 @@ RAW_TOKEN_UNITS_THRESHOLD = 1_000_000_000_000
 # Mints bought before; persisted in the status file and capped so the snapshot
 # stays small (~2k new buys a day in the Stage 0 paper run) (BUG-109).
 TRADED_MINTS_LIMIT = 10_000
+# Curve readings in the 30 s window before a polled pre-graduation entry
+# (FEAT-53); fewer give an acceleration of 0 by construction.
+PRE_GRADUATION_MIN_POLLED_SAMPLES = 4
 
 
 class TradingBot:
@@ -322,6 +326,13 @@ class TradingBot:
             max_retention_seconds=600,
             recent_token_ttl_seconds=self.recent_token_ttl_seconds,
         )
+        self.order_flow_engine.max_watch_mints = int(
+            getattr(self.config, "watch_max_mints", 300) or 300
+        )
+        # Confirmed-entry watch list counters (FEAT-51): watched, promoted, ...
+        self._watch_stats: dict[str, int] = {}
+        # Entry lane per bought mint (momentum / pre_graduation), for sell records.
+        self._entry_lane_by_mint: dict[str, str] = {}
         self.graduation_engine = GraduationEngine(
             target_graduation_sol=85.0,
             candidate_ttl_seconds=1800,
@@ -1304,10 +1315,15 @@ class TradingBot:
         unit_price_sol: float | None = None,
         signature: str | None = None,
         costs: TransactionCosts | None = None,
+        strategy: str | None = None,
+        entry_metrics: dict[str, Any] | None = None,
     ) -> None:
         trade_id = trade_id or self._next_trade_id()
         position_id = position_id or trade_id
         pos_info = self.active_positions.get(mint, {})
+        # Entry lane (FEAT-52): momentum / pre_graduation buys and their sells
+        # are grouped apart from the preset in ``pumpfun-audit pnl``.
+        lane = strategy or pos_info.get("strategy") or self._entry_lanes().get(mint)
         name = (
             token_name
             or mint_name
@@ -1383,8 +1399,10 @@ class TradingBot:
             "timestamp": time.time(),
             "signature": signature,
             "dry_run": bool(self.dry_run),
-            "strategy": getattr(self.config, "strategy_preset", None),
+            "strategy": lane or getattr(self.config, "strategy_preset", None),
         }
+        if entry_metrics:
+            record["entry_metrics"] = dict(entry_metrics)
         # Net of network fee, priority fee, Jito tip and token-account rent (FEAT-49).
         record.update(
             build_pnl_fields(
@@ -1745,6 +1763,7 @@ class TradingBot:
             "traded_mints": dict(self._traded_mints),
             "non_pump_rejections": dict(self._non_pump_rejections),
             "mayhem_rejections": int(getattr(self, "_mayhem_rejections", 0)),
+            "watch_list": self.watch_list_status(),
             "trade_ledger": list(self._trade_ledger),
             "recent_actions": list(self._recent_actions),
             "recent_events": list(self._recent_events),
@@ -1914,7 +1933,29 @@ class TradingBot:
             current_positions=self.active_positions,
         ):
             return False
+        if self._entry_mode() == "confirmed" and not self._entry_cost_share_ok(
+            entry_sol
+        ):
+            return False
         return self._buy_attempts.get(mint, 0) < self.max_buy_attempts_per_mint
+
+    def _entry_cost_share_ok(self, entry_sol: float) -> bool:
+        """Cost guard (FEAT-52): fixed round-trip costs from the same model as
+        paper and replay must stay below ``max_entry_cost_share_pct``."""
+        limit = float(getattr(self.config, "max_entry_cost_share_pct", 0.0) or 0.0)
+        if limit <= 0:
+            return True
+        model = ReplayCostModel.from_env(
+            close_token_account_on_full_exit=bool(
+                getattr(self.config, "close_token_account_on_full_exit", True)
+            )
+        )
+        share = model.round_trip_fixed_costs_sol() / max(float(entry_sol), 1e-9)
+        if share > limit:
+            self._count_watch("cost_guard_refused")
+            self._last_event = f"buy blocked: costs {share:.1%} > {limit:.1%}"
+            return False
+        return True
 
     async def _resolve_token_name(
         self, mint: str, token_name: str | None = None
@@ -1993,6 +2034,8 @@ class TradingBot:
         screening_verdict: TokenScreeningVerdict | None = None,
         reason: str | None = None,
         buy_amount_sol: float | None = None,
+        strategy: str | None = None,
+        entry_metrics: dict[str, Any] | None = None,
     ) -> bool:
         with self._track_operation("buy"):
             return await self._buy_token_impl(
@@ -2002,6 +2045,8 @@ class TradingBot:
                 screening_verdict=screening_verdict,
                 reason=reason,
                 buy_amount_sol=buy_amount_sol,
+                strategy=strategy,
+                entry_metrics=entry_metrics,
             )
 
     async def _buy_token_impl(
@@ -2012,6 +2057,8 @@ class TradingBot:
         screening_verdict: TokenScreeningVerdict | None = None,
         reason: str | None = None,
         buy_amount_sol: float | None = None,
+        strategy: str | None = None,
+        entry_metrics: dict[str, Any] | None = None,
     ) -> bool:
         effective_buy_amount = (
             buy_amount_sol if buy_amount_sol is not None else self.buy_amount_sol
@@ -2130,8 +2177,17 @@ class TradingBot:
             buy_signature=exec_res.signature,
             reason=reason or "entry",
             dry_run=self.dry_run,
-            metadata={"position_id": position_id, "trade_id": trade_id},
+            metadata={
+                "position_id": position_id,
+                "trade_id": trade_id,
+                **({"strategy": strategy} if strategy else {}),
+            },
         )
+        if strategy:
+            lanes = self._entry_lanes()
+            lanes[mint] = strategy
+            while len(lanes) > 1_000:
+                lanes.pop(next(iter(lanes)))
         self.active_positions = self.position_manager.get_all_positions()
         if self.dry_run or self.paper_trade:
             self.wallet_balance_sol = max(
@@ -2156,6 +2212,8 @@ class TradingBot:
             reason=reason or "entry",
             signature=exec_res.signature,
             costs=buy_costs,
+            strategy=strategy,
+            entry_metrics=entry_metrics,
         )
         if self.replay_recorder is not None:
             price = (
@@ -2939,6 +2997,92 @@ class TradingBot:
 
         return False
 
+    async def _maybe_buy_pre_graduation(
+        self, mint: str, market_cap_sol: float, *, now: float, min_samples: int = 0
+    ) -> bool:
+        """Pre-graduation harvesting entry (FEAT-25, FEAT-53).
+
+        Runs from the Geyser curve handler and from the watch-list poller.
+        Returns ``True`` when the candidate was handled (bought, refused or
+        already seen), so the caller must not fall through to a launch buy.
+        """
+        if (
+            not self.config.enable_pre_graduation_harvesting
+            or mint in self.active_positions
+            or self._is_recently_seen(mint)
+        ):
+            return False
+        min_p = (
+            self.config.pre_graduation_entry_progress_pct * 100.0
+            if self.config.pre_graduation_entry_progress_pct <= 1.0
+            else self.config.pre_graduation_entry_progress_pct
+        )
+        max_p = (
+            self.config.pre_graduation_max_entry_progress_pct * 100.0
+            if self.config.pre_graduation_max_entry_progress_pct <= 1.0
+            else self.config.pre_graduation_max_entry_progress_pct
+        )
+        grad_sig = self.graduation_engine.evaluate_pre_graduation_harvesting_entry(
+            mint=mint,
+            min_progress_pct=min_p,
+            max_progress_pct=max_p,
+            min_acceleration=self.config.pre_graduation_min_acceleration,
+            current_time=now,
+            min_samples=min_samples,
+        )
+        if not grad_sig.triggered:
+            return False
+        async with self._trade_lock:
+            if mint in self.active_positions or self._is_recently_seen(mint):
+                return True
+            screening_verdict = await self._enrich_and_screen_token(mint)
+            if not screening_verdict.passed:
+                return True
+            if not self._should_buy(
+                mint, market_cap_sol, screening_verdict=screening_verdict
+            ):
+                if getattr(self.config, "enable_capital_rotation", True):
+                    await self._evaluate_and_trigger_displacement(
+                        candidate_mint=mint,
+                        market_cap_sol=market_cap_sol,
+                        conviction_percentile=0.98,
+                        screening_verdict=screening_verdict,
+                    )
+                return True
+            self._log(
+                f"Pre-graduation harvesting entry triggered for {mint}: {grad_sig.reason}"
+            )
+            self._last_event = f"pre-grad entry {mint[:8]}"
+            bought = await self._buy_token(
+                mint,
+                market_cap_sol,
+                None,
+                screening_verdict=screening_verdict,
+                reason="pre_graduation_harvesting_entry",
+                strategy="pre_graduation",
+                entry_metrics={
+                    "curve_progress_pct": (
+                        grad_sig.trajectory.progress_pct
+                        if grad_sig.trajectory
+                        else None
+                    ),
+                    "acceleration_sol_per_sec2": (
+                        round(grad_sig.trajectory.acceleration_sol_per_sec2, 6)
+                        if grad_sig.trajectory
+                        else None
+                    ),
+                    "real_sol_reserves": round(grad_sig.real_sol_reserves, 4),
+                    "market_cap_sol": round(market_cap_sol, 4),
+                },
+            )
+            if bought:
+                self._record_event(f"bought pre-graduation {mint[:8]}")
+                watched = self.order_flow_engine.unwatch(mint)
+                if watched is None or not watched.subscribed:
+                    await self._subscribe_to_token_trades(None, mint)
+                return True
+        return False
+
     async def _handle_bonding_curve_state_update(
         self, update: BondingCurveStateUpdate
     ) -> None:
@@ -3005,66 +3149,10 @@ class TradingBot:
                 return
 
             # Pre-graduation acceleration harvesting evaluation (FEAT-25)
-            if (
-                self.config.enable_pre_graduation_harvesting
-                and mint not in self.active_positions
-                and not self._is_recently_seen(mint)
+            if await self._maybe_buy_pre_graduation(
+                mint, current_market_cap, now=update.timestamp
             ):
-                min_p = (
-                    self.config.pre_graduation_entry_progress_pct * 100.0
-                    if self.config.pre_graduation_entry_progress_pct <= 1.0
-                    else self.config.pre_graduation_entry_progress_pct
-                )
-                max_p = (
-                    self.config.pre_graduation_max_entry_progress_pct * 100.0
-                    if self.config.pre_graduation_max_entry_progress_pct <= 1.0
-                    else self.config.pre_graduation_max_entry_progress_pct
-                )
-                grad_sig = (
-                    self.graduation_engine.evaluate_pre_graduation_harvesting_entry(
-                        mint=mint,
-                        min_progress_pct=min_p,
-                        max_progress_pct=max_p,
-                        min_acceleration=self.config.pre_graduation_min_acceleration,
-                        current_time=update.timestamp,
-                    )
-                )
-                if grad_sig.triggered:
-                    async with self._trade_lock:
-                        if mint in self.active_positions or self._is_recently_seen(
-                            mint
-                        ):
-                            return
-                        screening_verdict = await self._enrich_and_screen_token(mint)
-                        if not screening_verdict.passed:
-                            return
-                        if not self._should_buy(
-                            mint,
-                            current_market_cap,
-                            screening_verdict=screening_verdict,
-                        ):
-                            if getattr(self.config, "enable_capital_rotation", True):
-                                await self._evaluate_and_trigger_displacement(
-                                    candidate_mint=mint,
-                                    market_cap_sol=current_market_cap,
-                                    conviction_percentile=0.98,
-                                    screening_verdict=screening_verdict,
-                                )
-                            return
-                        self._log(
-                            f"Pre-graduation harvesting entry triggered for {mint}: {grad_sig.reason}"
-                        )
-                        self._last_event = f"pre-grad entry {mint[:8]}"
-                        bought = await self._buy_token(
-                            mint,
-                            current_market_cap,
-                            None,
-                            screening_verdict=screening_verdict,
-                            reason="pre_graduation_harvesting_entry",
-                        )
-                        if bought:
-                            self._record_event(f"bought pre-graduation {mint[:8]}")
-                            return
+                return
 
             async with self._trade_lock:
                 if self._is_recently_seen(mint):
@@ -3678,11 +3766,16 @@ class TradingBot:
                 )
             return
 
+        confirmed = self._entry_mode() == "confirmed"
         async with self._trade_lock:
             if mint in self.active_positions or self._is_recently_seen(mint):
                 return
 
-            if not self._should_buy(mint, current_market_cap):
+            if confirmed:
+                # Watch instead of buy: entry gates run again at confirmation.
+                if not self._may_watch(mint):
+                    return
+            elif not self._should_buy(mint, current_market_cap):
                 return
 
             screening_verdict = await self._enrich_and_screen_token(
@@ -3705,6 +3798,10 @@ class TradingBot:
                     f"screen_rejected {mint[:8]}: {reasons_str}",
                     alert=False,
                 )
+                return
+
+            if confirmed:
+                self._watch_token(mint, data, current_market_cap, screening_verdict)
                 return
 
             bought = await self._buy_token(
@@ -3816,6 +3913,16 @@ class TradingBot:
                     "signal": "buy" if is_buy else "sell",
                 }
             )
+
+        if mint in self.active_positions:
+            self._note_follow_on_buy(mint, is_buy, sol_amount, user, ts)
+        elif self._entry_mode() == "confirmed":
+            entry = self.order_flow_engine.get_watch(mint)
+            if entry is not None and entry.subscribed:
+                await self._maybe_buy_confirmed_momentum(
+                    mint, current_market_cap, token_name, now=ts
+                )
+                return
 
         if mint in self.active_positions:
             if not self.dry_run or current_market_cap <= 0.0:
@@ -4046,6 +4153,248 @@ class TradingBot:
                     pass
         await self.event_router.route_ws_message(data, websocket)
 
+    # -- Confirmed entries: watch list and batch curve poller (FEAT-51) --------
+
+    def _entry_mode(self) -> str:
+        return str(getattr(self.config, "entry_mode", "launch") or "launch").lower()
+
+    def _count_watch(self, key: str, amount: int = 1) -> None:
+        stats = getattr(self, "_watch_stats", None)
+        if stats is None:
+            stats = self._watch_stats = {}
+        stats[key] = stats.get(key, 0) + amount
+
+    def _may_watch(self, mint: str) -> bool:
+        """Cheap gates before screening a launch for the watch list."""
+        if self.buying_paused or self._is_closed_reentry(mint):
+            return False
+        return not self.order_flow_engine.is_watched(mint)
+
+    def _watch_token(
+        self,
+        mint: str,
+        data: dict[str, Any],
+        market_cap_sol: float,
+        verdict: TokenScreeningVerdict,
+    ) -> None:
+        """Put a screened launch on the watch list instead of buying it."""
+        v_sol = float(data.get("vSolInBondingCurve", 0.0) or 0.0)
+        if v_sol > 1_000_000:
+            v_sol /= 1_000_000_000.0
+        now = time.time()
+        created_at = float(data.get("timestamp") or now)
+        if created_at > 1e12:  # milliseconds
+            created_at /= 1000.0
+        self.order_flow_engine.watch(
+            mint,
+            created_at=created_at,
+            creator=str(data.get("traderPublicKey") or "") or None,
+            verdict=verdict,
+            now=now,
+            real_sol=max(0.0, v_sol - 30.0) if v_sol > 0 else None,
+            market_cap_sol=market_cap_sol,
+        )
+        self._count_watch("watched")
+        self._last_event = f"watching {mint[:8]}"
+
+    def _entry_lanes(self) -> dict[str, str]:
+        lanes: dict[str, str] | None = getattr(self, "_entry_lane_by_mint", None)
+        if lanes is None:
+            lanes = self._entry_lane_by_mint = {}
+        return lanes
+
+    def _own_wallet(self) -> str:
+        try:
+            return str(self.execution.get_wallet_pubkey())
+        except Exception:
+            return ""
+
+    def _note_follow_on_buy(
+        self, mint: str, is_buy: bool, sol_amount: float, user: str, ts: float
+    ) -> None:
+        """Remember the last buy by another wallet big enough to count as demand
+        for the buy-flow stagnation exit (FEAT-52)."""
+        if not is_buy or sol_amount < float(self.config.stagnant_min_buy_sol):
+            return
+        if user and user == self._own_wallet():
+            return
+        position = self.active_positions.get(mint)
+        if position is not None:
+            position["last_qualifying_buy_at"] = float(ts)
+
+    async def _maybe_buy_confirmed_momentum(
+        self,
+        mint: str,
+        market_cap_sol: float,
+        token_name: str | None,
+        *,
+        now: float,
+    ) -> bool:
+        """Buy a promoted watched mint once its order flow confirms demand."""
+        engine = self.order_flow_engine
+        entry = engine.get_watch(mint)
+        if entry is None:
+            return False
+        if market_cap_sol <= 0.0:
+            market_cap_sol = entry.market_cap_sol
+        exclude = frozenset(u for u in (entry.creator, self._own_wallet()) if u)
+        signal = self.strategy.evaluate_momentum(
+            engine,
+            mint,
+            token_creation_timestamp=entry.created_at,
+            current_time=now,
+            exclude_users=exclude,
+        )
+        age = max(0.0, now - entry.created_at)
+        if not self.strategy.should_buy_momentum(
+            momentum_signal=signal,
+            active_positions=len(self.active_positions),
+            buy_attempts=self._buy_attempts.get(mint, 0),
+            token_age_seconds=age,
+            market_cap_sol=market_cap_sol,
+        ):
+            return False
+        metrics = {
+            "unique_buyers": signal.unique_buyers,
+            "net_inflow_sol": signal.net_sol_inflow,
+            "buy_sell_ratio": signal.buy_sell_ratio,
+            "z_score": signal.z_score,
+            "token_age_seconds": round(age, 1),
+            "market_cap_sol": round(market_cap_sol, 4),
+            "sol_growth": round(entry.sol_growth, 6),
+        }
+        async with self._trade_lock:
+            if mint in self.active_positions or not engine.is_watched(mint):
+                return False
+            self._count_watch("confirmed")
+            bought = await self._buy_token(
+                mint,
+                market_cap_sol,
+                token_name=token_name,
+                screening_verdict=entry.screening_verdict,
+                reason="momentum_confirmed",
+                strategy="momentum",
+                entry_metrics=metrics,
+            )
+            if bought:
+                # Keep the trade subscription: the position needs it now.
+                engine.unwatch(mint)
+                self._count_watch("bought")
+            return bought
+
+    def watch_list_status(self) -> dict[str, Any]:
+        """Watch list size, subscriptions and counters for status and dashboard."""
+        engine = self.order_flow_engine
+        return {
+            "entry_mode": self._entry_mode(),
+            "watched": engine.watch_count,
+            "subscribed": engine.watch_subscribed_count,
+            "max_mints": int(getattr(self.config, "watch_max_mints", 300)),
+            "subscription_budget": int(
+                getattr(self.config, "watch_max_trade_subscriptions", 20)
+            ),
+            "stats": dict(getattr(self, "_watch_stats", {}) or {}),
+        }
+
+    async def _run_watch_poll_loop(self) -> None:
+        """Batch-polls watched curves in its own task (confirmed mode only)."""
+        if self._entry_mode() != "confirmed":
+            return
+        interval = max(0.1, float(self.config.watch_poll_interval_seconds))
+        while not self._stop_requested:
+            try:
+                await asyncio.sleep(interval)
+                await self._poll_watch_list()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._log(f"Watch poll exception: {exc}", level=logging.DEBUG)
+
+    async def _poll_watch_list(self) -> None:
+        """One poll: expire, read curves, feed the engines, drop bad curves, promote."""
+        engine = self.order_flow_engine
+        now = time.time()
+        engine.expire_watch(ttl=float(self.config.watch_ttl_seconds), now=now)
+        mints = engine.watched_mints()
+        rejected: dict[str, str] = {}
+        if mints:
+            try:
+                states = await asyncio.wait_for(
+                    self.execution.get_bonding_curve_states(mints, rejected=rejected),
+                    timeout=10.0,
+                )
+            except Exception as exc:
+                # Keep polling; the RPC degradation alert covers long outages.
+                self._count_watch("poll_errors")
+                if getattr(self, "event_logger", None) is not None:
+                    self.event_logger.emit(
+                        category=EventCategory.STRATEGY,
+                        severity=EventSeverity.WARNING,
+                        event_name="watch_poll_failed",
+                        data={"mints": len(mints), "error": str(exc)[:200]},
+                    )
+                states = {}
+                rejected = {}
+            skip_mayhem = bool(getattr(self.config, "skip_mayhem_mode", True))
+            for mint, state in states.items():
+                if skip_mayhem and state.get("is_mayhem_mode"):
+                    rejected[mint] = "mayhem"
+                    continue
+                if state.get("complete"):
+                    rejected[mint] = "complete"
+                    continue
+                v_sol = int(state.get("virtual_sol_reserves", 0) or 0) / 1e9
+                v_tok = int(state.get("virtual_token_reserves", 0) or 0) / 1e6
+                real_sol = int(state.get("real_sol_reserves", 0) or 0) / 1e9
+                market_cap = v_sol * (1_000_000_000.0 / v_tok) if v_tok > 0 else 0.0
+                self.graduation_engine.update_bonding_curve(
+                    mint=mint,
+                    bonding_curve="",
+                    real_sol_reserves=real_sol,
+                    virtual_sol_reserves=v_sol,
+                    market_cap_sol=market_cap,
+                    timestamp=now,
+                )
+                engine.update_watch_curve(
+                    mint, real_sol=real_sol, market_cap_sol=market_cap, now=now
+                )
+                if self.config.enable_pre_graduation_harvesting:
+                    # Pre-graduation lane on polled curves (FEAT-53): needs a
+                    # few readings before acceleration means anything.
+                    await self._maybe_buy_pre_graduation(
+                        mint,
+                        market_cap,
+                        now=now,
+                        min_samples=PRE_GRADUATION_MIN_POLLED_SAMPLES,
+                    )
+            grace = max(10.0, 3 * float(self.config.watch_poll_interval_seconds))
+            for mint, reason in rejected.items():
+                entry = engine.get_watch(mint)
+                if reason == "missing" and entry and now - entry.watched_at < grace:
+                    continue  # load-balanced RPCs lag on brand-new accounts
+                self._count_watch(f"dropped_{reason}")
+                engine.unwatch(mint)
+                if entry is not None and entry.subscribed:
+                    await self._unsubscribe_from_token_trades(None, mint)
+        for evicted in engine.drain_watch_evictions():
+            self._count_watch("expired")
+            if evicted.subscribed and evicted.mint not in self.active_positions:
+                await self._unsubscribe_from_token_trades(None, evicted.mint)
+        await self._promote_watched_mints()
+
+    async def _promote_watched_mints(self) -> None:
+        """Subscribe growing watched mints to the billed trade feed, within budget."""
+        if self._active_ws is None or not self.trade_feed_available():
+            return  # breaker open: keep polling, promote once trades flow again
+        engine = self.order_flow_engine
+        for mint in engine.promotable(
+            min_sol_growth=float(self.config.watch_promote_min_sol_growth),
+            budget=int(self.config.watch_max_trade_subscriptions),
+        ):
+            await self._subscribe_to_token_trades(None, mint)
+            engine.mark_watch_subscribed(mint)
+            self._count_watch("promoted")
+
     async def _subscribe_to_token_trades(
         self, websocket: Any = None, mint: str = ""
     ) -> None:
@@ -4146,6 +4495,10 @@ class TradingBot:
                         # Resubscribe to active holding tokens if any
                         for mint in list(self.active_positions.keys()):
                             await self._subscribe_to_token_trades(ws, mint)
+                        for mint in self.order_flow_engine.watched_mints():
+                            entry = self.order_flow_engine.get_watch(mint)
+                            if entry is not None and entry.subscribed:
+                                await self._subscribe_to_token_trades(ws, mint)
                         if self.trade_feed_breaker.is_open:
                             # Probe on the first health pass after reconnecting.
                             self.trade_feed_breaker.next_probe_at = 0.0
@@ -4234,6 +4587,23 @@ class TradingBot:
                             mc = (vs / 1_000_000_000.0) * (
                                 1_000_000_000.0 / (vt / 1_000_000.0)
                             )
+                    if self._entry_mode() == "confirmed" and mc > 0.0:
+                        # Keep curve progress fresh for held mints so the
+                        # pre-graduation tranches sell before migration (FEAT-53).
+                        self.graduation_engine.update_bonding_curve(
+                            mint=mint,
+                            bonding_curve="",
+                            real_sol_reserves=int(
+                                curve.get("real_sol_reserves", 0) or 0
+                            )
+                            / 1_000_000_000.0,
+                            virtual_sol_reserves=int(
+                                curve.get("virtual_sol_reserves", 0) or 0
+                            )
+                            / 1_000_000_000.0,
+                            market_cap_sol=mc,
+                            complete=bool(curve.get("complete", False)),
+                        )
                 if mc > 0.0:
                     await self._evaluate_and_execute_exit(mint, mc)
                 else:
@@ -4573,6 +4943,7 @@ class TradingBot:
 
         health_task = asyncio.create_task(self._run_health_loop())
         refresh_task = asyncio.create_task(self._run_position_refresh_loop())
+        watch_task = asyncio.create_task(self._run_watch_poll_loop())
         render_task = None
         if self.verbose and not self.headless:
             render_task = asyncio.create_task(self._render_loop())
@@ -4663,6 +5034,7 @@ class TradingBot:
         finally:
             health_task.cancel()
             refresh_task.cancel()
+            watch_task.cancel()
             if render_task:
                 render_task.cancel()
             if self.geyser_client and hasattr(self.geyser_client, "stop"):

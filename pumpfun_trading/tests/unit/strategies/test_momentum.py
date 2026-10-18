@@ -8,6 +8,7 @@ from pumpfun_trading.strategies.momentum import (
     OrderFlowEngine,
     TokenOrderFlowTracker,
     TradeRecord,
+    WatchEntry,
     WindowMetrics,
 )
 
@@ -394,3 +395,103 @@ def test_order_flow_and_graduation_engines_are_bounded():
     grad.update_bonding_curve("c", "c3", 1.0, 31.0, 30.0, timestamp=2.0)
     assert grad.tracked_candidate_count == 2
     assert grad.get_candidate("a") is None
+
+
+# --- FEAT-51: watch list for confirmed entries ---------------------------------------
+
+
+def test_watch_entry_growth_and_dict() -> None:
+    entry = WatchEntry(mint="M", created_at=1.0, watched_at=2.0)
+    assert entry.sol_growth == 0.0
+    entry.start_real_sol, entry.last_real_sol = 0.5, 2.25
+    assert entry.sol_growth == pytest.approx(1.75)
+    data = entry.to_dict()
+    assert data["sol_growth"] == pytest.approx(1.75)
+    assert data["subscribed"] is False
+
+
+def test_watch_is_idempotent_and_measures_growth_from_first_reading() -> None:
+    engine = OrderFlowEngine()
+    first = engine.watch("A", created_at=100.0, creator="Dev", now=100.0)
+    assert engine.watch("A", created_at=999.0, now=200.0) is first
+    assert engine.is_watched("A") and engine.watch_count == 1
+    assert engine.get_watch("A") is first
+
+    engine.update_watch_curve("A", real_sol=0.4, market_cap_sol=29.0, now=102.0)
+    engine.update_watch_curve("A", real_sol=2.4, market_cap_sol=33.0, now=104.0)
+
+    assert first.start_real_sol == 0.4
+    assert first.sol_growth == pytest.approx(2.0)
+    assert first.market_cap_sol == 33.0 and first.last_polled_at == 104.0
+    assert engine.update_watch_curve("unknown", real_sol=1, market_cap_sol=1) is None
+
+
+def test_promotable_respects_growth_threshold_and_subscription_budget() -> None:
+    engine = OrderFlowEngine()
+    for mint, growth in (("slow", 0.5), ("fast", 4.0), ("mid", 2.0), ("new", 0.0)):
+        engine.watch(mint, created_at=0.0, now=0.0, real_sol=0.0)
+        engine.update_watch_curve(mint, real_sol=growth, market_cap_sol=30.0)
+    engine.watch("unpolled", created_at=0.0, now=0.0)
+
+    assert engine.promotable(min_sol_growth=1.5, budget=5) == ["fast", "mid"]
+    assert engine.promotable(min_sol_growth=1.5, budget=1) == ["fast"]
+
+    engine.mark_watch_subscribed("fast")
+    engine.mark_watch_subscribed("missing")  # ignored
+    assert engine.watch_subscribed_count == 1
+    assert engine.promotable(min_sol_growth=1.5, budget=1) == []
+    assert engine.promotable(min_sol_growth=1.5, budget=2) == ["mid"]
+
+
+def test_watch_list_full_evicts_oldest_unsubscribed_first() -> None:
+    engine = OrderFlowEngine()
+    engine.max_watch_mints = 2
+    engine.watch("old", created_at=0.0, now=1.0)
+    engine.watch("older_sub", created_at=0.0, now=0.5)
+    engine.mark_watch_subscribed("old")
+
+    engine.watch("new", created_at=0.0, now=2.0)
+
+    assert engine.watched_mints() == ["old", "new"]
+    assert [e.mint for e in engine.drain_watch_evictions()] == ["older_sub"]
+    assert engine.drain_watch_evictions() == []
+
+    engine.mark_watch_subscribed("new")
+    engine.watch("newest", created_at=0.0, now=3.0)  # all subscribed: oldest goes
+    assert engine.watched_mints() == ["new", "newest"]
+    assert [e.mint for e in engine.drain_watch_evictions()] == ["old"]
+
+
+def test_expire_and_unwatch() -> None:
+    engine = OrderFlowEngine()
+    engine.watch("stale_sub", created_at=0.0, now=0.0)
+    engine.watch("stale", created_at=0.0, now=1.0)
+    engine.watch("fresh", created_at=0.0, now=500.0)
+    engine.mark_watch_subscribed("stale_sub")
+
+    assert engine.expire_watch(ttl=300.0, now=600.0) == ["stale_sub", "stale"]
+    assert [e.mint for e in engine.drain_watch_evictions()] == ["stale_sub"]
+    assert engine.watched_mints() == ["fresh"]
+    assert engine.unwatch("fresh") is not None
+    assert engine.unwatch("fresh") is None
+    assert engine.watch_count == 0
+
+
+def test_momentum_metrics_exclude_creator_and_own_wallet() -> None:
+    engine = OrderFlowEngine()
+    for user in ("Dev", "Bot", "A", "B"):
+        engine.record_trade("M", True, 1.0, user, timestamp=100.0)
+
+    signal = engine.evaluate_momentum_signal(
+        "M",
+        min_unique_buyers=3,
+        min_z_score=0.0,
+        min_buy_ratio=0.0,
+        min_net_inflow_sol=0.0,
+        current_time=101.0,
+        exclude_users=frozenset({"Dev", "Bot"}),
+    )
+
+    assert signal.unique_buyers == 2
+    assert signal.net_sol_inflow == pytest.approx(2.0)
+    assert signal.triggered is False

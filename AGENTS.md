@@ -64,6 +64,8 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[SECURITY] Secrets Are Not Part Of A URL:** the dashboard printed `stream_url` with the PumpPortal `?api-key=` in it (BUG-118). Keep provider keys in their own env variable (`PUMPFUN_STREAM_API_KEY`), keep displayed/stored URLs key-free, join the key only at connect time, and pass any URL a UI renders through `redact_url`.
 
 - **[STREAMS] Unsubscribe Where Positions Close:** exits ran from six call sites and only one passed the websocket, so 538 exited mints kept streaming billed trade messages (BUG-120). Put per-position cleanup in the one function every exit goes through (`_sell_token`), never at the call sites. Net PnL means every record: a check that sums only sells drops the buy-side costs (BUG-119).
+- **[ENTRY] Demand Before Entry:** buying at the create event lost −0.579 SOL over 1,675 positions (10.3% won) because most launches get no follow-on buyers; exits can't fix that. Never buy a launch without evidence of follow-on demand (`entry_mode: "confirmed"`: watch → RPC curve poll → trade subscription → confirm); `"launch"` stays the default only for back-compat. See `docs/dev/STRATEGY-PIVOT.md`.
+- **[CONFIG] Check Limits Against Size:** the first `momentum` preset replay bought nothing: one 0.02 SOL position was 40% of the 0.05 SOL exposure cap, above the inherited 25% `max_token_concentration_pct`. When a preset changes `buy_amount_sol` or exposure, check every inherited risk cap still admits one position, and read `entry_rejections` before tuning signals on a zero-trade replay.
 
 ## Project Overview
 
@@ -135,6 +137,7 @@ Internal engineering documentation for maintainers, contributors, and SRE:
 * [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Candidate architectural proposals, alpha enhancement ideas, and unscheduled feature backlog.
 * [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook: runtime layout, paper pilot, incident drills, wallet reconciliation, operator pause, unattended alerts, profit sweep, supervised deployment, incident response and rollback.
 * [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Per-release checklist, staged live capital gate (paper → canary → scale-up), hosted security gate, and versioning policy.
+* [**`docs/dev/STRATEGY-PIVOT.md`**](docs/dev/STRATEGY-PIVOT.md): v0.3.0 strategy pivot (confirmed momentum + pre-graduation), evidence, cost model, Phase 4c sprints 24E–24H and go/no-go rules.
 
 ---
 

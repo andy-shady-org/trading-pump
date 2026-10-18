@@ -55,7 +55,7 @@ def build_parser(
     )
     parser.add_argument(
         "--preset",
-        choices=["conservative", "balanced", "aggressive"],
+        choices=["conservative", "balanced", "aggressive", "momentum"],
         default=None,
         help="Trading strategy preset",
     )

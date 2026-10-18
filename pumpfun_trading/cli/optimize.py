@@ -109,7 +109,7 @@ def build_parser(
         "--preset",
         "--export-preset",
         dest="preset",
-        choices=["conservative", "balanced", "aggressive"],
+        choices=["conservative", "balanced", "aggressive", "momentum"],
         default=None,
         help="Baseline strategy preset to use as starting defaults",
     )

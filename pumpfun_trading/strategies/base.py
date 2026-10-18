@@ -89,6 +89,17 @@ class TradingBotConfig:
     # then drift off the standard 30 SOL invariant (stream and curve flag).
     skip_mayhem_mode: bool = True
     screening_cache_ttl_seconds: int = 60
+    # Entry pipeline (Phase 4c, FEAT-51): "launch" buys at the create event;
+    # "confirmed" watches screened launches, polls their curves over RPC and
+    # subscribes to trades only for mints whose curve grows.
+    entry_mode: str = "launch"
+    watch_ttl_seconds: float = 600.0
+    watch_max_mints: int = 300
+    watch_poll_interval_seconds: float = 2.0
+    # Real SOL reserve growth (SOL) since a mint was watched before it gets a
+    # billed trade subscription.
+    watch_promote_min_sol_growth: float = 1.5
+    watch_max_trade_subscriptions: int = 20
     enable_momentum_signals: bool = True
     momentum_window_seconds: int = 30
     momentum_min_buy_ratio: float = 3.0
@@ -97,6 +108,19 @@ class TradingBotConfig:
     momentum_min_net_inflow_sol: float = 0.5
     momentum_baseline_window_seconds: int = 300
     momentum_max_token_age_seconds: int = 1800
+    # Confirmed momentum entries (FEAT-52): token-age floor and market-cap
+    # ceiling of the entry band (``min_market_cap_sol`` is the floor).
+    momentum_min_token_age_seconds: float = 60.0
+    momentum_max_market_cap_sol: float = 75.0
+    # Exits for confirmed entries: full exit without a buy of at least this size
+    # within ``stagnant_timeout_seconds``; break-even floor once the gain
+    # reached the activation level.
+    stagnant_min_buy_sol: float = 0.1
+    breakeven_ratchet_activation_pct: float = 0.25
+    breakeven_buffer_pct: float = 0.05
+    # Refuse a buy whose modelled fixed round-trip costs (network fees, tip,
+    # unrefunded rent) exceed this share of the position (0 = off).
+    max_entry_cost_share_pct: float = 0.10
     enable_raydium_migration_sniping: bool = True
     raydium_pre_migration_sol_threshold: float = 80.0
     raydium_buy_amount_sol: float = 0.02
@@ -255,6 +279,12 @@ class TradingBotConfig:
             "trade_feed_probe_seconds": self.trade_feed_probe_seconds,
             "skip_mayhem_mode": self.skip_mayhem_mode,
             "screening_cache_ttl_seconds": self.screening_cache_ttl_seconds,
+            "entry_mode": self.entry_mode,
+            "watch_ttl_seconds": self.watch_ttl_seconds,
+            "watch_max_mints": self.watch_max_mints,
+            "watch_poll_interval_seconds": self.watch_poll_interval_seconds,
+            "watch_promote_min_sol_growth": self.watch_promote_min_sol_growth,
+            "watch_max_trade_subscriptions": self.watch_max_trade_subscriptions,
             "enable_momentum_signals": self.enable_momentum_signals,
             "momentum_window_seconds": self.momentum_window_seconds,
             "momentum_min_buy_ratio": self.momentum_min_buy_ratio,
@@ -263,6 +293,12 @@ class TradingBotConfig:
             "momentum_min_net_inflow_sol": self.momentum_min_net_inflow_sol,
             "momentum_baseline_window_seconds": self.momentum_baseline_window_seconds,
             "momentum_max_token_age_seconds": self.momentum_max_token_age_seconds,
+            "momentum_min_token_age_seconds": self.momentum_min_token_age_seconds,
+            "momentum_max_market_cap_sol": self.momentum_max_market_cap_sol,
+            "stagnant_min_buy_sol": self.stagnant_min_buy_sol,
+            "breakeven_ratchet_activation_pct": self.breakeven_ratchet_activation_pct,
+            "breakeven_buffer_pct": self.breakeven_buffer_pct,
+            "max_entry_cost_share_pct": self.max_entry_cost_share_pct,
             "enable_raydium_migration_sniping": self.enable_raydium_migration_sniping,
             "raydium_pre_migration_sol_threshold": self.raydium_pre_migration_sol_threshold,
             "raydium_buy_amount_sol": self.raydium_buy_amount_sol,

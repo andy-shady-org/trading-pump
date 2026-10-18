@@ -18,6 +18,7 @@ For user-facing manuals, trading strategy mathematics, and hosted web instance g
 | [**Proposed Features & Roadmap (`PROPOSED-FEATURES.md`)**](PROPOSED-FEATURES.md) | Quant Traders / Architects | Candidate feature proposals, alpha generation strategies, and next-generation architectural enhancements under evaluation. |
 | [**Operations Runbook (`RUNBOOK.md`)**](RUNBOOK.md) | SRE / Bot Operators | Runtime layout, preflight, startup/shutdown, paper pilot procedure, incident drills, daily wallet reconciliation, incident response and rollback. |
 | [**Release Gate & Live Capital Gate (`RELEASE-GATE.md`)**](RELEASE-GATE.md) | Release Managers / Operators | Per-release checklist, staged live capital gate (paper pilot → canary → scale-up), hosted security gate, release record template and versioning policy. |
+| [**Strategy Pivot (`STRATEGY-PIVOT.md`)**](STRATEGY-PIVOT.md) | Maintainers / Operators | Why launch sniping loses, the confirmed-momentum and pre-graduation strategy, cost model, Phase 4c sprints and go/no-go rules for v0.3.0. |
 | [**Stage 0 Pilot Log – v0.2.1 (`releases/v0.2.1-stage0.md`)**](releases/v0.2.1-stage0.md) | Bot Operators / Quant Traders | v0.2.1 paper pilot: pre-start checks, checkpoint 0 and the close-out (closed as FAIL after the breaker tripped; BUG-112…115). |
 | [**Stage 0 Pilot Log – v0.2.0 (`releases/v0.2.0-stage0.md`)**](releases/v0.2.0-stage0.md) | Bot Operators / Quant Traders | Checkpoint results of the v0.2.0 paper pilot: operations, screening, PnL, exit-criteria status and decision (could not pass: BUG-104). |
 

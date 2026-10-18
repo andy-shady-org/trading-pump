@@ -4,6 +4,22 @@ This document details the quantitative models, mathematical formulations, financ
 
 ---
 
+## Strategy Pivot (v0.3.0)
+
+Measured results show that **buying at the create event loses money**: the v0.2.3 24 h capture lost −0.579 SOL net over 1,675 positions (10.3% profitable) and the v0.2.1 Stage 0 paper pilot failed after 34 positions. The losses come from tokens nobody else buys after launch, which no exit rule can rescue.
+
+From v0.3.0 the recommended entry is `entry_mode: "confirmed"` (the `momentum` preset):
+
+1. **Watch, don't buy.** Screened launches go onto a bounded watch list.
+2. **Poll cheaply.** Watched curves are batch-read over RPC (`getMultipleAccounts`); only mints whose curve grows get a billed PumpPortal trade subscription.
+3. **Confirm, then buy.** A buy needs a token-age window, a market-cap band, distinct non-creator buyers, net inflow and a buy-ratio / z-score signal from `OrderFlowEngine` (§8), plus the normal risk pipeline and a cost-share guard.
+4. **Exit for momentum.** No qualifying buy within the stagnation timeout → full exit; a break-even ratchet protects winners.
+5. **Second lane.** Pre-graduation harvesting (§14) runs from the same poller, off in the canary until proven in a 72 h paper pilot.
+
+The default stays `entry_mode: "launch"` (the original snipe pipeline) so existing configs behave as before. Evidence, cost model, sprint plan and go/no-go rules: [`docs/dev/STRATEGY-PIVOT.md`](dev/STRATEGY-PIVOT.md). Profitability is not assumed: thresholds are chosen on one capture and must stay net positive on a second, unseen one before Stage 0.
+
+---
+
 ## Table of Contents
 
 1. [Financial Objective & Mathematical Expectancy](#1-financial-objective--mathematical-expectancy)

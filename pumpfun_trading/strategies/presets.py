@@ -349,6 +349,62 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
+# Confirmed momentum (Phase 4c, FEAT-52): the conservative screen and limits,
+# but no buy at the create event. Thresholds are starting points; the canary
+# only uses values that were net positive in replay on an unseen capture
+# (docs/dev/STRATEGY-PIVOT.md).
+DEFAULT_PRESETS["momentum"] = {
+    **DEFAULT_PRESETS["conservative"],
+    "entry_mode": "confirmed",
+    "buy_amount_sol": 0.02,
+    "max_position_size_sol": 0.02,
+    "max_active_positions": 2,
+    "max_total_exposure_sol": 0.05,
+    # One 0.02 SOL position is 40% of the 0.05 SOL cap; the conservative 25%
+    # would refuse every buy.
+    "max_token_concentration_pct": 0.5,
+    "max_loss_per_trade_sol": 0.02,
+    "min_market_cap_sol": 35.0,
+    "momentum_max_market_cap_sol": 75.0,
+    # Picked on the first half of the v0.2.3 capture, positive on the held-out
+    # half (STRATEGY-PIVOT.md 6.1). The z-score is off: tokens this young have
+    # no 300 s baseline.
+    "momentum_min_token_age_seconds": 20.0,
+    "momentum_max_token_age_seconds": 600,
+    "momentum_window_seconds": 30,
+    "momentum_min_buy_ratio": 1.5,
+    "momentum_min_z_score": 0.0,
+    "momentum_min_unique_buyers": 3,
+    "momentum_min_net_inflow_sol": 0.5,
+    "watch_ttl_seconds": 600.0,
+    "watch_max_mints": 300,
+    "watch_poll_interval_seconds": 2.0,
+    "watch_promote_min_sol_growth": 3.0,
+    "watch_max_trade_subscriptions": 20,
+    "stagnant_timeout_seconds": 35.0,
+    "stagnant_min_buy_sol": 0.1,
+    "breakeven_ratchet_activation_pct": 0.25,
+    "breakeven_buffer_pct": 0.05,
+    "max_entry_cost_share_pct": 0.10,
+    "stop_loss": 0.85,
+    "take_profit": 3.0,
+    "tier_1_take_profit": 1.5,
+    "tier_1_sell_fraction": 0.50,
+    "tier_2_take_profit": 2.0,
+    "tier_2_sell_fraction": 0.30,
+    "moonbag_trailing_floor": 1.4,
+    "trailing_stop_activation_pct": 0.25,
+    "trailing_stop_drop_pct": 0.12,
+    "max_hold_time_seconds": 600.0,
+    # Off until a 72 h paper pilot shows them positive (RELEASE-GATE.md 3.5).
+    "enable_pre_graduation_harvesting": False,
+    "enable_raydium_migration_sniping": False,
+    "enable_copy_trading": False,
+    "enable_cross_venue_arbitrage": False,
+    "enable_mempool_backrunning": False,
+    "enable_capital_rotation": False,
+}
+
 
 CONFIG_ALIASES: dict[str, str] = {
     # Stagnation exit timeouts
@@ -503,6 +559,16 @@ def resolve_strategy_config(
         ),
         skip_mayhem_mode=bool(base.get("skip_mayhem_mode", True)),
         screening_cache_ttl_seconds=int(base.get("screening_cache_ttl_seconds", 60)),
+        entry_mode=str(base.get("entry_mode", "launch")).strip().lower(),
+        watch_ttl_seconds=float(base.get("watch_ttl_seconds", 600.0)),
+        watch_max_mints=int(base.get("watch_max_mints", 300)),
+        watch_poll_interval_seconds=float(base.get("watch_poll_interval_seconds", 2.0)),
+        watch_promote_min_sol_growth=float(
+            base.get("watch_promote_min_sol_growth", 1.5)
+        ),
+        watch_max_trade_subscriptions=int(
+            base.get("watch_max_trade_subscriptions", 20)
+        ),
         enable_momentum_signals=bool(base.get("enable_momentum_signals", True)),
         momentum_window_seconds=int(base.get("momentum_window_seconds", 30)),
         momentum_min_buy_ratio=float(base.get("momentum_min_buy_ratio", 3.0)),
@@ -514,6 +580,20 @@ def resolve_strategy_config(
         ),
         momentum_max_token_age_seconds=int(
             base.get("momentum_max_token_age_seconds", 1800)
+        ),
+        momentum_min_token_age_seconds=max(
+            0.0, float(base.get("momentum_min_token_age_seconds", 60.0))
+        ),
+        momentum_max_market_cap_sol=float(
+            base.get("momentum_max_market_cap_sol", 75.0)
+        ),
+        stagnant_min_buy_sol=max(0.0, float(base.get("stagnant_min_buy_sol", 0.1))),
+        breakeven_ratchet_activation_pct=max(
+            0.0, float(base.get("breakeven_ratchet_activation_pct", 0.25))
+        ),
+        breakeven_buffer_pct=float(base.get("breakeven_buffer_pct", 0.05)),
+        max_entry_cost_share_pct=max(
+            0.0, float(base.get("max_entry_cost_share_pct", 0.10))
         ),
         enable_raydium_migration_sniping=bool(
             base.get("enable_raydium_migration_sniping", True)
@@ -702,7 +782,49 @@ def resolve_strategy_config(
         raise ValueError("max_sybil_wash_ratio must be between 0.0 and 1.0.")
     if config.cluster_trace_depth < 1:
         raise ValueError("cluster_trace_depth must be at least 1.")
+    _validate_entry_pipeline(config)
     return config
+
+
+ENTRY_MODES = frozenset({"launch", "confirmed"})
+
+
+def _validate_entry_pipeline(config: TradingBotConfig) -> None:
+    """Fail fast on watch-list settings that would stall or unbound it (FEAT-51)."""
+    if config.entry_mode not in ENTRY_MODES:
+        raise ValueError(
+            f"Invalid entry_mode '{config.entry_mode}'. "
+            "Must be one of: 'launch', 'confirmed'."
+        )
+    if config.watch_ttl_seconds <= 0:
+        raise ValueError("watch_ttl_seconds must be greater than zero.")
+    if config.watch_max_mints < 1:
+        raise ValueError("watch_max_mints must be at least 1.")
+    if config.watch_poll_interval_seconds < 0.1:
+        raise ValueError("watch_poll_interval_seconds must be at least 0.1.")
+    if config.watch_promote_min_sol_growth < 0:
+        raise ValueError("watch_promote_min_sol_growth must not be negative.")
+    if config.watch_max_trade_subscriptions < 0:
+        raise ValueError("watch_max_trade_subscriptions must not be negative.")
+    if config.entry_mode != "confirmed":
+        return
+    # The momentum band only applies to confirmed entries (FEAT-52).
+    if config.momentum_max_market_cap_sol <= config.min_market_cap_sol:
+        raise ValueError(
+            "momentum_max_market_cap_sol must be greater than min_market_cap_sol."
+        )
+    if config.momentum_min_token_age_seconds >= config.momentum_max_token_age_seconds:
+        raise ValueError(
+            "momentum_min_token_age_seconds must be below "
+            "momentum_max_token_age_seconds."
+        )
+    if (
+        config.breakeven_ratchet_activation_pct > 0
+        and config.breakeven_buffer_pct >= config.breakeven_ratchet_activation_pct
+    ):
+        raise ValueError(
+            "breakeven_buffer_pct must be below breakeven_ratchet_activation_pct."
+        )
 
 
 __all__ = [

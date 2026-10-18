@@ -51,6 +51,10 @@ class PositionExitState:
     last_price_change_at: float = field(default_factory=time.time)
     last_price: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Momentum entries (FEAT-52): last buy >= stagnant_min_buy_sol by another
+    # wallet, and whether the break-even floor has been armed.
+    last_qualifying_buy_at: float | None = None
+    breakeven_floor_active: bool = False
 
     @property
     def performance(self) -> float:
@@ -144,6 +148,7 @@ class PositionExitState:
         data["pending_exit_tiers"] = dict(self.pending_exit_tiers)
         data["last_price_change_at"] = self.last_price_change_at
         data["last_price"] = self.last_price
+        data["breakeven_floor_active"] = self.breakeven_floor_active
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -164,6 +169,8 @@ class PositionExitState:
             "entry_time": self.entry_time,
             "last_price_change_at": self.last_price_change_at,
             "last_price": self.last_price,
+            "last_qualifying_buy_at": self.last_qualifying_buy_at,
+            "breakeven_floor_active": self.breakeven_floor_active,
         }
 
     @classmethod
@@ -190,6 +197,7 @@ class PositionExitState:
         tranches_set = (
             set(raw_tranches) if isinstance(raw_tranches, (set, list, tuple)) else set()
         )
+        raw_buy_at = data.get("last_qualifying_buy_at")
         raw_pending = data.get("pending_exit_tiers") or {}
         pending = (
             {str(k): float(v) for k, v in raw_pending.items()}
@@ -211,6 +219,10 @@ class PositionExitState:
             entry_time=entry_t,
             last_price_change_at=last_change_t,
             last_price=last_p,
+            last_qualifying_buy_at=(
+                float(raw_buy_at) if isinstance(raw_buy_at, (int, float)) else None
+            ),
+            breakeven_floor_active=bool(data.get("breakeven_floor_active", False)),
         )
 
 
@@ -329,7 +341,13 @@ def evaluate_exit_strategy(
                 target_sell = int(base_tokens * sell_frac)
                 target_sell = max(1, min(target_sell, effective_balance))
                 rem = effective_balance - target_sell
-                if rem <= config.min_sell_balance:
+                # Confirmed entries (FEAT-53): the last tranche sells what is left,
+                # so nothing is held into migration even when the fractions don't
+                # add up to 100%. Launch mode keeps its runner unchanged.
+                final_tranche = idx == len(tranches) - 1 and (
+                    getattr(config, "entry_mode", "launch") == "confirmed"
+                )
+                if rem <= config.min_sell_balance or final_tranche:
                     return ExitDecision(
                         action=ExitAction.FULL_EXIT,
                         sell_fraction=1.0,
@@ -346,6 +364,14 @@ def evaluate_exit_strategy(
                     exit_type="pre_graduation_tranche",
                     target_tier=tranche_tier,
                 )
+
+    # 1.7 Momentum entries (FEAT-52): exits built for confirmed buys.
+    if getattr(config, "entry_mode", "launch") == "confirmed":
+        momentum_exit = _momentum_entry_exit(
+            config, state, perf, effective_balance, current_time
+        )
+        if momentum_exit is not None:
+            return momentum_exit
 
     # 2. Stagnant Curve Inactivity Timeout Check
     if config.enable_stagnant_exit:
@@ -486,6 +512,52 @@ def evaluate_exit_strategy(
         )
 
     return ExitDecision(action=ExitAction.HOLD, reason="holding", exit_type="none")
+
+
+def _momentum_entry_exit(
+    config: TradingBotConfig,
+    state: PositionExitState,
+    perf: float,
+    balance: int,
+    now: float,
+) -> ExitDecision | None:
+    """Break-even ratchet and buy-flow stagnation for confirmed entries.
+
+    Once the peak gain reaches ``breakeven_ratchet_activation_pct`` the floor
+    moves to entry + ``breakeven_buffer_pct``. With no buy of at least
+    ``stagnant_min_buy_sol`` within ``stagnant_timeout_seconds`` (since entry or
+    the last such buy) the demand that justified the entry is gone.
+    """
+    activation = float(getattr(config, "breakeven_ratchet_activation_pct", 0.0))
+    if activation > 0 and state.peak_performance >= 1.0 + activation:
+        state.breakeven_floor_active = True
+    floor = 1.0 + float(getattr(config, "breakeven_buffer_pct", 0.0))
+    if state.breakeven_floor_active and perf <= floor:
+        return ExitDecision(
+            action=ExitAction.FULL_EXIT,
+            sell_fraction=1.0,
+            sell_tokens=balance,
+            reason=f"breakeven_ratchet ({perf:.2f}x <= {floor:.2f}x floor)",
+            exit_type="breakeven_ratchet",
+        )
+    if (
+        config.enable_stagnant_exit
+        and float(getattr(config, "stagnant_min_buy_sol", 0.0)) > 0
+    ):
+        last_demand = max(state.entry_time, state.last_qualifying_buy_at or 0.0)
+        idle = max(0.0, now - last_demand)
+        if idle >= config.stagnant_timeout_seconds:
+            return ExitDecision(
+                action=ExitAction.FULL_EXIT,
+                sell_fraction=1.0,
+                sell_tokens=balance,
+                reason=(
+                    f"stagnant_buy_flow ({idle:.1f}s without a buy >= "
+                    f"{config.stagnant_min_buy_sol:.3f} SOL)"
+                ),
+                exit_type="stagnant_buy_flow",
+            )
+    return None
 
 
 def should_exit_position(

@@ -11,6 +11,7 @@ import signal
 import threading
 import time
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -26,7 +27,7 @@ from pumpfun_trading.bot.enrichment import TokenScreeningVerdict
 from pumpfun_trading.bot.event_router import EventRouter
 from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.position_manager import PositionManager
-from pumpfun_trading.bot.run import TradingBot
+from pumpfun_trading.bot.run import PRE_GRADUATION_MIN_POLLED_SAMPLES, TradingBot
 from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.ops.retention import RetentionPolicy, RotatedFileSink
@@ -6059,3 +6060,490 @@ async def test_exit_without_websocket_argument_still_unsubscribes(
 
     assert await bot._evaluate_and_execute_exit(mint, 25.0) is True
     assert ws.sent == [{"method": "unsubscribeTokenTrade", "keys": [mint]}]
+
+
+# --- FEAT-51: confirmed entries watch instead of buying ------------------------------
+
+
+def _passing_verdict(mint: str = SAMPLE_PUMP_MINT) -> TokenScreeningVerdict:
+    return TokenScreeningVerdict(mint=mint, passed=True, risk_score=5.0)
+
+
+def _launch(mint: str = SAMPLE_PUMP_MINT, **extra: Any) -> dict[str, Any]:
+    return {
+        "mint": mint,
+        "pool": "pump",
+        "name": "Watched",
+        "vSolInBondingCurve": 30.5,
+        "vTokensInBondingCurve": 1_055_000_000,
+        "traderPublicKey": "DevWallet",
+        **extra,
+    }
+
+
+def _polled_curve(real_sol: float, **extra: Any) -> dict[str, Any]:
+    real = int(real_sol * 1e9)
+    v_sol = 30_000_000_000 + real
+    return {
+        "virtual_sol_reserves": v_sol,
+        "virtual_token_reserves": int(32_190_000_000 * 1e15 / v_sol),
+        "real_sol_reserves": real,
+        "complete": False,
+        "is_mayhem_mode": False,
+        **extra,
+    }
+
+
+async def test_confirmed_mode_watches_screened_launch_instead_of_buying(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    bot._enrich_and_screen_token = AsyncMock(return_value=_passing_verdict())  # type: ignore[method-assign]
+    bot._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    await bot._handle_new_token_event(_launch(timestamp=1_700_000_000_000))
+
+    bot._buy_token.assert_not_awaited()
+    entry = bot.order_flow_engine.get_watch(SAMPLE_PUMP_MINT)
+    assert entry is not None
+    assert entry.start_real_sol == pytest.approx(0.5)
+    assert entry.created_at == pytest.approx(1_700_000_000.0)
+    assert entry.creator == "DevWallet"
+    status = bot.watch_list_status()
+    assert status["entry_mode"] == "confirmed"
+    assert status["watched"] == 1 and status["stats"]["watched"] == 1
+    assert bot.get_status_snapshot()["watch_list"]["watched"] == 1
+
+
+async def test_launch_mode_still_buys_at_the_create_event(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    bot._enrich_and_screen_token = AsyncMock(return_value=_passing_verdict())  # type: ignore[method-assign]
+    bot._buy_token = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    bot._should_buy = MagicMock(return_value=True)  # type: ignore[method-assign]
+
+    await bot._handle_new_token_event(_launch())
+
+    bot._buy_token.assert_awaited_once()
+    assert bot.order_flow_engine.watch_count == 0
+    assert bot.watch_list_status()["entry_mode"] == "launch"
+
+
+@pytest.mark.parametrize("reason", ["paused", "reentry", "watched", "rejected"])
+async def test_confirmed_mode_skips_watching(tmp_path: Path, reason: str) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    verdict = _passing_verdict()
+    if reason == "paused":
+        bot.pause_buying()
+    elif reason == "reentry":
+        bot._mark_traded(SAMPLE_PUMP_MINT)
+    elif reason == "watched":
+        bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=0.0, now=0.0)
+    else:
+        verdict = TokenScreeningVerdict(
+            mint=SAMPLE_PUMP_MINT, passed=False, risk_score=90.0, reasons=["rug"]
+        )
+    bot._enrich_and_screen_token = AsyncMock(return_value=verdict)  # type: ignore[method-assign]
+
+    await bot._handle_new_token_event(_launch())
+
+    expected = 1 if reason == "watched" else 0
+    assert bot.order_flow_engine.watch_count == expected
+    if reason in ("paused", "reentry", "watched"):
+        bot._enrich_and_screen_token.assert_not_awaited()
+
+
+async def test_watch_poll_feeds_engines_and_promotes_within_budget(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        entry_mode="confirmed",
+        watch_promote_min_sol_growth=1.0,
+        watch_max_trade_subscriptions=1,
+    )
+    engine = bot.order_flow_engine
+    for mint in ("grow_a", "grow_b", "flat"):
+        engine.watch(mint, created_at=0.0, real_sol=0.5)
+    curves = {
+        "grow_a": _polled_curve(3.0),
+        "grow_b": _polled_curve(2.0),
+        "flat": _polled_curve(0.6),
+    }
+    bot.execution.get_bonding_curve_states = AsyncMock(return_value=curves)  # type: ignore[method-assign]
+    bot._active_ws = MagicMock()
+    bot._subscribe_to_token_trades = AsyncMock()  # type: ignore[method-assign]
+
+    await bot._poll_watch_list()
+
+    bot._subscribe_to_token_trades.assert_awaited_once_with(None, "grow_a")
+    assert engine.get_watch("grow_a").subscribed is True  # type: ignore[union-attr]
+    assert engine.get_watch("flat").sol_growth == pytest.approx(0.1)  # type: ignore[union-attr]
+    candidate = bot.graduation_engine._trackers["grow_a"].candidate
+    assert candidate.real_sol_reserves == pytest.approx(3.0)
+    assert bot.watch_list_status()["subscribed"] == 1
+
+    await bot._poll_watch_list()  # budget full: no second subscription
+    assert bot._subscribe_to_token_trades.await_count == 1
+
+
+async def test_watch_poll_drops_bad_curves_and_unsubscribes(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    engine = bot.order_flow_engine
+    for mint in ("foreign", "mayhem", "done", "late", "fresh_missing"):
+        engine.watch(mint, created_at=0.0, now=time.time() - 60)
+    engine.get_watch("fresh_missing").watched_at = time.time()  # type: ignore[union-attr]
+    engine.mark_watch_subscribed("foreign")
+
+    async def states(mints: list[str], *, rejected: dict[str, str]) -> dict:
+        rejected.update(
+            {"foreign": "not_pump_fun", "late": "missing", "fresh_missing": "missing"}
+        )
+        return {
+            "mayhem": _polled_curve(1.0, is_mayhem_mode=True),
+            "done": _polled_curve(85.0, complete=True),
+        }
+
+    bot.execution.get_bonding_curve_states = states  # type: ignore[method-assign,assignment]
+    bot._unsubscribe_from_token_trades = AsyncMock()  # type: ignore[method-assign]
+
+    await bot._poll_watch_list()
+
+    assert engine.watched_mints() == ["fresh_missing"]
+    bot._unsubscribe_from_token_trades.assert_awaited_once_with(None, "foreign")
+    stats = bot.watch_list_status()["stats"]
+    assert stats["dropped_not_pump_fun"] == 1
+    assert stats["dropped_mayhem"] == 1
+    assert stats["dropped_complete"] == 1
+    assert stats["dropped_missing"] == 1
+
+
+async def test_watch_poll_expiry_unsubscribes_and_rpc_errors_keep_the_list(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed", watch_ttl_seconds=30.0)
+    engine = bot.order_flow_engine
+    engine.watch("old", created_at=0.0, now=time.time() - 120)
+    engine.mark_watch_subscribed("old")
+    engine.watch("young", created_at=0.0)
+    bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("RPC request failed after retries")
+    )
+    bot._unsubscribe_from_token_trades = AsyncMock()  # type: ignore[method-assign]
+    bot.event_logger = MagicMock()
+
+    await bot._poll_watch_list()
+
+    assert engine.watched_mints() == ["young"]
+    bot._unsubscribe_from_token_trades.assert_awaited_once_with(None, "old")
+    stats = bot.watch_list_status()["stats"]
+    assert stats["poll_errors"] == 1 and stats["expired"] == 1
+    assert bot.event_logger.emit.call_args.kwargs["event_name"] == "watch_poll_failed"
+
+
+async def test_watch_promotion_waits_while_the_trade_feed_is_refused(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed", watch_promote_min_sol_growth=0.0)
+    bot.order_flow_engine.watch("grow", created_at=0.0, real_sol=0.0)
+    bot._active_ws = MagicMock()
+    bot._subscribe_to_token_trades = AsyncMock()  # type: ignore[method-assign]
+    bot.trade_feed_available = MagicMock(return_value=False)  # type: ignore[method-assign]
+
+    await bot._promote_watched_mints()
+
+    bot._subscribe_to_token_trades.assert_not_awaited()
+    bot.trade_feed_available.return_value = True
+    bot._active_ws = None
+    await bot._promote_watched_mints()
+    bot._subscribe_to_token_trades.assert_not_awaited()
+
+
+async def test_watch_poll_loop_runs_only_in_confirmed_mode(tmp_path: Path) -> None:
+    launch = make_bot(tmp_path)
+    launch._poll_watch_list = AsyncMock()  # type: ignore[method-assign]
+    await launch._run_watch_poll_loop()
+    launch._poll_watch_list.assert_not_awaited()
+
+    bot = make_bot(tmp_path, entry_mode="confirmed", watch_poll_interval_seconds=0.1)
+    calls = 0
+
+    async def poll() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("boom")  # logged, loop keeps going
+        bot._stop_requested = True
+
+    bot._poll_watch_list = poll  # type: ignore[method-assign]
+    with patch("pumpfun_trading.bot.run.asyncio.sleep", AsyncMock()):
+        await bot._run_watch_poll_loop()
+    assert calls == 2
+
+    bot._stop_requested = False
+    bot._poll_watch_list = AsyncMock(side_effect=asyncio.CancelledError)  # type: ignore[method-assign]
+    with patch("pumpfun_trading.bot.run.asyncio.sleep", AsyncMock()):
+        await bot._run_watch_poll_loop()
+
+
+async def test_websocket_reconnect_resubscribes_promoted_watched_mints(
+    tmp_path: Path,
+) -> None:
+    bot = _live_bot(tmp_path)
+    bot.stream_url = "wss://stream.test"
+    bot.order_flow_engine.watch("promoted", created_at=0.0)
+    bot.order_flow_engine.mark_watch_subscribed("promoted")
+    bot.order_flow_engine.watch("only_polled", created_at=0.0)
+    ws = _SendStrWs([_ws_msg(aiohttp.WSMsgType.CLOSED)])
+    with (
+        patch(
+            "pumpfun_trading.bot.run.aiohttp.ClientSession",
+            return_value=_FakeSession(ws),
+        ),
+        patch(
+            "pumpfun_trading.bot.run.asyncio.sleep",
+            AsyncMock(side_effect=asyncio.CancelledError),
+        ),
+    ):
+        await bot._run_websocket_stream()
+    assert ws.sent == [
+        {"method": "subscribeNewToken"},
+        {"method": "subscribeTokenTrade", "keys": ["promoted"]},
+    ]
+    await bot.close()
+
+
+# --- FEAT-52: confirmed momentum entry, cost guard and lanes -------------------------
+
+
+@pytest.mark.parametrize(
+    ("buy_amount", "tip", "limit", "allowed"),
+    [
+        (0.02, "100000", 0.10, True),  # 0.00021 SOL = 1.05%
+        (0.001, "100000", 0.10, False),  # 21%: costs eat the edge
+        (0.001, "0", 0.10, True),
+        (0.001, "100000", 0.0, True),  # guard off
+    ],
+)
+def test_cost_guard_refuses_positions_too_small_for_their_fixed_costs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    buy_amount: float,
+    tip: str,
+    limit: float,
+    allowed: bool,
+) -> None:
+    monkeypatch.setenv("PUMPFUN_JITO_TIP_LAMPORTS", tip)
+    bot = make_bot(
+        tmp_path,
+        entry_mode="confirmed",
+        buy_amount_sol=buy_amount,
+        max_entry_cost_share_pct=limit,
+    )
+
+    assert bot._entry_cost_share_ok(buy_amount) is allowed
+    if not allowed:
+        assert bot.watch_list_status()["stats"]["cost_guard_refused"] == 1
+
+
+def test_cost_guard_only_runs_for_confirmed_entries(tmp_path: Path) -> None:
+    launch = make_bot(tmp_path, buy_amount_sol=0.001)
+    launch._entry_cost_share_ok = MagicMock(return_value=False)  # type: ignore[method-assign]
+    launch._check_risk_limits = MagicMock(return_value=True)  # type: ignore[method-assign]
+    launch.trade_feed_available = MagicMock(return_value=True)  # type: ignore[method-assign]
+    launch._health_ok_for_trading = MagicMock(return_value=True)  # type: ignore[method-assign]
+    assert launch._should_buy(SAMPLE_PUMP_MINT, 50.0) is True
+    launch._entry_cost_share_ok.assert_not_called()
+
+    confirmed = make_bot(tmp_path, entry_mode="confirmed", buy_amount_sol=0.001)
+    confirmed._entry_cost_share_ok = MagicMock(return_value=False)  # type: ignore[method-assign]
+    confirmed._check_risk_limits = MagicMock(return_value=True)  # type: ignore[method-assign]
+    confirmed.trade_feed_available = MagicMock(return_value=True)  # type: ignore[method-assign]
+    confirmed._health_ok_for_trading = MagicMock(return_value=True)  # type: ignore[method-assign]
+    assert confirmed._should_buy(SAMPLE_PUMP_MINT, 50.0) is False
+
+
+def test_follow_on_buys_from_other_wallets_refresh_the_demand_clock(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed", stagnant_min_buy_sol=0.1)
+    make_position(bot, SAMPLE_PUMP_MINT)
+    own = str(bot.execution.get_wallet_pubkey())
+    position = bot.active_positions[SAMPLE_PUMP_MINT]
+
+    bot._note_follow_on_buy(SAMPLE_PUMP_MINT, False, 5.0, "Seller", 10.0)
+    bot._note_follow_on_buy(SAMPLE_PUMP_MINT, True, 0.05, "Small", 11.0)
+    bot._note_follow_on_buy(SAMPLE_PUMP_MINT, True, 1.0, own, 12.0)
+    assert "last_qualifying_buy_at" not in position
+
+    bot._note_follow_on_buy(SAMPLE_PUMP_MINT, True, 0.2, "Other", 13.0)
+    assert position["last_qualifying_buy_at"] == 13.0
+    bot._note_follow_on_buy("not_held", True, 0.2, "Other", 14.0)
+
+    bot.execution.get_wallet_pubkey = MagicMock(side_effect=RuntimeError)  # type: ignore[method-assign]
+    assert bot._own_wallet() == ""
+
+
+async def test_momentum_buy_needs_a_watch_entry_and_a_confirming_signal(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    bot._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    assert not await bot._maybe_buy_confirmed_momentum(
+        "unknown", 50.0, None, now=time.time()
+    )
+
+    bot.order_flow_engine.watch(
+        SAMPLE_PUMP_MINT, created_at=time.time() - 120, market_cap_sol=50.0
+    )
+    bot.strategy.should_buy_momentum = MagicMock(return_value=False)  # type: ignore[method-assign]
+    assert not await bot._maybe_buy_confirmed_momentum(
+        SAMPLE_PUMP_MINT, 0.0, None, now=time.time()
+    )
+    kwargs = bot.strategy.should_buy_momentum.call_args.kwargs
+    assert kwargs["market_cap_sol"] == 50.0  # falls back to the polled value
+    assert kwargs["token_age_seconds"] >= 119.0
+    bot._buy_token.assert_not_awaited()
+
+
+async def test_momentum_buy_tags_the_lane_and_keeps_watching_after_a_failed_buy(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=time.time() - 120)
+    bot.strategy.should_buy_momentum = MagicMock(return_value=True)  # type: ignore[method-assign]
+    bot._buy_token = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    assert not await bot._maybe_buy_confirmed_momentum(
+        SAMPLE_PUMP_MINT, 50.0, "Tok", now=time.time()
+    )
+
+    kwargs = bot._buy_token.await_args_list[0].kwargs
+    assert kwargs["strategy"] == "momentum"
+    assert kwargs["reason"] == "momentum_confirmed"
+    assert set(kwargs["entry_metrics"]) >= {"unique_buyers", "z_score", "sol_growth"}
+    assert bot.order_flow_engine.is_watched(SAMPLE_PUMP_MINT)
+
+    make_position(bot, SAMPLE_PUMP_MINT)  # already held: no second buy
+    bot._buy_token.reset_mock()
+    assert not await bot._maybe_buy_confirmed_momentum(
+        SAMPLE_PUMP_MINT, 50.0, "Tok", now=time.time()
+    )
+    bot._buy_token.assert_not_awaited()
+
+
+def test_sell_records_inherit_the_entry_lane(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, strategy_preset="conservative")
+    bot._entry_lanes()["LaneMint"] = "momentum"
+
+    bot._record_trade(mint="LaneMint", action="sell", exit_value=0.02)
+    bot._record_trade(mint="OtherMint", action="sell", exit_value=0.02)
+
+    assert bot._trade_ledger[-2]["strategy"] == "momentum"
+    assert bot._trade_ledger[-1]["strategy"] == "conservative"  # preset name
+    bot._record_trade(
+        mint="M2", action="buy", entry=0.02, strategy="momentum", entry_metrics={"a": 1}
+    )
+    assert bot._trade_ledger[-1]["entry_metrics"] == {"a": 1}
+
+
+# -- Pre-graduation lane via the RPC poller (FEAT-53) ----------------------------
+
+
+def _pre_grad_bot(tmp_path: Path) -> tuple[TradingBot, AsyncMock, AsyncMock]:
+    bot = make_bot(
+        tmp_path,
+        entry_mode="confirmed",
+        enable_pre_graduation_harvesting=True,
+        pre_graduation_entry_progress_pct=0.75,
+        pre_graduation_max_entry_progress_pct=0.88,
+        pre_graduation_min_acceleration=0.0,
+        watch_promote_min_sol_growth=100.0,  # isolate the pre-graduation lane
+    )
+    bot._enrich_and_screen_token = AsyncMock(return_value=_passing_verdict())  # type: ignore[method-assign]
+    bot._should_buy = MagicMock(return_value=True)  # type: ignore[method-assign]
+    buy = AsyncMock(return_value=True)
+    subscribe = AsyncMock()
+    bot._buy_token = buy  # type: ignore[method-assign]
+    bot._subscribe_to_token_trades = subscribe  # type: ignore[method-assign]
+    return bot, buy, subscribe
+
+
+async def test_polled_curves_trigger_pre_graduation_entry_after_enough_readings(
+    tmp_path: Path,
+) -> None:
+    bot, buy, subscribe = _pre_grad_bot(tmp_path)
+    bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=0.0, real_sol=60.0)
+    now = time.time()
+    # Accelerating inflow: 64 -> 64.5 -> 65.5 -> 67 -> 69 SOL (76%..81% progress).
+    readings = [64.0, 64.5, 65.5, 67.0, 69.0]
+    for i, real_sol in enumerate(readings):
+        bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+            return_value={SAMPLE_PUMP_MINT: _polled_curve(real_sol)}
+        )
+        with patch("pumpfun_trading.bot.run.time.time", return_value=now + 2 * i):
+            await bot._poll_watch_list()
+        if i < PRE_GRADUATION_MIN_POLLED_SAMPLES - 1:
+            buy.assert_not_awaited()
+
+    buy.assert_awaited_once()
+    assert buy.await_args is not None
+    kwargs = buy.await_args.kwargs
+    assert kwargs["strategy"] == "pre_graduation"
+    assert kwargs["reason"] == "pre_graduation_harvesting_entry"
+    assert kwargs["entry_metrics"]["curve_progress_pct"] >= 75.0
+    assert kwargs["entry_metrics"]["acceleration_sol_per_sec2"] >= 0.0
+    # The watch entry was never subscribed, so the position subscribes now.
+    assert not bot.order_flow_engine.is_watched(SAMPLE_PUMP_MINT)
+    subscribe.assert_awaited_once_with(None, SAMPLE_PUMP_MINT)
+
+
+async def test_polled_pre_graduation_lane_off_or_refused_does_not_buy(
+    tmp_path: Path,
+) -> None:
+    bot, _, _ = _pre_grad_bot(tmp_path)
+    bot.config = replace(bot.config, enable_pre_graduation_harvesting=False)
+    assert await bot._maybe_buy_pre_graduation(SAMPLE_PUMP_MINT, 70.0, now=0.0) is False
+
+    bot, buy, _ = _pre_grad_bot(tmp_path)
+    for i, real_sol in enumerate([64.0, 64.5, 65.5, 67.0, 69.0]):
+        bot.graduation_engine.update_bonding_curve(
+            mint=SAMPLE_PUMP_MINT,
+            bonding_curve="",
+            real_sol_reserves=real_sol,
+            virtual_sol_reserves=30.0 + real_sol,
+            market_cap_sol=70.0,
+            timestamp=100.0 + 2 * i,
+        )
+    # Too few readings for a polled curve.
+    assert (
+        await bot._maybe_buy_pre_graduation(
+            SAMPLE_PUMP_MINT, 70.0, now=108.0, min_samples=10
+        )
+        is False
+    )
+    # Screening refuses: handled, no buy.
+    bot._enrich_and_screen_token = AsyncMock(  # type: ignore[method-assign]
+        return_value=TokenScreeningVerdict(
+            mint=SAMPLE_PUMP_MINT, passed=False, risk_score=90.0
+        )
+    )
+    assert await bot._maybe_buy_pre_graduation(SAMPLE_PUMP_MINT, 70.0, now=108.0)
+    buy.assert_not_awaited()
+
+
+async def test_held_confirmed_positions_keep_curve_progress_fresh(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    bot.active_positions[SAMPLE_PUMP_MINT] = {"entry_market_cap": 60.0}
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value=_polled_curve(80.0)
+    )
+    bot._evaluate_and_execute_exit = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    await bot._refresh_active_positions_market_caps()
+
+    candidate = bot.graduation_engine.get_candidate(SAMPLE_PUMP_MINT)
+    assert candidate is not None
+    assert candidate.progress_pct == pytest.approx(80.0 / 85.0 * 100.0, abs=0.01)
+    bot._evaluate_and_execute_exit.assert_awaited_once()
