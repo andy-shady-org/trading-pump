@@ -542,6 +542,16 @@ def evaluate_token_heuristics(
         if getattr(config, "require_holder_data", False):
             # Without holders the top-5 and Gini checks cannot run (BUG-107).
             hard_failed = True
+    min_holders = int(getattr(config, "min_holder_count", 0) or 0)
+    holder_count = len(holder_distribution.top_holders) if holder_distribution else 0
+    if min_holders > 0 and holder_count < min_holders:
+        # In the 24 h capture, tokens with more than 5 holder accounts at
+        # screening were the only group that was net positive after costs.
+        all_reasons.append(
+            f"Too few holders: {holder_count} holder accounts (min {min_holders})"
+        )
+        flags["too_few_holders"] = True
+        hard_failed = True
 
     # 1. Dev wallet profiling
     dev_pass, dev_penalty, dev_reasons = evaluate_dev_wallet(

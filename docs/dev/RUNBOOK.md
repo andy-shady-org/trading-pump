@@ -216,6 +216,8 @@ pumpbot --config configs/capture.json --paper-trade --headless \
   --record-replay capture/replay_capture.jsonl
 ```
 
+Type all four path variables: the v0.2.3 capture was started without the `PUMPFUN_STATUS_PATH` line, so it restored (and sold) a position from `data/bot_status.json` and wrote its status there. The second line of `capture/bot.log` must name `capture/bot_status.json` (or say nothing was restored).
+
 In the first minutes check that `capture/bot.log` has "Successfully subscribed to keys", `Trade feed` is `ok`, and `capture/replay_capture.jsonl` holds `buy`/`sell` market trades, not only creates. Watch `trade_feed_breaker` (§5.7) and `mayhem_rejections` in the status file. Afterwards run §6.1 against `capture/` and replay with `configs/canary.json` as well, so the 45 s and 120 s timeouts can be compared on the same data.
 
 ## 7. Incident drills

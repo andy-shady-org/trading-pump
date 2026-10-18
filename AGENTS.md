@@ -63,6 +63,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[CONFIG] Defaults Are Not Choices:** a preset filled in the public PumpPortal URL, which beat the keyed `PUMPFUN_STREAM_URL` (BUG-117). Never let a filled-in default outrank an env override; check precedence by loading the real runtime config + env through `TradingBot`, not by testing the env value on its own.
 - **[SECURITY] Secrets Are Not Part Of A URL:** the dashboard printed `stream_url` with the PumpPortal `?api-key=` in it (BUG-118). Keep provider keys in their own env variable (`PUMPFUN_STREAM_API_KEY`), keep displayed/stored URLs key-free, join the key only at connect time, and pass any URL a UI renders through `redact_url`.
 
+- **[STREAMS] Unsubscribe Where Positions Close:** exits ran from six call sites and only one passed the websocket, so 538 exited mints kept streaming billed trade messages (BUG-120). Put per-position cleanup in the one function every exit goes through (`_sell_token`), never at the call sites. Net PnL means every record: a check that sums only sells drops the buy-side costs (BUG-119).
 
 ## Project Overview
 

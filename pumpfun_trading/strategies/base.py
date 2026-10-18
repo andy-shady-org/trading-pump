@@ -59,6 +59,10 @@ class TradingBotConfig:
     require_social_links: bool = False
     # Reject a token outright when no holder data could be read (BUG-107).
     require_holder_data: bool = False
+    # Reject a token with fewer holder accounts than this at screening (0 = off).
+    # Counts the accounts getTokenLargestAccounts returned, bonding curve
+    # included (max 20), i.e. the capture's ``holder_count``.
+    min_holder_count: int = 0
     min_social_links_count: int = 1
     max_acceptable_risk_score: float = 50.0
     # Only buy Pump.fun launches: mint vanity suffix, stream pool and an existing
@@ -238,6 +242,7 @@ class TradingBotConfig:
             "max_gini_coefficient": self.max_gini_coefficient,
             "require_social_links": self.require_social_links,
             "require_holder_data": self.require_holder_data,
+            "min_holder_count": self.min_holder_count,
             "min_social_links_count": self.min_social_links_count,
             "max_acceptable_risk_score": self.max_acceptable_risk_score,
             "require_pump_mint_suffix": self.require_pump_mint_suffix,

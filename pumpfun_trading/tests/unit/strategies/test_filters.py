@@ -512,3 +512,45 @@ def test_missing_dev_and_holder_data_fails_closed():
     )
     assert partial.passed is True
     assert partial.flags["missing_holder_data"] is True
+
+
+def _holders(accounts: int) -> HolderDistribution:
+    curve = "CurveAccount1111111111111111111111111111111"
+    return HolderDistribution(
+        total_supply=1_000_000_000,
+        creator_initial_balance=1_000_000,
+        bonding_curve_address=curve,
+        top_holders=[(curve, 900_000_000)]
+        + [(f"Wallet{i}", 1_000_000) for i in range(max(0, accounts - 1))],
+    )
+
+
+@pytest.mark.parametrize(
+    ("min_holder_count", "accounts", "passes"),
+    [
+        (0, 2, True),  # off by default
+        (6, 5, False),
+        (6, 6, True),
+        (6, 20, True),
+        (6, 0, False),  # no holder data is not "enough holders"
+    ],
+)
+def test_min_holder_count_rejects_tokens_below_the_threshold(
+    min_holder_count: int, accounts: int, passes: bool
+) -> None:
+    config = make_config(
+        min_holder_count=min_holder_count, max_acceptable_risk_score=100.0
+    )
+    verdict = evaluate_token_heuristics(
+        config,
+        f"HolderMint{min_holder_count}x{accounts}",
+        metadata=TokenMetadata(twitter="https://x.com/t"),
+        dev_profile=DevWalletProfile(creator_address="Dev", tokens_launched_24h=1),
+        holder_distribution=_holders(accounts) if accounts else None,
+        use_cache=False,
+    )
+
+    assert verdict.passed is passes
+    rejected = any(r.startswith("Too few holders") for r in verdict.reasons)
+    assert rejected is (min_holder_count > 0 and not passes)
+    assert bool(verdict.flags.get("too_few_holders")) is rejected
