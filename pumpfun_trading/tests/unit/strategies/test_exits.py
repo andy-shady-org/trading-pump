@@ -710,3 +710,127 @@ def test_pre_graduation_tranche_pending_until_fill_then_retries():
         config, state, current_market_cap=31.0, curve_progress_pct=93.0, now=1100.0
     )
     assert retry.target_tier == "pre_grad_1"
+
+
+# --- FEAT-52: exits for confirmed momentum entries -----------------------------------
+
+
+def _momentum_state(entry_time: float = 1_000.0) -> PositionExitState:
+    return PositionExitState(
+        entry_market_cap=40.0,
+        current_market_cap=40.0,
+        peak_market_cap=40.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=1_000_000,
+        entry_time=entry_time,
+        last_price_change_at=entry_time,
+        last_price=40.0,
+    )
+
+
+def _momentum_config(**overrides: object) -> TradingBotConfig:
+    base: dict[str, object] = {
+        "entry_mode": "confirmed",
+        "stagnant_timeout_seconds": 35.0,
+        "stagnant_min_buy_sol": 0.1,
+        "breakeven_ratchet_activation_pct": 0.25,
+        "breakeven_buffer_pct": 0.05,
+        "enable_max_hold_timeout": False,
+        "enable_trailing_stop": False,
+    }
+    base.update(overrides)
+    return make_config(**base)
+
+
+def test_buy_flow_stagnation_exits_without_follow_on_buys() -> None:
+    config = _momentum_config()
+    state = _momentum_state()
+
+    held = evaluate_exit_strategy(config, state, 41.0, now=1_020.0)
+    assert held.action == ExitAction.HOLD
+
+    state.last_qualifying_buy_at = 1_030.0  # a fresh buy resets the clock
+    held = evaluate_exit_strategy(config, state, 42.0, now=1_060.0)
+    assert held.action == ExitAction.HOLD
+
+    # The price still moved, but no buyer of size arrived for 36 s.
+    decision = evaluate_exit_strategy(config, state, 43.0, now=1_066.0)
+    assert decision.action == ExitAction.FULL_EXIT
+    assert decision.exit_type == "stagnant_buy_flow"
+    assert decision.sell_tokens == 1_000_000
+
+
+def test_breakeven_ratchet_moves_the_floor_after_activation() -> None:
+    config = _momentum_config(stagnant_min_buy_sol=0.0)
+    state = _momentum_state()
+
+    assert evaluate_exit_strategy(config, state, 49.0, now=1_001.0).action == (
+        ExitAction.HOLD
+    )
+    assert state.breakeven_floor_active is False
+    assert evaluate_exit_strategy(config, state, 51.0, now=1_002.0).action == (
+        ExitAction.HOLD
+    )
+    assert state.breakeven_floor_active is True
+
+    decision = evaluate_exit_strategy(config, state, 41.5, now=1_003.0)
+    assert decision.action == ExitAction.FULL_EXIT
+    assert decision.exit_type == "breakeven_ratchet"
+
+    data: dict[str, object] = {}
+    state.write_back(data)
+    assert data["breakeven_floor_active"] is True
+    restored = PositionExitState.from_dict(
+        {**state.to_dict(), "last_qualifying_buy_at": 1_002.5}
+    )
+    assert restored.breakeven_floor_active is True
+    assert restored.last_qualifying_buy_at == 1_002.5
+
+
+def test_momentum_exits_are_off_in_launch_mode() -> None:
+    config = _momentum_config(entry_mode="launch", stagnant_timeout_seconds=500.0)
+    state = _momentum_state()
+    state.breakeven_floor_active = True
+
+    decision = evaluate_exit_strategy(config, state, 41.0, now=1_100.0)
+
+    assert decision.action == ExitAction.HOLD
+
+
+@pytest.mark.parametrize(
+    ("entry_mode", "expected"), [("confirmed", "full"), ("launch", "partial")]
+)
+def test_last_pre_graduation_tranche_sells_everything_in_confirmed_mode(
+    entry_mode: str, expected: str
+) -> None:
+    """FEAT-53: nothing is held into migration on the confirmed lanes."""
+    config = make_config(
+        dry_run=False,
+        entry_mode=entry_mode,
+        enable_pre_graduation_harvesting=True,
+        enable_tiered_take_profit=False,
+        take_profit=10.0,
+        pre_graduation_tranches=(
+            {"progress_pct": 0.92, "sell_fraction": 0.30},
+            {"progress_pct": 0.97, "sell_fraction": 0.30},
+        ),
+        min_sell_balance=1000,
+    )
+    state = PositionExitState(
+        entry_market_cap=60.0,
+        current_market_cap=75.0,
+        peak_market_cap=75.0,
+        initial_token_amount=1_000_000,
+        remaining_token_amount=700_000,
+        executed_pre_grad_tranches={0},
+    )
+    decision = evaluate_exit_strategy(
+        config, state, current_market_cap=80.0, curve_progress_pct=97.5
+    )
+    if expected == "full":
+        assert decision.action == ExitAction.FULL_EXIT
+        assert decision.sell_tokens == 700_000
+    else:
+        assert decision.action == ExitAction.PARTIAL_EXIT
+        assert decision.sell_tokens == 300_000
+    assert decision.target_tier == "pre_grad_2"

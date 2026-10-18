@@ -121,6 +121,22 @@ Start from the conservative preset and override only these fields in a dedicated
 
 Run with `pumpbot --config <canary.json> --headless` from a dedicated runtime directory (never the repository root) so status, audit and event files belong only to the canary.
 
+**v0.3.0 canary (strategy pivot, [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)).** From v0.3.0 the canary buys on confirmed momentum, not at the create event, at **0.02 SOL** (one 2× step from 0.01, within the §3.1 scaling rule) with a lower Jito tip chosen by the paper tip experiment (0 / 25k / 50k lamports, set through `PUMPFUN_JITO_TIP_LAMPORTS`). Override these fields on top of the block above:
+
+```json
+{
+  "entry_mode": "confirmed",
+  "buy_amount_sol": 0.02,
+  "max_position_size_sol": 0.02,
+  "max_total_exposure_sol": 0.05,
+  "max_loss_per_trade_sol": 0.02,
+  "max_entry_cost_share_pct": 0.10,
+  "enable_pre_graduation_harvesting": false
+}
+```
+
+The momentum thresholds in `canary.json` are the ones that were net positive in replay on a capture **not** used to pick them; until then the v0.3.0 canary does not start. Stage 1 exit criteria (§3.4) are unchanged.
+
 ### 3.4 Stage 1 – Daily reconciliation and exit criteria
 Every day of the canary, follow [`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-reconciliation) and record the numbers in the release record:
 - wallet SOL balance at the start and end of the day (on-chain)
@@ -147,6 +163,7 @@ These stay disabled in Stages 1–2 until the listed condition is met and a rele
 | `enable_raydium_migration_sniping`, graduation exits via Raydium | BUG-36/44/50/51 fixes not mainnet-verified | Raydium buy and sell simulated on mainnet, then one live round trip at canary size |
 | Geyser endpoint (`PUMPFUN_GEYSER_ENDPOINT`) | BUG-55 mitigated; no real gRPC transport, falls back to WebSocket | FEAT-39 delivered |
 | `max_positions_per_mint` > 1 | BUG-92 clamps it to 1 | Per-mint pyramiding implemented |
+| `enable_copy_trading`, `momentum_tracked_wallet_bonus` > 0 (FEAT-54) | Wallet win rate is not our copied net PnL; tracked wallets are never added automatically | Sprint 24I exit gate: reviewed wallets net positive in a copy simulation on an unseen capture, and a ≥ 72 h paper run where wallet evidence beats momentum alone |
 | Replay/optimizer output as proof of profitability | BUG-61 is resolved (live sizing, exits and modelled costs), but the screener is not replayed and parity with live has not been shown yet | `pumpfun-replay --compare-audit` passes on a Stage 0 and a Stage 1 capture (`RUNBOOK.md` §6.1) |
 
 ### 3.6 Stop triggers (any stage)

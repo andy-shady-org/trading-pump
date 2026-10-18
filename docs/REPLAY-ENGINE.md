@@ -76,6 +76,20 @@ With `--config` or `--preset`, replay runs the same sizing, risk limits and exit
 !!! warning "What live-fidelity replay does not replay"
     The entry screener (social links, holder distribution, creator history) needs enrichment data that a capture does not record, so replay cannot say which tokens the screener would pass. Treat replay results as a test of **sizing, exits and costs**, not of token selection.
 
+### Confirmed entries (`entry_mode: "confirmed"`, FEAT-52)
+
+When the config sets `entry_mode: "confirmed"` (the `momentum` preset, `configs/canary.json`), replay models the watch → confirm path instead of mirroring recorded fills (`entries_from: confirmed` in the summary):
+
+1. A recorded create event whose `screening` record passed (or has no record) goes onto the watch list (`watch_ttl_seconds`, `watch_max_mints`). Mints already bought are never watched again.
+2. The curve's real SOL reserve is derived from each recorded market cap. A mint is promoted once it grew by `watch_promote_min_sol_growth`, within `watch_max_trade_subscriptions`. The trade that promotes it is not counted: live, trades only arrive after the subscription.
+3. Trades after promotion feed the order-flow check. A buy needs the age window, the `min_market_cap_sol`–`momentum_max_market_cap_sol` band, `momentum_min_unique_buyers` distinct buyers (the creator left out), net inflow, buy ratio and z-score, plus the cost guard (`max_entry_cost_share_pct`, same `ReplayCostModel`).
+4. Buys carry `reason: momentum_confirmed`, `strategy: momentum` and `entry_metrics`; the momentum exits (buy-flow stagnation with `stagnant_min_buy_sol`, break-even ratchet) run on the replay clock.
+
+`watch_stats` in the summary counts `watched`, `screen_rejected`, `promoted`, `budget_full`, `expired`, `cost_guard_refused` and `confirmed`. `pumpfun-optimize` with a confirmed base config also searches the watch, band and momentum-exit keys.
+
+!!! warning "Confirmed replay on launch-mode captures"
+    A capture from a launch-mode bot only has trade flow for the mints that bot bought, so confirmed replay can only buy among them. Use it to compare thresholds, and confirm on a capture recorded in confirmed mode (`configs/capture.json`) before trusting the PnL. Results and the train/test split are in [`dev/STRATEGY-PIVOT.md` §6](dev/STRATEGY-PIVOT.md#6-results-log).
+
 ### Replay-vs-live parity (`--compare-audit`)
 
 ```bash

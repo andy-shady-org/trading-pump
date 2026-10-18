@@ -16,6 +16,7 @@ from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.strategies.arbitrage import CrossVenueDisparityMonitor
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.copy_trading import CopyTradeEngine
+from pumpfun_trading.strategies.decision import TradingStrategy
 from pumpfun_trading.strategies.exits import (
     ExitAction,
     ExitDecision,
@@ -29,6 +30,19 @@ from pumpfun_trading.strategies.momentum import OrderFlowEngine
 # token amounts; replay only needs the fraction sold, so each position starts
 # with this many units (far above any ``min_sell_balance``).
 LIVE_POSITION_TOKEN_UNITS = 10**12
+
+# Pump.fun curve invariant in SOL x UI tokens (30 SOL x 1.073e9 tokens): a
+# market cap in SOL maps back to the curve's virtual (and so real) SOL reserve.
+CURVE_K_SOL_TOKENS = 30.0 * 1_073_000_000.0
+CURVE_INITIAL_VIRTUAL_SOL = 30.0
+
+
+def real_sol_from_market_cap(market_cap_sol: float) -> float:
+    """Real SOL in a standard curve priced at ``market_cap_sol`` (SOL)."""
+    if market_cap_sol <= 0:
+        return 0.0
+    virtual_sol = (market_cap_sol * CURVE_K_SOL_TOKENS / 1_000_000_000.0) ** 0.5
+    return max(0.0, virtual_sol - CURVE_INITIAL_VIRTUAL_SOL)
 
 
 class PaperTradingEngine:
@@ -49,6 +63,15 @@ class PaperTradingEngine:
     screener (social links, holders, creator history) is not replayed. Captures
     from v0.2.1 on hold ``event = "screening"`` records of what it saw (for
     filter analysis); the replay loop skips them.
+
+    ``confirmed`` (the default under ``auto`` when the config has
+    ``entry_mode: "confirmed"``, FEAT-52) models the watch -> confirm path: new
+    tokens whose recorded screening passed are watched, promoted once their curve
+    (derived from the market cap) grew by ``watch_promote_min_sol_growth`` within
+    the subscription budget, and bought when the order flow seen *after*
+    promotion confirms demand inside the age window and market-cap band. The
+    creator is left out of the buyer count; buys are tagged ``momentum``.
+    Promotion is optimistic by up to one poll interval.
     """
 
     def __init__(
@@ -71,8 +94,10 @@ class PaperTradingEngine:
         cost_model: ReplayCostModel | None = None,
         entry_mode: str = "auto",
     ) -> None:
-        if entry_mode not in {"auto", "live_fills", "signals"}:
+        if entry_mode not in {"auto", "live_fills", "signals", "confirmed"}:
             raise ValueError(f"Unsupported entry_mode: {entry_mode}")
+        if entry_mode == "confirmed" and not live_fidelity:
+            raise ValueError("entry_mode='confirmed' requires live_fidelity=True")
         if live_fidelity and strategy_config is None:
             raise ValueError("live_fidelity=True requires a strategy_config")
         if cost_model is not None and not live_fidelity:
@@ -115,6 +140,17 @@ class PaperTradingEngine:
             else False
         )
         self.order_flow_engine = OrderFlowEngine()
+        self.confirmed_entries = self.live_fidelity and (
+            entry_mode == "confirmed"
+            or (
+                entry_mode == "auto"
+                and getattr(strategy_config, "entry_mode", "launch") == "confirmed"
+            )
+        )
+        if strategy_config is not None:
+            self.order_flow_engine.max_watch_mints = int(
+                getattr(strategy_config, "watch_max_mints", 300) or 300
+            )
         self.graduation_engine = GraduationEngine()
         self.copy_trade_engine = CopyTradeEngine()
         self.arb_monitor = CrossVenueDisparityMonitor()
@@ -357,6 +393,132 @@ class PaperTradingEngine:
             and "user" not in snapshot
         )
 
+    @staticmethod
+    def _is_new_token(snapshot: dict[str, Any]) -> bool:
+        """A recorded create event: ``signal`` buy, no trader and no fill reason."""
+        return (
+            str(snapshot.get("signal") or "").lower() == "buy"
+            and "user" not in snapshot
+            and "reason" not in snapshot
+            and "sol_amount" not in snapshot
+        )
+
+    @staticmethod
+    def _screening_index(
+        snapshots: Sequence[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Recorded screening verdicts by mint (last one wins)."""
+        index: dict[str, dict[str, Any]] = {}
+        for snapshot in snapshots:
+            if snapshot.get("event") == "screening" and snapshot.get("mint"):
+                verdict = snapshot.get("screening")
+                if isinstance(verdict, dict):
+                    index[str(snapshot["mint"])] = verdict
+        return index
+
+    def _confirmed_entry(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        mint: str,
+        ts: float,
+        market_cap: float,
+        trade: tuple[bool, float, str] | None,
+        open_positions: int,
+        screening: dict[str, dict[str, Any]],
+        flow: OrderFlowEngine,
+        traded: set[str],
+        stats: dict[str, int],
+    ) -> dict[str, Any] | None:
+        """Watch -> promote -> confirm for one snapshot; the entry metrics when it
+        confirms a buy, else ``None``."""
+        cfg = self.strategy_config
+        assert cfg is not None
+        engine = self.order_flow_engine
+
+        def count(key: str) -> None:
+            stats[key] = stats.get(key, 0) + 1
+
+        if self._is_new_token(snapshot):
+            verdict = screening.get(mint)
+            if mint in traded or engine.is_watched(mint):
+                return None
+            if verdict is not None and not verdict.get("passed"):
+                count("screen_rejected")
+                return None
+            engine.watch(
+                mint,
+                created_at=ts,
+                creator=(verdict or {}).get("creator") or None,
+                now=ts,
+                real_sol=real_sol_from_market_cap(market_cap),
+                market_cap_sol=market_cap,
+            )
+            count("watched")
+            return None
+        entry = engine.get_watch(mint)
+        if entry is None:
+            return None
+        if ts - entry.watched_at > float(cfg.watch_ttl_seconds):
+            engine.unwatch(mint)
+            count("expired")
+            return None
+        engine.update_watch_curve(
+            mint,
+            real_sol=real_sol_from_market_cap(market_cap),
+            market_cap_sol=market_cap,
+            now=ts,
+        )
+        if trade is None:
+            return None
+        if not entry.subscribed:
+            if entry.sol_growth < float(cfg.watch_promote_min_sol_growth):
+                return None
+            if engine.watch_subscribed_count >= int(cfg.watch_max_trade_subscriptions):
+                count("budget_full")
+                return None
+            # Live, trades arrive only after the subscription: this one is unseen.
+            engine.mark_watch_subscribed(mint)
+            count("promoted")
+            return None
+        is_buy, sol_amount, user = trade
+        flow.record_trade(mint, is_buy, sol_amount, user, timestamp=ts)
+        strategy = TradingStrategy(cfg)
+        signal = strategy.evaluate_momentum(
+            flow,
+            mint,
+            token_creation_timestamp=entry.created_at,
+            current_time=ts,
+            exclude_users=frozenset({entry.creator}) if entry.creator else None,
+        )
+        age = ts - entry.created_at
+        if not strategy.should_buy_momentum(
+            momentum_signal=signal,
+            active_positions=open_positions,
+            buy_attempts=0,
+            token_age_seconds=age,
+            market_cap_sol=market_cap,
+        ):
+            return None
+        limit = float(getattr(cfg, "max_entry_cost_share_pct", 0.0) or 0.0)
+        if self.cost_model is not None and limit > 0:
+            share = self.cost_model.round_trip_fixed_costs_sol() / max(
+                float(cfg.buy_amount_sol), 1e-9
+            )
+            if share > limit:
+                count("cost_guard_refused")
+                return None
+        count("confirmed")
+        return {
+            "unique_buyers": signal.unique_buyers,
+            "net_inflow_sol": signal.net_sol_inflow,
+            "buy_sell_ratio": signal.buy_sell_ratio,
+            "z_score": signal.z_score,
+            "token_age_seconds": round(age, 1),
+            "market_cap_sol": round(market_cap, 4),
+            "sol_growth": round(entry.sol_growth, 6),
+        }
+
     def _live_entry_size(
         self,
         cash: float,
@@ -396,6 +558,30 @@ class PaperTradingEngine:
             rejections[reason] = rejections.get(reason, 0) + 1
             return 0.0
         return entry
+
+    @classmethod
+    def _snapshot_market_cap(cls, snapshot: dict[str, Any], price: float) -> float:
+        """Market cap in SOL; captures store the per-token price as mc / 1e9."""
+        market_cap = cls._snapshot_float(snapshot, "market_cap_sol", "marketCapSol")
+        if market_cap > 0:
+            return market_cap
+        return price * 1_000_000_000.0 if price < 1.0 else price
+
+    def _note_replay_follow_on_buy(
+        self,
+        position: dict[str, Any],
+        trade: tuple[bool, float, str],
+        ts: float,
+    ) -> None:
+        """Feed the buy-flow stagnation exit like the live trade handler."""
+        cfg = self.strategy_config
+        assert cfg is not None
+        is_buy, sol_amount, user = trade
+        if not is_buy or sol_amount < float(cfg.stagnant_min_buy_sol):
+            return
+        if user and user == position.get("creator"):
+            return
+        position["exit_state"].last_qualifying_buy_at = ts
 
     def _sell_value(self, quantity: float, price: float) -> float:
         """SOL received for selling ``quantity`` at ``price`` after slippage and fee."""
@@ -515,13 +701,23 @@ class PaperTradingEngine:
         last_arb_at: dict[str, float] = {}
         buys_per_mint: dict[str, int] = {}
         entry_rejections: dict[str, int] = {}
-        mirror_live_entries = self.live_fidelity and (
-            self.entry_mode == "live_fills"
-            or (
-                self.entry_mode == "auto"
-                and any(self._is_live_fill(s, "buy") for s in snapshots)
+        confirmed = self.confirmed_entries
+        mirror_live_entries = (
+            self.live_fidelity
+            and not confirmed
+            and (
+                self.entry_mode == "live_fills"
+                or (
+                    self.entry_mode == "auto"
+                    and any(self._is_live_fill(s, "buy") for s in snapshots)
+                )
             )
         )
+        screening = self._screening_index(snapshots) if confirmed else {}
+        confirm_flow = OrderFlowEngine()
+        traded_mints: set[str] = set()
+        watch_stats: dict[str, int] = {}
+        last_expiry_at: float | None = None
 
         for index, snapshot in enumerate(snapshots):
             if snapshot.get("event") == "screening":
@@ -539,6 +735,7 @@ class PaperTradingEngine:
             ts = parsed_ts if parsed_ts is not None else float(index)
 
             # Process order flow recording and momentum signal evaluation
+            trade_info: tuple[bool, float, str] | None = None
             momentum_triggered = False
             copy_trade_buy_triggered = False
             copy_trade_sell_triggered = False
@@ -571,6 +768,8 @@ class PaperTradingEngine:
                     user=user,
                     timestamp=ts,
                 )
+                if "user" in snapshot or "traderPublicKey" in snapshot:
+                    trade_info = (is_buy, sol_amount, user)
 
                 if self.enable_order_flow_momentum:
                     if self.strategy_config:
@@ -726,6 +925,21 @@ class PaperTradingEngine:
             ):
                 graduation_triggered = self.enable_raydium_graduation
 
+            if confirmed:
+                if trade_info is not None and mint in positions:
+                    self._note_replay_follow_on_buy(positions[mint], trade_info, ts)
+                if last_expiry_at is None or ts - last_expiry_at >= 1.0:
+                    last_expiry_at = ts
+                    expired = self.order_flow_engine.expire_watch(
+                        ttl=float(self.strategy_config.watch_ttl_seconds),  # type: ignore[union-attr]
+                        now=ts,
+                    )
+                    if expired:
+                        watch_stats["expired"] = watch_stats.get("expired", 0) + len(
+                            expired
+                        )
+                    self.order_flow_engine.drain_watch_evictions()
+
             exited_this_snapshot = False
             if self.live_fidelity:
                 forced_reason = ""
@@ -806,23 +1020,44 @@ class PaperTradingEngine:
                     del positions[mint]
                     exited_this_snapshot = True
 
+            confirmed_metrics: dict[str, Any] | None = None
+            if confirmed and mint not in positions and not exited_this_snapshot:
+                confirmed_metrics = self._confirmed_entry(
+                    snapshot=snapshot,
+                    mint=mint,
+                    ts=ts,
+                    market_cap=self._snapshot_market_cap(snapshot, price),
+                    trade=trade_info,
+                    open_positions=len(positions),
+                    screening=screening,
+                    flow=confirm_flow,
+                    traded=traded_mints,
+                    stats=watch_stats,
+                )
+
             # No re-entry on the same snapshot that closed the position (BUG-83).
             if (
                 mint not in positions
                 and not exited_this_snapshot
                 and (
-                    self._is_live_fill(snapshot, "buy")
-                    if mirror_live_entries
-                    else self._buy_signal(
-                        (
-                            snapshot
-                            if not (self.live_fidelity and "user" in snapshot)
-                            else {k: v for k, v in snapshot.items() if k != "signal"}
-                        ),
-                        momentum_triggered=momentum_triggered,
-                        graduation_triggered=graduation_triggered,
-                        copy_trade_triggered=copy_trade_buy_triggered,
-                        pre_grad_triggered=pre_grad_triggered,
+                    confirmed_metrics is not None
+                    if confirmed
+                    else (
+                        self._is_live_fill(snapshot, "buy")
+                        if mirror_live_entries
+                        else self._buy_signal(
+                            (
+                                snapshot
+                                if not (self.live_fidelity and "user" in snapshot)
+                                else {
+                                    k: v for k, v in snapshot.items() if k != "signal"
+                                }
+                            ),
+                            momentum_triggered=momentum_triggered,
+                            graduation_triggered=graduation_triggered,
+                            copy_trade_triggered=copy_trade_buy_triggered,
+                            pre_grad_triggered=pre_grad_triggered,
+                        )
                     )
                 )
                 and len(positions) < self.max_positions
@@ -867,7 +1102,11 @@ class PaperTradingEngine:
                             buys_per_mint[mint] = buys_per_mint.get(mint, 0) + 1
                             positions[mint]["costs_sol"] = buy_cost
                         cash -= spend_budget + buy_cost
-                        if copy_trade_buy_triggered:
+                        if confirmed_metrics is not None:
+                            buy_reason = "momentum_confirmed"
+                            self.order_flow_engine.unwatch(mint)
+                            traded_mints.add(mint)
+                        elif copy_trade_buy_triggered:
                             buy_reason = f"copy_trade_{copy_wallet_label}"
                         elif graduation_triggered:
                             buy_reason = "raydium_graduation_snipe"
@@ -896,6 +1135,13 @@ class PaperTradingEngine:
                                 "reason": buy_reason,
                             }
                         )
+                        if confirmed_metrics is not None:
+                            trades[-1]["strategy"] = "momentum"
+                            trades[-1]["entry_metrics"] = confirmed_metrics
+                            positions[mint]["strategy"] = "momentum"
+                            positions[mint]["creator"] = (
+                                screening.get(mint) or {}
+                            ).get("creator")
 
             portfolio_value = cash + sum(
                 position["quantity"]
@@ -976,7 +1222,11 @@ class PaperTradingEngine:
             },
             "live_fidelity": self.live_fidelity,
             "costs_modelled": self.cost_model is not None,
-            "entries_from": "live_fills" if mirror_live_entries else "signals",
+            "entries_from": (
+                "confirmed"
+                if confirmed
+                else "live_fills" if mirror_live_entries else "signals"
+            ),
             "gross_pnl_sol": sum(
                 float(t.get("gross_pnl_sol", t.get("pnl") or 0.0))
                 for t in trades
@@ -993,6 +1243,8 @@ class PaperTradingEngine:
             ),
             "entry_rejections": entry_rejections,
         }
+        if confirmed:
+            summary["watch_stats"] = watch_stats
         self.trades = trades
         return summary
 

@@ -66,6 +66,8 @@ class TradingStrategy:
         active_positions: int,
         buy_attempts: int,
         mint_seen_recently: bool = False,
+        token_age_seconds: float | None = None,
+        market_cap_sol: float | None = None,
     ) -> bool:
         return generate_momentum_buy_signal(
             self.config,
@@ -73,6 +75,8 @@ class TradingStrategy:
             active_positions=active_positions,
             buy_attempts=buy_attempts,
             mint_seen_recently=mint_seen_recently,
+            token_age_seconds=token_age_seconds,
+            market_cap_sol=market_cap_sol,
         )
 
     def evaluate_momentum(
@@ -82,6 +86,7 @@ class TradingStrategy:
         *,
         token_creation_timestamp: float | None = None,
         current_time: float | None = None,
+        exclude_users: frozenset[str] | None = None,
     ) -> MomentumSignal:
         return engine.evaluate_momentum_signal(
             mint,
@@ -94,6 +99,7 @@ class TradingStrategy:
             token_creation_timestamp=token_creation_timestamp,
             max_token_age_seconds=self.config.momentum_max_token_age_seconds,
             current_time=current_time,
+            exclude_users=exclude_users,
         )
 
     def should_buy_graduation(

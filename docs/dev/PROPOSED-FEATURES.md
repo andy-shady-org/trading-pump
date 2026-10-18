@@ -26,6 +26,10 @@ This document lists candidate features and architectural enhancements for `pumpf
 |---|---|---|---|---|
 | FEAT-49 | Net PnL accounting & wallet reconciliation | Income | P1 | 24B |
 | FEAT-50 | Terminal operator pause & daily PnL digest | Income | P1 | 24D (implemented) |
+| FEAT-51 | Watch list & batch curve poller (confirmed entries) | Income | P1 | 24F |
+| FEAT-52 | Confirmed momentum entry & momentum exits | Income | P1 | 24G |
+| FEAT-53 | Pre-graduation lane via the RPC poller | Income | P2 | 24H |
+| FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |
@@ -70,6 +74,44 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Dependencies:** FEAT-49 for the digest numbers.
 * **Impact:** Fewer missed sessions and fewer forced liquidations from full stops; the operator can pause through volatile periods.
 * **Status:** implemented in Sprint 24D (`bot/operator.py`, `bot/supervision.py`, `deploy/`; [`RUNBOOK.md` §5.5, §8](RUNBOOK.md#55-operator-pause-and-unattended-alerts-sprint-24d-feat-50)). The pause persists across restarts; the digest is the difference of the persisted session totals since the previous one. Drills and a 7-day unattended run are still to do.
+
+### FEAT-51: Watch List & Batch Curve Poller
+* **Class / Priority:** Income · P1 (Sprint 24F, [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md))
+* **Goal:** Observe screened launches cheaply instead of buying them at the create event.
+* **Evidence:** the v0.2.3 24 h capture lost −0.579 SOL over 1,675 launch-time positions (10.3% profitable); PumpPortal bills every trade message (BUG-112/120), so subscribing to every candidate is too expensive.
+* **Design:** `entry_mode: "confirmed"` puts passed tokens on a bounded, TTL watch list in `OrderFlowEngine` (`WatchEntry`); `_watch_poll_loop` batch-reads curves with `PumpFunExecutionClient.get_bonding_curve_states` (`getMultipleAccounts`, 100 per call, BUG-104/108 checks) and feeds the watch list and `GraduationEngine`; mints whose real SOL grew by `watch_promote_min_sol_growth` get a trade subscription, at most `watch_max_trade_subscriptions`; expired mints are unsubscribed.
+* **Dependencies:** none. **Impact:** confirmation data at near-zero message cost.
+
+### FEAT-52: Confirmed Momentum Entry & Momentum Exits
+* **Class / Priority:** Income · P1 (Sprint 24G)
+* **Goal:** Buy only watched tokens with real follow-on demand.
+* **Design:** `_handle_trade_update` runs `evaluate_momentum` / `should_buy_momentum` for subscribed watched mints, with a token-age window and a market-cap band, then `_should_buy` and the cost guard (`max_entry_cost_share_pct`); buys are tagged `strategy=momentum` with `entry_metrics`. Exits gain a buy-flow stagnation exit (`stagnant_min_buy_sol`) and a break-even ratchet. Replay models the watch → confirm path; a `momentum` preset ships the starting thresholds.
+* **Dependencies:** FEAT-51. **Impact:** targets the main cause of the losses (no follow-on buyers); judged per lane with `pumpfun-audit pnl --group-by strategy`.
+
+### FEAT-53: Pre-Graduation Lane via the RPC Poller
+* **Class / Priority:** Income · P2 (Sprint 24H)
+* **Goal:** Run the existing pre-graduation harvester on the WebSocket deployment.
+* **Design:** the poller feeds `GraduationEngine`; the pre-graduation entry block becomes a helper called from both the Geyser handler and the poller; buys are tagged `strategy=pre_graduation`; tranche exits sell before `complete`.
+* **Dependencies:** FEAT-51. Stays off in the canary until a ≥ 72 h paper pilot ([`RELEASE-GATE.md` §3.5](RELEASE-GATE.md#35-features-that-must-stay-off-until-proven)).
+
+### FEAT-54: Smart-Wallet Discovery, Copy Simulation & Reviewed Watch List
+* **Class / Priority:** Income · P2 (Sprint 24I, after 24H; [`STRATEGY-PIVOT.md` §2.4](STRATEGY-PIVOT.md#24-lane-3--reviewed-smart-wallets-feat-54-p2))
+* **Goal:** Use wallets with a strong record as evidence for entries, without adding them to live copy trading automatically.
+* **Evidence:** a wallet with "100+ buys at 75% wins" is not proof of a copyable edge:
+  - win rate is not net profit (the confirmed lane was net positive at a 41–55% win rate in replay; a wallet can win 75% and still lose on a few large losses);
+  - scanning thousands of wallets finds lucky ones (selection bias);
+  - many high scorers are launch-slot snipers, bundle/dev/insider wallets or wash bots;
+  - a copy always fills one or more slots later at a higher curve price, so the wallet's result does not carry over;
+  - a wallet known to be copied can sell into its copiers.
+* **Current code:** `strategies/copy_trading.py` (`TrackedWallet.win_rate`, `total_trades`, `record_trade_outcome`) tracks win rate only, and copy buys fire only on `subscribeTokenTrade` messages for mints the bot already holds or has promoted.
+* **Design:**
+  1. **Discover, don't act.** An offline scorer (`pumpfun-audit wallets` or `pumpfun-replay --score-wallets`) ranks wallets from captures on **net SOL after modelled costs**, distinct tokens, average and worst return, hold time and the share of buys in the first slots after create. It rejects launch-slot buyers, wallets linked to the token's creator (funding cluster, `strategies/filters.py` Sybil checks), and round-trip/wash patterns. Minimums are config keys (`wallet_min_closed_trades` 100, `wallet_min_distinct_tokens`, `wallet_min_net_sol`); win rate is reported, never used alone.
+  2. **Simulate our copy.** Replay each candidate's buys with our own delay (`copy_entry_delay_slots`, default 2) and `engines/costs.py`; keep a wallet only if **our** copied PnL is net positive on a later capture that was not used to find it.
+  3. **Reviewed list.** Survivors are written to a candidate file (`wallets_candidates.json`); a person moves them to the tracked list (`tracked_wallets.json`). Nothing is added to the tracked list automatically.
+  4. **Confirmation, not a trigger.** A tracked wallet's buy on a watched mint counts as one more piece of evidence in the momentum check (`momentum_tracked_wallet_bonus`, e.g. one fewer distinct buyer needed); it never bypasses the age / market-cap band, `_should_buy` or the cost guard. Buys it influenced record `entry_metrics.tracked_wallets`.
+  5. **Automatic removal.** A wallet is disabled when its rolling net copied PnL over the last `wallet_rolling_window` (20) influenced positions drops below zero, or when its SOL at risk would exceed `wallet_max_exposure_sol`; both are audited and alerted.
+  6. **Optional stand-alone lane** (`strategy=copy`), only after the confirmation use is shown positive; needs `subscribeAccountTrade` (another billed PumpPortal feed, BUG-112/120), so it gets its own subscription budget and the BUG-116 breaker.
+* **Dependencies:** FEAT-51, FEAT-52 (watch list and momentum check), a capture recorded with `configs/capture.json` that has trade flow for watched mints. **Impact:** more entry evidence at no extra message cost; per-wallet results visible in `pumpfun-audit pnl --group-by strategy`. Copy trading as its own lane stays off ([`RELEASE-GATE.md` §3.5](RELEASE-GATE.md#35-features-that-must-stay-off-until-proven)) until the 24I exit gate passes.
 
 ---
 

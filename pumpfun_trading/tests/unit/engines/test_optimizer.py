@@ -34,6 +34,7 @@ from pumpfun_trading.engines.optimizer import (
     evaluate_fitness,
 )
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.strategies.presets import resolve_strategy_config
 from pumpfun_trading.tests.support.factories import make_config
 
 
@@ -512,6 +513,34 @@ def test_build_default_strategy_search_space():
     tp = space.get("take_profit")
     assert tp is not None
     assert tp.default == 1.8
+    assert "watch_promote_min_sol_growth" not in space.names
+
+
+def test_search_space_adds_confirmed_entry_keys_for_confirmed_mode():
+    cfg = resolve_strategy_config("momentum", overrides={"min_market_cap_sol": 40.0})
+    space = build_default_strategy_search_space(cfg)
+    confirmed_keys = {
+        "watch_promote_min_sol_growth",
+        "momentum_min_net_inflow_sol",
+        "momentum_min_token_age_seconds",
+        "min_market_cap_sol",
+        "momentum_max_market_cap_sol",
+        "stagnant_min_buy_sol",
+        "breakeven_ratchet_activation_pct",
+    }
+    assert confirmed_keys <= set(space.names)
+    floor = space.get("min_market_cap_sol")
+    ceiling = space.get("momentum_max_market_cap_sol")
+    ratchet = space.get("breakeven_ratchet_activation_pct")
+    assert floor is not None and ceiling is not None and ratchet is not None
+    assert floor.default == 40.0
+    # Every sampled combination stays a valid confirmed-entry config.
+    assert floor.max_val < ceiling.min_val
+    assert ratchet.min_val > cfg.breakeven_buffer_pct
+    rng = random.Random(7)
+    for _ in range(20):
+        sample = space.sample_configuration(rng)
+        resolve_strategy_config("momentum", overrides=sample)
 
 
 def test_fitness_metrics_calculation():

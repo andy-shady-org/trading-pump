@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -426,3 +427,38 @@ def test_graduation_trajectory_and_signals():
 
     traj_none = engine.evaluate_graduation_trajectory("non_existent_mint")
     assert traj_none is None
+
+
+def test_polled_curves_need_enough_readings_before_a_pre_graduation_entry() -> None:
+    """FEAT-53: one or two polls give acceleration 0 by construction."""
+    engine = GraduationEngine(target_graduation_sol=85.0)
+    for i, real_sol in enumerate([64.0, 64.5, 65.5, 67.0]):
+        engine.update_bonding_curve(
+            mint="polled",
+            bonding_curve="",
+            real_sol_reserves=real_sol,
+            virtual_sol_reserves=30.0 + real_sol,
+            market_cap_sol=70.0,
+            timestamp=100.0 + 2 * i,
+        )
+    tracker = engine._trackers["polled"]
+    assert tracker.sample_count(current_time=106.0) == 4
+    assert tracker.sample_count(window_seconds=3.0, current_time=106.0) == 2
+
+    kwargs: dict[str, Any] = {
+        "min_progress_pct": 75.0,
+        "max_progress_pct": 88.0,
+        "current_time": 106.0,
+    }
+    short = engine.evaluate_pre_graduation_harvesting_entry(
+        "polled", min_samples=5, **kwargs
+    )
+    assert not short.triggered
+    assert short.reason.startswith("insufficient_history")
+
+    enough = engine.evaluate_pre_graduation_harvesting_entry(
+        "polled", min_samples=4, **kwargs
+    )
+    assert enough.triggered
+    assert enough.trajectory is not None
+    assert enough.trajectory.acceleration_sol_per_sec2 > 0.0

@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the Pump.fun trading bot")
     parser.add_argument(
         "--preset",
-        choices=["conservative", "balanced", "aggressive"],
+        choices=["conservative", "balanced", "aggressive", "momentum"],
         default="balanced",
         help="Trading strategy preset",
     )

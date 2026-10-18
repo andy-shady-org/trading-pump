@@ -241,6 +241,17 @@ def build_dashboard(bot: Any) -> Panel:
             "Trade feed",
             "ok" if trade_feed() else "[bold red]REFUSED (key funds?)[/bold red]",
         )
+    watch_status = getattr(bot, "watch_list_status", None)
+    if callable(watch_status):
+        watch = watch_status()
+        if isinstance(watch, dict) and watch.get("entry_mode") == "confirmed":
+            # Confirmed entries (FEAT-51): watched launches and billed subscriptions.
+            health.add_row(
+                "Watch list",
+                f"{watch.get('watched', 0)} watched, "
+                f"{watch.get('subscribed', 0)}/{watch.get('subscription_budget', 0)}"
+                " subscribed",
+            )
     health.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     health.add_row("Stop requested", "yes" if bot._stop_requested else "no")
     health.add_row("Last status", str(bot._last_status))

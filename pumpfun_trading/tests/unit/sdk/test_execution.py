@@ -26,6 +26,7 @@ from pumpfun_trading.sdk.execution import (
     BUYBACK_FEE_RECIPIENT,
     EVENT_AUTHORITY,
     FEE_RECIPIENT,
+    GET_MULTIPLE_ACCOUNTS_LIMIT,
     GLOBAL_STATE,
     MAYHEM_FEE_RECIPIENT,
     PUMP_FEE_PROGRAM_ID,
@@ -2097,3 +2098,83 @@ async def test_fetch_trade_curve_state_foreign_owner_refuses_to_build() -> None:
 
     with pytest.raises(NotPumpFunCurveError):
         await client._fetch_trade_curve_state(SAMPLE_MINT)
+
+
+# --- FEAT-51: batch curve reader for the watch list ---------------------------------
+
+
+def _curve_value(virtual_sol: int, real_sol: int, owner: str = PUMP_PROGRAM_ID) -> dict:
+    value = _curve_account(virtual_sol, real_sol)["result"]["value"]
+    value["owner"] = owner
+    return value
+
+
+async def test_get_bonding_curve_states_decodes_good_curves_and_rejects_the_rest() -> (
+    None
+):
+    client = _client()
+    good, bad_owner, missing, odd, junk = (str(Pubkey.new_unique()) for _ in range(5))
+    junk_value = {"owner": PUMP_PROGRAM_ID, "data": ["!!notbase64", "base64"]}
+    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "result": {
+                "value": [
+                    _curve_value(*STANDARD_CURVE_RESERVES[0]),
+                    _curve_value(
+                        *STANDARD_CURVE_RESERVES[0],
+                        owner="11111111111111111111111111111111",
+                    ),
+                    None,
+                    _curve_value(*NON_STANDARD_CURVE_RESERVES[0]),
+                    junk_value,
+                ]
+            }
+        }
+    )
+    rejected: dict[str, str] = {}
+
+    states = await client.get_bonding_curve_states(
+        [good, bad_owner, missing, odd, junk, good], rejected=rejected
+    )
+
+    assert list(states) == [good]
+    assert states[good]["virtual_sol_reserves"] == STANDARD_CURVE_RESERVES[0][0]
+    assert rejected == {
+        bad_owner: "not_pump_fun",
+        missing: "missing",
+        odd: "non_standard",
+        junk: "decode_error",
+    }
+    payload = client._request_rpc_json.await_args_list[0].args[0]
+    assert payload["method"] == "getMultipleAccounts"
+    assert len(payload["params"][0]) == 5
+
+
+async def test_get_bonding_curve_states_reads_in_chunks_of_100() -> None:
+    client = _client()
+    mints = [str(Pubkey.new_unique()) for _ in range(GET_MULTIPLE_ACCOUNTS_LIMIT + 5)]
+
+    async def reply(payload: dict, **_: Any) -> dict:
+        count = len(payload["params"][0])
+        return {"result": {"value": [None] * (count - 1)}}  # short answer
+
+    client._request_rpc_json = AsyncMock(side_effect=reply)  # type: ignore[method-assign]
+
+    states = await client.get_bonding_curve_states(mints)
+
+    assert states == {}
+    sizes = [
+        len(c.args[0]["params"][0]) for c in client._request_rpc_json.await_args_list
+    ]
+    assert sizes == [GET_MULTIPLE_ACCOUNTS_LIMIT, 5]
+
+
+async def test_get_bonding_curve_states_raises_on_rpc_failure() -> None:
+    client = _client()
+    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("RPC request failed after retries: timeout")
+    )
+
+    with pytest.raises(RuntimeError):
+        await client.get_bonding_curve_states([SAMPLE_MINT])
+    assert await client.get_bonding_curve_states([]) == {}

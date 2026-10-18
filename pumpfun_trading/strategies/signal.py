@@ -37,8 +37,24 @@ def generate_momentum_buy_signal(
     active_positions: int,
     buy_attempts: int,
     mint_seen_recently: bool = False,
+    token_age_seconds: float | None = None,
+    market_cap_sol: float | None = None,
 ) -> bool:
+    """Momentum entry; with ``token_age_seconds`` / ``market_cap_sol`` also the
+    confirmed-entry window and band (FEAT-52)."""
     if not config.enable_momentum_signals:
+        return False
+    if token_age_seconds is not None and not (
+        float(getattr(config, "momentum_min_token_age_seconds", 0.0))
+        <= token_age_seconds
+        <= float(config.momentum_max_token_age_seconds)
+    ):
+        return False
+    if market_cap_sol is not None and not (
+        float(config.min_market_cap_sol)
+        <= market_cap_sol
+        <= float(getattr(config, "momentum_max_market_cap_sol", float("inf")))
+    ):
         return False
     return (
         not mint_seen_recently

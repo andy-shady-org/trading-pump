@@ -1026,3 +1026,22 @@ def test_dashboard_masks_a_key_set_directly_on_the_stream_url(tmp_path: Path) ->
 
     assert "wss://feed.test/ws" in text
     assert "secret-stream-key" not in text
+
+
+def test_watch_list_row_shows_only_in_confirmed_mode(tmp_path: Path) -> None:
+    launch = make_bot(tmp_path)
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(launch))
+    assert "Watch list" not in console.export_text()
+
+    bot = make_bot(tmp_path, entry_mode="confirmed", watch_max_trade_subscriptions=20)
+    bot.order_flow_engine.watch("A", created_at=0.0)
+    bot.order_flow_engine.watch("B", created_at=0.0)
+    bot.order_flow_engine.mark_watch_subscribed("B")
+    console = Console(width=220, record=True)
+    console.print(build_dashboard(bot))
+    lines = console.export_text().splitlines()
+
+    assert any(
+        "Watch list" in line and "2 watched, 1/20 subscribed" in line for line in lines
+    )

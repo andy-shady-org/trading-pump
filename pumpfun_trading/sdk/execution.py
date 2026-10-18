@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from collections.abc import Sequence
 from typing import Any, Optional
 
 import aiohttp
@@ -51,6 +52,8 @@ from .raydium import (
 )
 
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+# Solana caps getMultipleAccounts at 100 accounts per call.
+GET_MULTIPLE_ACCOUNTS_LIMIT = 100
 GLOBAL_STATE = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 FEE_RECIPIENT = "FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz"
 # Global.reserved_fee_recipient: mandatory fee recipient for mayhem-mode curves
@@ -1041,6 +1044,59 @@ class PumpFunExecutionClient:
         # Never price a position from a curve that decodes to nonsense.
         self._reject_non_standard_curve(mint, state)
         return state
+
+    async def get_bonding_curve_states(
+        self,
+        mints: Sequence[str],
+        *,
+        rejected: dict[str, str] | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, dict[str, int | float | bool]]:
+        """Batch-read bonding curves with ``getMultipleAccounts`` (FEAT-51).
+
+        Reads at most 100 accounts per call. Only curves that exist, are owned by
+        the Pump.fun program (BUG-108) and pass the reserve sanity checks
+        (BUG-104) are returned; every other mint is written to ``rejected`` with a
+        reason (``missing``, ``not_pump_fun``, ``decode_error``, ``non_standard``).
+        An RPC failure raises ``RuntimeError`` so the caller can back off.
+        """
+        unique = list(dict.fromkeys(str(m) for m in mints if m))
+        states: dict[str, dict[str, int | float | bool]] = {}
+        for start in range(0, len(unique), GET_MULTIPLE_ACCOUNTS_LIMIT):
+            chunk = unique[start : start + GET_MULTIPLE_ACCOUNTS_LIMIT]
+            pdas = [self.get_bonding_curve_pda(mint)[0] for mint in chunk]
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getMultipleAccounts",
+                "params": [pdas, {"encoding": "base64", "commitment": "confirmed"}],
+            }
+            parsed = await self._request_rpc_json(
+                payload, max_retries=1, timeout_seconds=timeout_seconds
+            )
+            values = (parsed.get("result") or {}).get("value") or []
+            for index, mint in enumerate(chunk):
+                value = values[index] if index < len(values) else None
+                reason = None
+                state: dict[str, Any] = {}
+                if not value:
+                    reason = "missing"
+                elif str(value.get("owner") or PUMP_PROGRAM_ID) != PUMP_PROGRAM_ID:
+                    reason = "not_pump_fun"
+                else:
+                    try:
+                        raw = base64.b64decode((value.get("data") or [""])[0])
+                        state = self.decode_bonding_curve_data(raw)
+                        self._reject_non_standard_curve(mint, state)
+                    except NonStandardCurveError:
+                        reason = "non_standard"
+                    except Exception:
+                        reason = "decode_error"
+                if reason is None:
+                    states[mint] = state
+                elif rejected is not None:
+                    rejected[mint] = reason
+        return states
 
     async def _fetch_trade_curve_state(self, mint: str) -> dict[str, Any]:
         """Fetches the bonding curve needed to build a trade.

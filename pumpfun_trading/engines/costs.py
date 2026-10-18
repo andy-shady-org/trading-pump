@@ -52,6 +52,15 @@ class ReplayCostModel:
             rent_lamports=refund,
         )
 
+    def round_trip_fixed_costs_sol(self) -> float:
+        """Fixed SOL of one buy plus one full exit: network and priority fees,
+        tips, and rent that a closing sell does not refund. The Pump.fun fee is
+        proportional to size, so it is not part of it."""
+        return (
+            self.buy_costs().total_cost_sol
+            + self.sell_costs(full_exit=True).total_cost_sol
+        )
+
     @classmethod
     def from_env(
         cls,

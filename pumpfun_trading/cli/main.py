@@ -276,7 +276,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--preset",
-        choices=["conservative", "balanced", "aggressive"],
+        choices=["conservative", "balanced", "aggressive", "momentum"],
         default="balanced",
         help="Trading strategy preset",
     )

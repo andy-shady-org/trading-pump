@@ -220,6 +220,28 @@ Type all four path variables: the v0.2.3 capture was started without the `PUMPFU
 
 In the first minutes check that `capture/bot.log` has "Successfully subscribed to keys", `Trade feed` is `ok`, and `capture/replay_capture.jsonl` holds `buy`/`sell` market trades, not only creates. Watch `trade_feed_breaker` (§5.7) and `mayhem_rejections` in the status file. Afterwards run §6.1 against `capture/` and replay with `configs/canary.json` as well, so the 45 s and 120 s timeouts can be compared on the same data.
 
+### 6.3 Confirmed entries: capture → Stage 0 → Stage 1 at 0.02 SOL (v0.3.0, Phase 4c)
+
+From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json` with `entry_mode: "confirmed"` ([`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)). Copy both into the runtime `configs/` (keep the v0.2.x files as `*.v0.2.json` for rollback, §5.4). Each step starts only if the one before passed; record every result in `STRATEGY-PIVOT.md` §6.
+
+1. **Capture (24 h, paper).** Run `configs/capture.json` as in §6.2. Checks while it runs:
+   - dashboard `Watch list: N watched, S/20 subscribed`: N stays ≤ `watch_max_mints` (300) and S ≤ `watch_max_trade_subscriptions`;
+   - `watch_list.stats` in `capture/bot_status.json`: `watched` and `promoted` grow, `poll_errors` stays near 0, `dropped_not_pump_fun` / `dropped_non_standard` are counted, not bought;
+   - no `watch_poll_failed` events for more than a few minutes (`pumpfun-events --path capture/events.jsonl --tail`), no loop stalls (`Last status` keeps changing);
+   - PumpPortal message count well below the v0.2.3 capture (only promoted and held mints are subscribed).
+2. **Replay gate.** Replay the new capture with `configs/canary.json` **unchanged**:
+   ```bash
+   PUMPFUN_JITO_TIP_LAMPORTS=25000 pumpfun-replay --path capture/replay_capture.jsonl \
+     --config configs/canary.json --initial-cash 2.0 --mode summary
+   ```
+   Go only if `net_pnl_sol` > 0 and `entries_from` is `confirmed`. If not, do not start Stage 0: re-tune on this capture, then wait for a third one to confirm.
+3. **Stage 0 (72 h, paper)** with `configs/canary.json --paper-trade` and `--record-replay`, per §6 and `RELEASE-GATE.md` §3.1. Judge it with `pumpfun-audit pnl --group-by strategy` (`momentum` row) and per position, never per sell.
+4. **Stage 1 (live canary)** with `configs/canary.json` on the dedicated hot wallet: 0.02 SOL buys, ≤ 2 positions, 0.05 SOL exposure (`RELEASE-GATE.md` §3.3). Exit criteria: ≥ 100 trades, net > 0, daily reconciliation clean (§5.3).
+
+**Tip experiment.** Replay already shows the tip is small next to the edge on this lane (0 / 25k / 50k / 100k lamports: +0.139 / +0.132 / +0.124 / +0.109 SOL over the v0.2.3 day). What replay cannot show is landing. During Stage 0 and the first canary days compare `PUMPFUN_JITO_TIP_LAMPORTS` 0 (direct RPC, `PUMPFUN_USE_JITO=false`), 25,000 and 50,000 for at least one day each, and keep the lowest tip whose buys land within the `paper_entry_delay_seconds` assumption (1.5 s) and whose net per position does not drop. Record landing time and net per position for each setting.
+
+**Pre-graduation lane (FEAT-53).** It runs from the same poller on watched and held curves, but stays `enable_pre_graduation_harvesting: false` in `canary.json`. To test it, run a separate 72 h paper instance with the flag on (own runtime folder and paths as in §6.2) and judge the `pre_graduation` row of `pumpfun-audit pnl --group-by strategy`. It can only see curves still on the watch list (`watch_ttl_seconds`) or already held; enable it in the canary only after that pilot is net positive (`RELEASE-GATE.md` §3.5).
+
 ## 7. Incident drills
 
 Run these in paper mode before Stage 1 and after any release that touches lifecycle, persistence or execution.
