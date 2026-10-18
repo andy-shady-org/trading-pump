@@ -8,6 +8,12 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+## [0.3.0-rc.1] - 2026-10-18
+
+Release candidate for the strategy pivot (Phase 4c, Sprints 24E–24H; PR #22) plus the fixes from the v0.2.3 capture (BUG-118…120). With `entry_mode: "confirmed"` the bot no longer buys at the create event: it watches screened launches, polls their curves over RPC and buys only after follow-on demand is confirmed, with a pre-graduation lane fed by the same poller. The default `entry_mode` stays `"launch"`, so existing configs behave as before.
+
+This is a MINOR release under the [§6 versioning policy](docs/dev/RELEASE-GATE.md#6-versioning-policy) (new config keys). It is a **pre-release for paper testing only**: the capture run, the replay go/no-go and the 72 h Stage 0 run on this tag. `v0.3.0` is tagged only after Sprint 24G passes Stage 0 ([`STRATEGY-PIVOT.md` §5](docs/dev/STRATEGY-PIVOT.md#5-go--no-go)); until then this build must not run on a funded wallet.
+
 ### Security
 - BUG-118: the dashboard's Coin Polling and Bot Status panels showed the PumpPortal API key inside the stream URL. The key now has its own variable, `PUMPFUN_STREAM_API_KEY`; `stream_url` stays key-free and the key is only added when connecting to `pumpportal.fun`. A key still in `PUMPFUN_STREAM_URL` is split out and used, with a warning. The dashboard also redacts the stream and Geyser URLs.
 
@@ -22,11 +28,39 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ### Changed
 - New environment variable `PUMPFUN_STREAM_API_KEY`. Move the key out of `PUMPFUN_STREAM_URL` (`?api-key=` still works, with a warning).
+- New config keys (FEAT-51/52/53): `entry_mode`, `watch_ttl_seconds`, `watch_max_mints`, `watch_poll_interval_seconds`, `watch_promote_min_sol_growth`, `watch_max_trade_subscriptions`, `momentum_min_token_age_seconds`, `momentum_max_market_cap_sol`, `stagnant_min_buy_sol`, `breakeven_ratchet_activation_pct`, `breakeven_buffer_pct`, `max_entry_cost_share_pct`, plus `min_holder_count`. All default to the old behaviour. New `momentum` preset.
+- Buy audit records carry `strategy` (`launch`, `momentum`, `pre_graduation`) and `entry_metrics`; `bot_status.json` and the dashboard show the watch list size and subscribed mints.
+
+### Fixed
+- BUG-119: `pumpfun-replay --compare-audit` left the costs booked on live buys out of the live total, so a losing run looked profitable (+2.06 SOL against a real −0.579 SOL). Both sides now net every buy and sell record.
+- BUG-120: trade subscriptions were only cancelled on exits from the trade-message path, so most exited mints kept streaming (54% of the capture's trade messages, billed by PumpPortal). `_sell_token` now unsubscribes whenever it closes a position.
+
+### Known limitations
+- The confirmed-lane thresholds were picked on the v0.2.3 capture, which only has trade flow for mints the launch-mode bot bought. The replay result (+0.023 SOL over 70 positions on the held-out half) is weak evidence and must be confirmed on a new capture before Stage 0 counts ([`STRATEGY-PIVOT.md` §6.2](docs/dev/STRATEGY-PIVOT.md#62-why-this-is-not-yet-a-go)).
+- The pre-graduation lane only sees curves still on the watch list (`watch_ttl_seconds`) or already held, and stays off in `configs/canary.json` until a 72 h paper pilot.
+- FEAT-54 (Sprint 24I, smart wallets) is planned only; no code ships for it.
+
+### Release record – v0.3.0-rc.1 (2026-10-18)
+- Commit: the release commit on `release/v0.3.0rc1` (this record and `pyproject.toml` → `0.3.0rc1`); the code is that of `83ce16a` (merge of PR #22, `strategy-pivot-momentum` → `main`). The `v0.3.0-rc.1` tag goes on the merge of this branch into `main`.
+- Merged since v0.2.3: `004face` (PR #21, BUG-118…120 and capture findings), `83ce16a` (PR #22, Sprints 24E–24H, FEAT-51/52/53, FEAT-54 plan)
+- Release gate: PASS (`nox -s lint mypy tests-3.14 package`; 3.11–3.13 in CI)
+- Tests: 1,483 collected, all passed; coverage 96.34% (statement + branch); golden replay unchanged in launch mode
+- Replay (v0.2.3 capture, `configs/canary.json`, net of costs): first half (tuning) +0.086 SOL / 62 positions, held-out second half +0.023 SOL / 70, full day at a 25k-lamport tip +0.132 SOL / 132; the tip moves the full-day result by at most 0.03 SOL
+- Replay parity: not yet run on a confirmed-mode capture
+- Money path changed (entries in confirmed mode, cost guard, momentum exits, pre-graduation via the poller), so no earlier Stage 0 result carries over
+- Runtime settings: new `configs/capture.json` (paper, confirmed) and `configs/canary.json` (0.02 SOL, 2 positions, confirmed, pre-graduation off); copy them into the runtime folder
+- Next: pin `runtime/pumpfun-trading` to `v0.3.0-rc.1`, record a 24–72 h capture with `capture.json` (also the 24F exit gate), replay it with the frozen `canary.json` thresholds (no re-tuning; go/no-go), then a 72 h Stage 0 with the tip test (0 / 25k / 50k lamports) ([RUNBOOK §6.3](docs/dev/RUNBOOK.md)). Fixes found on paper ship as `rc.2`, `rc.3`, …; a money-path fix restarts Stage 0
+- RUNBOOK §7 drills: not yet run
+- Capital stage after this release: 0 (paper only)
+- Stage 0 paper pilot: not started on this build
+- Sign-off: –
+
+## [0.2.3] - 2026-10-17
+
+Tagged on 2026-10-17 (`6002806`, merge of PR #20, `release/v0.2.3` → `main`) without its own CHANGELOG section; recorded here afterwards. This is the build the 24 h capture ran on.
 
 ### Fixed
 - BUG-117: a `strategy_preset` config filled in the public PumpPortal URL, which beat `PUMPFUN_STREAM_URL`, so the API key was never sent and the trade-feed breaker blamed the key's funds. An env URL now beats that placeholder; a PumpPortal URL without `api-key` logs a warning, and the breaker alert and `trade_feed_breaker.stream_has_api_key` in `bot_status.json` name the missing key.
-- BUG-119: `pumpfun-replay --compare-audit` left the costs booked on live buys out of the live total, so a losing run looked profitable (+2.06 SOL against a real −0.579 SOL). Both sides now net every buy and sell record.
-- BUG-120: trade subscriptions were only cancelled on exits from the trade-message path, so most exited mints kept streaming (54% of the capture's trade messages, billed by PumpPortal). `_sell_token` now unsubscribes whenever it closes a position.
 
 ## [0.2.2] - 2026-10-17
 
@@ -253,7 +287,9 @@ First tagged build (`v0.0.1-alpha` points at the same commit). Baseline for the 
 - Capital stage after this release: 0
 - Sign-off: –
 
-[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0-rc.1...HEAD
+[0.3.0-rc.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.3...v0.3.0-rc.1
+[0.2.3]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.1.1...v0.2.0
