@@ -830,7 +830,7 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] `PumpFunExecutionClient.get_bonding_curve_states` (`getMultipleAccounts`, chunks of 100, BUG-104/108 checks) (`sdk/execution.py`)
 - [x] Confirmed mode watches instead of buying; `_watch_poll_loop` feeds `GraduationEngine` and the watch list; promotion subscribes within `watch_max_trade_subscriptions`; expiry unsubscribes (`bot/run.py`)
 - [x] Watch list size and subscribed mints in the status snapshot and dashboard
-- **Acceptance:** paper run with a bounded watch list, trade messages within budget, no loop stalls *(code and unit tests done: `unit/strategies/test_momentum.py`, `unit/sdk/test_execution.py`, `unit/bot/test_run.py`, `unit/ui/test_dashboard.py`, `unit/strategies/test_presets.py`; paper run pending)*
+- **Acceptance:** paper run with a bounded watch list, trade messages within budget, no loop stalls *(code and unit tests done: `unit/strategies/test_momentum.py`, `unit/sdk/test_execution.py`, `unit/bot/test_run.py`, `unit/ui/test_dashboard.py`, `unit/strategies/test_presets.py`; **paper run PASS** on the v0.3.0-rc.1 capture: 869 watched, 148 promoted, ≤ 20 subscriptions, all closed, 4,661 trade messages, no breaker trips or loop stalls, [`STRATEGY-PIVOT.md` §6.3](STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19))*
 
 ### Sprint 24G: Momentum Confirmation Entry & Exit Tuning (FEAT-52)
 - [x] Token-age window and market-cap band in `generate_momentum_buy_signal`
@@ -839,7 +839,10 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] `momentum` preset
 - [x] Replay models watch → confirm → buy (`entries_from: confirmed`, `watch_stats`); optimizer search space gains the watch, band and momentum-exit keys for a confirmed base config *(tests: `unit/engines/test_replay.py`, `unit/engines/test_optimizer.py`)*
 - [x] Tune on the v0.2.3 capture (time split): `configs/canary.json` +0.086 SOL / 62 positions on the tuning half, +0.023 SOL / 70 on the held-out half, +0.132 SOL / 132 over 24 h at a 25k-lamport tip ([`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log)); `configs/capture.json` written
-- [ ] Confirm on a second capture recorded with `configs/capture.json` (the v0.2.3 capture only has trade flow for mints the launch-mode bot bought); only then the 72 h Stage 0
+- [x] Confirm on a second capture recorded with `configs/capture.json` *(v0.3.0-rc.1, 12.7 h: **NO-GO**. Paper −0.100 SOL / 65 positions, 21.5% profitable; replay with the frozen `canary.json` −0.084 SOL / 62. [`STRATEGY-PIVOT.md` §6.3](STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19))*
+- [x] Replay models the paper entry delay and penalty (BUG-121) *(parity gap +0.023 → +0.014 SOL; v0.2.3 replay +0.139 → +0.062 SOL; with it no `momentum_min_unique_buyers` value is positive on the new capture)*
+- [ ] Rework the entry before any Stage 0, judged only on capture hours the sweep has not seen: buy/sell-ratio cap, skip the buy when the curve moved > X% between signal and fill, shorter signal-to-fill latency. If none is positive, move to the pre-graduation paper pilot or a faster data source (§6.3 verdict)
+- [ ] Close the remaining parity gap (+0.014 SOL vs ±0.010 allowed): fills priced from curve reads that see trades the capture's trade stream misses
 - **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
 
 ### Sprint 24H: Pre-Graduation Lane via the RPC Poller (FEAT-53)
