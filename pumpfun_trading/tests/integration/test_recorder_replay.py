@@ -22,8 +22,8 @@ async def test_trading_bot_replay_recording_hook(tmp_path: Path):
     )
 
     with (
-        patch("pumpfun_trading.bot.run.build_execution_client"),
-        patch("pumpfun_trading.bot.run.YellowstoneGeyserClient"),
+        patch("pumpfun_trading.bot.factory.build_execution_client"),
+        patch("pumpfun_trading.bot.factory.YellowstoneGeyserClient"),
     ):
         bot = TradingBot(
             private_key_b58="1" * 64,

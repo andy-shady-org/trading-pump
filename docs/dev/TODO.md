@@ -312,7 +312,7 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Extract `EventRouter` in `pumpfun_trading/bot/event_router.py` to decouple Geyser/WebSocket stream ingestion from trade execution
 - [x] Extract `StatusPersistenceManager` in `pumpfun_trading/bot/persistence.py` and `AlertDispatcher` in `pumpfun_trading/bot/alerts.py`
 - [ ] **Re-opened:** Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP
-  - The original extraction landed, but `bot/run.py` has since regrown to ~3,770 lines (`__init__` ~500 lines, `_sell_token_locked`, all stream handlers and the WebSocket loop). It is not a lightweight facade. Tracked in **Sprint 28** (Runtime decomposition II).
+  - The original extraction landed, but `bot/run.py` has since regrown to 5,078 lines (v0.3.0-rc.1; 4,631 after Sprint 28a) (`__init__` ~500 lines, `_sell_token_locked`, all stream handlers and the WebSocket loop). It is not a lightweight facade. Tracked in **Sprint 28** (Runtime decomposition II).
 - [x] Update existing unit and integration test suites to verify complete behavioral equivalence and 100% test pass rate
 
 #### 26. Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot (FEAT-10) — **SUPERSEDED**
@@ -589,7 +589,7 @@ These enhancements build upon the hardened production v1 core to maximize risk-a
 - [x] Extract `TokenEnricher` in `pumpfun_trading/bot/enrichment.py` for anti-rug screening, creator profiling, and Gini holder analysis
 - [x] Extract `EventRouter` in `pumpfun_trading/bot/event_router.py` to decouple Geyser/WebSocket stream ingestion from trade execution
 - [x] Extract `StatusPersistenceManager` in `pumpfun_trading/bot/persistence.py` and `AlertDispatcher` in `pumpfun_trading/bot/alerts.py`
-- [ ] **Re-opened:** Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP — `run.py` regrew to ~3,770 lines; see **Sprint 28**
+- [ ] **Re-opened:** Refactor `TradingBot` in `pumpfun_trading/bot/run.py` into a lightweight facade and orchestrator adhering to SRP and OCP — `run.py` regrew to 5,078 lines (4,631 after Sprint 28a); see **Sprint 28**
 - [x] Update existing unit and integration test suites to verify complete behavioral equivalence and 100% test pass rate
 
 ### Sprint 16: Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot — **SUPERSEDED**
@@ -883,13 +883,13 @@ The bot is in production. Phase 5 pays down the structural debt that blocks the 
 
 | Finding | Summary | Sprint |
 |---|---|---|
-| R1 | `bot/run.py` regrew to ~3,770 lines | 28 |
+| R1 | `bot/run.py` regrew to 5,078 lines (4,631 after Sprint 28a) | 28 |
 | R2 | No typed read-model; `storage/status.py` reads private attributes via `getattr` | 29 |
 | R3 | No `PAUSED` / `HALTED` lifecycle states | 29 |
 | R4 | No command/control interface or event bus | 29 |
 | R5 | Hot config has no validated patch path through the risk pipeline | 29 |
 | R6 | WebSocket ingestion lives in `bot/run.py`, not `streams/` | 28 |
-| R7 | `sdk/execution.py` (~1,650 lines) mixes Pump.fun, Raydium and confirmation logic | 28 |
+| R7 | `sdk/execution.py` (1,953 lines; split in Sprint 28a) mixes Pump.fun, Raydium and confirmation logic | 28 |
 | R8 | Packaging hygiene (unused `requests`, Django classifier, no extras, nox only on 3.14, version 0.1.0 vs "Production/Stable") | 25 |
 | R9 | Runtime artifacts and stale `__pycache__` in the repo | 25 |
 | R10 / T1–T9 | Flat, unstructured test suite | 26, 27 |
@@ -960,14 +960,15 @@ Branch: `sprint-27-test-consolidation`. Test-only sprint (plus `hypothesis` in t
 - **Acceptance:** no file in the tests root except `conftest.py`; 1:1 mirror verified; coverage ≥ 95%. **Met:** 1,139 tests (1,040 + 99 new), coverage 96.30% with no module changed, green on 3.12–3.14; layout guard and BUG tag check pass
 
 ### Sprint 28: Runtime Decomposition II (R1, R6, R7)
-- [ ] `bot/factory.py`: composition root extracted from `TradingBot.__init__`
-- [ ] `bot/handlers/` (`curve.py`, `trade.py`, `raydium.py`, `new_token.py`) extracted from the stream handlers in `run.py`
-- [ ] `execution/sell_pipeline.py` extracted from `_sell_token_locked`
-- [ ] `ops/metrics.py` for runtime counters and latency telemetry
-- [ ] `streams/websocket.py` for `_run_websocket_stream` (restores the `streams/` boundary)
-- [ ] Split `sdk/execution.py` into Pump.fun, Raydium and confirmation modules (public re-exports kept)
-- [ ] Each extracted module gets its mirrored `tests/unit/<pkg>/test_<module>.py` in the same PR ([`TESTING.md`](TESTING.md))
-- **Acceptance:** `bot/run.py` < 800 lines; golden replay tests from Sprint 27 unchanged; coverage ≥ 95%; mypy clean
+Split in two (decided 2026-10-19). **28a** (branch `sprint-28a-runtime-decomposition`) takes the mechanical extractions that the Sprint 24G entry rework does not touch and may run during Phase 4c because it changes no behaviour; it is merged to `main` but ships only inside the `rc.2` build with the entry rework, so Stage 0 runs once. **28b** (the stream handlers) waits until after the entry rework and Stage 1, as the Phase 4b rules say.
+- [x] **28a** `bot/factory.py`: composition root extracted from `TradingBot.__init__` (config resolution, stream URL precedence and key split, validation, engine / logger / persistence / RPC pool / execution builders) *(`unit/bot/test_factory.py`)*
+- [ ] **28b** `bot/handlers/` (`curve.py`, `trade.py`, `raydium.py`, `new_token.py`) extracted from the stream handlers in `run.py`, plus the watch poller
+- [x] **28a** `execution/sell_pipeline.py` extracted from `_sell_token_locked` (sizing, proceeds, replay record; the lock, lifecycle and dispatch stay in `run.py`) *(`unit/execution/test_sell_pipeline.py`)*
+- [x] **28a** `ops/metrics.py` for runtime counters and latency telemetry *(`unit/ops/test_metrics.py`)*
+- [x] **28a** `streams/websocket.py` for `_run_websocket_stream` (restores the `streams/` boundary; `TradingBot` implements `WebSocketStreamHost`) *(`unit/streams/test_websocket.py`)*
+- [x] **28a** Split `sdk/execution.py` into `execution_types.py`, `execution_base.py`, `transport.py`, `pumpfun_execution.py`, `raydium_execution.py` (public re-exports kept; 1,953 → 165 lines) *(mirrored `unit/sdk/test_*.py`; the 85 old `test_execution.py` tests moved whole)*
+- [x] Each extracted module gets its mirrored `tests/unit/<pkg>/test_<module>.py` in the same PR ([`TESTING.md`](TESTING.md)) *(28a)*
+- **Acceptance:** `bot/run.py` < 800 lines; golden replay tests from Sprint 27 unchanged; coverage ≥ 95%; mypy clean. *28a: `run.py` 5,078 → 4,631 lines, golden replay unchanged, coverage 96.53%, lint and mypy clean; the < 800 target needs 28b.*
 
 ### Sprint 29: Typed State, Lifecycle Control & Event Bus (R2–R5)
 - [ ] `bot/state_model.py`: Pydantic `BotStatusView`, `PositionView`, `TradeView`, `HealthView`; `storage/status.py` and `ui/dashboard.py` consume views instead of `getattr(bot, "_…")`

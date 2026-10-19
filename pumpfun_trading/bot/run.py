@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import replace
-import json
 import logging
 import os
 import signal
@@ -13,12 +11,35 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-import aiohttp
 from dotenv import load_dotenv
 from rich.live import Live
 
 from pumpfun_trading.api.client import PumpFunApiClient
 from pumpfun_trading.bot.alerts import AlertDispatcher
+from pumpfun_trading.bot.factory import (
+    audit_retention_policy,
+    build_arbitrage_monitor,
+    build_bot_logger,
+    build_copy_trade_engine,
+    build_event_logger,
+    build_execution_from_env,
+    build_geyser_client,
+    build_graduation_engine,
+    build_order_flow_engine,
+    build_persistence,
+    build_replay_recorder,
+    build_retention_managers,
+    build_rpc_pool,
+    resolve_audit_log_path,
+    resolve_bot_config,
+    resolve_replay_log_path,
+    resolve_rpc_endpoints,
+    resolve_status_path,
+    retention_check_interval_seconds,
+    replay_retention_policy,
+    stream_max_consecutive_failures,
+    use_jito_from_env,
+)
 from pumpfun_trading.bot.enrichment import (
     TokenEnricher,
     mayhem_mode_reason,
@@ -37,12 +58,9 @@ from pumpfun_trading.bot.lifecycle import (
     settled_state,
 )
 from pumpfun_trading.bot.operator import OperatorPause
-from pumpfun_trading.bot.persistence import StatusPersistenceManager
 from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
 from pumpfun_trading.bot.trade_feed import (
-    PUMPPORTAL_PUBLIC_STREAM_URL,
     TradeFeedBreaker,
-    split_stream_api_key,
     stream_connect_url,
     stream_url_has_api_key,
 )
@@ -57,7 +75,6 @@ from pumpfun_trading.bot.position_manager import (
     CapitalDisplacementEngine,
     PositionManager,
 )
-from pumpfun_trading.bot.recorder import ReplayRecorder
 from pumpfun_trading.bot.supervision import (
     DailySummarySchedule,
     DegradationMonitor,
@@ -80,44 +97,46 @@ from pumpfun_trading.bot.risk import (
 )
 from pumpfun_trading.bot.strategy import (
     ArbitrageOpportunity,
-    CopyTradeEngine,
-    CrossVenueDisparityMonitor,
     ExitAction,
-    GraduationEngine,
     MempoolBackrunEngine,
-    OrderFlowEngine,
     RaydiumPoolKeys,
     ScreeningCache,
     TokenScreeningVerdict,
     TradingBotConfig,
     TradingStrategy,
-    resolve_strategy_config,
-)
-from pumpfun_trading.config.env import (
-    get_env_bool,
-    get_env_int,
-    resolve_bot_log_path,
 )
 from pumpfun_trading.execution.arbitrage import (
     AtomicArbitrageBuilder,
     AtomicArbitrageExecutor,
 )
-from pumpfun_trading.execution.builder import build_execution_client
 from pumpfun_trading.execution.executor import OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
-from pumpfun_trading.infra.rpc_pool import RpcConnectionPool, RpcPoolConfig
+from pumpfun_trading.execution.sell_pipeline import (
+    estimate_sell_proceeds,
+    plan_sell_size,
+    position_entry_sol,
+    position_id,
+    position_token_amounts,
+    sell_replay_snapshot,
+    sold_fraction,
+)
+from pumpfun_trading.infra.rpc_pool import RpcConnectionPool
 from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.ops.events import (
-    DiagnosticEventLogger,
     EventCategory,
     EventSeverity,
 )
 from pumpfun_trading.ops.logging import (
     get_configured_console,
-    setup_structured_logging,
+)
+from pumpfun_trading.ops.metrics import (
+    metrics_snapshot,
+    new_runtime_metrics,
+    record_latency_ms,
+    record_metric,
+    restore_metrics,
 )
 from pumpfun_trading.ops.redact import redact_text
-from pumpfun_trading.ops.retention import LogRetentionManager, RetentionPolicy
 from pumpfun_trading.sdk.costs import (
     BASE_FEE_LAMPORTS_PER_SIGNATURE,
     COST_SOURCE_TRANSACTION_META,
@@ -131,6 +150,12 @@ from pumpfun_trading.streams.geyser import (
     CompleteEventUpdate,
     TradeEventUpdate,
     YellowstoneGeyserClient,
+)
+from pumpfun_trading.streams.websocket import (
+    NEW_TOKEN_SUBSCRIPTION,
+    run_websocket_stream,
+    send_ws_message,
+    token_trade_message,
 )
 from pumpfun_trading.ui.dashboard import build_dashboard
 
@@ -181,80 +206,28 @@ class TradingBot:
         bot_status_path: str | None = None,
         replay_log_path: str | Path | None = None,
     ):
-        resolved = resolve_strategy_config(
-            strategy_preset,
+        resolved_config = resolve_bot_config(
+            config=config,
+            strategy_preset=strategy_preset,
             overrides={
-                key: value
-                for key, value in {
-                    "buy_amount_sol": buy_amount_sol,
-                    "take_profit": take_profit,
-                    "stop_loss": stop_loss,
-                    "max_active_positions": max_active_positions,
-                    "min_market_cap_sol": min_market_cap_sol,
-                    "min_balance_sol": min_balance_sol,
-                }.items()
-                if value is not None
+                "buy_amount_sol": buy_amount_sol,
+                "take_profit": take_profit,
+                "stop_loss": stop_loss,
+                "max_active_positions": max_active_positions,
+                "min_market_cap_sol": min_market_cap_sol,
+                "min_balance_sol": min_balance_sol,
             },
+            stream_url=stream_url,
+            api_base_url=api_base_url,
+            dry_run=dry_run,
+            paper_trade=paper_trade,
+            verbose=verbose,
+            headless=headless,
+            replay_log_path=replay_log_path,
         )
-        base = config or resolved
-        if not isinstance(base, TradingBotConfig):
-            base = TradingBotConfig.from_dict(base if isinstance(base, dict) else {})
-        # Precedence (BUG-100): an explicit ``stream_url=`` argument wins, then a
-        # config URL, then PUMPFUN_STREAM_URL / PUMPFUN_WS_URL, then the default.
-        # ``pumpbot`` never passes the argument, so its order is unchanged.
-        # Preset configs fill in the public PumpPortal URL when the JSON has no
-        # ``stream_url``; that placeholder must not hide the env URL carrying the
-        # API key (BUG-117).
-        default_stream_url = "http://127.0.0.1:10000"
-        placeholder_stream_urls = {default_stream_url, PUMPPORTAL_PUBLIC_STREAM_URL}
-        env_stream_url = os.getenv("PUMPFUN_STREAM_URL") or os.getenv("PUMPFUN_WS_URL")
-        effective_stream_url = stream_url
-        if stream_url and stream_url != default_stream_url:
-            effective_stream_url = stream_url
-        elif base.stream_url and base.stream_url not in placeholder_stream_urls:
-            effective_stream_url = base.stream_url
-        elif env_stream_url:
-            effective_stream_url = env_stream_url
-        elif base.stream_url:
-            effective_stream_url = base.stream_url
-        # The PumpPortal API key lives in PUMPFUN_STREAM_API_KEY, never in the
-        # stream URL the bot keeps, logs and displays (BUG-118). A key still
-        # embedded as ``?api-key=`` is split out and used, with a warning.
-        effective_stream_url, embedded_stream_key = split_stream_api_key(
-            str(effective_stream_url or "")
-        )
-        self._stream_api_key: str | None = (
-            os.getenv("PUMPFUN_STREAM_API_KEY") or ""
-        ).strip() or embedded_stream_key
-        self._stream_key_in_url = embedded_stream_key is not None
-
-        self.config = replace(
-            base,
-            dry_run=bool(base.dry_run or dry_run or paper_trade),
-            paper_trade=bool(base.paper_trade or paper_trade),
-            verbose=bool(base.verbose and verbose),
-            headless=bool(getattr(base, "headless", False) or headless),
-            stream_url=str(effective_stream_url),
-            api_base_url=str(api_base_url if api_base_url else base.api_base_url),
-            replay_log_path=(
-                str(replay_log_path)
-                if replay_log_path is not None
-                else (
-                    str(base.replay_log_path)
-                    if getattr(base, "replay_log_path", None)
-                    else None
-                )
-            ),
-        )
-
-        if self.config.buy_amount_sol <= 0:
-            raise ValueError("buy_amount_sol must be greater than zero.")
-        if not 0 < self.config.stop_loss < self.config.take_profit:
-            raise ValueError(
-                "stop_loss must be less than take_profit and both must be greater than zero."
-            )
-        if self.config.max_active_positions < 1:
-            raise ValueError("max_active_positions must be at least 1.")
+        self._stream_api_key: str | None = resolved_config.stream_api_key
+        self._stream_key_in_url = resolved_config.stream_key_in_url
+        self.config = resolved_config.config
 
         self.private_key_b58 = private_key_b58
         self.rpc_url = rpc_url
@@ -322,46 +295,17 @@ class TradingBot:
         )
 
         self.strategy = TradingStrategy(self.config)
-        self.order_flow_engine = OrderFlowEngine(
-            max_retention_seconds=600,
-            recent_token_ttl_seconds=self.recent_token_ttl_seconds,
-        )
-        self.order_flow_engine.max_watch_mints = int(
-            getattr(self.config, "watch_max_mints", 300) or 300
-        )
+        self.order_flow_engine = build_order_flow_engine(self.config)
         # Confirmed-entry watch list counters (FEAT-51): watched, promoted, ...
         self._watch_stats: dict[str, int] = {}
         # Entry lane per bought mint (momentum / pre_graduation), for sell records.
         self._entry_lane_by_mint: dict[str, str] = {}
-        self.graduation_engine = GraduationEngine(
-            target_graduation_sol=85.0,
-            candidate_ttl_seconds=1800,
-            pre_migration_threshold_sol=self.config.raydium_pre_migration_sol_threshold,
-        )
-        self.arb_monitor = CrossVenueDisparityMonitor(
-            min_arbitrage_spread_pct=self.config.min_arbitrage_spread_pct,
-            min_arbitrage_profit_sol=self.config.min_arbitrage_profit_sol,
-            max_arbitrage_input_sol=self.config.max_arbitrage_input_sol,
-            min_arbitrage_input_sol=self.config.min_arbitrage_input_sol,
-            jito_tip_profit_share_pct=self.config.arbitrage_jito_tip_profit_share_pct,
-        )
+        self.graduation_engine = build_graduation_engine(self.config)
+        self.arb_monitor = build_arbitrage_monitor(self.config)
         self.backrun_engine = MempoolBackrunEngine(
             disparity_monitor=self.arb_monitor,
         )
-        self.copy_trade_engine = CopyTradeEngine(
-            base_buy_amount_sol=self.config.buy_amount_sol,
-            max_position_size_sol=self.config.max_position_size_sol,
-            sizing_mode=self.config.copy_trading_sizing_mode,
-            scale_factor=self.config.copy_trading_scale_factor,
-            min_wallet_win_rate=self.config.copy_trading_min_wallet_win_rate,
-            max_wallet_risk_score=self.config.copy_trading_max_wallet_risk_score,
-            mirror_sells=self.config.copy_trading_mirror_sells,
-            enabled=self.config.enable_copy_trading,
-        )
-        if self.config.copy_trading_wallets:
-            self.copy_trade_engine.registry.register_wallets(
-                list(self.config.copy_trading_wallets)
-            )
+        self.copy_trade_engine = build_copy_trade_engine(self.config)
 
         self.daily_equity_tracker = DailyEquityTracker()
         self.wallet_balance_sol = self._initial_simulated_balance()
@@ -379,19 +323,17 @@ class TradingBot:
 
         self.geyser_endpoint = geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
         self.geyser_x_token = geyser_x_token or os.getenv("PUMPFUN_GEYSER_X_TOKEN")
-        self.geyser_client = geyser_client or YellowstoneGeyserClient(
-            endpoint=self.geyser_endpoint or self.stream_url,
+        self.geyser_client = geyser_client or build_geyser_client(
+            endpoint=self.geyser_endpoint,
             x_token=self.geyser_x_token,
-            reconnect_initial_backoff=self.reconnect_delay_seconds,
+            stream_url=self.stream_url,
+            reconnect_delay_seconds=self.reconnect_delay_seconds,
         )
         self._active_ws: Optional[Any] = None
 
         self._stream_consecutive_failures = 0
         self._circuit_breaker_tripped = False
-        stream_retries_env = os.getenv("PUMPFUN_STREAM_MAX_RETRIES") or os.getenv(
-            "PUMPFUN_WS_MAX_RETRIES", "5"
-        )
-        self._max_stream_consecutive_failures = int(stream_retries_env or "5")
+        self._max_stream_consecutive_failures = stream_max_consecutive_failures()
 
         self._exit_retry_queue: dict[str, dict[str, Any]] = {}
         self.max_exit_retries = int(os.getenv("PUMPFUN_MAX_EXIT_RETRIES", "5"))
@@ -403,70 +345,15 @@ class TradingBot:
         )
 
         # RPC Pooling & Failover (FEAT-08)
-        self.rpc_pool: RpcConnectionPool | None = None
-        endpoints_list = list(self.config.rpc_endpoints)
-        if not endpoints_list:
-            env_urls = os.getenv("PUMPFUN_RPC_URLS") or os.getenv("SOLANA_RPC_URLS")
-            if env_urls:
-                endpoints_list = [u.strip() for u in env_urls.split(",") if u.strip()]
-        if not endpoints_list and self.rpc_url:
-            endpoints_list = [self.rpc_url]
-
-        if self.config.enable_rpc_pool and len(endpoints_list) > 0:
-            pool_cfg = RpcPoolConfig(
-                endpoints=tuple(endpoints_list),
-                health_check_interval_seconds=self.config.rpc_pool_health_check_interval_seconds,
-                circuit_breaker_threshold=self.config.rpc_pool_circuit_breaker_threshold,
-                circuit_breaker_cooldown_seconds=self.config.rpc_pool_circuit_breaker_cooldown_seconds,
-                broadcast_concurrency=self.config.rpc_pool_broadcast_concurrency,
-            )
-            self.rpc_pool = RpcConnectionPool(
-                endpoints=tuple(endpoints_list), config=pool_cfg
-            )
-
-        # In interactive terminal mode (verbose=True and not headless), Rich's Live dashboard
-        # manages the alternate screen buffer. Direct StreamHandler writes to stderr/stdout
-        # bypass Rich and trigger cursor repositioning / viewport jumping (BUG-29).
-        # We suppress raw console StreamHandler writes during interactive Live UI rendering,
-        # enabling console logging only in headless mode or when verbose logging is disabled.
-        enable_console_logging = bool(self.headless or not self.verbose)
-        log_max_bytes = get_env_int("PUMPFUN_LOG_MAX_BYTES", self.config.log_max_bytes)
-        log_backup_count = get_env_int(
-            "PUMPFUN_LOG_BACKUP_COUNT", self.config.log_backup_count
+        endpoints_list = resolve_rpc_endpoints(self.config, self.rpc_url)
+        self.rpc_pool: RpcConnectionPool | None = build_rpc_pool(
+            self.config, endpoints_list
         )
-        log_rotation_type = os.getenv(
-            "PUMPFUN_LOG_ROTATION_TYPE", self.config.log_rotation_type
-        )
-        log_compress = get_env_bool("PUMPFUN_LOG_COMPRESS", self.config.log_compress)
-        effective_log_file = resolve_bot_log_path(log_file, self.config.log_file)
-
-        self.logger = setup_structured_logging(
-            logger_name="pumpfun_trading.bot",
-            log_file=effective_log_file,
-            console=enable_console_logging,
-            max_bytes=log_max_bytes,
-            backup_count=log_backup_count,
-            rotation_type=log_rotation_type,
-            compress=log_compress,
+        self.logger, effective_log_file = build_bot_logger(
+            self.config, log_file=log_file, headless=self.headless, verbose=self.verbose
         )
 
-        self._metrics = {
-            "buys": 0,
-            "sells": 0,
-            "failures": 0,
-            "retries": 0,
-            "connection_loss": 0,
-            "stale_data": 0,
-            "risk_kills": 0,
-            "circuit_breaker_trips": 0,
-            "latency_ms": {
-                "samples": 0,
-                "avg_ms": 0.0,
-                "last_ms": 0.0,
-                "max_ms": 0.0,
-                "total_ms": 0.0,
-            },
-        }
+        self._metrics = new_runtime_metrics()
 
         # Multi-Channel Alerting & Persistence Extracted Components
         self.alert_provider = (
@@ -500,172 +387,50 @@ class TradingBot:
         self._reconcile_watcher = ReconcileGapWatcher()
         self._sweep_state = SweepState()
 
-        # Primary env names with documented aliases (BUG-87).
-        self.bot_status_path = (
-            bot_status_path
-            or os.getenv("PUMPFUN_STATUS_PATH")
-            or os.getenv("PUMPFUN_BOT_STATUS_PATH")
-        )
-        self.audit_log_path = (
-            audit_log_path
-            or os.getenv("PUMPFUN_AUDIT_LOG_PATH")
-            or os.getenv("PUMPFUN_AUDIT_LOG")
-        )
-        audit_max_bytes = get_env_int(
-            "PUMPFUN_AUDIT_MAX_BYTES", self.config.audit_max_bytes
-        )
-        audit_backup_count = get_env_int(
-            "PUMPFUN_AUDIT_BACKUP_COUNT", self.config.audit_backup_count
-        )
-        audit_retention_days = get_env_int(
-            "PUMPFUN_AUDIT_RETENTION_DAYS", self.config.audit_retention_days
-        )
-        audit_compress = get_env_bool(
-            "PUMPFUN_AUDIT_COMPRESS", self.config.audit_compress
-        )
-        self.audit_policy = RetentionPolicy(
-            max_bytes=audit_max_bytes,
-            max_files=audit_backup_count,
-            max_age_days=audit_retention_days,
-            compress_archives=audit_compress,
-        )
-        self.persistence = StatusPersistenceManager(
+        self.bot_status_path = resolve_status_path(bot_status_path)
+        self.audit_log_path = resolve_audit_log_path(audit_log_path)
+        self.audit_policy = audit_retention_policy(self.config)
+        self.persistence = build_persistence(
             bot_status_path=self.bot_status_path,
             audit_log_path=self.audit_log_path,
             policy=self.audit_policy,
         )
 
         # Diagnostic Telemetry Event Logger (FEAT-30)
-        event_log_path_env = os.getenv("PUMPFUN_EVENT_LOG_PATH")
-        effective_event_log_path = (
-            event_log_path_env
-            if event_log_path_env
-            else getattr(self.config, "event_log_path", "events.jsonl")
-            or "events.jsonl"
-        )
-        subsystems_env = os.getenv("PUMPFUN_EVENT_SUBSYSTEMS")
-        effective_subsystems = (
-            tuple(p.strip() for p in subsystems_env.split(",") if p.strip())
-            if subsystems_env
-            else getattr(self.config, "event_log_subsystems", None)
-        )
-        enable_events_env = os.getenv("PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS")
-        effective_enable_events = (
-            enable_events_env.lower() in {"1", "true", "yes"}
-            if enable_events_env is not None
-            else getattr(self.config, "enable_diagnostic_events", True)
-        )
-        self.event_logger = DiagnosticEventLogger(
-            output_path=effective_event_log_path,
-            enabled_categories=effective_subsystems,
-            enabled=effective_enable_events,
-        )
+        self.event_logger, effective_event_log_path = build_event_logger(self.config)
         self._audit_handle = self.persistence._audit_handle
 
-        resolved_replay_path = (
-            replay_log_path
-            or getattr(self.config, "replay_log_path", None)
-            or os.getenv("PUMPFUN_REPLAY_LOG_PATH")
-        )
-        if not resolved_replay_path:
-            rec_env = os.getenv("PUMPFUN_RECORD_REPLAY")
-            if rec_env and rec_env.lower() not in {"false", "0", "no"}:
-                resolved_replay_path = (
-                    rec_env
-                    if rec_env.lower() not in {"true", "1", "yes"}
-                    else "market_replay.jsonl"
-                )
-        self.replay_log_path = (
-            Path(resolved_replay_path) if resolved_replay_path else None
-        )
-        replay_max_bytes = get_env_int(
-            "PUMPFUN_REPLAY_MAX_BYTES", self.config.replay_max_bytes
-        )
-        replay_backup_count = get_env_int(
-            "PUMPFUN_REPLAY_BACKUP_COUNT", self.config.replay_backup_count
-        )
-        replay_retention_days = get_env_int(
-            "PUMPFUN_REPLAY_RETENTION_DAYS", self.config.replay_retention_days
-        )
-        replay_compress = get_env_bool(
-            "PUMPFUN_REPLAY_COMPRESS", self.config.replay_compress
-        )
-        self.replay_policy = RetentionPolicy(
-            max_bytes=replay_max_bytes,
-            max_files=replay_backup_count,
-            max_age_days=replay_retention_days,
-            compress_archives=replay_compress,
-        )
-        self.replay_recorder = (
-            ReplayRecorder(output_path=self.replay_log_path, policy=self.replay_policy)
-            if self.replay_log_path
-            else None
+        self.replay_log_path = resolve_replay_log_path(replay_log_path, self.config)
+        self.replay_policy = replay_retention_policy(self.config)
+        self.replay_recorder = build_replay_recorder(
+            self.replay_log_path, self.replay_policy
         )
 
         # Retention managers and background pruning
         self._last_retention_check = time.monotonic()
-        self.retention_check_interval_seconds = float(
-            os.getenv(
-                "PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS",
-                str(getattr(self.config, "retention_check_interval_seconds", 3600.0)),
-            )
+        self.retention_check_interval_seconds = retention_check_interval_seconds(
+            self.config
         )
-        managed_dirs: set[Path] = set()
-        for p in (
-            effective_log_file,
-            self.audit_log_path,
-            effective_event_log_path,
-            self.replay_log_path,
-        ):
-            if p:
-                p_path = Path(p)
-                parent = p_path.parent if str(p_path.parent) != "" else Path(".")
-                managed_dirs.add(parent)
-        self.retention_managers = [
-            LogRetentionManager(
-                target_directory=d,
-                policy=self.audit_policy,
-                file_patterns=("*.log*", "*.jsonl*"),
-            )
-            for d in managed_dirs
-        ]
+        self.retention_managers = build_retention_managers(
+            (
+                effective_log_file,
+                self.audit_log_path,
+                effective_event_log_path,
+                self.replay_log_path,
+            ),
+            self.audit_policy,
+        )
 
         self.api = PumpFunApiClient(base_url=self.api_base_url)
 
-        jito_block_engine = os.getenv(
-            "PUMPFUN_JITO_BLOCK_ENGINE_URL",
-            "https://mainnet.block-engine.jito.wtf",
-        )
-        use_jito = os.getenv("PUMPFUN_USE_JITO", "true").lower() not in {
-            "false",
-            "0",
-            "no",
-        }
-        self.use_jito = use_jito
-        jito_tip_lamports = int(os.getenv("PUMPFUN_JITO_TIP_LAMPORTS", "100000"))
-
-        self.execution = build_execution_client(
+        self.use_jito = use_jito_from_env()
+        self.execution = build_execution_from_env(
             self.private_key_b58,
             rpc_url=self.rpc_url,
             rpc_pool=self.rpc_pool,
-            rpc_urls=endpoints_list if endpoints_list else None,
-            default_slippage_bps=int(
-                os.getenv(
-                    "PUMPFUN_SLIPPAGE_BPS",
-                    str(getattr(self.config, "raydium_slippage_bps", 250)),
-                )
-            ),
-            compute_unit_limit=int(os.getenv("PUMPFUN_COMPUTE_UNIT_LIMIT", "200000")),
-            jito_tip_lamports=jito_tip_lamports,
-            jito_block_engine_url=jito_block_engine,
-            use_jito=use_jito,
-            jito_fallback_to_rpc=os.getenv(
-                "PUMPFUN_JITO_FALLBACK_TO_RPC", "true"
-            ).lower()
-            not in {"false", "0", "no"},
-            jito_confirmation_timeout=float(
-                os.getenv("PUMPFUN_JITO_CONFIRMATION_TIMEOUT", "12.0")
-            ),
+            endpoints=endpoints_list,
+            config=self.config,
+            use_jito=self.use_jito,
         )
 
         self.arb_builder = AtomicArbitrageBuilder(self.execution)
@@ -1025,20 +790,7 @@ class TradingBot:
 
         metrics = snapshot.get("metrics", {})
         if isinstance(metrics, dict):
-            for k in [
-                "buys",
-                "sells",
-                "failures",
-                "retries",
-                "connection_loss",
-                "stale_data",
-                "risk_kills",
-                "circuit_breaker_trips",
-            ]:
-                if k in metrics and isinstance(metrics[k], (int, float)):
-                    self._metrics[k] = int(metrics[k])
-            if "latency_ms" in metrics and isinstance(metrics["latency_ms"], dict):
-                self._metrics["latency_ms"] = dict(metrics["latency_ms"])
+            restore_metrics(self._metrics, metrics)
 
         self._log(
             f"Restored persisted bot state from {self.bot_status_path} with {len(self.active_positions)} active positions.",
@@ -1433,40 +1185,13 @@ class TradingBot:
         self._write_status_snapshot()
 
     def _record_latency_ms(self, latency_ms: float) -> None:
-        lat = self._metrics.get("latency_ms")
-        if not isinstance(lat, dict):
-            lat = {
-                "samples": 0,
-                "avg_ms": 0.0,
-                "last_ms": 0.0,
-                "max_ms": 0.0,
-                "total_ms": 0.0,
-            }
-            self._metrics["latency_ms"] = lat
-        lat["samples"] = int(lat.get("samples", 0)) + 1
-        lat["total_ms"] = float(lat.get("total_ms", 0.0)) + float(latency_ms)
-        lat["last_ms"] = float(latency_ms)
-        lat["max_ms"] = max(float(lat.get("max_ms", 0.0)), float(latency_ms))
-        lat["avg_ms"] = float(lat["total_ms"]) / int(lat["samples"])
+        record_latency_ms(self._metrics, latency_ms)
 
     def _record_metric(self, name: str, value: float | int = 1) -> None:
-        if name in {"latency_ms", "last_latency_ms"}:
-            self._record_latency_ms(float(value))
-            return
-
-        current_val = self._metrics.get(name)
-        if isinstance(current_val, (int, float)):
-            self._metrics[name] = int(current_val + value)
-        else:
-            self._metrics[name] = int(value)
+        record_metric(self._metrics, name, value)
 
     def _metrics_snapshot(self) -> dict[str, Any]:
-        snapshot = dict(self._metrics)
-        if "latency_ms" in self._metrics and isinstance(
-            self._metrics["latency_ms"], dict
-        ):
-            snapshot["latency_ms"] = dict(self._metrics["latency_ms"])
-        return snapshot
+        return metrics_snapshot(self._metrics)
 
     def _record_event(self, event_message: str, alert: bool = True) -> None:
         # Events feed the status file, dashboard and alerts: never carry a key (BUG-102).
@@ -2645,15 +2370,8 @@ class TradingBot:
             TradingBotState.SELLING, reason=f"selling {mint} ({reason})"
         )
 
-        initial_tokens = int(
-            position.get("initial_token_amount")
-            or position.get("token_amount")
-            or (100_000_000 if self.dry_run else 0)
-        )
-        rem_tokens = int(
-            position.get("remaining_token_amount")
-            or position.get("token_amount")
-            or initial_tokens
+        initial_tokens, rem_tokens = position_token_amounts(
+            position, dry_run=self.dry_run
         )
 
         if not self.dry_run:
@@ -2680,20 +2398,14 @@ class TradingBot:
                 )
                 return True
 
-        if sell_amount_tokens is not None and sell_amount_tokens > 0:
-            tokens_to_sell = min(sell_amount_tokens, rem_tokens)
-        elif sell_fraction < 1.0:
-            tokens_to_sell = int((initial_tokens or rem_tokens) * sell_fraction)
-            tokens_to_sell = max(1, min(tokens_to_sell, rem_tokens))
-        else:
-            tokens_to_sell = rem_tokens
-
-        rem_after = rem_tokens - tokens_to_sell
-        is_partial = (tokens_to_sell < rem_tokens) and (
-            rem_after > self.min_sell_balance
+        size = plan_sell_size(
+            initial_tokens=initial_tokens,
+            remaining_tokens=rem_tokens,
+            sell_amount_tokens=sell_amount_tokens,
+            sell_fraction=sell_fraction,
+            min_sell_balance=self.min_sell_balance,
         )
-        if not is_partial:
-            tokens_to_sell = rem_tokens
+        tokens_to_sell, is_partial = size.tokens_to_sell, size.is_partial
 
         effective_slippage = slippage_bps or self.base_exit_slippage_bps
         t_sell_start = time.perf_counter()
@@ -2744,55 +2456,27 @@ class TradingBot:
             self._transition_to(TradingBotState.HOLDING, reason=f"sell_failed {mint}")
             return False
 
-        # `buy_price` is a per-token unit price, never the position cost (BUG-45).
-        pos_entry = float(
-            position.get("cost_sol")
-            or position.get("entry_sol")
-            or getattr(self.config, "buy_amount_sol", 0.0)
-            or 0.0
+        pos_entry = position_entry_sol(
+            position, float(getattr(self.config, "buy_amount_sol", 0.0) or 0.0)
         )
         entry_mc = float(position.get("entry_market_cap", 0.0) or 0.0)
         curr_mc = float(position.get("current_market_cap", 0.0) or entry_mc or 0.0)
-        cost_sol = float(
-            position.get("cost_sol")
-            or position.get("entry_sol")
-            or getattr(self.config, "buy_amount_sol", 0.0)
-            or pos_entry
-            or 0.0
-        )
-        frac = float(tokens_to_sell) / float(
-            initial_tokens or rem_tokens or tokens_to_sell
-        )
-        frac = max(0.0, min(1.0, frac))
-
-        if self.dry_run:
+        frac = sold_fraction(tokens_to_sell, initial_tokens, rem_tokens)
+        sell_p = estimate_sell_proceeds(
+            exec_res,
+            dry_run=self.dry_run,
+            cost_sol=pos_entry,
+            fraction=frac,
+            entry_market_cap=entry_mc,
+            current_market_cap=curr_mc,
             # Pump.fun charges its fee on the buy and on the sell; live swap
             # amounts include it, so paper proceeds must too (FEAT-49).
-            fee_factor = self._paper_round_trip_fee_factor()
-            if entry_mc > 0 and curr_mc > 0 and cost_sol > 0:
-                sell_p = (cost_sol * frac) * (curr_mc / entry_mc) * fee_factor
-            elif cost_sol > 0:
-                sell_p = cost_sol * frac * fee_factor
-            else:
-                sell_p = float(getattr(exec_res, "amount_sol", 0.0) or 0.0)
-        else:
-            sell_p = float(
-                getattr(exec_res, "amount_sol", 0.0)
-                or getattr(exec_res, "sol_amount", 0.0)
-                or (
-                    float(getattr(exec_res, "min_sol_lamports", 0)) / 1e9
-                    if getattr(exec_res, "min_sol_lamports", 0) > 0
-                    else 0.0
-                )
-                or 0.0
-            )
-            if sell_p <= 0.0:
-                if entry_mc > 0 and curr_mc > 0 and cost_sol > 0:
-                    sell_p = (cost_sol * frac) * (curr_mc / entry_mc)
-                elif cost_sol > 0:
-                    sell_p = cost_sol * frac
+            paper_fee_factor=(
+                self._paper_round_trip_fee_factor() if self.dry_run else 1.0
+            ),
+        )
 
-        is_fully_closed, remaining = self.position_manager.record_sell(
+        self.position_manager.record_sell(
             mint=mint,
             sold_tokens=tokens_to_sell,
             proceeds_sol=sell_p,
@@ -2807,83 +2491,8 @@ class TradingBot:
         sell_costs = self._execution_costs(exec_res)
         sell_costs_sol = sell_costs.total_cost_sol if sell_costs is not None else 0.0
 
-        pos_id = (
-            position.get("position_id")
-            or position.get("id")
-            or position.get("trade_id")
-        )
-
-        if is_partial:
-            frac = float(tokens_to_sell) / float(
-                initial_tokens or rem_tokens or tokens_to_sell
-            )
-            frac = max(0.0, min(1.0, frac))
-            partial_entry = pos_entry * frac if pos_entry > 0 else pos_entry
-            trade_pnl = sell_p - partial_entry
-            net_trade_pnl = trade_pnl - sell_costs_sol
-            if getattr(self, "daily_equity_tracker", None) is not None:
-                self._book_trade_costs(net_trade_pnl, sell_costs_sol)
-                if hasattr(self, "event_logger") and self.event_logger is not None:
-                    self.event_logger.emit(
-                        category=EventCategory.RISK,
-                        severity=EventSeverity.INFO,
-                        event_name="realized_pnl_banked",
-                        mint=mint,
-                        mint_name=pos_name,
-                        data={
-                            "trade_pnl": trade_pnl,
-                            "net_trade_pnl": net_trade_pnl,
-                            "costs_sol": sell_costs_sol,
-                            "is_partial": True,
-                            "realized_daily_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
-                            "effective_baseline_sol": self.daily_equity_tracker.effective_baseline_sol,
-                        },
-                    )
-            self._record_trade(
-                position_id=pos_id,
-                mint=mint,
-                action="partial_sell",
-                token_name=pos_name,
-                mint_name=pos_name,
-                entry=partial_entry,
-                exit_value=sell_p,
-                buy_price=pos_entry,
-                sell_price=sell_p,
-                reason=reason,
-                signature=exec_res.signature,
-                costs=sell_costs,
-            )
-            if self.replay_recorder is not None:
-                curr_mc = float(
-                    position.get("current_market_cap", 0.0)
-                    or position.get("entry_market_cap", 0.0)
-                    or 0.0
-                )
-                price = curr_mc / 1_000_000_000.0 if curr_mc > 0 else 0.0
-                self.replay_recorder.record_snapshot(
-                    {
-                        "timestamp": time.time(),
-                        "mint": mint,
-                        "name": pos_name,
-                        "price": price,
-                        "market_cap_sol": curr_mc,
-                        "is_buy": False,
-                        "sol_amount": float(sell_p),
-                        "token_amount": int(tokens_to_sell),
-                        "signal": "sell",
-                        "reason": reason or "partial_exit",
-                    }
-                )
-            self._transition_to(
-                TradingBotState.HOLDING, reason=f"partial_sell_complete {mint}"
-            )
-            return True
-
-        self._exit_retry_queue.pop(mint, None)
-        frac = float(tokens_to_sell) / float(
-            initial_tokens or rem_tokens or tokens_to_sell
-        )
-        frac = max(0.0, min(1.0, frac))
+        if not is_partial:
+            self._exit_retry_queue.pop(mint, None)
         effective_entry = pos_entry * frac if pos_entry > 0 else pos_entry
         trade_pnl = sell_p - effective_entry
         net_trade_pnl = trade_pnl - sell_costs_sol
@@ -2900,15 +2509,15 @@ class TradingBot:
                         "trade_pnl": trade_pnl,
                         "net_trade_pnl": net_trade_pnl,
                         "costs_sol": sell_costs_sol,
-                        "is_partial": False,
+                        "is_partial": is_partial,
                         "realized_daily_pnl_sol": self.daily_equity_tracker.realized_daily_pnl_sol,
                         "effective_baseline_sol": self.daily_equity_tracker.effective_baseline_sol,
                     },
                 )
         self._record_trade(
-            position_id=pos_id,
+            position_id=position_id(position),
             mint=mint,
-            action="sell",
+            action="partial_sell" if is_partial else "sell",
             token_name=pos_name,
             mint_name=pos_name,
             entry=effective_entry,
@@ -2920,27 +2529,25 @@ class TradingBot:
             costs=sell_costs,
         )
         if self.replay_recorder is not None:
-            curr_mc = float(
-                position.get("current_market_cap", 0.0)
-                or position.get("entry_market_cap", 0.0)
-                or 0.0
-            )
-            price = curr_mc / 1_000_000_000.0 if curr_mc > 0 else 0.0
             self.replay_recorder.record_snapshot(
-                {
-                    "timestamp": time.time(),
-                    "mint": mint,
-                    "name": pos_name,
-                    "price": price,
-                    "market_cap_sol": curr_mc,
-                    "is_buy": False,
-                    "sol_amount": float(sell_p),
-                    "token_amount": int(tokens_to_sell),
-                    "signal": "sell",
-                    "reason": reason or "exit",
-                }
+                sell_replay_snapshot(
+                    mint=mint,
+                    name=pos_name,
+                    position=position,
+                    proceeds_sol=sell_p,
+                    tokens_sold=tokens_to_sell,
+                    reason=reason,
+                    default_reason="partial_exit" if is_partial else "exit",
+                )
             )
-        self._transition_to(TradingBotState.MONITORING, reason=f"sell_complete {mint}")
+        if is_partial:
+            self._transition_to(
+                TradingBotState.HOLDING, reason=f"partial_sell_complete {mint}"
+            )
+        else:
+            self._transition_to(
+                TradingBotState.MONITORING, reason=f"sell_complete {mint}"
+            )
         return True
 
     async def _evaluate_and_execute_exit(
@@ -4402,17 +4009,11 @@ class TradingBot:
         if ws is None or not mint:
             return
         try:
-            msg = {"method": "subscribeTokenTrade", "keys": [mint]}
-            if hasattr(ws, "send") and not isinstance(
-                ws, aiohttp.ClientWebSocketResponse
-            ):
-                await ws.send(json.dumps(msg))
-            elif hasattr(ws, "send_json"):
-                await ws.send_json(msg)
-            elif hasattr(ws, "send_str"):
-                await ws.send_str(json.dumps(msg))
-            elif hasattr(ws, "send"):
-                await ws.send(json.dumps(msg))
+            await send_ws_message(
+                ws,
+                token_trade_message("subscribeTokenTrade", mint),
+                prefer_raw_send=True,
+            )
         except Exception as exc:
             # The socket is usually going away; the reconnect resubscribes.
             self._trade_feed_breaker().record_send_failure()
@@ -4428,17 +4029,11 @@ class TradingBot:
         if ws is None or not mint:
             return
         try:
-            msg = {"method": "unsubscribeTokenTrade", "keys": [mint]}
-            if hasattr(ws, "send") and not isinstance(
-                ws, aiohttp.ClientWebSocketResponse
-            ):
-                await ws.send(json.dumps(msg))
-            elif hasattr(ws, "send_json"):
-                await ws.send_json(msg)
-            elif hasattr(ws, "send_str"):
-                await ws.send_str(json.dumps(msg))
-            elif hasattr(ws, "send"):
-                await ws.send(json.dumps(msg))
+            await send_ws_message(
+                ws,
+                token_trade_message("unsubscribeTokenTrade", mint),
+                prefer_raw_send=True,
+            )
         except Exception:
             pass
 
@@ -4450,7 +4045,6 @@ class TradingBot:
 
     async def _run_websocket_stream(self) -> None:
         """Connects to the WebSocket endpoint and ingests real-time events."""
-        backoff = self.reconnect_delay_seconds
         if self.trade_feed_breaker.stream_has_api_key is False:
             self._log(
                 "PumpPortal stream has no API key: subscribeTokenTrade will be "
@@ -4463,112 +4057,71 @@ class TradingBot:
                 "PUMPFUN_STREAM_API_KEY and keep the URL key-free (BUG-118).",
                 level=logging.WARNING,
             )
-        while not self._stop_requested:
-            try:
-                self._log(f"Connecting to WebSocket stream at {self.stream_url}...")
-                timeout = aiohttp.ClientTimeout(total=None, sock_read=60.0)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.ws_connect(self._stream_connect_url()) as ws:
-                        self._active_ws = ws
-                        self._log(f"Connected to WebSocket stream at {self.stream_url}")
-                        self._record_event(
-                            f"stream connected: {self.stream_url}", alert=False
-                        )
-                        self._last_message_at = time.monotonic()
-                        self._circuit_breaker_tripped = False
-                        self._stream_consecutive_failures = 0
-                        # The breaker stays open across reconnects: only a
-                        # confirmed subscription or trade data closes it.
-                        self._last_status = "monitoring active tokens"
-                        self._health_ok = True
+        await run_websocket_stream(self)
 
-                        # Subscribe to token creation events
-                        if hasattr(ws, "send_json"):
-                            await ws.send_json({"method": "subscribeNewToken"})
-                        elif hasattr(ws, "send_str"):
-                            await ws.send_str(
-                                json.dumps({"method": "subscribeNewToken"})
-                            )
-                        elif hasattr(ws, "send"):
-                            await ws.send(json.dumps({"method": "subscribeNewToken"}))
+    # -- WebSocketStreamHost hooks (streams/websocket.py) --------------------
 
-                        # Resubscribe to active holding tokens if any
-                        for mint in list(self.active_positions.keys()):
-                            await self._subscribe_to_token_trades(ws, mint)
-                        for mint in self.order_flow_engine.watched_mints():
-                            entry = self.order_flow_engine.get_watch(mint)
-                            if entry is not None and entry.subscribed:
-                                await self._subscribe_to_token_trades(ws, mint)
-                        if self.trade_feed_breaker.is_open:
-                            # Probe on the first health pass after reconnecting.
-                            self.trade_feed_breaker.next_probe_at = 0.0
+    def stream_stop_requested(self) -> bool:
+        return bool(self._stop_requested)
 
-                        backoff = self.reconnect_delay_seconds
+    def stream_connect_url(self) -> str:
+        return self._stream_connect_url()
 
-                        async for msg in ws:
-                            if self._stop_requested:
-                                break
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                try:
-                                    data = json.loads(msg.data)
-                                except json.JSONDecodeError:
-                                    continue
-                                self._last_message_at = time.monotonic()
-                                self._circuit_breaker_tripped = False
-                                self._stream_consecutive_failures = 0
-                                await self._handle_message(data, ws)
-                            elif msg.type == aiohttp.WSMsgType.ERROR:
-                                self._stream_consecutive_failures += 1
-                                self._log(
-                                    f"WebSocket connection error: {ws.exception()}",
-                                    level=logging.WARNING,
-                                )
-                                break
-                            elif msg.type in (
-                                aiohttp.WSMsgType.CLOSED,
-                                aiohttp.WSMsgType.CLOSING,
-                            ):
-                                self._log(
-                                    "WebSocket connection closed by remote server.",
-                                    level=logging.INFO,
-                                )
-                                break
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                self._stream_consecutive_failures += 1
-                self._log(
-                    f"WebSocket stream error: {exc}. Reconnecting in {backoff:.1f}s (attempt {self._stream_consecutive_failures})...",
-                    level=logging.WARNING,
-                )
-                if (
-                    self._stream_consecutive_failures
-                    >= self._max_stream_consecutive_failures
-                ):
-                    self._circuit_breaker_tripped = True
-                    self._health_ok = False
-                    self._last_status = "degraded: stream circuit breaker active"
-                try:
-                    await asyncio.sleep(backoff)
-                except asyncio.CancelledError:
-                    break
-                backoff = min(backoff * 2.0, 30.0)
-            else:
-                if not self._stop_requested:
-                    if (
-                        self._stream_consecutive_failures
-                        >= self._max_stream_consecutive_failures
-                    ):
-                        self._circuit_breaker_tripped = True
-                        self._health_ok = False
-                        self._last_status = "degraded: stream circuit breaker active"
-                    try:
-                        await asyncio.sleep(backoff)
-                    except asyncio.CancelledError:
-                        break
-                    backoff = min(backoff * 2.0, 30.0)
-            finally:
-                self._active_ws = None
+    def stream_log(self, message: str, level: int = logging.INFO) -> None:
+        self._log(message, level=level)
+
+    async def on_stream_connected(self, ws: Any) -> None:
+        self._active_ws = ws
+        self._log(f"Connected to WebSocket stream at {self.stream_url}")
+        self._record_event(f"stream connected: {self.stream_url}", alert=False)
+        self._last_message_at = time.monotonic()
+        self._circuit_breaker_tripped = False
+        self._stream_consecutive_failures = 0
+        # The breaker stays open across reconnects: only a
+        # confirmed subscription or trade data closes it.
+        self._last_status = "monitoring active tokens"
+        self._health_ok = True
+        await send_ws_message(ws, NEW_TOKEN_SUBSCRIPTION)
+        # Resubscribe to held and promoted watched mints.
+        for mint in list(self.active_positions.keys()):
+            await self._subscribe_to_token_trades(ws, mint)
+        for mint in self.order_flow_engine.watched_mints():
+            entry = self.order_flow_engine.get_watch(mint)
+            if entry is not None and entry.subscribed:
+                await self._subscribe_to_token_trades(ws, mint)
+        if self.trade_feed_breaker.is_open:
+            # Probe on the first health pass after reconnecting.
+            self.trade_feed_breaker.next_probe_at = 0.0
+
+    async def on_stream_message(self, data: Any, ws: Any) -> None:
+        self._last_message_at = time.monotonic()
+        self._circuit_breaker_tripped = False
+        self._stream_consecutive_failures = 0
+        await self._handle_message(data, ws)
+
+    def on_stream_error(self, message: str) -> None:
+        self._stream_consecutive_failures += 1
+        self._log(message, level=logging.WARNING)
+
+    def on_stream_exception(self, exc: Exception, backoff: float) -> None:
+        self._stream_consecutive_failures += 1
+        self._log(
+            f"WebSocket stream error: {exc}. Reconnecting in {backoff:.1f}s (attempt {self._stream_consecutive_failures})...",
+            level=logging.WARNING,
+        )
+        self._trip_stream_breaker_if_failing()
+
+    def on_stream_ended(self) -> None:
+        self._trip_stream_breaker_if_failing()
+
+    def on_stream_closed(self) -> None:
+        self._active_ws = None
+
+    def _trip_stream_breaker_if_failing(self) -> None:
+        if self._stream_consecutive_failures >= self._max_stream_consecutive_failures:
+            self._circuit_breaker_tripped = True
+            self._health_ok = False
+            self._last_status = "degraded: stream circuit breaker active"
 
     async def _refresh_active_positions_market_caps(self) -> None:
         """Periodically refresh active position market caps from on-chain bonding curve states."""
