@@ -619,7 +619,7 @@ async def test_websocket_stream_session_end_trips_breaker_on_failure_budget(
     )
     with (
         patch(
-            "pumpfun_trading.bot.run.aiohttp.ClientSession",
+            "pumpfun_trading.streams.websocket.aiohttp.ClientSession",
             return_value=_FakeSession(ws),
         ),
         patch(
@@ -657,7 +657,7 @@ async def test_websocket_stream_stop_requested_mid_session_exits_without_sleep(
     sleep = AsyncMock()
     with (
         patch(
-            "pumpfun_trading.bot.run.aiohttp.ClientSession",
+            "pumpfun_trading.streams.websocket.aiohttp.ClientSession",
             return_value=_FakeSession(ws),
         ),
         patch("pumpfun_trading.bot.run.asyncio.sleep", sleep),
@@ -674,7 +674,7 @@ async def test_websocket_stream_connect_error_trips_breaker_then_cancel_stops(
     bot._max_stream_consecutive_failures = 1
     with (
         patch(
-            "pumpfun_trading.bot.run.aiohttp.ClientSession",
+            "pumpfun_trading.streams.websocket.aiohttp.ClientSession",
             side_effect=aiohttp.ClientError("refused"),
         ),
         patch(
@@ -5702,7 +5702,10 @@ async def test_trade_feed_breaker_survives_reconnect_and_closes_on_trade_data(
         bot._stop_requested = True
 
     with (
-        patch("pumpfun_trading.bot.run.aiohttp.ClientSession", return_value=session),
+        patch(
+            "pumpfun_trading.streams.websocket.aiohttp.ClientSession",
+            return_value=session,
+        ),
         patch("pumpfun_trading.bot.run.asyncio.sleep", stop_after_session),
     ):
         await bot._run_websocket_stream()
@@ -6296,7 +6299,7 @@ async def test_websocket_reconnect_resubscribes_promoted_watched_mints(
     ws = _SendStrWs([_ws_msg(aiohttp.WSMsgType.CLOSED)])
     with (
         patch(
-            "pumpfun_trading.bot.run.aiohttp.ClientSession",
+            "pumpfun_trading.streams.websocket.aiohttp.ClientSession",
             return_value=_FakeSession(ws),
         ),
         patch(

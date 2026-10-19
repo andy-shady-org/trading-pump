@@ -13,6 +13,15 @@ Work towards `v0.3.0-rc.2`. The v0.3.0-rc.1 capture is a **NO-GO** for the momen
 ### Fixed
 - BUG-121: `pumpfun-replay` filled confirmed and signal entries at the signal price and ignored `paper_entry_delay_seconds` and `paper_entry_slippage_bps`, so replay ran 0.016–0.023 SOL better than the paper bot on the rc.1 capture. Entries now fill at the last recorded price at signal + delay, cut by the penalty, with no exits before the fill; `entry_metrics` gain `fill_market_cap_sol` and `fill_drift_pct`. Earlier confirmed-lane replay results were optimistic: the v0.2.3 capture drops from +0.139 to +0.062 SOL. Replays without those settings, and entries mirrored from recorded fills, are unchanged.
 
+### Changed
+- Sprint 28a, runtime decomposition (no behaviour change; ships with the rc.2 entry rework so Stage 0 runs once; `docs/dev/TODO.md` Sprint 28):
+  - `bot/factory.py`: config resolution (stream URL precedence, BUG-117/118 key split, validation) and component builders moved out of `TradingBot.__init__`.
+  - `streams/websocket.py`: the PumpPortal connect / read / back-off loop and the subscription messages; `TradingBot` implements the `WebSocketStreamHost` hooks.
+  - `ops/metrics.py`: runtime counters and latency telemetry.
+  - `execution/sell_pipeline.py`: sell sizing, proceeds and replay-record helpers used by `_sell_token_locked`.
+  - `sdk/execution.py` split into `execution_types.py`, `execution_base.py`, `transport.py`, `pumpfun_execution.py` and `raydium_execution.py`; every name still imports from `sdk.execution`.
+  - `bot/run.py` 5,078 → 4,631 lines, `sdk/execution.py` 1,953 → 165. Golden replay unchanged.
+
 ## [0.3.0-rc.1] - 2026-10-18
 
 Release candidate for the strategy pivot (Phase 4c, Sprints 24E–24H; PR #22) plus the fixes from the v0.2.3 capture (BUG-118…120). With `entry_mode: "confirmed"` the bot no longer buys at the create event: it watches screened launches, polls their curves over RPC and buys only after follow-on demand is confirmed, with a pre-graduation lane fed by the same poller. The default `entry_mode` stays `"launch"`, so existing configs behave as before.
