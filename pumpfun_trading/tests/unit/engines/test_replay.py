@@ -1229,3 +1229,56 @@ def test_confirmed_replay_exits_on_buy_flow_stagnation() -> None:
 def test_confirmed_entry_mode_requires_live_fidelity() -> None:
     with pytest.raises(ValueError, match="live_fidelity"):
         PaperTradingEngine(entry_mode="confirmed")
+
+
+@pytest.mark.regression("BUG-121")
+def test_confirmed_replay_fills_after_the_paper_entry_delay() -> None:
+    cfg = _confirmed_config(paper_entry_delay_seconds=1.5, paper_entry_slippage_bps=100)
+    snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)]
+    snaps += _confirming_flow(MINT_A, 30.0)
+    # The signal fires at t=34 (mc 45); the curve dips and then runs while the
+    # paper buy is still landing (due at 35.5).
+    snaps += [
+        _market_trade(MINT_A, 34.5, 30.0, "Dumper", buy=False),
+        _market_trade(MINT_A, 35.2, 60.0, "Chaser"),
+        _market_trade(MINT_A, 36.0, 60.0, "Chaser2"),
+    ]
+    summary = _confirmed_engine(cfg).run(snaps)
+
+    # No stop-loss on the dip: the position had not filled yet.
+    assert [t["action"] for t in summary["trades"]] == ["buy"]
+    buy = summary["trades"][0]
+    assert buy["timestamp"] == 34.0
+    assert buy["entry_price"] == pytest.approx(60.0 / 0.99)
+    assert buy["entry_metrics"]["fill_drift_pct"] == 0.3333
+    assert buy["entry_metrics"]["fill_market_cap_sol"] == pytest.approx(
+        60.0 / 0.99, abs=1e-4
+    )
+    assert buy["quantity"] == pytest.approx(0.02 / 1.01 * 0.99 / 60.0)
+
+
+@pytest.mark.regression("BUG-121")
+def test_confirmed_replay_penalty_without_delay_and_fill_at_data_end() -> None:
+    cfg = _confirmed_config(paper_entry_slippage_bps=200)
+    snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)]
+    snaps += _confirming_flow(MINT_A, 30.0)
+    buy = _confirmed_engine(cfg).run(snaps)["trades"][0]
+    assert buy["entry_price"] == pytest.approx(45.0 / 0.98)
+    assert "fill_drift_pct" not in buy["entry_metrics"]
+
+    cfg = _confirmed_config(paper_entry_delay_seconds=5.0)
+    buy = _confirmed_engine(cfg).run(snaps)["trades"][0]
+    # The data ends before the buy lands: it fills at the last price seen, and
+    # without a penalty the engine's own slippage applies as before.
+    assert buy["entry_price"] == pytest.approx(45.0)
+    assert buy["quantity"] == pytest.approx(0.02 / 1.01 / (45.0 * 1.01))
+    assert buy["entry_metrics"]["fill_drift_pct"] == 0.0
+
+
+@pytest.mark.regression("BUG-121")
+def test_no_paper_entry_model_keeps_signal_price_fills() -> None:
+    cfg = _confirmed_config()
+    snaps = [_create(MINT_A, 0.0)] + _confirming_flow(MINT_A, 30.0)
+    buy = _confirmed_engine(cfg).run(snaps)["trades"][0]
+    assert buy["entry_price"] == 45.0
+    assert "fill_drift_pct" not in buy["entry_metrics"]

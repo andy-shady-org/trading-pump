@@ -72,6 +72,11 @@ class PaperTradingEngine:
     promotion confirms demand inside the age window and market-cap band. The
     creator is left out of the buyer count; buys are tagged ``momentum``.
     Promotion is optimistic by up to one poll interval.
+
+    Entries that are not mirrored from recorded fills pay the paper latency the
+    live bot pays (``paper_entry_delay_seconds`` / ``paper_entry_slippage_bps``):
+    the fill is priced from the last curve price at signal + delay, worsened by
+    the penalty, and the position takes no exits until it has filled.
     """
 
     def __init__(
@@ -519,6 +524,61 @@ class PaperTradingEngine:
             "sol_growth": round(entry.sol_growth, 6),
         }
 
+    def _paper_entry_model(self) -> tuple[float, int]:
+        """``(delay_seconds, penalty_bps)`` the live paper executor applies."""
+        cfg = self.strategy_config
+        delay = getattr(cfg, "paper_entry_delay_seconds", 0.0)
+        penalty = getattr(cfg, "paper_entry_slippage_bps", 0)
+        delay = float(delay) if isinstance(delay, (int, float)) else 0.0
+        penalty = int(penalty) if isinstance(penalty, int) else 0
+        return max(0.0, delay), max(0, min(5_000, penalty))
+
+    def _fill_entry(
+        self,
+        position: dict[str, Any],
+        trades: list[dict[str, Any]],
+        *,
+        price: float,
+        ts: float,
+        penalty_bps: int,
+    ) -> None:
+        """Price a live-fidelity entry at ``price`` (the curve when it lands).
+
+        Mirrors ``execution/executor.py`` paper buys: with a penalty the token
+        amount is cut by ``penalty_bps`` and the entry market cap raised to match
+        (BUG-121); without one the engine's ``slippage_bps`` applies as before.
+        """
+        fee_rate = self.fee_bps / 10_000.0
+        net_spend = float(position["cost_basis"]) / (1.0 + fee_rate)
+        if penalty_bps > 0:
+            keep = (10_000 - penalty_bps) / 10_000.0
+            quantity = net_spend * keep / price
+            entry_price = price / keep
+        else:
+            quantity = net_spend / (price * (1.0 + self.slippage_bps / 10_000.0))
+            entry_price = price
+        signal_ts = position.pop("fill_due", None)
+        position["quantity"] = quantity
+        position["entry_price"] = entry_price
+        position["exit_state"] = PositionExitState(
+            entry_market_cap=entry_price,
+            current_market_cap=price,
+            peak_market_cap=entry_price,
+            initial_token_amount=LIVE_POSITION_TOKEN_UNITS,
+            remaining_token_amount=LIVE_POSITION_TOKEN_UNITS,
+            entry_time=ts,
+            last_price_change_at=ts,
+            last_price=price,
+        )
+        buy = trades[int(position["buy_trade_index"])]
+        buy["entry_price"] = entry_price
+        buy["quantity"] = quantity
+        metrics = buy.get("entry_metrics")
+        if signal_ts is not None and isinstance(metrics, dict):
+            signal_price = float(position.get("signal_price") or price)
+            metrics["fill_market_cap_sol"] = round(entry_price, 4)
+            metrics["fill_drift_pct"] = round(price / signal_price - 1.0, 4)
+
     def _live_entry_size(
         self,
         cash: float,
@@ -612,6 +672,9 @@ class PaperTradingEngine:
         exited_mint = False
         for pos_mint in list(positions):
             position = positions[pos_mint]
+            if "fill_due" in position:
+                # The paper buy has not landed yet: nothing to exit.
+                continue
             state: PositionExitState = position["exit_state"]
             if pos_mint == mint and forced_reason:
                 state.update_price(
@@ -718,6 +781,13 @@ class PaperTradingEngine:
         traded_mints: set[str] = set()
         watch_stats: dict[str, int] = {}
         last_expiry_at: float | None = None
+        entry_delay, entry_penalty_bps = (
+            self._paper_entry_model()
+            if self.live_fidelity and not mirror_live_entries
+            else (0.0, 0)
+        )
+        # Entries waiting for their paper fill: mint -> time the buy lands.
+        pending_fills: dict[str, float] = {}
 
         for index, snapshot in enumerate(snapshots):
             if snapshot.get("event") == "screening":
@@ -729,10 +799,23 @@ class PaperTradingEngine:
             if price <= 0.0:
                 continue
 
-            last_prices[mint] = price
-
             parsed_ts = self._parse_timestamp(self._snapshot_timestamp(snapshot))
             ts = parsed_ts if parsed_ts is not None else float(index)
+
+            # A delayed paper buy fills at the curve as it was when it landed:
+            # the last price seen before this (later) snapshot (BUG-121).
+            for pending_mint, due in list(pending_fills.items()):
+                if ts >= due:
+                    del pending_fills[pending_mint]
+                    self._fill_entry(
+                        positions[pending_mint],
+                        trades,
+                        price=last_prices[pending_mint],
+                        ts=due,
+                        penalty_bps=entry_penalty_bps,
+                    )
+
+            last_prices[mint] = price
 
             # Process order flow recording and momentum signal evaluation
             trade_info: tuple[bool, float, str] | None = None
@@ -1142,6 +1225,23 @@ class PaperTradingEngine:
                             positions[mint]["creator"] = (
                                 screening.get(mint) or {}
                             ).get("creator")
+                        if self.live_fidelity and (
+                            entry_delay > 0 or entry_penalty_bps > 0
+                        ):
+                            # Paper latency the live executor applies (BUG-121).
+                            positions[mint]["buy_trade_index"] = len(trades) - 1
+                            positions[mint]["signal_price"] = price
+                            if entry_delay > 0:
+                                positions[mint]["fill_due"] = ts + entry_delay
+                                pending_fills[mint] = ts + entry_delay
+                            else:
+                                self._fill_entry(
+                                    positions[mint],
+                                    trades,
+                                    price=price,
+                                    ts=ts,
+                                    penalty_bps=entry_penalty_bps,
+                                )
 
             portfolio_value = cash + sum(
                 position["quantity"]
@@ -1156,6 +1256,16 @@ class PaperTradingEngine:
                     "cash": cash,
                     "open_positions": len(positions),
                 }
+            )
+
+        # Buys still landing when the data ends fill at the last price seen.
+        for pending_mint, due in pending_fills.items():
+            self._fill_entry(
+                positions[pending_mint],
+                trades,
+                price=last_prices[pending_mint],
+                ts=due,
+                penalty_bps=entry_penalty_bps,
             )
 
         sell_returns = [

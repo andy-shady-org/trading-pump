@@ -128,6 +128,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-118** | Medium | Security / UI | **RESOLVED** | The dashboard's Coin Polling and Bot Status panels printed the raw stream URL, so the PumpPortal `?api-key=` was shown on screen; the key now lives in its own `PUMPFUN_STREAM_API_KEY` |
 | **BUG-119** | Medium | Replay / Parity | **RESOLVED** | `pumpfun-replay --compare-audit` summed only live sell records, so the fee, tip and rent booked on each live buy were left out: the 24 h capture showed live +2.06 SOL against a real −0.579 SOL |
 | **BUG-120** | Medium | Streams / Cost | **RESOLVED** | Trade subscriptions were only cancelled when an exit ran from the trade-message path; exits from the 1 s refresh loop, retry queue and other paths left them open, so 538 exited mints kept streaming (54% of all trade messages, billed by PumpPortal) |
+| **BUG-121** | Medium | Replay / Parity | **RESOLVED** | Replay filled confirmed (and signal) entries at the signal price and ignored `paper_entry_delay_seconds` / `paper_entry_slippage_bps`, so it ran 0.016–0.023 SOL better than the paper bot on the v0.3.0-rc.1 capture and made the momentum lane look profitable |
 
 ---
 
@@ -1057,3 +1058,14 @@ Found while analysing the v0.2.3 24 h capture run (`runtime/capture/`).
 * **Impact:** medium: 538 of 1,676 exited mints kept streaming trades for hours (median 12 min, p90 73 min after the exit), 54% of all trade messages. PumpPortal bills the key's wallet per message, and the subscription list grew all day.
 * **Resolution:** `_sell_token` unsubscribes (through the active socket) whenever the call closed a held position, so every exit path is covered; the per-call-site unsubscribes are gone so nothing is sent twice. Partial and failed sells keep the subscription.
 * **Verification:** `regression("BUG-120")` in `tests/unit/bot/test_run.py`: full exit unsubscribes once, partial and failed sells don't, an unheld mint sends nothing, and an exit from the refresh-loop path (no websocket argument) still unsubscribes.
+
+## 20. v0.3.0-rc.1 Capture Findings (2026-10-19)
+
+Found while analysing the first 12.7 h of the v0.3.0-rc.1 capture (`runtime/capture/`, `configs/capture.json`).
+
+### BUG-121: Replay Ignores The Paper Entry Delay And Penalty [RESOLVED]
+* **Location:** `pumpfun_trading/engines/replay.py` (`PaperTradingEngine.run`, live-fidelity entries)
+* **Description:** the paper executor waits `paper_entry_delay_seconds` (1.5 s in `capture.json` / `canary.json`), re-reads the curve and cuts the fill by `paper_entry_slippage_bps` (100), because a live buy lands after screening and confirmation. Replay bought at the price of the snapshot that confirmed the signal and could exit on the very next snapshot.
+* **Impact:** medium: `--compare-audit` showed replay 0.016 SOL better than paper over 62 positions (allowed ±0.010), and every confirmed-lane replay result was optimistic: the v0.2.3 capture went from +0.139 to +0.062 SOL with the fix, and the 8-buyer variant that looked positive on the new capture (+0.021) is −0.003. No trading decision used replay directly, but the go/no-go does.
+* **Resolution:** entries that are not mirrored from recorded fills are booked at the signal and filled at the last recorded price at signal + delay; until then the position takes no exits. A penalty keeps `1 − bps/10,000` of the tokens and raises the entry market cap to match, replacing the engine's own entry slippage; without the two settings nothing changes. Buys still landing at the end of the data fill at the last price. `entry_metrics` gain `fill_market_cap_sol` and `fill_drift_pct`.
+* **Verification:** `regression("BUG-121")` tests in `tests/unit/engines/test_replay.py`: a dip during the delay does not stop out the unfilled position and the fill uses the price at signal + delay, a penalty without a delay, a fill at the end of the data, and no change without the settings. On the capture the parity gap fell from +0.023 to +0.014 SOL; the rest is curve reads that see trades the capture's trade stream does not, plus unmatched positions ([`STRATEGY-PIVOT.md` §6.3](STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19)).

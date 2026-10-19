@@ -84,6 +84,7 @@ When the config sets `entry_mode: "confirmed"` (the `momentum` preset, `configs/
 2. The curve's real SOL reserve is derived from each recorded market cap. A mint is promoted once it grew by `watch_promote_min_sol_growth`, within `watch_max_trade_subscriptions`. The trade that promotes it is not counted: live, trades only arrive after the subscription.
 3. Trades after promotion feed the order-flow check. A buy needs the age window, the `min_market_cap_sol`–`momentum_max_market_cap_sol` band, `momentum_min_unique_buyers` distinct buyers (the creator left out), net inflow, buy ratio and z-score, plus the cost guard (`max_entry_cost_share_pct`, same `ReplayCostModel`).
 4. Buys carry `reason: momentum_confirmed`, `strategy: momentum` and `entry_metrics`; the momentum exits (buy-flow stagnation with `stagnant_min_buy_sol`, break-even ratchet) run on the replay clock.
+5. Entries pay the paper latency the bot pays (BUG-121). With `paper_entry_delay_seconds` set, the buy is booked at the signal but fills at the last recorded price at signal + delay, and no exit runs on it before then. With `paper_entry_slippage_bps` set, the fill keeps `1 − bps/10,000` of the tokens and the entry market cap is raised to match, as in `execution/executor.py`; this replaces the engine's own entry slippage. `entry_metrics` then also carry `fill_market_cap_sol` and `fill_drift_pct` (price move from signal to fill). Signal entries get the same treatment; entries mirrored from recorded fills already carry their real price and are unchanged.
 
 `watch_stats` in the summary counts `watched`, `screen_rejected`, `promoted`, `budget_full`, `expired`, `cost_guard_refused` and `confirmed`. `pumpfun-optimize` with a confirmed base config also searches the watch, band and momentum-exit keys.
 
@@ -97,7 +98,7 @@ pumpfun-replay --path data/replay_capture.jsonl --config configs/canary.json \
   --compare-audit data/audit_trail.jsonl --mode summary
 ```
 
-Lines up the replay trades with the audit trail per mint: entries in both / live only / replay only, exit reasons (live reason text is normalised to the exit type), and net PnL. It exits with code 1 when the net PnL gap is larger than `max(--parity-tolerance-sol, --parity-tolerance-pct × |live net PnL|)` (defaults 0.002 SOL and 10%). Expected, explainable differences: live fills at the executed price while replay fills at the recorded market cap, live costs come from the transaction (dynamic tips) while replay uses the model, and live exits can lag by one refresh.
+Lines up the replay trades with the audit trail per mint: entries in both / live only / replay only, exit reasons (live reason text is normalised to the exit type), and net PnL. It exits with code 1 when the net PnL gap is larger than `max(--parity-tolerance-sol, --parity-tolerance-pct × |live net PnL|)` (defaults 0.002 SOL and 10%). Expected, explainable differences: live fills at the executed price (a curve read, which can see trades the capture's trade stream missed) while replay fills at the recorded market cap, live costs come from the transaction (dynamic tips) while replay uses the model, and live exits can lag by one refresh.
 
 ## Command usage
 

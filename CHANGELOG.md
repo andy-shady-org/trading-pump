@@ -8,6 +8,11 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+Work towards `v0.3.0-rc.2`. The v0.3.0-rc.1 capture is a **NO-GO** for the momentum lane: paper −0.100 SOL over 65 positions (21.5% profitable), replay with the frozen `configs/canary.json` −0.084 SOL over 62 ([`STRATEGY-PIVOT.md` §6.3](docs/dev/STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19)). Stage 0 does not start on this lane. The runtime side (watch list, poller, subscription budget) passed its paper exit gate.
+
+### Fixed
+- BUG-121: `pumpfun-replay` filled confirmed and signal entries at the signal price and ignored `paper_entry_delay_seconds` and `paper_entry_slippage_bps`, so replay ran 0.016–0.023 SOL better than the paper bot on the rc.1 capture. Entries now fill at the last recorded price at signal + delay, cut by the penalty, with no exits before the fill; `entry_metrics` gain `fill_market_cap_sol` and `fill_drift_pct`. Earlier confirmed-lane replay results were optimistic: the v0.2.3 capture drops from +0.139 to +0.062 SOL. Replays without those settings, and entries mirrored from recorded fills, are unchanged.
+
 ## [0.3.0-rc.1] - 2026-10-18
 
 Release candidate for the strategy pivot (Phase 4c, Sprints 24E–24H; PR #22) plus the fixes from the v0.2.3 capture (BUG-118…120). With `entry_mode: "confirmed"` the bot no longer buys at the create event: it watches screened launches, polls their curves over RPC and buys only after follow-on demand is confirmed, with a pre-graduation lane fed by the same poller. The default `entry_mode` stays `"launch"`, so existing configs behave as before.
