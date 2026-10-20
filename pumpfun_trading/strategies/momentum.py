@@ -13,6 +13,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from pumpfun_trading.strategies.graduation import GRADUATION_REAL_SOL
+
 
 @dataclass(slots=True)
 class TradeRecord:
@@ -104,6 +106,12 @@ class WatchEntry:
     # First curve poll (FEAT-56): growth this early is mostly sniper volume.
     first_polled_real_sol: float | None = None
     first_polled_at: float = 0.0
+    # Last time the real SOL reserve rose; a near-graduation entry is dropped
+    # once it stalls.
+    last_growth_at: float = 0.0
+    # Kept past the watch TTL for the pre-graduation lane (FEAT-53): polled
+    # more slowly, never promoted to a trade subscription.
+    near_graduation: bool = False
 
     @property
     def sol_growth(self) -> float:
@@ -123,6 +131,7 @@ class WatchEntry:
             "market_cap_sol": self.market_cap_sol,
             "creator": self.creator,
             "subscribed": self.subscribed,
+            "near_graduation": self.near_graduation,
         }
 
 
@@ -397,6 +406,9 @@ class OrderFlowEngine:
         self._watch: dict[str, WatchEntry] = {}
         # Mints dropped to make room, so the runtime can unsubscribe them.
         self._watch_evicted: list[WatchEntry] = []
+        # Entries moved to the near-graduation set since the last drain, with
+        # whether they held a trade subscription that must now be cancelled.
+        self._near_graduation_moved: list[tuple[WatchEntry, bool]] = []
 
     @property
     def tracked_token_count(self) -> int:
@@ -650,6 +662,11 @@ class OrderFlowEngine:
         """Watched mints that hold a (billed) trade subscription."""
         return sum(1 for entry in self._watch.values() if entry.subscribed)
 
+    @property
+    def near_graduation_count(self) -> int:
+        """Watched mints kept past the TTL for the pre-graduation lane."""
+        return sum(1 for entry in self._watch.values() if entry.near_graduation)
+
     def is_watched(self, mint: str) -> bool:
         return mint in self._watch
 
@@ -676,17 +693,19 @@ class OrderFlowEngine:
         When the list is full the oldest unsubscribed entry is evicted (the oldest
         entry if all are subscribed); evicted entries are kept for
         :meth:`drain_watch_evictions` so their subscriptions can be cancelled.
+        Near-graduation entries have their own cap and are never evicted here.
         """
         existing = self._watch.get(mint)
         if existing is not None:
             return existing
         ts = float(now if now is not None else time.time())
         limit = max(1, int(self.max_watch_mints))
-        while len(self._watch) >= limit:
+        regular = [m for m, e in self._watch.items() if not e.near_graduation]
+        while len(regular) >= limit:
             victim = next(
-                (m for m, e in self._watch.items() if not e.subscribed),
-                next(iter(self._watch)),
+                (m for m in regular if not self._watch[m].subscribed), regular[0]
             )
+            regular.remove(victim)
             self._watch_evicted.append(self._watch.pop(victim))
         entry = WatchEntry(
             mint=mint,
@@ -697,6 +716,7 @@ class OrderFlowEngine:
             market_cap_sol=float(market_cap_sol or 0.0),
             creator=creator,
             screening_verdict=verdict,
+            last_growth_at=ts,
         )
         self._watch[mint] = entry
         return entry
@@ -713,11 +733,14 @@ class OrderFlowEngine:
         entry = self._watch.get(mint)
         if entry is None:
             return None
+        ts = float(now if now is not None else time.time())
         if entry.start_real_sol is None:
             entry.start_real_sol = float(real_sol)
+        if entry.last_real_sol is None or float(real_sol) > entry.last_real_sol + 1e-9:
+            entry.last_growth_at = ts
         entry.last_real_sol = float(real_sol)
         entry.market_cap_sol = float(market_cap_sol)
-        entry.last_polled_at = float(now if now is not None else time.time())
+        entry.last_polled_at = ts
         if entry.first_polled_real_sol is None:
             entry.first_polled_real_sol = float(real_sol)
             entry.first_polled_at = entry.last_polled_at
@@ -733,6 +756,7 @@ class OrderFlowEngine:
             entry
             for entry in self._watch.values()
             if not entry.subscribed
+            and not entry.near_graduation
             and entry.start_real_sol is not None
             and entry.sol_growth >= float(min_sol_growth)
         ]
@@ -748,18 +772,53 @@ class OrderFlowEngine:
         """Remove a mint from the watch list (bought, rejected or expired)."""
         return self._watch.pop(mint, None)
 
-    def expire_watch(self, *, ttl: float, now: Optional[float] = None) -> list[str]:
+    def expire_watch(
+        self,
+        *,
+        ttl: float,
+        now: Optional[float] = None,
+        near_graduation_max: int = 0,
+        near_graduation_min_real_sol: float = 0.0,
+        near_graduation_stall_seconds: float = float("inf"),
+        near_graduation_ttl: float = float("inf"),
+    ) -> list[str]:
         """Drop entries watched longer than ``ttl`` seconds; returns their mints.
 
-        Expired entries that held a subscription are also queued for
+        With ``near_graduation_max`` > 0 an expiring entry whose curve holds at
+        least ``near_graduation_min_real_sol`` and grew within
+        ``near_graduation_stall_seconds`` moves to the near-graduation set
+        instead (up to that many entries, its trade subscription released; see
+        :meth:`drain_near_graduation`). A near-graduation entry is dropped once
+        it stalls, falls below the floor or was watched ``near_graduation_ttl``
+        seconds. Expired entries that held a subscription are also queued for
         :meth:`drain_watch_evictions`.
         """
         ts = float(now if now is not None else time.time())
-        expired = [
-            mint
-            for mint, entry in self._watch.items()
-            if ts - entry.watched_at > float(ttl)
-        ]
+        floor = float(near_graduation_min_real_sol)
+        stall = float(near_graduation_stall_seconds)
+        near_ttl = float(near_graduation_ttl)
+        near_count = self.near_graduation_count
+        expired: list[str] = []
+        for mint, entry in list(self._watch.items()):
+            age = ts - entry.watched_at
+            growing = (
+                (entry.last_real_sol or 0.0) >= floor
+                and ts - entry.last_growth_at <= stall
+                and age <= near_ttl
+            )
+            if entry.near_graduation:
+                if not growing:
+                    expired.append(mint)
+                continue
+            if age <= float(ttl):
+                continue
+            if growing and near_count < int(near_graduation_max):
+                near_count += 1
+                entry.near_graduation = True
+                self._near_graduation_moved.append((entry, entry.subscribed))
+                entry.subscribed = False
+                continue
+            expired.append(mint)
         for mint in expired:
             entry = self._watch.pop(mint)
             if entry.subscribed:
@@ -771,8 +830,33 @@ class OrderFlowEngine:
         drained, self._watch_evicted = self._watch_evicted, []
         return drained
 
+    def drain_near_graduation(self) -> list[tuple[WatchEntry, bool]]:
+        """Entries moved to the near-graduation set since the last call, each
+        with whether its trade subscription must now be cancelled."""
+        drained, self._near_graduation_moved = self._near_graduation_moved, []
+        return drained
+
+
+def near_graduation_expiry(config: Any) -> dict[str, Any]:
+    """:meth:`OrderFlowEngine.expire_watch` arguments of the near-graduation set
+    (FEAT-53) from a ``TradingBotConfig``; shared by the runtime and replay."""
+    return {
+        "near_graduation_max": int(getattr(config, "near_graduation_max_mints", 0)),
+        "near_graduation_min_real_sol": float(
+            getattr(config, "near_graduation_min_progress_pct", 0.5)
+        )
+        * GRADUATION_REAL_SOL,
+        "near_graduation_stall_seconds": float(
+            getattr(config, "near_graduation_stall_seconds", 300.0)
+        ),
+        "near_graduation_ttl": float(
+            getattr(config, "near_graduation_ttl_seconds", 3600.0)
+        ),
+    }
+
 
 __all__ = [
+    "near_graduation_expiry",
     "TradeRecord",
     "WindowMetrics",
     "MomentumSignal",

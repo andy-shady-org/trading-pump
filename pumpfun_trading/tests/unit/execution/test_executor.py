@@ -801,6 +801,8 @@ async def test_dry_run_buy_is_skipped_when_curve_ran_past_the_drift_limit() -> N
     assert result.error is not None and result.error.startswith("entry_drift")
     # 120 SOL market cap at the fill against 30 SOL at the signal.
     assert result.metadata["fill_drift_pct"] == pytest.approx(3.0)
+    # The curve the refused fill read, for the capture (replay prices from it).
+    assert result.metadata["fill_curve_market_cap_sol"] == pytest.approx(120.0, 1e-3)
     assert result.costs is None
 
 
@@ -814,6 +816,9 @@ async def test_dry_run_buy_within_the_drift_limit_records_the_drift() -> None:
 
     assert guarded.success
     assert guarded.metadata["fill_drift_pct"] == pytest.approx(30.0 / 29.0 - 1.0, 1e-3)
+    # Pre-penalty curve price of the paper fill, recorded on every paper buy.
+    assert guarded.metadata["fill_curve_market_cap_sol"] == pytest.approx(30.0, 1e-3)
+    assert plain.metadata["fill_curve_market_cap_sol"] == pytest.approx(30.0, 1e-3)
     # Without a limit the guard is off, however far the price moved.
     assert plain.success
     assert "fill_drift_pct" not in plain.metadata

@@ -1,5 +1,7 @@
 """Unit tests for OrderFlowEngine, sliding window analytics, and velocity Z-score detector."""
 
+from typing import Any
+
 import pytest
 
 from pumpfun_trading.strategies.graduation import GraduationEngine
@@ -475,6 +477,93 @@ def test_expire_and_unwatch() -> None:
     assert engine.unwatch("fresh") is not None
     assert engine.unwatch("fresh") is None
     assert engine.watch_count == 0
+
+
+def _near_grad_args(**overrides: float) -> dict[str, Any]:
+    args: dict[str, Any] = {
+        "near_graduation_max": 2,
+        "near_graduation_min_real_sol": 40.0,
+        "near_graduation_stall_seconds": 120.0,
+        "near_graduation_ttl": 3600.0,
+    }
+    args.update(overrides)
+    return args
+
+
+def test_expiry_keeps_growing_curves_in_the_near_graduation_set() -> None:
+    """FEAT-53: an old coin still climbing stays polled for the pre-grad lane."""
+    engine = OrderFlowEngine()
+    engine.watch("climbing", created_at=0.0, now=0.0, real_sol=5.0)
+    engine.watch("low", created_at=0.0, now=0.0, real_sol=5.0)
+    engine.watch("stalled", created_at=0.0, now=0.0, real_sol=5.0)
+    engine.mark_watch_subscribed("climbing")
+    engine.update_watch_curve("climbing", real_sol=50.0, market_cap_sol=80.0, now=550.0)
+    engine.update_watch_curve("low", real_sol=20.0, market_cap_sol=40.0, now=550.0)
+    engine.update_watch_curve("stalled", real_sol=50.0, market_cap_sol=80.0, now=100.0)
+
+    expired = engine.expire_watch(ttl=300.0, now=600.0, **_near_grad_args())
+
+    assert expired == ["low", "stalled"]
+    entry = engine.get_watch("climbing")
+    assert entry is not None and entry.near_graduation and not entry.subscribed
+    assert entry.to_dict()["near_graduation"] is True
+    # The trade subscription it held must be cancelled by the runtime.
+    assert [(e.mint, held) for e, held in engine.drain_near_graduation()] == [
+        ("climbing", True)
+    ]
+    assert engine.drain_near_graduation() == []
+    assert engine.near_graduation_count == 1
+    # Never promoted again, however fast it grows.
+    assert engine.promotable(min_sol_growth=0.0, budget=5) == []
+
+
+def test_near_graduation_set_has_its_own_cap_and_drops_stalled_entries() -> None:
+    engine = OrderFlowEngine()
+    engine.max_watch_mints = 2
+    for mint in ("a", "b", "c"):
+        engine.watch(mint, created_at=0.0, now=0.0, real_sol=5.0)
+        engine.update_watch_curve(mint, real_sol=60.0, market_cap_sol=90.0, now=500.0)
+
+    # Only two fit in the near-graduation set (one was evicted at the watch cap).
+    assert engine.watched_mints() == ["b", "c"]
+    engine.drain_watch_evictions()
+    engine.expire_watch(ttl=300.0, now=600.0, **_near_grad_args(near_graduation_max=1))
+    assert engine.watched_mints() == ["b"]
+    assert engine.near_graduation_count == 1
+
+    # Regular capacity ignores the near-graduation entry: no eviction.
+    engine.watch("new1", created_at=0.0, now=600.0)
+    engine.watch("new2", created_at=0.0, now=600.0)
+    assert engine.drain_watch_evictions() == []
+    assert set(engine.watched_mints()) == {"b", "new1", "new2"}
+
+    # Growth keeps it; a stall, or the hard TTL, drops it.
+    engine.update_watch_curve("b", real_sol=61.0, market_cap_sol=91.0, now=700.0)
+    engine.expire_watch(ttl=300.0, now=800.0, **_near_grad_args())
+    assert engine.is_watched("b")
+    engine.update_watch_curve("b", real_sol=61.0, market_cap_sol=91.0, now=850.0)
+    # No growth since 700 s: stalled for longer than 120 s at 941 s.
+    assert "b" in engine.expire_watch(ttl=300.0, now=941.0, **_near_grad_args())
+
+    engine.watch("ttl", created_at=0.0, now=0.0, real_sol=50.0)
+    engine.update_watch_curve("ttl", real_sol=70.0, market_cap_sol=100.0, now=4_000.0)
+    assert "ttl" in engine.expire_watch(
+        ttl=300.0, now=4_001.0, **_near_grad_args(near_graduation_ttl=3_600.0)
+    )
+
+
+def test_near_graduation_expiry_reads_the_config() -> None:
+    from pumpfun_trading.strategies.momentum import near_graduation_expiry
+    from pumpfun_trading.tests.support.factories import make_config
+
+    args = near_graduation_expiry(
+        make_config(near_graduation_max_mints=7, near_graduation_min_progress_pct=0.4)
+    )
+
+    assert args["near_graduation_max"] == 7
+    assert args["near_graduation_min_real_sol"] == pytest.approx(34.0)
+    assert args["near_graduation_stall_seconds"] == 300.0
+    assert args["near_graduation_ttl"] == 3600.0
 
 
 def test_momentum_metrics_exclude_creator_and_own_wallet() -> None:

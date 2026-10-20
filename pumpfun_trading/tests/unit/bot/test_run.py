@@ -27,7 +27,11 @@ from pumpfun_trading.bot.enrichment import TokenScreeningVerdict
 from pumpfun_trading.bot.event_router import EventRouter
 from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.position_manager import PositionManager
-from pumpfun_trading.bot.run import PRE_GRADUATION_MIN_POLLED_SAMPLES, TradingBot
+from pumpfun_trading.bot.run import (
+    PRE_GRADUATION_MIN_POLLED_SAMPLES,
+    TradingBot,
+    _curve_market_cap,
+)
 from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.ops.retention import RetentionPolicy, RotatedFileSink
@@ -46,6 +50,7 @@ from pumpfun_trading.storage.status import build_status_snapshot
 from pumpfun_trading.strategies.copy_trading import TrackedWallet
 from pumpfun_trading.strategies.exits import ExitAction
 from pumpfun_trading.strategies.momentum import MomentumSignal
+from pumpfun_trading.strategies.shadow import ShadowSignal, ShadowVariant
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -6635,6 +6640,254 @@ async def test_drift_refused_momentum_buy_stops_watching_the_mint(
     assert not bot.order_flow_engine.is_watched(SAMPLE_PUMP_MINT)
     bot._unsubscribe_from_token_trades.assert_awaited_once_with(None, SAMPLE_PUMP_MINT)
     assert bot.watch_list_status()["stats"]["drift_refused"] == 1
+
+
+# --- Polled curves in the capture, near-graduation set, shadow variants -----------
+
+
+def _recorded(recorder: MagicMock, event: str) -> list[dict[str, Any]]:
+    return [
+        call.args[0]
+        for call in recorder.record_snapshot.call_args_list
+        if call.args[0].get("event") == event
+    ]
+
+
+async def test_watch_poll_records_every_polled_curve_to_the_capture(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed", watch_promote_min_sol_growth=50)
+    recorder = MagicMock()
+    bot.replay_recorder = recorder
+    bot.order_flow_engine.watch("polled", created_at=0.0, real_sol=0.5)
+    bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+        return_value={"polled": _polled_curve(2.0)}
+    )
+
+    await bot._poll_watch_list()
+
+    (row,) = _recorded(recorder, "curve_poll")
+    assert row["mint"] == "polled" and row["source"] == "watch"
+    assert row["real_sol_reserves"] == pytest.approx(2.0)
+    assert row["virtual_sol_reserves"] == pytest.approx(32.0)
+    assert row["market_cap_sol"] > 0
+    assert row["price"] == pytest.approx(row["market_cap_sol"] / 1e9)
+
+    bot.config = replace(bot.config, capture_curve_polls=False)
+    recorder.reset_mock()
+    await bot._poll_watch_list()
+    assert _recorded(recorder, "curve_poll") == []
+    bot._record_curve_poll("polled", 0.0, ts=1.0, source="watch")  # unpriced
+    assert recorder.record_snapshot.call_count == 0
+
+
+async def test_position_refresh_and_paper_fills_record_their_curve_reads(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    recorder = MagicMock()
+    bot.replay_recorder = recorder
+    bot.active_positions[SAMPLE_PUMP_MINT] = {"entry_market_cap": 60.0}
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value=_polled_curve(10.0)
+    )
+    bot._evaluate_and_execute_exit = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    await bot._refresh_active_positions_market_caps()
+
+    (refresh,) = _recorded(recorder, "curve_poll")
+    assert refresh["source"] == "position"
+    assert refresh["real_sol_reserves"] == pytest.approx(10.0)
+
+    buyer = _buy_ready_bot(tmp_path, momentum_max_entry_drift_pct=0.08)
+    buyer.replay_recorder = MagicMock()
+    buyer.executor.execute_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=False,
+            error="entry_drift: +0.2000 > 0.0800",
+            metadata={"fill_drift_pct": 0.2, "fill_curve_market_cap_sol": 54.0},
+        )
+    )
+    assert not await buyer._buy_token(SAMPLE_PUMP_MINT, 45.0, strategy="momentum")
+    (fill,) = _recorded(buyer.replay_recorder, "curve_poll")
+    assert fill["source"] == "entry_fill"
+    assert fill["market_cap_sol"] == 54.0
+
+
+async def test_near_graduation_entries_free_their_slot_and_poll_slowly(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        entry_mode="confirmed",
+        watch_ttl_seconds=300.0,
+        near_graduation_max_mints=5,
+        near_graduation_min_progress_pct=0.5,
+        near_graduation_poll_interval_seconds=6.0,
+        pre_graduation_entry_progress_pct=0.75,
+        watch_promote_min_sol_growth=500.0,
+    )
+    engine = bot.order_flow_engine
+    engine.watch("old", created_at=0.0, now=0.0, real_sol=1.0)
+    engine.mark_watch_subscribed("old")
+    engine.update_watch_curve("old", real_sol=45.0, market_cap_sol=80.0, now=990.0)
+    bot._unsubscribe_from_token_trades = AsyncMock()  # type: ignore[method-assign]
+    states = AsyncMock(return_value={"old": _polled_curve(46.0)})
+    bot.execution.get_bonding_curve_states = states  # type: ignore[method-assign]
+
+    with patch("pumpfun_trading.bot.run.time.time", return_value=1_000.0):
+        await bot._poll_watch_list()
+
+    entry = engine.get_watch("old")
+    assert entry is not None and entry.near_graduation
+    bot._unsubscribe_from_token_trades.assert_awaited_once_with(None, "old")
+    assert bot.watch_list_status()["near_graduation"] == 1
+    assert bot.watch_list_status()["stats"]["near_graduation"] == 1
+    states.assert_awaited_once()
+
+    # Polled at the slow interval while far from the entry band ...
+    states.reset_mock()
+    with patch("pumpfun_trading.bot.run.time.time", return_value=1_003.0):
+        await bot._poll_watch_list()
+    states.assert_not_awaited()
+    with patch("pumpfun_trading.bot.run.time.time", return_value=1_006.5):
+        await bot._poll_watch_list()
+    states.assert_awaited_once()
+
+    # ... and at every poll once it is within 10 points of it (65% here).
+    engine.update_watch_curve("old", real_sol=58.0, market_cap_sol=95.0, now=1_007.0)
+    states.reset_mock()
+    with patch("pumpfun_trading.bot.run.time.time", return_value=1_008.0):
+        await bot._poll_watch_list()
+    states.assert_awaited_once()
+
+
+def _shadow_bot(tmp_path: Path, **config: Any) -> tuple[TradingBot, MagicMock]:
+    settings: dict[str, Any] = {
+        "entry_mode": "confirmed",
+        "momentum_min_unique_buyers": 3,
+        "momentum_min_buy_ratio": 1.0,
+        "momentum_min_z_score": -100.0,
+        "momentum_min_net_inflow_sol": 0.1,
+        "momentum_min_token_age_seconds": 0.0,
+        "min_market_cap_sol": 1.0,
+        "paper_entry_delay_seconds": 0.0,
+        "shadow_variants": (
+            {"name": "b3"},
+            {"name": "b3_drift1", "max_entry_drift_pct": 0.01},
+            {"name": "b9", "momentum_min_unique_buyers": 9},
+        ),
+    }
+    settings.update(config)
+    bot = make_bot(tmp_path, **settings)
+    recorder = MagicMock()
+    bot.replay_recorder = recorder
+    return bot, recorder
+
+
+async def _settle_shadow_fills(bot: TradingBot) -> None:
+    await asyncio.gather(*list(getattr(bot, "_shadow_fill_tasks", ())))
+
+
+async def test_shadow_variants_record_a_fill_for_each_rule_that_fires(
+    tmp_path: Path,
+) -> None:
+    bot, recorder = _shadow_bot(tmp_path)
+    engine = bot.order_flow_engine
+    now = time.time()
+    engine.watch(SAMPLE_PUMP_MINT, created_at=now - 120, creator="Dev", now=now)
+    engine.mark_watch_subscribed(SAMPLE_PUMP_MINT)
+    for i, user in enumerate(("a", "b", "c")):
+        engine.record_trade(SAMPLE_PUMP_MINT, True, 0.5, user, timestamp=now + i)
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value=_polled_curve(10.0)
+    )
+
+    bot._evaluate_shadow_variants(SAMPLE_PUMP_MINT, 30.0, now=now + 2)
+    await _settle_shadow_fills(bot)
+
+    rows = {row["variant"]: row for row in _recorded(recorder, "shadow_entry")}
+    assert set(rows) == {"b3", "b3_drift1"}  # b9 needs nine buyers
+    assert rows["b3"]["signal_market_cap_sol"] == 30.0
+    assert rows["b3"]["entry_metrics"]["unique_buyers"] == 3
+    assert "refused" not in rows["b3"]
+    # The curve (~50 SOL) is far above the 30 SOL signal: the 1% guard refuses.
+    assert rows["b3_drift1"]["refused"] == "entry_drift"
+    fills = _recorded(recorder, "curve_poll")
+    assert {row["source"] for row in fills} == {"shadow_fill"}
+    assert bot.watch_list_status()["stats"]["shadow_signals"] == 2
+
+    # The bot bought it since: evaluation goes on for the stricter rule.
+    engine.unwatch(SAMPLE_PUMP_MINT)
+    for i in range(6):
+        engine.record_trade(SAMPLE_PUMP_MINT, True, 0.5, f"u{i}", timestamp=now + 3 + i)
+    bot._evaluate_shadow_variants(SAMPLE_PUMP_MINT, 32.0, now=now + 9)
+    await _settle_shadow_fills(bot)
+    assert "b9" in {row["variant"] for row in _recorded(recorder, "shadow_entry")}
+
+
+async def test_shadow_variants_need_a_capture_confirmed_mode_and_a_known_mint(
+    tmp_path: Path,
+) -> None:
+    bot, recorder = _shadow_bot(tmp_path)
+    bot._evaluate_shadow_variants("never_watched", 30.0, now=1.0)
+    assert not getattr(bot, "_shadow_fill_tasks", set())
+
+    bot.replay_recorder = None
+    bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=0.0)
+    bot.order_flow_engine.mark_watch_subscribed(SAMPLE_PUMP_MINT)
+    bot._evaluate_shadow_variants(SAMPLE_PUMP_MINT, 30.0, now=1.0)
+    assert bot._shadow_book() is not None
+    assert not bot._shadow_book().knows(SAMPLE_PUMP_MINT)  # type: ignore[union-attr]
+
+    launch, _ = _shadow_bot(tmp_path, entry_mode="launch")
+    launch._evaluate_shadow_variants(SAMPLE_PUMP_MINT, 30.0, now=1.0)
+    assert not hasattr(launch, "_shadow_variant_book")
+
+    plain, _ = _shadow_bot(tmp_path, shadow_variants=())
+    plain.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=0.0)
+    plain._evaluate_shadow_variants(SAMPLE_PUMP_MINT, 30.0, now=1.0)
+    assert plain._shadow_book() is None
+
+
+async def test_shadow_fills_are_bounded_record_curve_errors_and_cancel(
+    tmp_path: Path,
+) -> None:
+    bot, recorder = _shadow_bot(tmp_path, paper_entry_delay_seconds=30.0)
+    signal = ShadowSignal(
+        variant=ShadowVariant(name="v"),
+        mint=SAMPLE_PUMP_MINT,
+        signal_time=1.0,
+        signal_market_cap_sol=30.0,
+        entry_metrics={},
+    )
+    with patch("pumpfun_trading.bot.run.MAX_PENDING_SHADOW_FILLS", 1):
+        bot._schedule_shadow_fill(signal)
+        bot._schedule_shadow_fill(signal)
+    assert bot.watch_list_status()["stats"]["shadow_skipped"] == 1
+    # Shutdown drops the read still waiting out its delay.
+    await bot._cancel_shadow_fills()
+    assert recorder.record_snapshot.call_count == 0
+
+    bot.config = replace(bot.config, paper_entry_delay_seconds=0.0)
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("rpc down")
+    )
+    await bot._record_shadow_fill(signal)
+    (row,) = _recorded(recorder, "shadow_entry")
+    assert row["refused"] == "curve_error: RuntimeError"
+
+    bot.replay_recorder = None  # recorder closed meanwhile: nothing to write
+    await bot._record_shadow_fill(signal)
+
+
+def test_curve_market_cap_handles_complete_and_raw_curves() -> None:
+    assert _curve_market_cap(None) is None
+    assert _curve_market_cap({"complete": True, "market_cap_sol": 5.0}) is None
+    assert _curve_market_cap({"market_cap_sol": 42.0}) == 42.0
+    # 30 SOL / 1.073e9 tokens at launch: ~28 SOL market cap.
+    assert _curve_market_cap(_polled_curve(0.0)) == pytest.approx(27.96, rel=0.01)
+    assert _curve_market_cap({"virtual_sol_reserves": 0}) is None
 
 
 # --- BUG-123: exit a coin held through graduation on PumpSwap ----------------------

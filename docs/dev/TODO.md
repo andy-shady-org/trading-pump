@@ -850,7 +850,10 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] FEAT-56 wallet-diversity / sniper-volume inputs recorded in momentum `entry_metrics` (`top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth`, `first_poll_age_seconds`); offline they beat a random cut on both captures but do not make rc.1 positive, so nothing gates on them yet
 - [x] FEAT-57 wash-trade inputs recorded in momentum `entry_metrics` (`round_trip_wallets`, `round_trip_share`, `quick_flips`; `OrderFlowEngine.round_trip_flow`); offline they beat a random cut on the v0.2.3 replay but not on rc.1 (paper or replay), so nothing gates on them ([`STRATEGY-PIVOT.md` §6.6](STRATEGY-PIVOT.md#66-wash-trade-inputs-graduation-backfill-and-split-tips-2026-10-20))
 - [ ] On the rc.2 capture: net PnL by `market_regime.hour_utc` and graduation rate, and the FEAT-56 / FEAT-57 rules against a random cut; gate only what holds on that unseen data
-- [ ] Close the remaining parity gap (+0.014 SOL vs ±0.010 allowed): fills priced from curve reads that see trades the capture's trade stream misses
+- [x] Polled curves written to the capture (`event: "curve_poll"`: watch poll, position refresh, paper fill, shadow fill; `capture_curve_polls`), and replay prices delayed fills and the drift guard from the read the paper fill took *(tests: `unit/bot/test_run.py`, `unit/engines/test_replay.py`)*
+- [x] FEAT-58 shadow variants: nine momentum rules logged on paper fill prices in `configs/capture.json` (`strategies/shadow.py`, `shadow_entry` rows), never traded *(tests: `unit/strategies/test_shadow.py`, `unit/bot/test_run.py`)*
+- [ ] Close the remaining parity gap (+0.014 SOL vs ±0.010 allowed): re-run `--compare-audit` on the rc.2 capture, which now records the curve reads paper fills and exits use
+- [ ] On the rc.2 capture: each shadow variant per position against a random cut; stop tuning the lane if none is clearly net positive
 - **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
 
 ### Sprint 24H: Pre-Graduation Lane via the RPC Poller (FEAT-53)
@@ -860,6 +863,7 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] `RUNBOOK.md` §6.3: capture → replay gate → Stage 0 → Stage 1 at 0.02 SOL, the tip experiment and the pre-graduation paper pilot
 - [x] Exit through PumpSwap after graduation (BUG-123): completion is seen from the curve refresh, Geyser and `subscribeMigration`; the position is priced and sold in the canonical PumpSwap pool (`sdk/pumpswap.py`, `OrderExecutor.execute_pumpswap_sell`, `enable_pumpswap_exit`). Required before the pre-graduation pilot
 - [x] Non-SOL quote mints refused (BUG-124)
+- [x] Near-graduation set: watched coins past the TTL stay polled (slowly, unsubscribed) while ≥ `near_graduation_min_progress_pct` and growing, so the lane sees coins older than 10 min; replay models the set and runs the lane on recorded polls; `configs/pregrad_pilot.json` for the 72 h pilot *(tests: `unit/strategies/test_momentum.py`, `unit/bot/test_run.py`, `unit/engines/test_replay.py`)*
 - [x] Graduation backfill: held mints checked against the Pump.fun API every `graduation_backfill_seconds` (30 s), a third completion source next to the curve refresh and `subscribeMigration` *(tests: `unit/bot/test_run.py`)*
 - [x] `resolve_strategy_config` reads every config field (BUG-125: `enable_pumpswap_exit`, `replay_log_path`, the FEAT-50 alert and FEAT-42 sweep keys were dropped from config files) *(guard test: `unit/strategies/test_presets.py`)*
 - [ ] One live PumpSwap sell at the smallest size before any lane relies on it with real capital (the instruction is pinned to mainnet accounts, but no transaction from this code has landed yet)

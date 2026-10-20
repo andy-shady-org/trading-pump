@@ -27,6 +27,12 @@
   "watch_poll_interval_seconds": 2.0,
   "watch_promote_min_sol_growth": 3.0,
   "watch_max_trade_subscriptions": 20,
+  "near_graduation_max_mints": 50,
+  "near_graduation_min_progress_pct": 0.5,
+  "near_graduation_stall_seconds": 300.0,
+  "near_graduation_ttl_seconds": 3600.0,
+  "near_graduation_poll_interval_seconds": 6.0,
+  "capture_curve_polls": true,
   "min_market_cap_sol": 35.0,
   "momentum_max_market_cap_sol": 75.0,
   "momentum_min_token_age_seconds": 20.0,
@@ -65,5 +71,17 @@
   "paper_entry_slippage_bps": 100,
   "position_refresh_seconds": 1.0,
   "require_trade_feed": true,
-  "trade_feed_probe_seconds": 300.0
+  "trade_feed_probe_seconds": 300.0,
+
+  "shadow_variants": [
+    {"name": "baseline"},
+    {"name": "buyers6", "momentum_min_unique_buyers": 6},
+    {"name": "buyers8", "momentum_min_unique_buyers": 8},
+    {"name": "drift5", "max_entry_drift_pct": 0.05},
+    {"name": "drift10", "max_entry_drift_pct": 0.10},
+    {"name": "feat56_top_buyer", "max_top_buyer_share": 0.5},
+    {"name": "feat56_diversity", "min_wallet_diversity": 0.3},
+    {"name": "feat57_round_trip", "max_round_trip_share": 0.4},
+    {"name": "feat57_quick_flips", "max_quick_flips": 0}
+  ]
 }

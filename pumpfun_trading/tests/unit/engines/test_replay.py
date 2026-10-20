@@ -1340,3 +1340,210 @@ def test_confirmed_replay_drift_guard_refund_and_limits() -> None:
         summary = _confirmed_engine(cfg).run(snaps)
         assert summary["buy_count"] == 1
         assert "entry_drift" not in summary["entry_rejections"]
+
+
+# -- Recorded curve reads (curve_poll), near-graduation set, shadow rows ----------
+
+
+def _curve_poll(
+    mint: str, ts: float, mc: float, real_sol: float | None = None, **extra: Any
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "timestamp": ts,
+        "mint": mint,
+        "event": "curve_poll",
+        "source": "watch",
+        "market_cap_sol": mc,
+        **extra,
+    }
+    if real_sol is not None:
+        row["real_sol_reserves"] = real_sol
+    return row
+
+
+def _delayed_fill_snaps(*extra: dict[str, Any]) -> list[dict[str, Any]]:
+    snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)]
+    snaps += _confirming_flow(MINT_A, 30.0)
+    # Signal at t=34 (mc 45); the buy is due at 35.5. A trade runs the price
+    # to 60 just before; another mint trades just after the fill is due.
+    snaps += [
+        _market_trade(MINT_A, 35.2, 60.0, "Chaser"),
+        _market_trade(MINT_B, 35.6, 10.0, "Elsewhere"),
+        *extra,
+    ]
+    snaps.sort(key=lambda s: float(s["timestamp"]))
+    return snaps
+
+
+def test_recorded_curve_read_after_the_due_time_prices_the_paper_fill() -> None:
+    """The paper fill reads the curve just after its delay; a recorded read of
+    that moment (entry_fill / shadow_fill / watch poll) is the fill price."""
+    cfg = _confirmed_config(
+        paper_entry_delay_seconds=1.5,
+        paper_entry_slippage_bps=100,
+        momentum_max_entry_drift_pct=0.0,
+    )
+
+    read = _curve_poll(MINT_A, 35.7, 50.0, source="entry_fill")
+    buy = _confirmed_engine(cfg).run(_delayed_fill_snaps(read))["trades"][0]
+    assert buy["entry_price"] == pytest.approx(50.0 / 0.99)
+    assert buy["entry_metrics"]["fill_drift_pct"] == pytest.approx(5.0 / 45.0, abs=1e-4)
+
+    # No curve reads in the capture: the last price before the fill, as before.
+    buy = _confirmed_engine(cfg).run(_delayed_fill_snaps())["trades"][0]
+    assert buy["entry_price"] == pytest.approx(60.0 / 0.99)
+
+    # A read too late to be the fill's own falls back to the price at the fill.
+    late = _curve_poll(MINT_A, 37.0, 50.0)
+    other = _curve_poll(MINT_B, 30.0, 10.0)  # makes this a capture with reads
+    buy = _confirmed_engine(cfg).run(_delayed_fill_snaps(late, other))["trades"][0]
+    assert buy["entry_price"] == pytest.approx(60.0 / 0.99)
+
+    # Data ending while the fill waits for its read: priced as of the fill.
+    snaps = _delayed_fill_snaps(other)
+    snaps = [s for s in snaps if float(s["timestamp"]) <= 35.6]
+    buy = _confirmed_engine(cfg).run(snaps)["trades"][0]
+    assert buy["entry_price"] == pytest.approx(60.0 / 0.99)
+
+
+def test_recorded_curve_read_drives_the_drift_guard() -> None:
+    cfg = _confirmed_config(
+        paper_entry_delay_seconds=1.5,
+        paper_entry_slippage_bps=100,
+        momentum_max_entry_drift_pct=0.10,
+    )
+    # The last trade says +33%, the curve read at the fill says +4%: it fills.
+    read = _curve_poll(MINT_A, 35.7, 46.8, source="entry_fill")
+    summary = _confirmed_engine(cfg).run(_delayed_fill_snaps(read))
+    assert summary["buy_count"] == 1
+    assert "entry_drift" not in summary["entry_rejections"]
+
+
+def test_shadow_entry_rows_are_never_market_data() -> None:
+    cfg = _confirmed_config()
+    snaps = [_create(MINT_A, 0.0)] + _confirming_flow(MINT_A, 30.0)
+    shadow = {
+        "timestamp": 33.5,
+        "mint": MINT_A,
+        "event": "shadow_entry",
+        "variant": "b6",
+        "price": 999.0,  # even a priced row is skipped
+        "fill_market_cap_sol": 999.0,
+    }
+    plain = _confirmed_engine(cfg).run(snaps)
+    with_shadow = _confirmed_engine(cfg).run(
+        sorted(snaps + [shadow], key=lambda s: float(s["timestamp"]))
+    )
+    assert with_shadow["trades"] == plain["trades"]
+
+
+def test_confirmed_replay_promotes_on_polled_curves_like_the_live_poller() -> None:
+    cfg = _confirmed_config()
+    flow = [_market_trade(MINT_A, 30.0 + i, 45.0, f"Buyer{i}") for i in range(3)]
+    # The poll at t=20 shows 3 SOL of growth: promoted there, so every later
+    # trade is demand (live, they arrive because of that subscription).
+    snaps = [_create(MINT_A, 0.0), _curve_poll(MINT_A, 20.0, 35.0, real_sol=3.0)]
+    summary = _confirmed_engine(cfg).run(snaps + flow)
+    buys = [t for t in summary["trades"] if t["action"] == "buy"]
+    assert [b["timestamp"] for b in buys] == [32.0]
+    assert summary["watch_stats"]["promoted"] == 1
+
+    # Not a watch poll (a fill read), or too little growth: no promotion.
+    for poll in (
+        _curve_poll(MINT_A, 20.0, 35.0, real_sol=3.0, source="shadow_fill"),
+        _curve_poll(MINT_A, 20.0, 29.0, real_sol=0.5),
+    ):
+        summary = _confirmed_engine(cfg).run([_create(MINT_A, 0.0), poll] + flow)
+        assert summary["watch_stats"].get("promoted") == 1  # by the first trade
+        assert summary["buy_count"] == 0  # only two buyers seen after it
+
+    cfg = _confirmed_config(watch_max_trade_subscriptions=1)
+    snaps = [
+        _create(MINT_A, 0.0),
+        _create(MINT_B, 0.0),
+        _curve_poll(MINT_A, 20.0, 35.0, real_sol=3.0),
+        _curve_poll(MINT_B, 20.5, 35.0, real_sol=3.0),
+    ]
+    summary = _confirmed_engine(cfg).run(snaps)
+    assert summary["watch_stats"]["promoted"] == 1
+    assert summary["watch_stats"]["budget_full"] == 1
+
+
+def _pre_grad_config(**overrides: Any) -> TradingBotConfig:
+    values: dict[str, Any] = {
+        "enable_pre_graduation_harvesting": True,
+        "pre_graduation_entry_progress_pct": 0.75,
+        "pre_graduation_max_entry_progress_pct": 0.88,
+        "pre_graduation_min_acceleration": 0.0,
+        "pre_graduation_tranches": (
+            {"progress_pct": 0.92, "sell_fraction": 0.30},
+            {"progress_pct": 0.97, "sell_fraction": 0.30},
+        ),
+        "watch_promote_min_sol_growth": 500.0,  # isolate the pre-graduation lane
+        "near_graduation_max_mints": 5,
+        "paper_entry_delay_seconds": 1.5,
+        "paper_entry_slippage_bps": 0,
+    }
+    values.update(overrides)
+    return _confirmed_config(**values)
+
+
+def _pre_grad_snaps() -> list[dict[str, Any]]:
+    snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)]
+    # Halfway up the curve before the 600 s watch TTL, still climbing after it.
+    snaps += [
+        _curve_poll(MINT_A, 500.0, 200.0, real_sol=45.0),
+        _curve_poll(MINT_A, 600.0, 210.0, real_sol=46.0),
+    ]
+    # Accelerating inflow past 75%: 64 -> 64.5 -> 65.5 -> 67 -> 69 SOL.
+    for i, real_sol in enumerate([64.0, 64.5, 65.5, 67.0, 69.0]):
+        snaps.append(_curve_poll(MINT_A, 700.0 + 2 * i, 300.0, real_sol=real_sol))
+    # Tranche exits read curve progress from the polls: 92.9%, then 97.6%.
+    snaps.append(_curve_poll(MINT_A, 715.0, 320.0, real_sol=79.0))
+    snaps.append(_curve_poll(MINT_A, 720.0, 330.0, real_sol=83.0))
+    return snaps
+
+
+def test_confirmed_replay_runs_the_pre_graduation_lane_on_polled_curves() -> None:
+    summary = _confirmed_engine(_pre_grad_config()).run(_pre_grad_snaps())
+
+    assert summary["watch_stats"]["near_graduation"] == 1
+    buys = [t for t in summary["trades"] if t["action"] == "buy"]
+    assert len(buys) == 1
+    buy = buys[0]
+    assert buy["reason"] == "pre_graduation_harvesting_entry"
+    assert buy["strategy"] == "pre_graduation"
+    assert buy["timestamp"] == 706.0  # the fourth reading in the 30 s window
+    assert buy["entry_metrics"]["curve_progress_pct"] >= 75.0
+    assert buy["entry_metrics"]["market_cap_sol"] == 300.0
+    # Filled from the next curve read, at 708 s.
+    assert buy["entry_price"] == pytest.approx(300.0)
+    sells = [t for t in summary["trades"] if t["action"] == "sell"]
+    assert [t["reason"] for t in sells] == [
+        "pre_graduation_tranche",
+        "pre_graduation_tranche",
+    ]
+
+
+def test_pre_graduation_replay_needs_the_near_graduation_set_and_watch_polls() -> None:
+    # Without the near-graduation set the coin expired at the 600 s TTL.
+    summary = _confirmed_engine(_pre_grad_config(near_graduation_max_mints=0)).run(
+        _pre_grad_snaps()
+    )
+    assert summary["buy_count"] == 0
+    assert summary["watch_stats"]["expired"] == 1
+
+    # Curve data that is not a poll (old captures) never triggers the lane.
+    snaps = [
+        {**s, "event": "geyser"} if s.get("event") == "curve_poll" else s
+        for s in _pre_grad_snaps()
+    ]
+    assert _confirmed_engine(_pre_grad_config()).run(snaps)["buy_count"] == 0
+
+    # The cost guard applies to this lane too.
+    summary = _confirmed_engine(
+        _pre_grad_config(buy_amount_sol=0.002, max_entry_cost_share_pct=0.10),
+        cost_model=ReplayCostModel(tip_lamports=100_000),
+    ).run(_pre_grad_snaps())
+    assert summary["buy_count"] == 0
+    assert summary["watch_stats"]["cost_guard_refused"] >= 1

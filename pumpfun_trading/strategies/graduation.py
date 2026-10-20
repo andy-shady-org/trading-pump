@@ -13,6 +13,13 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 
+# Real SOL reserve at which a standard Pump.fun curve completes (100% progress).
+GRADUATION_REAL_SOL = 85.0
+# Curve readings in the 30 s window before a polled pre-graduation entry
+# (FEAT-53); fewer give an acceleration of 0 by construction. Shared by the
+# runtime poller and replay.
+PRE_GRADUATION_MIN_POLLED_SAMPLES = 4
+
 
 @dataclass(slots=True)
 class RaydiumPoolKeys:

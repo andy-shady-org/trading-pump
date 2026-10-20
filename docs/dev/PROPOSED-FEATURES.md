@@ -33,6 +33,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
 | FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | recorded in rc.2 |
 | FEAT-57 | Wash-trade detection as a buy filter | Income | P3 | recorded in rc.2 (no edge yet) |
+| FEAT-58 | Shadow variants of the momentum entry (paper) | Income | P1 | shipped for the rc.2 capture |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |
@@ -172,6 +173,18 @@ This document lists candidate features and architectural enhancements for `pumpf
   It helps on the v0.2.3 replay and is no better (mostly worse) than a random cut on rc.1, including the paper run, which is the set closest to live. v0.2.3 has no paper rows: its launch-mode buys had no flow before the entry.
 * **Decision:** keep recording the three inputs in every momentum buy's `entry_metrics`; gate nothing. Re-test on the rc.2 capture; add `momentum_max_round_trip_share` (0 = off) only if it beats a random cut there and on rc.1.
 * **Dependencies:** FEAT-52, FEAT-56 (same recorded-inputs pattern). **Impact:** at most a small trim; no evidence yet that it changes the lane's result.
+
+### FEAT-58: Shadow Variants Of The Momentum Entry
+* **Class / Priority:** Income · P1 (shipped for the rc.2 capture; records only, never trades)
+* **Goal:** Test several momentum rules on **real paper fill prices** from one capture. Replay cannot judge a rule that acts on the fill price: the paper fill reads the curve, and a capture only holds the trades the bot subscribed to (AGENTS learning "Replay can't see what it didn't record").
+* **Design** (`strategies/shadow.py`, `bot/run.py::_evaluate_shadow_variants`):
+  - `shadow_variants` in the config: each entry has a `name`, any `momentum_*` threshold or `min_market_cap_sol` override, an optional `max_entry_drift_pct` (the variant's own drift guard) and optional FEAT-56/57 flow filters (`max_top_buyer_share`, `min_wallet_diversity`, `max_round_trip_share`, `max_quick_flips`). Unknown keys fail at load.
+  - On every trade of a promoted watched mint (and of a mint seen that way before, e.g. after the bot bought it), each variant is evaluated with its own thresholds against an empty book (no open positions, no attempts), so it measures the rule and not the bot's limits. It fires at most once per mint.
+  - When it fires, the bot waits `paper_entry_delay_seconds`, reads the curve (5 s timeout) and writes an `event: "shadow_entry"` row (`variant`, signal and fill market cap, `fill_drift_pct`, `refused`: `entry_drift` / `no_curve` / `curve_error: …`, entry metrics) and a `curve_poll` row with `source: "shadow_fill"`. At most 50 reads wait at once (`shadow_skipped` counts the rest); pending reads are cancelled at shutdown.
+  - Only in confirmed mode with `--record-replay`; the result exists only in the capture.
+* **How to read it:** a replay with the variant's settings (e.g. `momentum_min_unique_buyers: 8`) fires at the same trade as the live shadow and, because the shadow fill read is recorded as a curve read within 1 s of the fill time, prices its fill from that read. The exits come from the recorded trades and curve polls. The `shadow_entry` rows themselves give fill drift and refusals per variant without any replay.
+* **Limits:** a mint dropped from the watch list (drift refusal, expiry) is unsubscribed, so stricter variants stop seeing its trades; a variant looser than the bot fires earlier than the bot's own entry, a stricter one later (only while the mint is still subscribed). Shadow reads add one RPC call per variant signal.
+* **Dependencies:** FEAT-52, FEAT-56, FEAT-57; the `curve_poll` capture rows. **Impact:** no trading change; it turns one 24 h paper capture into a test of up to nine rules.
 
 ---
 
