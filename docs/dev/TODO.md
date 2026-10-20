@@ -854,6 +854,7 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] FEAT-58 shadow variants: nine momentum rules logged on paper fill prices in `configs/capture.json` (`strategies/shadow.py`, `shadow_entry` rows), never traded *(tests: `unit/strategies/test_shadow.py`, `unit/bot/test_run.py`)*
 - [ ] Close the remaining parity gap (+0.014 SOL vs ±0.010 allowed): re-run `--compare-audit` on the rc.2 capture, which now records the curve reads paper fills and exits use
 - [ ] On the rc.2 capture: each shadow variant per position against a random cut; stop tuning the lane if none is clearly net positive
+- [x] Read-out tooling for those checks: `pumpfun-replay --shadow-report` (per-variant drift, refusals, modelled net, random cut per half; `engines/shadow_report.py`), `pumpfun-audit cuts` (entry rules against a random cut per half; `bot/selection.py`) and `pumpfun-audit pnl --group-by hour` *(tests: `unit/engines/test_shadow_report.py`, `unit/bot/test_selection.py`, `unit/bot/test_pnl.py`, `unit/cli/test_audit.py`, `unit/cli/test_replay.py`, `unit/engines/test_replay.py`)*
 - **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
 
 ### Sprint 24H: Pre-Graduation Lane via the RPC Poller (FEAT-53)

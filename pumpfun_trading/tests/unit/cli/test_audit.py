@@ -120,6 +120,126 @@ def test_pnl_command_labels_win_rate_per_position(
     assert "Positions" in out
 
 
+def _write_momentum_audit(path: Path) -> Path:
+    """Four closed momentum positions (two per half) and one launch position."""
+    trades: list[dict[str, Any]] = []
+    for index, (ts, share, net, lane) in enumerate(
+        [
+            (100.0, 0.2, 0.004, "momentum"),
+            (110.0, 0.6, -0.004, "momentum"),
+            (200.0, 0.1, 0.002, "momentum"),
+            (210.0, 0.9, -0.006, "momentum"),
+            (220.0, 0.1, 0.050, "launch"),
+        ]
+    ):
+        position = f"p{index}"
+        trades.append(
+            {
+                "action": "buy",
+                "position_id": position,
+                "timestamp": ts,
+                "strategy": lane,
+                "net_pnl_sol": 0.0,
+                "entry_metrics": {"top_buyer_share": share},
+                "market_regime": {"hour_utc": 4},
+            }
+        )
+        trades.append(
+            {
+                "action": "sell",
+                "position_id": position,
+                "timestamp": ts + 30,
+                "net_pnl_sol": net,
+                "reason": "stop_loss",
+            }
+        )
+    path.write_text(
+        "\n".join(json.dumps({"type": "trade", "payload": t}) for t in trades),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_pnl_command_groups_by_entry_hour(tmp_path: Path, output: Console) -> None:
+    path = _write_momentum_audit(tmp_path / "audit.jsonl")
+
+    audit_cli.run_audit_cli(
+        _args("pnl", "--path", str(path), "--group-by", "hour", "--json")
+    )
+
+    summary = json.loads(output.export_text())
+    assert list(summary["groups"]) == ["04"]
+    assert summary["groups"]["04"]["positions_closed"] == 5
+
+
+def test_cuts_command_reports_rules_against_a_random_cut(
+    tmp_path: Path, output: Console
+) -> None:
+    path = _write_momentum_audit(tmp_path / "audit.jsonl")
+
+    audit_cli.run_audit_cli(
+        _args(
+            "cuts",
+            "--path",
+            str(path),
+            "--strategy",
+            "momentum",
+            "--keep",
+            "top_buyer_share<0.3",
+            "--keep",
+            "hour_utc==4",
+            "--split-at",
+            "mid",
+            "--json",
+        )
+    )
+
+    report = json.loads(output.export_text())
+    assert report["positions"] == 4  # the launch position is left out
+    share = report["rules"][0]
+    assert share["rule"] == "top_buyer_share<0.3"
+    assert share["segments"]["A"]["kept"] == 1
+    assert share["beats_random_cut"] is True
+    assert len(report["rules"]) == 3  # both rules, then both together
+
+
+def test_cuts_command_renders_a_table(tmp_path: Path, output: Console) -> None:
+    path = _write_momentum_audit(tmp_path / "audit.jsonl")
+
+    audit_cli.run_audit_cli(
+        _args("cuts", "--path", str(path), "--keep", "top_buyer_share>=0.5")
+    )
+
+    out = output.export_text()
+    assert "Entry rules against a random cut" in out
+    assert "top_buyer_share>=0.5" in out and "no edge" in out
+    assert "Closed positions: all 5" in out
+
+
+def test_cuts_command_shows_beating_rules(tmp_path: Path, output: Console) -> None:
+    path = _write_momentum_audit(tmp_path / "audit.jsonl")
+
+    audit_cli.run_audit_cli(
+        _args("cuts", "--path", str(path), "--keep", "top_buyer_share<0.3")
+    )
+
+    assert "beats random cut" in output.export_text()
+
+
+@pytest.mark.parametrize(
+    "extra", [(), ("--keep", "nonsense")], ids=["no-rule", "bad-rule"]
+)
+def test_cuts_command_rejects_missing_or_bad_rules(
+    tmp_path: Path, output: Console, extra: tuple[str, ...]
+) -> None:
+    path = _write_momentum_audit(tmp_path / "audit.jsonl")
+
+    with pytest.raises(SystemExit) as exc:
+        audit_cli.run_audit_cli(_args("cuts", "--path", str(path), *extra))
+
+    assert exc.value.code == 2
+
+
 def test_unified_cli_keeps_its_command_dest() -> None:
     args = _build_parser().parse_args(
         ["audit", "reconcile", "--path", "x", "--wallet", "W"]

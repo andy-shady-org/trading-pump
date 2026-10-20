@@ -8,6 +8,16 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+Read-out tooling for the rc.2 capture and pre-graduation pilot. Analysis only: no buy, exit or sizing rule changes, and the golden replay is unchanged.
+
+### Added
+- `pumpfun-replay --shadow-report` (FEAT-58, `engines/shadow_report.py`): reads a paper capture's `shadow_entry` rows and reports per variant the signals, refusals by reason, fill drift (median, p90, share above 5 / 8 / 10%) and a modelled net PnL. Each fill that was not refused is mirrored into live-fidelity replay at its recorded fill price with the paper penalty, and the config's exits and cost model run on the capture's data for that mint; positions open at the end are marked to market. Every variant is compared with a random cut of the baseline variant (`--shadow-baseline`, default `baseline`), per half with `--split-at mid|TIMESTAMP`; `--json` prints the report. Needs `--config` (the capture's config).
+- `pumpfun-audit cuts` (`bot/selection.py`): tests entry rules on the closed positions of an audit trail against a random cut, per half with `--split-at`. Rules are `--keep METRIC<OP>VALUE` on the buy's `entry_metrics` or `market_regime` (e.g. `top_buyer_share<0.3`, `hour_utc>=12`), repeatable and also tested together; `--strategy` picks a lane. Replaces the hand-run scripts in `data/analysis-2026-10-20/`.
+- `pumpfun-audit pnl --group-by hour`: books each whole position under the UTC hour of its buy (`market_regime.hour_utc`, else the buy's timestamp), to test the time-of-day effect seen in rc.1.
+
+### Changed
+- `pumpfun-replay` mirroring recorded fills: a fill row that carries `strategy`, `creator`, `entry_metrics` or `entry_penalty_bps` (only the shadow read-out writes them) gets that lane, the paper penalty, and, for `momentum`, the buy-flow stagnation clock fed by later buys of other wallets. Fills the bot recorded carry none of these keys and mirror exactly as before.
+
 ## [0.3.0-rc.2] - 2026-10-20
 
 Second release candidate of v0.3.0 (PRs #24–#29). It ships the one entry change that helped on unseen rc.1 hours (the momentum drift guard), the PumpSwap exit for graduated coins, and a capture that can test more than one rule per run: polled curves, shadow variants, the near-graduation set for the pre-graduation pilot, and recorded market-regime, FEAT-56 and FEAT-57 inputs. No new buy filter is gated on; FEAT-55/56/57 are recorded only.

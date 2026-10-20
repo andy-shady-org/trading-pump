@@ -93,10 +93,21 @@ When the config sets `entry_mode: "confirmed"` (the `momentum` preset, `configs/
 
 **Near-graduation set and pre-graduation lane (FEAT-53).** With `near_graduation_max_mints` > 0, an expiring watched mint whose curve is still growing past `near_graduation_min_progress_pct` stays watched (never promoted), as live (`watch_stats.near_graduation`). With `enable_pre_graduation_harvesting` on, the lane fires only on a `watch` poll of a watched mint, needs 4 curve readings in the 30 s window, applies the cost guard and records `strategy: pre_graduation` with curve progress and acceleration.
 
-`event: "shadow_entry"` rows (FEAT-58 shadow variants) and `event: "screening"` rows are never read as market data. To check a shadow variant, replay with its settings: its fill is priced from the recorded `shadow_fill` read.
+`event: "shadow_entry"` rows (FEAT-58 shadow variants) and `event: "screening"` rows are never read as market data. To check a shadow variant, use the read-out below, or replay with its settings: its fill is priced from the recorded `shadow_fill` read.
 
 !!! warning "Confirmed replay on launch-mode captures"
     A capture from a launch-mode bot only has trade flow for the mints that bot bought, so confirmed replay can only buy among them. Use it to compare thresholds, and confirm on a capture recorded in confirmed mode (`configs/capture.json`) before trusting the PnL. Results and the train/test split are in [`dev/STRATEGY-PIVOT.md` §6](dev/STRATEGY-PIVOT.md#6-results-log).
+
+### Shadow-variant read-out (`--shadow-report`, FEAT-58)
+
+```bash
+pumpfun-replay --path capture/replay_capture.jsonl --config configs/capture.json \
+  --shadow-report --split-at mid [--shadow-baseline baseline] [--json]
+```
+
+Reads the `shadow_entry` rows of a paper capture and reports, per variant (in the config's `shadow_variants` order): signals, refusals by reason (`entry_drift`, `no_curve`, `curve_error`), the fill drift (median, p90, share above 5 / 8 / 10%), and a modelled net PnL. Each fill that was not refused is mirrored into the live-fidelity replay at its recorded fill price, with the config's `paper_entry_slippage_bps` applied as the paper executor does, and the config's exit stack and cost model run on the capture's market data for that mint (the bot's own fills are left out). Momentum exits apply, with the buy-flow stagnation clock fed by later buys from other wallets than the creator. Positions still open when the data ends are marked to market at their last price (`open_at_end`).
+
+Each variant is judged on its own: sizing caps are lifted, so no variant loses a fill to another one's open positions (the live shadow book also evaluates with empty capacity). Every variant is compared with a random cut of the baseline variant of the same size (`baseline × variant positions / baseline positions`); `--split-at mid` (or a timestamp) also reports halves A and B, and a variant only `beats a random cut` when its edge is positive in both. Exits only see what the capture holds for each mint: trades while the mint was subscribed and the watch, position and fill curve reads, so a mint that went quiet exits at its last recorded price. `--no-costs`, `--tip-lamports` and `--priority-fee-lamports` work as for a normal replay.
 
 ### Replay-vs-live parity (`--compare-audit`)
 

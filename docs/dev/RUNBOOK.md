@@ -236,6 +236,20 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
      --config configs/canary.json --initial-cash 2.0 --mode summary
    ```
    Go only if `net_pnl_sol` > 0 and `entries_from` is `confirmed`. If not, do not start Stage 0: re-tune on this capture, then wait for a third one to confirm.
+
+   **Read-out (rc.2 captures on).** Run these on the finished capture, before any re-tuning:
+   ```bash
+   pumpfun-replay --path capture/replay_capture.jsonl --config configs/capture.json \
+     --compare-audit capture/audit_trail.jsonl --mode summary        # parity first
+   pumpfun-replay --path capture/replay_capture.jsonl --config configs/capture.json \
+     --shadow-report --split-at mid                                   # FEAT-58 variants
+   pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by strategy
+   pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by hour    # time of day
+   pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
+     --keep 'top_buyer_share<0.3' --keep 'wallet_diversity>=0.3' \
+     --keep 'round_trip_share<0.2' --keep 'quick_flips<1'               # FEAT-56/57 inputs
+   ```
+   A variant or rule counts only if it beats the random cut in both halves; set the tip variables as for the capture, and record every result in `STRATEGY-PIVOT.md` §6.
 3. **Stage 0 (72 h, paper)** with `configs/canary.json --paper-trade` and `--record-replay`, per §6 and `RELEASE-GATE.md` §3.1. Judge it with `pumpfun-audit pnl --group-by strategy` (`momentum` row) and per position, never per sell.
 4. **Stage 1 (live canary)** with `configs/canary.json` on the dedicated hot wallet: 0.02 SOL buys, ≤ 2 positions, 0.05 SOL exposure (`RELEASE-GATE.md` §3.3). Exit criteria: ≥ 100 trades, net > 0, daily reconciliation clean (§5.3).
 

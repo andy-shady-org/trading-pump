@@ -285,13 +285,29 @@ def trade_payloads(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return trades
 
 
+def _record_utc(record: dict[str, Any]) -> _dt.datetime:
+    try:
+        ts = float(record.get("timestamp") or 0.0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc)
+
+
+def _entry_hour(record: dict[str, Any]) -> str:
+    """UTC hour a buy was made in: its ``market_regime`` snapshot, else its time."""
+    regime = record.get("market_regime")
+    if isinstance(regime, dict):
+        hour = regime.get("hour_utc")
+        if isinstance(hour, int) and not isinstance(hour, bool) and 0 <= hour < 24:
+            return f"{hour:02d}"
+    return _record_utc(record).strftime("%H")
+
+
 def _group_key(record: dict[str, Any], group_by: str) -> str:
     if group_by == "day":
-        try:
-            ts = float(record.get("timestamp") or 0.0)
-        except (TypeError, ValueError):
-            ts = 0.0
-        return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc).strftime("%Y-%m-%d")
+        return _record_utc(record).strftime("%Y-%m-%d")
+    if group_by == "hour":
+        return _entry_hour(record)
     if group_by == "reason":
         reason = str(record.get("reason") or "").strip()
         return reason.split(" ")[0].split("(")[0] or "unknown"
@@ -302,7 +318,7 @@ def _group_key(record: dict[str, Any], group_by: str) -> str:
     raise ValueError(f"Unsupported group_by: {group_by}")
 
 
-PNL_GROUPS = ("day", "reason", "strategy", "mint")
+PNL_GROUPS = ("day", "hour", "reason", "strategy", "mint")
 
 
 def summarize_pnl(
@@ -318,6 +334,10 @@ def summarize_pnl(
     Win rate and expectancy are per closed position (BUG-105). In groups, a
     position counts once, in the group of its first exit: the exit rule that
     started it for ``reason``, the closing day for ``day``.
+
+    ``hour`` groups a whole position (buy and sells) under the UTC hour of its
+    buy (``market_regime.hour_utc``, else the buy's timestamp), to test the
+    time-of-day effect seen in the v0.3.0-rc.1 capture.
     """
     totals = PnlTotals()
     groups: dict[str, PnlTotals] = {}
@@ -327,6 +347,8 @@ def summarize_pnl(
     open_group: dict[str, str] = {}
     # reason grouping: buy legs waiting for the position's first exit (BUG-115).
     pending_buys: dict[str, list[dict[str, Any]]] = {}
+    # hour grouping: the entry hour of each position seen so far.
+    entry_hours: dict[str, str] = {}
     count = 0
     for trade in trades:
         count += 1
@@ -337,6 +359,14 @@ def summarize_pnl(
             continue
         group = _group_key(trade, group_by)
         is_position_trade = is_buy(trade) or is_sell(trade) or is_round_trip(trade)
+        if group_by == "hour" and is_position_trade:
+            key = position_key(trade)
+            if is_buy(trade):
+                group = entry_hours.setdefault(key, group)
+            else:
+                group = entry_hours.get(key, group)
+                if closes_position(trade):
+                    entry_hours.pop(key, None)
         if not is_position_trade:
             groups.setdefault(group, PnlTotals()).add(trade, track_positions=False)
             continue

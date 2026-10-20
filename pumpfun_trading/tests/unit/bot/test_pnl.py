@@ -308,3 +308,34 @@ def test_arbitrage_round_trip_is_its_own_closed_position() -> None:
 
     assert totals.positions_closed == 1 and totals.win_rate == 1.0
     assert totals.sells == 0
+
+
+def test_summarize_pnl_hour_groups_whole_positions_by_entry_hour() -> None:
+    """A position is booked under the UTC hour of its buy, even when it sells
+    in the next hour; ``market_regime.hour_utc`` wins over the timestamp."""
+    late_buy = {**_buy("p1"), "timestamp": DAY_1 + 2_800}  # 09:58 UTC
+    regime_buy = {**_buy("p2"), "market_regime": {"hour_utc": 21}}
+    bad_regime = {**_buy("p3"), "market_regime": {"hour_utc": 99}}
+    trades = [
+        late_buy,
+        _sell("p1", 0.015, ts=DAY_1 + 3_700),  # 10:13 UTC
+        regime_buy,
+        _sell("p2", 0.008, ts=DAY_1 + 10),
+        bad_regime,
+        _sell("p3", 0.009, ts=DAY_1 + 20),
+        _sell("orphan", 0.01, ts=DAY_1 + 7_300),  # no buy seen: own hour
+    ]
+
+    summary = summarize_pnl(trades, group_by="hour")
+    groups = summary["groups"]
+
+    assert set(groups) == {"09", "11", "21"}
+    assert groups["09"]["positions_closed"] == 2
+    assert groups["09"]["net_pnl_sol"] == pytest.approx(
+        sum(trade_net_pnl(t) for t in trades[:2] + trades[4:6])
+    )
+    assert groups["21"]["positions_closed"] == 1
+    assert groups["21"]["net_pnl_sol"] == pytest.approx(
+        trade_net_pnl(regime_buy) + trade_net_pnl(trades[3])
+    )
+    assert groups["11"]["sells"] == 1
