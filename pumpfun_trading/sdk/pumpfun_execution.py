@@ -36,6 +36,7 @@ from .execution_types import (
     SYSTEM_PROGRAM_ID,
     EVENT_AUTHORITY,
     TOKEN_PROGRAM_ID_STR,
+    WSOL_MINT_STR,
     BUY_DISCRIMINATOR,
     SELL_DISCRIMINATOR,
     FEE_CONFIG_KEY,
@@ -44,6 +45,11 @@ from .execution_types import (
     NotPumpFunCurveError,
 )
 from .transport import TransactionTransportMixin
+
+# BondingCurve.quote_mint (BUG-124): zeroed or WSOL means the curve trades for SOL.
+CURVE_QUOTE_MINT_START = 83
+CURVE_QUOTE_MINT_END = 115
+SOL_QUOTE_MINTS = frozenset({SYSTEM_PROGRAM_ID, WSOL_MINT_STR})
 
 
 class PumpFunCurveMixin(TransactionTransportMixin):
@@ -63,6 +69,11 @@ class PumpFunCurveMixin(TransactionTransportMixin):
           48..49: complete (bool)
           49..81: creator (Pubkey)
           81..82: is_mayhem_mode (bool)
+          82..83: is_cashback_coin (bool)
+          83..115: quote_mint (Pubkey; all zeros on SOL-quoted curves)
+
+        ``quote_mint`` is ``None`` on accounts too short to carry it (older
+        curves are SOL-quoted).
         """
         if len(data) < 49:
             raise ValueError(
@@ -92,6 +103,11 @@ class PumpFunCurveMixin(TransactionTransportMixin):
             except Exception:
                 creator = None
         is_mayhem_mode = bool(data[81]) if len(data) >= 82 else False
+        quote_mint = None
+        if len(data) >= CURVE_QUOTE_MINT_END:
+            quote_mint = str(
+                Pubkey.from_bytes(data[CURVE_QUOTE_MINT_START:CURVE_QUOTE_MINT_END])
+            )
 
         price_sol = (
             (virtual_sol_reserves / 1_000_000_000.0)
@@ -117,6 +133,7 @@ class PumpFunCurveMixin(TransactionTransportMixin):
             "market_cap_sol": market_cap_sol,
             "creator": creator,
             "is_mayhem_mode": is_mayhem_mode,
+            "quote_mint": quote_mint,
         }
 
     calculate_buy_tokens_out = staticmethod(calculate_buy_tokens_out)
@@ -525,7 +542,16 @@ class PumpFunCurveMixin(TransactionTransportMixin):
 
     @staticmethod
     def _reject_non_standard_curve(mint: str, curve_state: dict[str, Any]) -> None:
-        """Refuse to buy into a curve whose reserves fail the layout checks (BUG-104)."""
+        """Refuse to buy into a curve whose reserves fail the layout checks (BUG-104).
+
+        A curve quoted in anything but SOL (e.g. USDC) is refused too: every
+        reserve and price in this bot is in lamports (BUG-124).
+        """
+        quote_mint = curve_state.get("quote_mint")
+        if quote_mint and str(quote_mint) not in SOL_QUOTE_MINTS:
+            raise NonStandardCurveError(
+                f"Non-standard bonding curve for {mint}: quote mint {quote_mint} is not SOL"
+            )
         anomaly = curve_reserve_anomaly(
             int(curve_state.get("virtual_sol_reserves", 0) or 0),
             int(curve_state.get("virtual_token_reserves", 0) or 0),

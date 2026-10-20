@@ -85,6 +85,8 @@ from .execution_types import (
     NotPumpFunCurveError,
 )
 from .pumpfun_execution import PumpFunCurveMixin
+from .pumpswap import PumpSwapPoolUnavailableError
+from .pumpswap_execution import PumpSwapExecutionMixin
 from .raydium_execution import RaydiumExecutionMixin
 
 __all__ = [
@@ -139,6 +141,7 @@ __all__ = [
     "PUMP_FEE_PROGRAM_ID",
     "PUMP_PROGRAM_ID",
     "PumpFunExecutionClient",
+    "PumpSwapPoolUnavailableError",
     "RaydiumPoolKeys",
     "RENT_PROGRAM_ID",
     "RpcConnectionPool",
@@ -161,5 +164,7 @@ __all__ = [
 ]
 
 
-class PumpFunExecutionClient(PumpFunCurveMixin, RaydiumExecutionMixin):
+class PumpFunExecutionClient(
+    PumpFunCurveMixin, RaydiumExecutionMixin, PumpSwapExecutionMixin
+):
     """Build and broadcast real Pump.fun transactions using the program instruction pattern."""

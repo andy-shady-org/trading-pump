@@ -630,6 +630,7 @@ async def test_websocket_stream_session_end_trips_breaker_on_failure_budget(
         await bot._run_websocket_stream()
     assert ws.sent == [
         {"method": "subscribeNewToken"},
+        {"method": "subscribeMigration"},
         {"method": "subscribeTokenTrade", "keys": [MINT]},
     ]
     assert handled == [{"mint": MINT}]
@@ -6310,6 +6311,7 @@ async def test_websocket_reconnect_resubscribes_promoted_watched_mints(
         await bot._run_websocket_stream()
     assert ws.sent == [
         {"method": "subscribeNewToken"},
+        {"method": "subscribeMigration"},
         {"method": "subscribeTokenTrade", "keys": ["promoted"]},
     ]
     await bot.close()
@@ -6623,3 +6625,182 @@ async def test_drift_refused_momentum_buy_stops_watching_the_mint(
     assert not bot.order_flow_engine.is_watched(SAMPLE_PUMP_MINT)
     bot._unsubscribe_from_token_trades.assert_awaited_once_with(None, SAMPLE_PUMP_MINT)
     assert bot.watch_list_status()["stats"]["drift_refused"] == 1
+
+
+# --- BUG-123: exit a coin held through graduation on PumpSwap ----------------------
+
+_COMPLETE_CURVE = {
+    "complete": True,
+    "virtual_sol_reserves": 0,
+    "virtual_token_reserves": 0,
+    "real_sol_reserves": 0,
+}
+
+
+def _graduated_paper_bot(tmp_path: Path, **config: Any) -> TradingBot:
+    bot = make_bot(tmp_path, dry_run=True, **config)
+    _hold_position(bot)
+    bot.execution.get_bonding_curve_state = AsyncMock(return_value=_COMPLETE_CURVE)  # type: ignore[method-assign]
+    bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={"market_cap_sol": 60.0}
+    )
+    bot.execution.quote_pumpswap_sell = AsyncMock(return_value=19_000_000)  # type: ignore[method-assign]
+    return bot
+
+
+@pytest.mark.regression("BUG-123")
+async def test_held_curve_that_completes_exits_on_pumpswap(tmp_path: Path) -> None:
+    bot = _graduated_paper_bot(tmp_path)
+    curve_sell = AsyncMock()
+    bot.executor.execute_sell = curve_sell  # type: ignore[method-assign]
+
+    await bot._refresh_active_positions_market_caps()
+
+    assert MINT not in bot.active_positions
+    curve_sell.assert_not_awaited()
+    sell = [t for t in _audit_trades(tmp_path) if t["action"] != "buy"][-1]
+    assert sell["reason"] == "bonding_curve_graduated"
+    # Paper proceeds follow the pool price: 60 / 30 SOL market cap.
+    assert sell["proceeds_sol"] == pytest.approx(
+        0.02 * bot._paper_round_trip_fee_factor(), rel=1e-6
+    )
+    assert bot.market_regime.snapshot()["graduations"] == 1
+    await bot.close()
+
+
+async def test_graduated_position_waits_for_the_pool_then_exits(
+    tmp_path: Path,
+) -> None:
+    bot = _graduated_paper_bot(tmp_path)
+    bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("PumpSwap pool not found")
+    )
+    await bot._refresh_active_positions_market_caps()
+    assert MINT in bot.active_positions
+    assert MINT in bot._migrating_mints
+    assert bot._last_event.startswith("awaiting pool")
+
+    # Next pass: no curve read for a migrating mint; the pool is there now.
+    bot.execution.get_bonding_curve_state = AsyncMock(side_effect=AssertionError)  # type: ignore[method-assign]
+    bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={"market_cap_sol": 45.0}
+    )
+    await bot._refresh_active_positions_market_caps()
+    assert MINT not in bot.active_positions
+    await bot.close()
+
+
+async def test_pumpswap_exit_can_be_switched_off(tmp_path: Path) -> None:
+    bot = _graduated_paper_bot(tmp_path, enable_pumpswap_exit=False)
+    await bot._refresh_active_positions_market_caps()
+    assert MINT in bot.active_positions
+    bot.execution.get_pumpswap_market_state.assert_not_awaited()  # type: ignore[attr-defined]
+    # A pool that reports no market cap, or no reader at all, also waits.
+    bot.config = replace(bot.config, enable_pumpswap_exit=True)
+    bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={"market_cap_sol": 0.0}
+    )
+    assert await bot._pumpswap_exit_market_cap(MINT) is None
+    bot.execution = SimpleNamespace()  # type: ignore[assignment]
+    assert await bot._pumpswap_exit_market_cap(MINT) is None
+    assert await bot._exit_graduated_position("NotHeld") is False
+
+
+async def test_live_graduated_exit_sells_into_pumpswap_and_closes(
+    tmp_path: Path,
+) -> None:
+    bot = _live_bot(tmp_path)
+    _hold_position(bot)
+    bot._migrating_mints.add(MINT)
+    bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={"market_cap_sol": 60.0}
+    )
+    bot.execution.get_token_balance = AsyncMock(return_value=TOKENS)  # type: ignore[method-assign]
+    sell = AsyncMock(
+        return_value=ExecutionResult(
+            success=True,
+            signature="SwapSig",
+            mint=MINT,
+            is_buy=False,
+            amount_sol=0.019,
+            token_amount=TOKENS,
+            metadata={"venue": "pumpswap"},
+        )
+    )
+    bot.executor.execute_pumpswap_sell = sell  # type: ignore[method-assign]
+
+    assert await bot._sell_token(MINT, reason="bonding_curve_graduated")
+
+    assert sell.await_args is not None
+    assert sell.await_args.args == (MINT, TOKENS)
+    assert sell.await_args.kwargs["close_token_account"] is True
+    assert MINT not in bot.active_positions
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-123")
+async def test_migration_message_exits_held_and_drops_watched_mints(
+    tmp_path: Path,
+) -> None:
+    bot = _graduated_paper_bot(tmp_path)
+    bot.replay_recorder = MagicMock(close=AsyncMock())
+    unsubscribe = AsyncMock()
+    bot._unsubscribe_from_token_trades = unsubscribe  # type: ignore[method-assign]
+    watched = SAMPLE_PUMP_MINT
+    bot.order_flow_engine.watch(watched, created_at=time.time(), now=time.time())
+    bot.order_flow_engine.mark_watch_subscribed(watched)
+
+    await bot._handle_message({"txType": "migrate", "mint": watched, "pool": "x"})
+    await bot._handle_message({"txType": "migrate", "mint": MINT})
+    await bot._handle_message({"txType": "migrate", "mint": MINT})  # repeat
+
+    assert not bot.order_flow_engine.is_watched(watched)
+    unsubscribe.assert_any_await(None, watched)
+    assert MINT not in bot.active_positions
+    assert bot._watch_stats["dropped_complete"] == 1
+    assert bot.market_regime.snapshot()["graduations"] == 2
+    recorded = [
+        call.args[0]
+        for call in bot.replay_recorder.record_snapshot.call_args_list
+        if call.args[0].get("event") == "migration"
+    ]
+    assert [r["mint"] for r in recorded] == [watched, MINT]
+
+    bot._stop_requested = True
+    await bot._handle_message({"txType": "migration", "mint": "Other"})
+    assert bot.market_regime.snapshot()["graduations"] == 3
+    await bot.close()
+
+
+# --- Market regime on buys, screens and the status file ----------------------------
+
+
+async def test_market_regime_is_recorded_on_buys_screens_and_status(
+    tmp_path: Path,
+) -> None:
+    bot = _paper_bot(tmp_path)
+    await bot._handle_new_token_event({"mint": SAMPLE_MINT})
+    assert bot.market_regime.snapshot()["launches"] == 1
+
+    bot._record_trade(mint=MINT, action="buy", entry=0.01)
+    bot._record_trade(mint=MINT, action="sell", exit_value=0.01)
+    buy, sell = bot._trade_ledger[-2:]
+    assert buy["market_regime"]["launches"] == 1
+    assert "hour_utc" in buy["market_regime"]
+    assert "market_regime" not in sell
+
+    bot.replay_recorder = MagicMock(close=AsyncMock())
+    bot.enricher.enrich_and_screen = AsyncMock(  # type: ignore[method-assign]
+        return_value=TokenScreeningVerdict(
+            mint=MINT, passed=True, risk_score=0.0, reasons=[]
+        )
+    )
+    await bot._enrich_and_screen_token(MINT)
+    record = bot.replay_recorder.record_snapshot.call_args.args[0]
+    assert record["event"] == "screening"
+    assert record["market_regime"]["launches"] == 1
+
+    assert bot.get_status_snapshot()["market_regime"]["launches"] == 1
+    del bot.market_regime
+    assert bot._market_regime().snapshot()["launches"] == 0
+    await bot.close()

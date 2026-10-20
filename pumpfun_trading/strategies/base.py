@@ -125,6 +125,9 @@ class TradingBotConfig:
     # at the fill is more than this share above the signal's (0 = off). Live it
     # also caps the buy slippage at the remaining headroom.
     momentum_max_entry_drift_pct: float = 0.0
+    # Exit a position held through graduation on its canonical PumpSwap pool;
+    # Pump.fun no longer migrates to Raydium (BUG-123).
+    enable_pumpswap_exit: bool = True
     enable_raydium_migration_sniping: bool = True
     raydium_pre_migration_sol_threshold: float = 80.0
     raydium_buy_amount_sol: float = 0.02
@@ -304,6 +307,7 @@ class TradingBotConfig:
             "breakeven_buffer_pct": self.breakeven_buffer_pct,
             "max_entry_cost_share_pct": self.max_entry_cost_share_pct,
             "momentum_max_entry_drift_pct": self.momentum_max_entry_drift_pct,
+            "enable_pumpswap_exit": self.enable_pumpswap_exit,
             "enable_raydium_migration_sniping": self.enable_raydium_migration_sniping,
             "raydium_pre_migration_sol_threshold": self.raydium_pre_migration_sol_threshold,
             "raydium_buy_amount_sol": self.raydium_buy_amount_sol,

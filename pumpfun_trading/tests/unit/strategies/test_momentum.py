@@ -495,3 +495,47 @@ def test_momentum_metrics_exclude_creator_and_own_wallet() -> None:
     assert signal.unique_buyers == 2
     assert signal.net_sol_inflow == pytest.approx(2.0)
     assert signal.triggered is False
+
+
+# --- FEAT-56: buy-flow concentration and the first curve poll ----------------------
+
+
+def test_buy_flow_concentration_scores_spread_and_concentrated_flow() -> None:
+    engine = OrderFlowEngine()
+    assert engine.buy_flow_concentration("none") == {
+        "buys": 0,
+        "unique_buyers": 0,
+        "top_buyer_share": 0.0,
+        "wallet_diversity": 0.0,
+    }
+    for user in ("a", "b", "c", "d"):
+        engine.record_trade("spread", True, 0.5, user, timestamp=100.0)
+    engine.record_trade("spread", False, 5.0, "e", timestamp=100.0)  # sells ignored
+    spread = engine.buy_flow_concentration("spread")
+    assert spread["unique_buyers"] == 4
+    assert spread["top_buyer_share"] == 0.25
+    assert spread["wallet_diversity"] == 0.75
+
+    for _ in range(4):
+        engine.record_trade("whale", True, 2.0, "w", timestamp=100.0)
+    engine.record_trade("whale", True, 0.1, "x", timestamp=100.0)
+    engine.record_trade("whale", True, 3.0, "creator", timestamp=100.0)
+    engine.record_trade("whale", True, 9.0, "late", timestamp=200.0)
+    whale = engine.buy_flow_concentration(
+        "whale", exclude_users=frozenset({"creator"}), current_time=150.0
+    )
+    assert whale["buys"] == 5
+    assert whale["top_buyer_share"] == round(8.0 / 8.1, 4)
+    assert whale["wallet_diversity"] == round((2 / 5) * (1 - 8.0 / 8.1), 4)
+
+
+def test_first_poll_is_kept_after_later_polls() -> None:
+    engine = OrderFlowEngine()
+    engine.watch("m", created_at=10.0, now=11.0, real_sol=0.5)
+    engine.update_watch_curve("m", real_sol=2.0, market_cap_sol=33.0, now=13.0)
+    engine.update_watch_curve("m", real_sol=4.0, market_cap_sol=40.0, now=15.0)
+    entry = engine.get_watch("m")
+    assert entry is not None
+    assert entry.first_polled_real_sol == 2.0
+    assert entry.first_polled_at == 13.0
+    assert entry.last_real_sol == 4.0

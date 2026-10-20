@@ -158,6 +158,7 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-20 | same, last 11.5 h only (unseen by the sweeps) | momentum | `configs/capture.json` | 53 | +0.001 | 39.6% | break-even |
 | 2026-10-20 | same, 24.2 h, replay | momentum | `configs/canary.json`, tip 0 | 112 | −0.077 | — | NO-GO; parity gap +0.022 (allowed ±0.010) |
 | 2026-10-20 | same, audit trail, drift guard applied after the fact | momentum | + `momentum_max_entry_drift_pct` 0.08 | 101 | −0.046 | — | helps in both halves (A −0.075, B +0.029), still negative |
+| 2026-10-20 | rc.1 replay, FEAT-56 filters (top buyer < 50%, diversity ≥ 0.3, early inflow < 5 SOL) | momentum | `configs/canary.json`, tip 0 | 47 | −0.004 | — | beats a random cut on 3 sets; recorded in rc.2, not gated (§6.5) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -241,3 +242,25 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 - **Operations: healthy.** 1,568 watched, 251 promoted, 118 bought, 13 dropped as non-standard curves; ≤ 20 subscriptions; 7,689 trade messages with no refusals or breaker trips; 0 ERROR lines; RPC p95 117 ms. The stream connected 7 times but `connection_loss` stayed 0 (telemetry gap, BUG-122).
 - **Possible time-of-day effect.** A ran overnight in Europe, B in EU/US daytime, and B did better under every setting. One day cannot separate the hour from the settings; every buy carries its timestamp, so net PnL per hour can be compared on the next capture.
 - **Verdict:** no Stage 0, no change to `momentum_min_unique_buyers`. rc.2 ships the drift guard (plus BUG-121 and Sprint 28a). **The next 24 h capture with `configs/capture.json` is the last test of the momentum lane:** if it is not clearly net positive with the guard on, stop tuning it. In parallel and at no risk to capital: the 72 h pre-graduation paper pilot (FEAT-53, second runtime folder, `enable_pre_graduation_harvesting: true`) and the FEAT-54 offline wallet scorer on the two captures.
+
+### 6.5 Ideas from other projects, tested offline (2026-10-20)
+Ideas taken from a review of `pumpfun-bonkfun-bot`, `pumpfun-sniper-bot` and `PumpGrok` (FEAT-55/56 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md#feat-55-creator-reputation-book)). Data: the v0.2.3 capture (`runtime/archive/stage0-v0.2.3/`) and the rc.1 capture (`runtime/capture/`). Replay is `configs/canary.json` as in rc.2 (drift guard on), tip 0: v0.2.3 +0.058 SOL / 117, rc.1 −0.080 / 105. Every filter is compared with keeping a random share of the same size, since any cut of a losing lane loses less.
+
+- **Creator reputation book (FEAT-55): no edge.**
+  - Walking forward through v0.2.3 and blocking a creator after one losing position blocks 203 of 1,697 positions worth −0.044 SOL; a random 203 would be −0.070.
+  - In rc.1 only 2 creators were bought twice (the serial-launcher screen already rejects repeat creators), and the v0.2.3 book would block 6 rc.1 positions worth +0.002 SOL.
+  - PumpGrok's "token fell ≥ 60%" rule fires on 2 of 1,229 tokens: an early curve cannot fall that far below a ~30 SOL entry.
+  - `creator_rugs` is 0 on all 24,521 screening records: `rug_history_count` is never filled, so that screen check does nothing.
+- **Sniper count: not measurable on these captures.** For 90% of mints the first recorded trade comes more than 3.3 s after the create, so the first-slot buyers are never seen. The proxy used is the SOL that entered the curve before the first recorded trade.
+- **Wallet diversity and sniper volume (FEAT-56): small, consistent edge; not enough on its own.** Net SOL / positions kept:
+
+| Keep rule | v0.2.3 replay | rc.1 replay | rc.1 paper |
+|---|---|---|---|
+| none | +0.058 / 117 | −0.080 / 105 | −0.099 / 118 |
+| largest buyer < 50% of buy volume | +0.071 / 98 | −0.027 / 67 | −0.046 / 84 |
+| wallet diversity ≥ 0.3 | +0.073 / 109 | −0.028 / 82 | −0.062 / 96 |
+| inflow before the first seen trade < 5 SOL | +0.086 / 110 | −0.043 / 77 | −0.035 / 87 |
+| all three | +0.099 / 91 | −0.004 / 47 | −0.006 / 58 |
+
+  Each rule beats a random cut of the same size on all three sets (+0.016 to +0.054 SOL), but the combination only brings rc.1 to about break-even, on 47–58 positions. The thresholds are round numbers chosen before looking, not tuned. The inflow measure overlaps the rc.2 drift guard on rc.1 (it is everything before promotion there), so the two gains will not simply add up.
+- **Verdict:** no gate in rc.2. rc.2 records the inputs on every momentum buy (`entry_metrics.top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth`, `first_poll_age_seconds`) and the market regime on every buy and screened launch (`market_regime`: UTC hour and weekday, launches per minute and graduations per hour over 15 min, `warm` once a full window has passed). The rc.2 capture is unseen data for all of them: add a filter only if it beats a random cut there too, then Stage 0 it.

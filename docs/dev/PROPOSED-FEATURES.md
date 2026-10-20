@@ -113,6 +113,40 @@ This document lists candidate features and architectural enhancements for `pumpf
   6. **Optional stand-alone lane** (`strategy=copy`), only after the confirmation use is shown positive; needs `subscribeAccountTrade` (another billed PumpPortal feed, BUG-112/120), so it gets its own subscription budget and the BUG-116 breaker.
 * **Dependencies:** FEAT-51, FEAT-52 (watch list and momentum check), a capture recorded with `configs/capture.json` that has trade flow for watched mints. **Impact:** more entry evidence at no extra message cost; per-wallet results visible in `pumpfun-audit pnl --group-by strategy`. Copy trading as its own lane stays off ([`RELEASE-GATE.md` §3.5](RELEASE-GATE.md#35-features-that-must-stay-off-until-proven)) until the 24I exit gate passes.
 
+### FEAT-55: Creator Reputation Book
+* **Class / Priority:** Income · P3 (tested offline 2026-10-20: **no edge**, not scheduled)
+* **Goal:** Skip launches from creators whose earlier tokens lost us money, from our own records and with no network calls (idea from PumpGrok `reputation.py`, AGPL-3.0, so idea only).
+* **Evidence:** `DevWalletProfile.rug_history_count` is checked by the screener but never set: `bot/enrichment.py` builds the profile without it, and none of the 24,521 screening records in the two captures has `creator_rugs` above 0. The check is dead code.
+* **Design (as tested):** a book keyed by creator (the screening record's `creator`), filled from closed positions in `audit_trail.jsonl`. A creator is blocked after one losing position; the PumpGrok rule ("token fell ≥ 60%") was tested too. Clean creators expire after 30 days.
+* **Offline test** (`STRATEGY-PIVOT.md` §6.5):
+  - v0.2.3 (1,697 launch-mode positions): walking forward, the book blocks 203 positions worth −0.044 SOL. A random 203 would be worth −0.070, so the blocked ones were *better* than average.
+  - rc.1 (118 momentum positions): only 2 creators were bought twice, because the serial-launcher screen already rejects repeat creators. The v0.2.3 book would block 6 rc.1 positions worth +0.002 SOL.
+  - The "fell ≥ 60%" rule never fires on our entries (2 of 1,229 tokens): an early curve cannot fall 60% below a ~30 SOL entry because its floor is the ~28 SOL launch market cap.
+* **Decision:** don't build it. Either delete `rug_history_count` from the screen or fill it from a source with real rug data; revisit only if a capture shows repeat creators among bought tokens.
+
+### FEAT-56: Sniper-Volume & Wallet-Diversity Entry Filters
+* **Class / Priority:** Income · P2 (recorded in rc.2; gate only after an unseen-capture test)
+* **Goal:** Skip momentum entries whose "demand" is one wallet or a burst of snipers that will dump (idea from PumpGrok `analyzer.py`).
+* **Measures** (all exclude the creator and our wallet):
+  - `top_buyer_share`: the largest buyer's share of the buy volume seen before the entry.
+  - `wallet_diversity`: `unique_buyers / buys × (1 − top_buyer_share)`. One wallet splitting its buys, or one whale, scores low.
+  - Sniper volume: the SOL that entered the curve before the first trade we see. **No capture sees the first slots** (for 90% of mints the first recorded trade came more than 3.3 s after the create), so a true sniper *count* cannot be measured; rc.2 records `first_poll_sol_growth` (create → first curve poll) as the proxy.
+* **Offline test** (`STRATEGY-PIVOT.md` §6.5), compared with keeping a random share of the same size:
+
+  | Keep rule | v0.2.3 replay | rc.1 replay | rc.1 paper |
+  |---|---|---|---|
+  | none (all positions) | +0.058 / 117 | −0.080 / 105 | −0.099 / 118 |
+  | `top_buyer_share` < 0.5 | +0.071 / 98 (+0.023 vs random) | −0.027 / 67 (+0.024) | −0.046 / 84 (+0.025) |
+  | `wallet_diversity` ≥ 0.3 | +0.073 / 109 (+0.019) | −0.028 / 82 (+0.035) | −0.062 / 96 (+0.018) |
+  | inflow before the first seen trade < 5 SOL | +0.086 / 110 (+0.031) | −0.043 / 77 (+0.016) | −0.035 / 87 (+0.038) |
+  | all three | +0.099 / 91 (+0.054) | −0.004 / 47 (+0.032) | −0.006 / 58 (+0.043) |
+
+  Net SOL / positions kept; replay is `configs/canary.json` (drift guard on), tip 0. "vs random" is the kept net minus the same share of the total.
+
+  Each rule beats a random cut on all three sets, but none turns rc.1 positive, the samples are small, the thresholds are round numbers that were not tuned, and the inflow measure means different things in the two captures (≈ 3.5 s of snipers in v0.2.3, everything before promotion in rc.1, which overlaps the rc.2 drift guard).
+* **Design:** rc.2 records `top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth` and `first_poll_age_seconds` in every momentum buy's `entry_metrics` (`OrderFlowEngine.buy_flow_concentration`, `WatchEntry.first_polled_real_sol`). Nothing gates on them yet. If the rc.2 capture (unseen) confirms the edge, add `momentum_max_top_buyer_share` and `momentum_min_wallet_diversity` (0 = off) to `strategies/signal.py`, model them in replay, and Stage 0 them like any money-path change.
+* **Dependencies:** FEAT-52. **Impact:** at best it trims the worst momentum entries; on its own it does not make the lane profitable.
+
 ---
 
 ## 3. Web UI Platform (Required)

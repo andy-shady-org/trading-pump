@@ -1033,3 +1033,160 @@ class OrderExecutor:
                     "confirmed": bool(confirmed),
                 },
             )
+
+    async def execute_pumpswap_sell(
+        self,
+        mint: str,
+        token_amount: int,
+        *,
+        slippage_bps: int | None = None,
+        reason: str = "bonding_curve_graduated",
+        dry_run: bool | None = None,
+        close_token_account: bool = False,
+    ) -> ExecutionResult:
+        """Sell a graduated coin into its canonical PumpSwap pool (BUG-123).
+
+        The completed curve takes no trades, so this is the only exit once a
+        held coin has migrated. A missing pool fails the sell, so the caller
+        retries until the migration lands.
+        """
+        is_dry_run = self.dry_run if dry_run is None else dry_run
+        effective_slippage = (
+            slippage_bps
+            if slippage_bps is not None
+            else getattr(self.execution, "default_slippage_bps", 500)
+        )
+        try:
+            expected_lamports = int(
+                await self.execution.quote_pumpswap_sell(
+                    mint, token_amount, slippage_bps=0
+                )
+            )
+        except Exception as exc:
+            logger.warning("PumpSwap pool unavailable for %s: %s", mint, exc)
+            return ExecutionResult(
+                success=False,
+                mint=mint,
+                is_buy=False,
+                token_amount=token_amount,
+                reason=reason,
+                dry_run=is_dry_run,
+                error=f"pumpswap_pool_unavailable: {exc}",
+            )
+
+        closes = close_token_account and bool(
+            getattr(self.config, "close_token_account_on_full_exit", True)
+        )
+        if is_dry_run:
+            logger.info("DRY RUN PUMPSWAP SELL: %s for %d tokens", mint, token_amount)
+            dry_signature = f"dry_run_pumpswap_sell_{mint[:8]}_{int(time.time())}"
+            return ExecutionResult(
+                success=True,
+                signature=dry_signature,
+                mint=mint,
+                is_buy=False,
+                amount_sol=float(expected_lamports) / 1_000_000_000.0,
+                token_amount=token_amount,
+                reason=reason,
+                dry_run=True,
+                metadata={"venue": "pumpswap", "closed_token_account": closes},
+                costs=self._model_costs(
+                    rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
+                    signature=dry_signature,
+                ),
+            )
+
+        async with self.get_lock(mint):
+            logger.info(
+                "Executing PumpSwap sell for %s (%d tokens)", mint, token_amount
+            )
+            pre_sol = await self._read_sol_lamports()
+            pre_tokens = await self._read_token_balance(mint)
+            closes = closes and self._should_close_token_account(
+                mint, token_amount, pre_tokens
+            )
+            try:
+                signature = await self.execution.pumpswap_sell(
+                    mint,
+                    token_amount,
+                    slippage_bps=effective_slippage,
+                    close_token_account=closes,
+                )
+            except Exception as exc:
+                if closes:
+                    self._close_disabled_mints.add(mint)
+                logger.warning("PumpSwap sell failed for %s: %s", mint, exc)
+                return ExecutionResult(
+                    success=False,
+                    mint=mint,
+                    is_buy=False,
+                    token_amount=token_amount,
+                    reason=reason,
+                    error=f"pumpswap_sell_failed: {exc}",
+                )
+            if not signature:
+                return ExecutionResult(
+                    success=False,
+                    mint=mint,
+                    is_buy=False,
+                    token_amount=token_amount,
+                    reason=reason,
+                    error="pumpswap_sell_signature_missing",
+                )
+
+            confirmed = await self.execution.confirm_transaction(signature)
+            if not confirmed and not await self._detect_token_decrease(
+                mint, pre_tokens, token_amount
+            ):
+                if closes:
+                    self._close_disabled_mints.add(mint)
+                logger.warning(
+                    "PumpSwap sell confirmation failed for %s (sig=%s)", mint, signature
+                )
+                return ExecutionResult(
+                    success=False,
+                    signature=signature,
+                    mint=mint,
+                    is_buy=False,
+                    token_amount=token_amount,
+                    reason=reason,
+                    error="pumpswap_sell_confirmation_failed",
+                )
+
+            self._close_disabled_mints.discard(mint)
+            costs = await self._capture_costs(signature, mint, is_buy=False)
+            proceeds: int | None
+            if (
+                costs is not None
+                and costs.source == COST_SOURCE_TRANSACTION_META
+                and costs.swap_lamports is not None
+                and costs.swap_lamports > 0
+            ):
+                proceeds, proceeds_source = costs.swap_lamports, "transaction_meta"
+            else:
+                proceeds = await self._measure_sol_proceeds(pre_sol, expected_lamports)
+                if proceeds is not None:
+                    # The wallet delta is already net of fee and tip.
+                    proceeds_source, costs = "sol_balance_delta", None
+                else:
+                    proceeds, proceeds_source = expected_lamports, "pre_trade_quote"
+                    costs = self._model_costs(
+                        rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
+                        signature=signature,
+                    )
+            return ExecutionResult(
+                success=True,
+                signature=signature,
+                mint=mint,
+                is_buy=False,
+                amount_sol=float(proceeds) / 1_000_000_000.0,
+                token_amount=token_amount,
+                reason=reason,
+                metadata={
+                    "venue": "pumpswap",
+                    "proceeds_source": proceeds_source,
+                    "confirmed": bool(confirmed),
+                    "closed_token_account": closes,
+                },
+                costs=costs,
+            )

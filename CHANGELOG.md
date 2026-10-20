@@ -14,9 +14,16 @@ The full 24.2 h rc.1 capture confirms it: paper −0.099 SOL over 118 positions 
 
 ### Added
 - Momentum entry drift guard, `momentum_max_entry_drift_pct` (default `0` = off; `0.08` in the `momentum` preset, `configs/canary.json` and `configs/capture.json`). For `strategy=momentum` buys the bot passes the signal's market cap to `OrderExecutor.execute_buy`: paper re-reads the curve after `paper_entry_delay_seconds` and skips the buy (`entry_drift` error, no costs) when the curve is more than the limit above the signal; live refuses before sending when the curve is already past it and otherwise caps the slippage at the headroom left. A refused mint is dropped from the watch list and unsubscribed (`watch_list.stats.drift_refused`). Filled buys record `entry_metrics.fill_drift_pct`. Replay applies the same rule to delayed confirmed fills and refunds the cash (`entry_rejections.entry_drift`). On the rc.1 audit trail the guard at 8% would have skipped 17 buys and moved the 24 h result from −0.099 to −0.046 SOL (first half −0.100 → −0.075, second half +0.001 → +0.029).
+- PumpSwap exit for graduated coins (BUG-123): `sdk/pumpswap.py` (canonical pool PDA, pool / `global_config` layouts, sell quote, `sell` instruction) and `sdk/pumpswap_execution.py` (`get_pumpswap_market_state`, `quote_pumpswap_sell`, `build_pumpswap_sell_tx`, `pumpswap_sell`); `OrderExecutor.execute_pumpswap_sell`. A held position whose curve completes is priced from its PumpSwap pool and sold there; the sell waits while the pool is missing. New config key `enable_pumpswap_exit` (default `true`).
+- The PumpPortal stream also subscribes to `subscribeMigration` (free, not metered). A migration exits a held mint, drops a watched one and is recorded in the capture as an `event: migration` record (no price, so replay skips it).
+- Market-regime telemetry (`strategies/regime.py`): every buy audit record, every screening capture record and the status file carry `market_regime` (UTC hour and weekday, launches per minute and graduations per hour over 15 min, `warm` after one full window). Nothing gates on it.
+- Momentum buys record `entry_metrics.top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth` and `first_poll_age_seconds` (FEAT-56, recorded only; `OrderFlowEngine.buy_flow_concentration`).
+- FEAT-55 (creator reputation book) and FEAT-56 (sniper-volume / wallet-diversity filters) in `docs/dev/PROPOSED-FEATURES.md`, with the offline tests on the v0.2.3 and rc.1 captures in `STRATEGY-PIVOT.md` §6.5: FEAT-55 has no edge; FEAT-56 beats a random cut on both captures but does not make rc.1 positive, so it is recorded and not gated.
 
 ### Fixed
 - BUG-121: `pumpfun-replay` filled confirmed and signal entries at the signal price and ignored `paper_entry_delay_seconds` and `paper_entry_slippage_bps`, so replay ran 0.016–0.023 SOL better than the paper bot on the rc.1 capture. Entries now fill at the last recorded price at signal + delay, cut by the penalty, with no exits before the fill; `entry_metrics` gain `fill_market_cap_sol` and `fill_drift_pct`. Earlier confirmed-lane replay results were optimistic: the v0.2.3 capture drops from +0.139 to +0.062 SOL. Replays without those settings, and entries mirrored from recorded fills, are unchanged.
+- BUG-123: a position held through graduation could not exit. The bot waited for a Raydium pool that Pump.fun no longer creates, and on the WebSocket deployment never noticed the completion at all. Completion is now seen from the position refresh, Geyser and the migration feed, and the exit goes through PumpSwap.
+- BUG-124: the bonding-curve decoder ignored `quote_mint`, so a USDC-quoted curve would have been priced as lamports. Non-SOL quote mints are now refused as non-standard curves.
 
 ### Changed
 - Sprint 28a, runtime decomposition (no behaviour change; ships with the rc.2 entry rework so Stage 0 runs once; `docs/dev/TODO.md` Sprint 28):
@@ -29,6 +36,7 @@ The full 24.2 h rc.1 capture confirms it: paper −0.099 SOL over 118 positions 
 
 ### Known issues
 - BUG-122 (open): stream reconnects are not counted in `connection_loss`; the rc.1 capture connected 7 times with the counter at 0. Telemetry only.
+- The PumpSwap sell (BUG-123) is pinned to mainnet account data and a real PumpSwap sell, but no transaction built by this code has landed yet. Paper exercises the pricing only. Send one live sell at the smallest size before relying on it with real capital.
 
 ## [0.3.0-rc.1] - 2026-10-18
 
