@@ -47,6 +47,8 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_USE_JITO`](#pumpfun_use_jito) | — | Boolean | Optional | `true` | Execution / Anti-MEV |
 | [`PUMPFUN_JITO_BLOCK_ENGINE_URL`](#pumpfun_jito_block_engine_url) | — | String (URL) | Optional | `https://mainnet.block-engine.jito.wtf` | Execution / Anti-MEV |
 | [`PUMPFUN_JITO_TIP_LAMPORTS`](#pumpfun_jito_tip_lamports) | — | Integer | Optional | `100000` (0.0001 SOL) | Execution / Anti-MEV |
+| [`PUMPFUN_JITO_ENTRY_TIP_LAMPORTS`](#pumpfun_jito_entry_tip_lamports) | — | Integer | Optional | unset (shared tip) | Execution / Anti-MEV |
+| [`PUMPFUN_JITO_EXIT_TIP_LAMPORTS`](#pumpfun_jito_exit_tip_lamports) | — | Integer | Optional | unset (shared tip) | Execution / Anti-MEV |
 | [`PUMPFUN_JITO_CONFIRMATION_TIMEOUT`](#pumpfun_jito_confirmation_timeout) | — | Float (Seconds) | Optional | `12.0` | Execution / Anti-MEV |
 | [`PUMPFUN_JITO_FALLBACK_TO_RPC`](#pumpfun_jito_fallback_to_rpc) | — | Boolean | Optional | `true` | Execution / Anti-MEV |
 | [`PUMPFUN_COMPUTE_UNIT_LIMIT`](#pumpfun_compute_unit_limit) | — | Integer | Optional | `200000` | Execution / Priority Fees |
@@ -200,6 +202,22 @@ The table below summarizes every supported environment variable, its recognized 
 * **Default:** `100000` (0.0001 SOL)
 * **Description:** Validator tip in Lamports appended to Jito bundles to incentivize fast block inclusion.
 * **Example:** `PUMPFUN_JITO_TIP_LAMPORTS=200000`
+
+#### `PUMPFUN_JITO_ENTRY_TIP_LAMPORTS`
+* **Fallback Alias:** None
+* **Type:** Integer (Lamports)
+* **Required:** Optional
+* **Default:** unset (buys use `PUMPFUN_JITO_TIP_LAMPORTS` / the dynamic tip)
+* **Description:** Fixed tip for buys only, for the entry/exit tip experiment (`docs/dev/RUNBOOK.md`). `0` sends buys over plain RPC with no tip instruction; a positive value is paid as a fixed tip. Ignored when `PUMPFUN_USE_JITO=false`. Paper costs and `pumpfun-replay` model the same value.
+* **Example:** `PUMPFUN_JITO_ENTRY_TIP_LAMPORTS=0`
+
+#### `PUMPFUN_JITO_EXIT_TIP_LAMPORTS`
+* **Fallback Alias:** None
+* **Type:** Integer (Lamports)
+* **Required:** Optional
+* **Default:** unset (sells use `PUMPFUN_JITO_TIP_LAMPORTS` / the dynamic tip)
+* **Description:** Fixed tip for sells only (curve, Raydium and PumpSwap). Same rules as `PUMPFUN_JITO_ENTRY_TIP_LAMPORTS`.
+* **Example:** `PUMPFUN_JITO_EXIT_TIP_LAMPORTS=50000`
 
 #### `PUMPFUN_JITO_CONFIRMATION_TIMEOUT`
 * **Fallback Alias:** None

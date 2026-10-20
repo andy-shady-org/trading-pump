@@ -67,6 +67,53 @@ def test_from_env_explicit_values_win() -> None:
 
 
 @pytest.mark.parametrize(
+    ("env", "entry", "exit_"),
+    [
+        ({}, None, None),
+        (
+            {
+                "PUMPFUN_JITO_ENTRY_TIP_LAMPORTS": "0",
+                "PUMPFUN_JITO_EXIT_TIP_LAMPORTS": "50000",
+            },
+            0,
+            50_000,
+        ),
+        ({"PUMPFUN_JITO_EXIT_TIP_LAMPORTS": "lots"}, None, None),
+        # Jito off: no side tip either, matching the live client.
+        (
+            {"PUMPFUN_USE_JITO": "false", "PUMPFUN_JITO_EXIT_TIP_LAMPORTS": "50000"},
+            None,
+            None,
+        ),
+    ],
+)
+def test_from_env_reads_the_split_entry_and_exit_tips(
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    entry: int | None,
+    exit_: int | None,
+) -> None:
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    model = ReplayCostModel.from_env()
+
+    assert (model.entry_tip_lamports, model.exit_tip_lamports) == (entry, exit_)
+
+
+def test_split_tips_apply_per_side_and_in_the_round_trip() -> None:
+    model = ReplayCostModel(
+        tip_lamports=100_000, entry_tip_lamports=0, exit_tip_lamports=25_000
+    )
+
+    assert model.buy_costs().tip_lamports == 0
+    assert model.sell_costs(full_exit=True).tip_lamports == 25_000
+    assert model.round_trip_fixed_costs_sol() == pytest.approx(
+        (2 * 5_000 + 25_000) / 1_000_000_000
+    )
+
+
+@pytest.mark.parametrize(
     ("close", "tip", "expected_lamports"),
     [
         (True, 100_000, 2 * (5_000 + 100_000)),  # rent refunded by the closing sell

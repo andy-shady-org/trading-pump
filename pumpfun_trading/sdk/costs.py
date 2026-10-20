@@ -8,6 +8,7 @@ amounts are lamports; ``rent_lamports`` is signed: positive when rent was paid
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
@@ -22,6 +23,23 @@ TOKEN_ACCOUNT_RENT_LAMPORTS = 1_513_840
 
 COST_SOURCE_TRANSACTION_META = "transaction_meta"
 COST_SOURCE_MODELLED = "modelled"
+
+# Per-side Jito tips for the entry/exit tip experiment (RUNBOOK). Unset means
+# the shared PUMPFUN_JITO_TIP_LAMPORTS / dynamic tip; 0 means that side goes
+# over plain RPC with no tip.
+ENTRY_TIP_ENV = "PUMPFUN_JITO_ENTRY_TIP_LAMPORTS"
+EXIT_TIP_ENV = "PUMPFUN_JITO_EXIT_TIP_LAMPORTS"
+
+
+def side_tip_lamports_from_env(name: str) -> int | None:
+    """A per-side tip override, or ``None`` when unset or not an integer."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)

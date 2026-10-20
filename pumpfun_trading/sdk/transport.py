@@ -63,17 +63,58 @@ class TransactionTransportMixin(ExecutionClientBase):
             )
         return max(0, int(unit_price * self.compute_unit_limit / 1_000_000))
 
+    def side_tip_override(self, *, is_buy: bool) -> Optional[int]:
+        """Fixed tip of one side (entry or exit), or ``None`` for the shared tip."""
+        name = "jito_entry_tip_lamports" if is_buy else "jito_exit_tip_lamports"
+        value = getattr(self, name, None)
+        return None if value is None else max(0, int(value))
+
+    async def resolve_trade_tip(
+        self,
+        *,
+        is_buy: bool,
+        trade_amount_sol: float = 0.0,
+        conviction_score: float = 1.0,
+        use_jito: Optional[bool] = None,
+    ) -> tuple[bool, Optional[int]]:
+        """``(send_via_jito, tip_lamports)`` for one trade.
+
+        Without a side override the dynamic tip applies as before. A side tip of
+        0 sends that side over plain RPC with no tip instruction; a positive one
+        is paid as a fixed tip.
+        """
+        should_jito = self.use_jito if use_jito is None else use_jito
+        if not should_jito:
+            return False, None
+        override = self.side_tip_override(is_buy=is_buy)
+        if override is None:
+            return True, await self.calculate_dynamic_jito_tip(
+                trade_amount_sol=trade_amount_sol, conviction_score=conviction_score
+            )
+        if override == 0:
+            return False, 0
+        return True, override
+
     def model_trade_costs(
-        self, *, rent_lamports: int = 0, signature: str | None = None
+        self,
+        *,
+        rent_lamports: int = 0,
+        signature: str | None = None,
+        is_buy: Optional[bool] = None,
     ) -> TransactionCosts:
         """Modelled costs of one trade for paper/dry-run accounting (FEAT-49).
 
-        Uses the static ``jito_tip_lamports``; live trades may pay a higher
+        Uses the static ``jito_tip_lamports``, or the side's fixed tip when one
+        is set and ``is_buy`` says which side; live trades may pay a higher
         dynamic tip, which is read from the transaction instead.
         """
+        tip = 0
+        if self.use_jito:
+            override = None if is_buy is None else self.side_tip_override(is_buy=is_buy)
+            tip = self.jito_tip_lamports if override is None else override
         return model_transaction_costs(
             priority_fee_lamports=self.modelled_priority_fee_lamports(),
-            tip_lamports=self.jito_tip_lamports if self.use_jito else 0,
+            tip_lamports=tip,
             rent_lamports=rent_lamports,
             signature=signature,
         )

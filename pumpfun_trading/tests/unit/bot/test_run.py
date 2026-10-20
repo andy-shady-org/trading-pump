@@ -6425,7 +6425,17 @@ async def test_momentum_buy_tags_the_lane_and_keeps_watching_after_a_failed_buy(
     kwargs = bot._buy_token.await_args_list[0].kwargs
     assert kwargs["strategy"] == "momentum"
     assert kwargs["reason"] == "momentum_confirmed"
-    assert set(kwargs["entry_metrics"]) >= {"unique_buyers", "z_score", "sol_growth"}
+    assert set(kwargs["entry_metrics"]) >= {
+        "unique_buyers",
+        "z_score",
+        "sol_growth",
+        # FEAT-56 / FEAT-57 inputs, recorded for offline tests only.
+        "top_buyer_share",
+        "wallet_diversity",
+        "round_trip_wallets",
+        "round_trip_share",
+        "quick_flips",
+    }
     assert bot.order_flow_engine.is_watched(SAMPLE_PUMP_MINT)
 
     make_position(bot, SAMPLE_PUMP_MINT)  # already held: no second buy
@@ -6804,3 +6814,79 @@ async def test_market_regime_is_recorded_on_buys_screens_and_status(
     del bot.market_regime
     assert bot._market_regime().snapshot()["launches"] == 0
     await bot.close()
+
+
+# --- Graduation backfill: a third source for held mints ---------------------------
+
+
+@pytest.mark.parametrize(
+    "coin",
+    [{"complete": True}, {"complete": False, "pump_swap_pool": "Pool111"}],
+)
+async def test_graduation_backfill_exits_a_migration_the_stream_missed(
+    tmp_path: Path, coin: dict[str, Any]
+) -> None:
+    bot = _graduated_paper_bot(tmp_path)
+    bot.api.get_coin = AsyncMock(return_value=coin)  # type: ignore[method-assign]
+
+    assert await bot._graduation_backfill_pass() == 1
+
+    assert MINT not in bot.active_positions
+    sell = [t for t in _audit_trades(tmp_path) if t["action"] != "buy"][-1]
+    assert sell["reason"] == "bonding_curve_graduated"
+    assert bot.watch_list_status()["stats"]["graduation_backfill"] == 1
+    assert any("graduation backfill" in e for e in bot._recent_events)
+    await bot.close()
+
+
+async def test_graduation_backfill_skips_live_curves_failures_and_known_migrations(
+    tmp_path: Path,
+) -> None:
+    bot = _graduated_paper_bot(tmp_path)
+    bot.api.get_coin = AsyncMock(return_value={"complete": False})  # type: ignore[method-assign]
+    assert await bot._graduation_backfill_pass() == 0
+    bot.api.get_coin = AsyncMock(side_effect=RuntimeError("HTTP 429"))  # type: ignore[method-assign]
+    assert await bot._graduation_backfill_pass() == 0
+    bot.api.get_coin = AsyncMock(return_value=["not", "a", "coin"])  # type: ignore[method-assign]
+    assert await bot._graduation_backfill_pass() == 0
+    assert MINT in bot.active_positions
+
+    # Already migrating (curve refresh or subscribeMigration got there first).
+    bot._migrating_mints.add(MINT)
+    bot.api.get_coin = AsyncMock(return_value={"complete": True})  # type: ignore[method-assign]
+    assert await bot._graduation_backfill_pass() == 0
+    bot.api.get_coin.assert_not_awaited()
+    await bot.close()
+
+
+@pytest.mark.parametrize("interval", [0, None])
+async def test_graduation_backfill_loop_off(tmp_path: Path, interval: Any) -> None:
+    bot = make_bot(tmp_path, graduation_backfill_seconds=interval)
+    bot._graduation_backfill_pass = AsyncMock()  # type: ignore[method-assign]
+    await bot._run_graduation_backfill_loop()
+    bot._graduation_backfill_pass.assert_not_awaited()
+
+
+async def test_graduation_backfill_loop_survives_errors_and_stops(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, graduation_backfill_seconds=0.001)
+    calls = 0
+
+    async def flaky() -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("boom")
+        bot._stop_requested = True
+        return 0
+
+    bot._graduation_backfill_pass = flaky  # type: ignore[method-assign]
+    await asyncio.wait_for(bot._run_graduation_backfill_loop(), timeout=2.0)
+    assert calls == 2
+
+    bot._stop_requested = False
+    bot._graduation_backfill_pass = AsyncMock(  # type: ignore[method-assign]
+        side_effect=asyncio.CancelledError
+    )
+    await asyncio.wait_for(bot._run_graduation_backfill_loop(), timeout=2.0)

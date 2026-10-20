@@ -132,6 +132,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-122** | Low | Telemetry / Streams | **OPEN** | The `connection_loss` counter never moves: `TradingBot._record_connection_loss` has no caller on the stream path, so the rc.1 capture showed 0 while the PumpPortal stream connected 7 times (6 reconnects) |
 | **BUG-123** | High | Execution / Graduation | **RESOLVED** | A position held through graduation could not exit: Pump.fun migrates completed curves into PumpSwap, not Raydium, the bot waited for a `RaydiumPoolKeys` pool that never comes, and the WebSocket deployment never even noticed the completion. Now detected from the curve refresh and the free `subscribeMigration` feed and sold into the canonical PumpSwap pool (`sdk/pumpswap.py`) |
 | **BUG-124** | Medium | SDK / Curve Decoding | **RESOLVED** | The bonding-curve decoder ignored the new `quote_mint` field, so a USDC-quoted curve would have been priced as if its reserves were lamports; such curves are now refused as non-standard |
+| **BUG-125** | Medium | Config | **RESOLVED** | `resolve_strategy_config` dropped 11 fields, so `enable_pumpswap_exit`, `replay_log_path`, the FEAT-50 alert keys and every FEAT-42 `profit_sweep_*` key were ignored in a config file without a warning |
 
 ---
 
@@ -1100,3 +1101,14 @@ Found while reviewing `pumpfun-bonkfun-bot` (Apache-2.0), `pumpfun-sniper-bot` a
 * **Impact:** medium: every price, slippage bound and paper fill assumes lamports. Whether any of the 13 `non_standard` drops in the rc.1 capture were USDC curves is not known (the capture does not store the raw account).
 * **Resolution:** the decoder returns `quote_mint` (`None` on accounts too short to carry it), and `_reject_non_standard_curve` raises `NonStandardCurveError` for any quote mint other than the zeroed key or WSOL, so the watch poller drops it as `non_standard` and the buy path refuses it before the reserve checks.
 * **Verification:** `regression("BUG-124")` test in `unit/sdk/test_pumpfun_execution.py`: zeroed, WSOL and missing quote mints pass; a USDC quote mint is refused by the sanity check and by `get_bonding_curve_states`.
+
+## 22. Config Keys Ignored In Config Files (2026-10-20)
+
+Found while adding `graduation_backfill_seconds`: `TradingBotConfig.from_dict({"enable_pumpswap_exit": false})` came back with `true`.
+
+### BUG-125: Config Resolver Drops Fields Without A Warning [RESOLVED]
+* **Location:** `pumpfun_trading/strategies/presets.py` (`resolve_strategy_config`)
+* **Description:** the resolver builds `TradingBotConfig(...)` by listing every field with its own `base.get(...)`, and anything not listed keeps the dataclass default. Eleven fields were missing: `enable_pumpswap_exit` (BUG-123), `replay_log_path`, `daily_summary_alert`, `daily_summary_hour_utc`, `degradation_alert_minutes` (FEAT-50) and all five `profit_sweep_*` keys (FEAT-42). `pumpbot --config` and `TradingBot(config=dict)` both go through it. Unit tests passed because they build configs with `make_config` / `dataclasses.replace`, which never touch the resolver.
+* **Impact:** medium: the profit sweep could not be turned on from a config file, the daily summary hour and degradation alert delay could not be changed, and `enable_pumpswap_exit: false` would not have switched the PumpSwap exit off. No shipped or runtime config sets any of these keys, so no run so far behaved differently from its config.
+* **Resolution:** the resolver reads all eleven. A guard test sets every scalar field to a non-default value through `resolve_strategy_config` and fails on any field that comes back unchanged (fields the resolver normalises on purpose are listed in the test).
+* **Verification:** `regression("BUG-125")` test in `unit/strategies/test_presets.py`; it fails with 11 dropped fields on the old resolver.

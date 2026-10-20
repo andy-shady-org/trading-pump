@@ -56,7 +56,7 @@ def _client(**overrides: Any) -> MagicMock:
     client.calculate_sell_sol_output = MagicMock(return_value=10_000_000)
     client.get_transaction_costs = AsyncMock(side_effect=RuntimeError("no rpc"))
     client.model_trade_costs = MagicMock(
-        side_effect=lambda rent_lamports=0, signature=None: model_transaction_costs(
+        side_effect=lambda rent_lamports=0, signature=None, is_buy=None: model_transaction_costs(
             priority_fee_lamports=1_000,
             tip_lamports=2_000,
             rent_lamports=rent_lamports,
@@ -252,10 +252,10 @@ async def test_cost_capture_is_bounded_and_ignores_foreign_types() -> None:
 
     bare = OrderExecutor(object(), config=make_config(dry_run=False), dry_run=False)  # type: ignore[arg-type]
     assert await bare._capture_costs("Sig", MINT, is_buy=True) is None
-    assert bare._model_costs() is None
+    assert bare._model_costs(is_buy=True) is None
 
     broken = _client(model_trade_costs=MagicMock(side_effect=ValueError("bad")))
-    assert _executor(broken)._model_costs() is None
+    assert _executor(broken)._model_costs(is_buy=False) is None
 
 
 async def test_order_executor_dry_run():

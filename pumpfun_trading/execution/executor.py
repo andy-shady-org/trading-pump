@@ -106,14 +106,19 @@ class OrderExecutor:
         return costs if isinstance(costs, TransactionCosts) else None
 
     def _model_costs(
-        self, *, rent_lamports: int = 0, signature: str | None = None
+        self, *, is_buy: bool, rent_lamports: int = 0, signature: str | None = None
     ) -> TransactionCosts | None:
-        """Modelled fee, tip and rent for paper trades and live fallbacks."""
+        """Modelled fee, tip and rent for paper trades and live fallbacks.
+
+        ``is_buy`` picks the entry or exit tip when they are set apart.
+        """
         model = getattr(self.execution, "model_trade_costs", None)
         if model is None:
             return None
         try:
-            costs = model(rent_lamports=rent_lamports, signature=signature)
+            costs = model(
+                rent_lamports=rent_lamports, signature=signature, is_buy=is_buy
+            )
         except Exception as exc:
             logger.debug("Could not model trade costs: %s", exc)
             return None
@@ -460,6 +465,7 @@ class OrderExecutor:
                 metadata=metadata,
                 # A fresh position pays the token-account rent (FEAT-49).
                 costs=self._model_costs(
+                    is_buy=True,
                     rent_lamports=TOKEN_ACCOUNT_RENT_LAMPORTS,
                     signature=dry_signature,
                 ),
@@ -567,7 +573,9 @@ class OrderExecutor:
                 spent_sol = costs.swap_sol
             if costs is None:
                 rent = TOKEN_ACCOUNT_RENT_LAMPORTS if pre_tokens == 0 else 0
-                costs = self._model_costs(rent_lamports=rent, signature=signature)
+                costs = self._model_costs(
+                    is_buy=True, rent_lamports=rent, signature=signature
+                )
             return ExecutionResult(
                 success=True,
                 signature=signature,
@@ -676,6 +684,7 @@ class OrderExecutor:
                 dry_run=True,
                 metadata={"closed_token_account": closes},
                 costs=self._model_costs(
+                    is_buy=False,
                     rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
                     signature=dry_signature,
                 ),
@@ -819,6 +828,7 @@ class OrderExecutor:
                         proceeds = max(0, min_sol_lamports)
                         proceeds_source = "min_out"
                     costs = self._model_costs(
+                        is_buy=False,
                         rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
                         signature=signature,
                     )
@@ -863,6 +873,7 @@ class OrderExecutor:
                 reason=reason,
                 dry_run=True,
                 costs=self._model_costs(
+                    is_buy=True,
                     rent_lamports=TOKEN_ACCOUNT_RENT_LAMPORTS,
                     signature=dry_signature,
                 ),
@@ -928,7 +939,9 @@ class OrderExecutor:
             costs = await self._capture_costs(signature, mint, is_buy=True)
             if costs is None:
                 rent = TOKEN_ACCOUNT_RENT_LAMPORTS if pre_tokens == 0 else 0
-                costs = self._model_costs(rent_lamports=rent, signature=signature)
+                costs = self._model_costs(
+                    is_buy=True, rent_lamports=rent, signature=signature
+                )
             return ExecutionResult(
                 success=True,
                 signature=signature,
@@ -964,7 +977,7 @@ class OrderExecutor:
                 token_amount=token_amount,
                 reason=reason,
                 dry_run=True,
-                costs=self._model_costs(signature=dry_signature),
+                costs=self._model_costs(is_buy=False, signature=dry_signature),
             )
 
         async with self.get_lock(mint):
@@ -1091,6 +1104,7 @@ class OrderExecutor:
                 dry_run=True,
                 metadata={"venue": "pumpswap", "closed_token_account": closes},
                 costs=self._model_costs(
+                    is_buy=False,
                     rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
                     signature=dry_signature,
                 ),
@@ -1171,6 +1185,7 @@ class OrderExecutor:
                 else:
                     proceeds, proceeds_source = expected_lamports, "pre_trade_quote"
                     costs = self._model_costs(
+                        is_buy=False,
                         rent_lamports=-TOKEN_ACCOUNT_RENT_LAMPORTS if closes else 0,
                         signature=signature,
                     )

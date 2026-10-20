@@ -309,3 +309,19 @@ def test_jito_flag_and_execution_client_from_env(
     assert captured["jito_fallback_to_rpc"] is False
     assert captured["rpc_urls"] is None
     assert captured["use_jito"] is False
+    # Unset side tips keep the shared tip.
+    assert captured["jito_entry_tip_lamports"] is None
+    assert captured["jito_exit_tip_lamports"] is None
+
+    monkeypatch.setenv("PUMPFUN_JITO_ENTRY_TIP_LAMPORTS", "0")
+    monkeypatch.setenv("PUMPFUN_JITO_EXIT_TIP_LAMPORTS", "50000")
+    factory.build_execution_from_env(
+        "key",
+        rpc_url="https://rpc",
+        rpc_pool=None,
+        endpoints=[],
+        config=make_config(),
+        use_jito=True,
+    )
+    assert captured["jito_entry_tip_lamports"] == 0
+    assert captured["jito_exit_tip_lamports"] == 50_000

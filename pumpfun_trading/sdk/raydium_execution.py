@@ -231,12 +231,12 @@ class RaydiumExecutionMixin(TransactionTransportMixin):
         conviction_score: float = 1.0,
     ) -> str:
         """Execute a Raydium AMM v4 swap buy using Jito bundle or standard transaction."""
-        should_jito = self.use_jito if use_jito is None else use_jito
-        tip_lamports = None
-        if should_jito:
-            tip_lamports = await self.calculate_dynamic_jito_tip(
-                trade_amount_sol=sol_amount, conviction_score=conviction_score
-            )
+        should_jito, tip_lamports = await self.resolve_trade_tip(
+            is_buy=True,
+            trade_amount_sol=sol_amount,
+            conviction_score=conviction_score,
+            use_jito=use_jito,
+        )
         tx = await self.build_raydium_buy_tx(
             pool_keys=pool_keys,
             sol_amount=sol_amount,
@@ -271,12 +271,12 @@ class RaydiumExecutionMixin(TransactionTransportMixin):
                 conviction_score=conviction_score,
             )
         else:
-            should_jito = self.use_jito if use_jito is None else use_jito
-            tip_lamports = None
-            if should_jito:
-                tip_lamports = await self.calculate_dynamic_jito_tip(
-                    trade_amount_sol=0.01, conviction_score=conviction_score
-                )
+            should_jito, tip_lamports = await self.resolve_trade_tip(
+                is_buy=False,
+                trade_amount_sol=0.01,
+                conviction_score=conviction_score,
+                use_jito=use_jito,
+            )
             tx = await self.build_raydium_sell_tx(
                 pool_keys=pool_keys,
                 token_amount=amount_in,

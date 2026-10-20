@@ -37,6 +37,11 @@ from pumpfun_trading.infra.rpc_pool import RpcConnectionPool, RpcPoolConfig
 from pumpfun_trading.ops.events import DiagnosticEventLogger
 from pumpfun_trading.ops.logging import setup_structured_logging
 from pumpfun_trading.ops.retention import LogRetentionManager, RetentionPolicy
+from pumpfun_trading.sdk.costs import (
+    ENTRY_TIP_ENV,
+    EXIT_TIP_ENV,
+    side_tip_lamports_from_env,
+)
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.streams.geyser import YellowstoneGeyserClient
 
@@ -435,6 +440,9 @@ def build_execution_from_env(
         ),
         compute_unit_limit=int(os.getenv("PUMPFUN_COMPUTE_UNIT_LIMIT", "200000")),
         jito_tip_lamports=int(os.getenv("PUMPFUN_JITO_TIP_LAMPORTS", "100000")),
+        # Entry/exit tip experiment: a fixed tip per side, 0 = plain RPC.
+        jito_entry_tip_lamports=side_tip_lamports_from_env(ENTRY_TIP_ENV),
+        jito_exit_tip_lamports=side_tip_lamports_from_env(EXIT_TIP_ENV),
         jito_block_engine_url=os.getenv(
             "PUMPFUN_JITO_BLOCK_ENGINE_URL",
             "https://mainnet.block-engine.jito.wtf",

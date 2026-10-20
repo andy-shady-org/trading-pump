@@ -105,6 +105,92 @@ def test_model_trade_costs_uses_priority_fee_and_static_tip() -> None:
     assert costs.rent_lamports == TOKEN_ACCOUNT_RENT_LAMPORTS
 
 
+def test_model_trade_costs_uses_the_side_tip_when_set() -> None:
+    """Entry/exit tip experiment: each side models its own fixed tip."""
+    client = PumpFunExecutionClient(
+        private_key_b58=str(Keypair()),
+        jito_tip_lamports=100_000,
+        jito_entry_tip_lamports=0,
+        jito_exit_tip_lamports=50_000,
+    )
+
+    assert client.model_trade_costs(is_buy=True).tip_lamports == 0
+    assert client.model_trade_costs(is_buy=False).tip_lamports == 50_000
+    # No side given: the shared tip, as before.
+    assert client.model_trade_costs().tip_lamports == 100_000
+
+
+async def test_resolve_trade_tip_without_override_uses_the_dynamic_tip() -> None:
+    client = PumpFunExecutionClient(
+        private_key_b58=str(Keypair()), jito_tip_lamports=100_000
+    )
+    with patch.object(
+        client, "calculate_dynamic_jito_tip", AsyncMock(return_value=77_000)
+    ) as dynamic:
+        assert await client.resolve_trade_tip(is_buy=True, trade_amount_sol=0.02) == (
+            True,
+            77_000,
+        )
+    dynamic.assert_awaited_once_with(trade_amount_sol=0.02, conviction_score=1.0)
+
+
+@pytest.mark.parametrize(
+    "entry, exit_, is_buy, expected",
+    [
+        (0, 50_000, True, (False, 0)),
+        (0, 50_000, False, (True, 50_000)),
+        (25_000, None, True, (True, 25_000)),
+    ],
+)
+async def test_resolve_trade_tip_applies_the_fixed_side_tip(
+    entry: int | None,
+    exit_: int | None,
+    is_buy: bool,
+    expected: tuple[bool, int],
+) -> None:
+    """A side tip of 0 sends that side over plain RPC with no tip instruction."""
+    client = PumpFunExecutionClient(
+        private_key_b58=str(Keypair()),
+        jito_tip_lamports=100_000,
+        jito_entry_tip_lamports=entry,
+        jito_exit_tip_lamports=exit_,
+    )
+    with patch.object(client, "calculate_dynamic_jito_tip", AsyncMock()) as dynamic:
+        assert await client.resolve_trade_tip(is_buy=is_buy) == expected
+    dynamic.assert_not_awaited()
+
+
+async def test_resolve_trade_tip_respects_jito_off() -> None:
+    client = PumpFunExecutionClient(
+        private_key_b58=str(Keypair()),
+        jito_tip_lamports=100_000,
+        jito_exit_tip_lamports=50_000,
+    )
+    assert await client.resolve_trade_tip(is_buy=False, use_jito=False) == (
+        False,
+        None,
+    )
+
+
+async def test_buy_with_a_zero_entry_tip_goes_over_rpc_untipped() -> None:
+    client = PumpFunExecutionClient(
+        private_key_b58=str(Keypair()),
+        jito_tip_lamports=100_000,
+        jito_entry_tip_lamports=0,
+    )
+    tx = MagicMock()
+    with (
+        patch.object(client, "build_buy_tx", AsyncMock(return_value=tx)) as build,
+        patch.object(client, "send_transaction", AsyncMock(return_value="Sig")),
+        patch.object(client, "send_jito_bundle_with_fallback", AsyncMock()) as jito,
+    ):
+        assert await client.buy(MINT, "Curve", 0.02) == "Sig"
+
+    assert build.await_args is not None
+    assert build.await_args.kwargs["tip_lamports"] == 0
+    jito.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "kwargs, expected",
     [

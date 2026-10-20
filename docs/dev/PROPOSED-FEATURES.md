@@ -30,6 +30,9 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-52 | Confirmed momentum entry & momentum exits | Income | P1 | 24G |
 | FEAT-53 | Pre-graduation lane via the RPC poller | Income | P2 | 24H |
 | FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I |
+| FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
+| FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | recorded in rc.2 |
+| FEAT-57 | Wash-trade detection as a buy filter | Income | P3 | recorded in rc.2 (no edge yet) |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |
@@ -146,6 +149,29 @@ This document lists candidate features and architectural enhancements for `pumpf
   Each rule beats a random cut on all three sets, but none turns rc.1 positive, the samples are small, the thresholds are round numbers that were not tuned, and the inflow measure means different things in the two captures (≈ 3.5 s of snipers in v0.2.3, everything before promotion in rc.1, which overlaps the rc.2 drift guard).
 * **Design:** rc.2 records `top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth` and `first_poll_age_seconds` in every momentum buy's `entry_metrics` (`OrderFlowEngine.buy_flow_concentration`, `WatchEntry.first_polled_real_sol`). Nothing gates on them yet. If the rc.2 capture (unseen) confirms the edge, add `momentum_max_top_buyer_share` and `momentum_min_wallet_diversity` (0 = off) to `strategies/signal.py`, model them in replay, and Stage 0 them like any money-path change.
 * **Dependencies:** FEAT-52. **Impact:** at best it trims the worst momentum entries; on its own it does not make the lane profitable.
+
+### FEAT-57: Wash-Trade Detection As A Buy Filter
+* **Class / Priority:** Income · P3 (recorded in rc.2; tested offline 2026-10-20: **no consistent edge**, not gated)
+* **Goal:** Refuse a momentum entry whose "demand" is wallets trading against themselves, which looks like follow-on buying but leaves no buyer to sell to. This is the defensive reading of launch-relay's "organic buyer detection"; we detect wash trading, we never do it.
+* **Evidence:** the FEAT-26 `SybilWashTradingDetector` (`strategies/cluster.py`) never runs in practice: `bot/enrichment.py` only calls it when the API coin record carries `funding_links`, which Pump.fun does not send. Our own trade flow for a promoted mint is the data we actually have.
+* **Measures** (`OrderFlowEngine.round_trip_flow`, the retained flow before the entry, creator and our wallet excluded):
+  - `round_trip_wallets`: wallets that both bought and sold.
+  - `round_trip_share`: each wallet's matched volume, `2 × min(bought, sold)`, over all volume; 1.0 means every SOL in came back out of the same wallets.
+  - `quick_flips`: a wallet reversing direction within 2 s. PumpPortal trade messages carry no slot, so this receive-time window stands in for "buy and sell in one slot".
+  - Not measured: shared funders. That needs a funding lookup per wallet (`getSignaturesForAddress` + `getTransaction`), which is too slow and too many RPC calls for the 1.5 s entry path; revisit with Geyser (FEAT-39) or as an offline enrichment of captures.
+* **Offline test** (`data/analysis-2026-10-20/wash.py`, `STRATEGY-PIVOT.md` §6.6), skipping flagged entries and comparing the kept net with a random cut of the same size:
+
+  | Skip rule | v0.2.3 replay (117) | rc.1 replay (105) | rc.1 paper (118) |
+  |---|---|---|---|
+  | `round_trip_share` > 0.1 | skips 42, edge +0.061 | skips 35, edge −0.001 | skips 39, edge −0.023 |
+  | `round_trip_share` > 0.2 | skips 32, edge +0.052 | skips 28, edge −0.000 | skips 33, edge −0.020 |
+  | `round_trip_share` > 0.4 | skips 18, edge +0.040 | skips 19, edge +0.009 | skips 18, edge −0.002 |
+  | `round_trip_wallets` ≥ 2 | skips 37, edge +0.044 | skips 29, edge −0.006 | skips 34, edge −0.009 |
+  | `quick_flips` ≥ 1 | skips 21, edge +0.043 | skips 25, edge −0.018 | skips 26, edge −0.012 |
+
+  It helps on the v0.2.3 replay and is no better (mostly worse) than a random cut on rc.1, including the paper run, which is the set closest to live. v0.2.3 has no paper rows: its launch-mode buys had no flow before the entry.
+* **Decision:** keep recording the three inputs in every momentum buy's `entry_metrics`; gate nothing. Re-test on the rc.2 capture; add `momentum_max_round_trip_share` (0 = off) only if it beats a random cut there and on rc.1.
+* **Dependencies:** FEAT-52, FEAT-56 (same recorded-inputs pattern). **Impact:** at most a small trim; no evidence yet that it changes the lane's result.
 
 ---
 

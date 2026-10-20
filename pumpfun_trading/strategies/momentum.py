@@ -497,6 +497,51 @@ class OrderFlowEngine:
             "wallet_diversity": round(diversity, 4),
         }
 
+    def round_trip_flow(
+        self,
+        mint: str,
+        *,
+        exclude_users: frozenset[str] = frozenset(),
+        current_time: Optional[float] = None,
+        quick_flip_seconds: float = 2.0,
+    ) -> dict[str, float | int]:
+        """How much of the retained flow is wallets trading against themselves
+        (FEAT-57, recorded only).
+
+        ``round_trip_share`` is each wallet's matched volume (``2 * min(bought,
+        sold)``) over all volume, so 1.0 means every SOL in came back out of
+        the same wallets. ``quick_flips`` counts a wallet reversing direction
+        within ``quick_flip_seconds``; the stream has no slot, so this is the
+        receive-time stand-in for a buy and sell in one slot.
+        """
+        tracker = self._trackers.get(mint)
+        cutoff = float("inf") if current_time is None else float(current_time)
+        bought: dict[str, float] = {}
+        sold: dict[str, float] = {}
+        last: dict[str, tuple[bool, float]] = {}
+        flips = 0
+        for trade in tracker.trades if tracker is not None else ():
+            if trade.user in exclude_users or trade.timestamp > cutoff:
+                continue
+            side = bought if trade.is_buy else sold
+            side[trade.user] = side.get(trade.user, 0.0) + trade.sol_amount
+            previous = last.get(trade.user)
+            if (
+                previous is not None
+                and previous[0] != trade.is_buy
+                and trade.timestamp - previous[1] <= quick_flip_seconds
+            ):
+                flips += 1
+            last[trade.user] = (trade.is_buy, trade.timestamp)
+        total = sum(bought.values()) + sum(sold.values())
+        both = set(bought) & set(sold)
+        matched = sum(2.0 * min(bought[u], sold[u]) for u in both)
+        return {
+            "round_trip_wallets": len(both),
+            "round_trip_share": round(matched / total, 4) if total > 0 else 0.0,
+            "quick_flips": flips,
+        }
+
     def get_velocity_z_score(
         self,
         mint: str,
