@@ -18,6 +18,11 @@ from pumpfun_trading.bot.audit import (
     summarize_audit_records,
 )
 from pumpfun_trading.bot.pnl import PNL_GROUPS, summarize_pnl, trade_payloads
+from pumpfun_trading.bot.selection import (
+    KeepRule,
+    closed_positions,
+    selection_report,
+)
 from pumpfun_trading.bot.sweep import sweep_payloads
 from pumpfun_trading.bot.reconcile import (
     DEFAULT_TOLERANCE_ABS_SOL,
@@ -31,7 +36,7 @@ from pumpfun_trading.ops.logging import get_configured_console
 
 console = get_configured_console()
 
-AUDIT_COMMANDS = ("pnl", "reconcile")
+AUDIT_COMMANDS = ("pnl", "reconcile", "cuts")
 
 
 def build_parser(
@@ -52,7 +57,8 @@ def build_parser(
         default=None,
         help=(
             "pnl: net PnL report (fees, tips, rent); reconcile: compare the audit "
-            "trail with the wallet on-chain. Omit to list records."
+            "trail with the wallet on-chain; cuts: entry rules against a random "
+            "cut. Omit to list records."
         ),
     )
     parser.add_argument("--path", required=True, help="Path to the JSONL audit file")
@@ -109,7 +115,31 @@ def build_parser(
         "--group-by",
         choices=PNL_GROUPS,
         default=None,
-        help="pnl: break the totals down by day, exit/entry reason, strategy or mint",
+        help=(
+            "pnl: break the totals down by day, entry hour (UTC), exit/entry "
+            "reason, strategy or mint"
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="append",
+        default=None,
+        metavar="METRIC<OP>VALUE",
+        help=(
+            "cuts: a rule on the buy's entry_metrics / market_regime, e.g. "
+            "'top_buyer_share<0.3' (repeat for more; all together are tested too)"
+        ),
+    )
+    parser.add_argument(
+        "--strategy",
+        default=None,
+        help="cuts: only positions of this lane (momentum, pre_graduation, launch)",
+    )
+    parser.add_argument(
+        "--split-at",
+        default=None,
+        metavar="mid|TIMESTAMP",
+        help="cuts: also report halves A/B split at this entry time ('mid' = middle)",
     )
     parser.add_argument(
         "--wallet", default=None, help="reconcile: wallet public key to check"
@@ -226,6 +256,46 @@ def render_pnl_summary(summary: dict[str, Any]) -> None:
                 f"{row['win_rate']:.0%}",
             )
         console.print(breakdown)
+
+
+def render_selection_report(report: dict[str, Any]) -> None:
+    """Prints each rule's kept net against a random cut, per segment."""
+    segments = report["segments"]
+    console.print(
+        "Closed positions: "
+        + ", ".join(
+            f"{name} {row['positions']} ({_fmt_sol(row['net_sol'])} SOL)"
+            for name, row in segments.items()
+        )
+    )
+    table = Table(title="Entry rules against a random cut")
+    table.add_column("Rule")
+    table.add_column("Segment")
+    for column in ("Kept", "Missing", "Kept net", "Random cut", "Edge"):
+        table.add_column(column, justify="right")
+    table.add_column("Verdict")
+    for rule in report["rules"]:
+        verdict = (
+            "[green]beats random cut[/green]"
+            if rule["beats_random_cut"]
+            else "[red]no edge[/red]"
+        )
+        for index, (segment, row) in enumerate(rule["segments"].items()):
+            table.add_row(
+                rule["rule"] if index == 0 else "",
+                segment,
+                f"{row['kept']}/{row['total']}",
+                str(row["missing"]),
+                _fmt_sol(row["kept_net_sol"]),
+                _fmt_sol(row["random_cut_net_sol"]),
+                _fmt_sol(row["edge_sol"]),
+                verdict if index == 0 else "",
+            )
+    console.print(table)
+    console.print(
+        "A rule has an edge only when it beats the random cut in both halves; "
+        "confirm it on a second capture before gating on it."
+    )
 
 
 def render_reconciliation(report: ReconciliationReport) -> None:
@@ -359,6 +429,9 @@ def _run_audit_command(
         reason=args.reason,
     )
     trades = trade_payloads(trade_records)
+    if command == "cuts":
+        _run_cuts(args, trades)
+        return
     if command == "pnl":
         summary = summarize_pnl(trades, group_by=getattr(args, "group_by", None))
         if args.json:
@@ -392,6 +465,29 @@ def _run_audit_command(
         raise SystemExit(1)
 
 
+def _run_cuts(args: argparse.Namespace, trades: list[dict[str, Any]]) -> None:
+    raw_rules = getattr(args, "keep", None) or []
+    if not raw_rules:
+        console.print("[red]cuts needs at least one --keep METRIC<OP>VALUE[/red]")
+        raise SystemExit(2)
+    try:
+        rules = [KeepRule.parse(text) for text in raw_rules]
+        positions = closed_positions(trades)
+        strategy = getattr(args, "strategy", None)
+        if strategy:
+            positions = [p for p in positions if p.get("strategy") == strategy]
+        report = selection_report(
+            positions, rules, split_at=getattr(args, "split_at", None)
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(2) from exc
+    if args.json:
+        console.print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        render_selection_report(report)
+
+
 def main() -> None:
     run_audit_cli()
 
@@ -401,5 +497,6 @@ __all__ = [
     "main",
     "render_pnl_summary",
     "render_reconciliation",
+    "render_selection_report",
     "run_audit_cli",
 ]

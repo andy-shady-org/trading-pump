@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 from unittest.mock import patch
 
 import pytest
+from rich.console import Console
 
 import pumpfun_trading.cli.replay as cli_replay
 from pumpfun_trading.cli.main import _build_parser
@@ -122,3 +124,98 @@ def test_replay_mode_flags_resolve(tmp_path):
             )
         )
     assert summary.called
+
+
+def _shadow_capture(tmp_path):
+    rows = [
+        {"timestamp": 10.0, "mint": "A", "event": "curve_poll", "price": 4e-8},
+        {
+            "timestamp": 11.5,
+            "mint": "A",
+            "event": "shadow_entry",
+            "variant": "baseline",
+            "signal_timestamp": 10.0,
+            "signal_market_cap_sol": 40.0,
+            "fill_market_cap_sol": 41.0,
+            "fill_drift_pct": 0.025,
+        },
+        {"timestamp": 20.0, "mint": "A", "event": "curve_poll", "price": 5e-8},
+    ]
+    capture = tmp_path / "replay_capture.jsonl"
+    capture.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    config = tmp_path / "capture.json"
+    config.write_text(
+        json.dumps({"entry_mode": "confirmed", "buy_amount_sol": 0.02}),
+        encoding="utf-8",
+    )
+    return capture, config
+
+
+def test_shadow_report_flag_prints_the_read_out(tmp_path, monkeypatch):
+    output = Console(record=True, width=200, file=io.StringIO())
+    monkeypatch.setattr(cli_replay, "console", output)
+    capture, config = _shadow_capture(tmp_path)
+    args = build_replay_parser().parse_args(
+        [
+            "--path",
+            str(capture),
+            "--config",
+            str(config),
+            "--shadow-report",
+            "--split-at",
+            "mid",
+            "--tip-lamports",
+            "0",
+            "--json",
+        ]
+    )
+
+    run_replay_cli(args)
+
+    report = json.loads(output.export_text())
+    assert report["costs_modelled"] is True
+    assert report["split_at"] == pytest.approx(15.0)
+    assert report["variants"]["baseline"]["segments"]["all"]["positions"] == 1
+
+    with patch("pumpfun_trading.cli.replay.render_replay_summary") as summary:
+        with patch(
+            "pumpfun_trading.engines.shadow_report.render_shadow_report"
+        ) as render:
+            run_replay_cli(
+                build_replay_parser().parse_args(
+                    [
+                        "--path",
+                        str(capture),
+                        "--preset",
+                        "momentum",
+                        "--shadow-report",
+                        "--no-costs",
+                    ]
+                )
+            )
+    assert render.call_args.args[0]["costs_modelled"] is False
+    assert not summary.called
+
+
+def test_shadow_report_needs_a_config_and_a_valid_split(tmp_path):
+    capture, config = _shadow_capture(tmp_path)
+    with pytest.raises(SystemExit, match="needs --config"):
+        run_replay_cli(
+            build_replay_parser().parse_args(
+                ["--path", str(capture), "--shadow-report"]
+            )
+        )
+    with pytest.raises(SystemExit, match="--shadow-report: could not convert"):
+        run_replay_cli(
+            build_replay_parser().parse_args(
+                [
+                    "--path",
+                    str(capture),
+                    "--config",
+                    str(config),
+                    "--shadow-report",
+                    "--split-at",
+                    "noon",
+                ]
+            )
+        )

@@ -97,6 +97,20 @@ If you do not specify `--summary`, `--json`, or `--export`, the tool renders a R
 - Reason
 - Status
 
+### Net PnL and entry rules
+
+```bash
+# Net PnL per lane, and per UTC hour of the buy (time-of-day check)
+pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by strategy
+pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by hour
+
+# Would a filter on the recorded entry metrics have helped? (random-cut test)
+pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum \
+  --split-at mid --keep 'top_buyer_share<0.3'
+```
+
+`cuts` compares the net of the closed positions a rule keeps with the same share of all positions' net, in each half of the run. A rule shows an edge only when it beats that random cut in both halves. See [CLI-COMMANDS.md](CLI-COMMANDS.md) (Recipe 5b).
+
 ## Example workflow
 
 ```bash

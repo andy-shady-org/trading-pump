@@ -247,6 +247,10 @@ pumpfun replay --path <DATASET_PATH> [OPTIONS]
 | `--compare-audit` | — | File Path | `None` | Replay-vs-live parity report against this audit trail; exit code 1 when net PnL differs by more than the tolerance. |
 | `--parity-tolerance-sol` | — | Float | `0.002` | Absolute net PnL tolerance for `--compare-audit`. |
 | `--parity-tolerance-pct` | — | Float | `0.10` | Relative tolerance (fraction of live net PnL) for `--compare-audit`. |
+| `--shadow-report` | — | Flag | off | Shadow-variant read-out of a paper capture (FEAT-58): signals, fill drift, refusals and modelled net PnL per variant against a random cut of the baseline variant. Needs `--config` (the capture's config) or `--preset`. See [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#shadow-variant-read-out---shadow-report-feat-58). |
+| `--split-at` | — | `mid` / Timestamp | `None` | `--shadow-report`: also report halves A and B, split at the middle of the capture or at this Unix time. |
+| `--shadow-baseline` | — | String | `baseline` | `--shadow-report`: the variant the random cut is taken from. |
+| `--json` | — | Flag | off | `--shadow-report`: print the report as JSON. |
 | `--mint` | — | Base58 | `None` | Filters replay execution to a single token mint address. |
 | `--mint-name` | `--token-name` | String | `None` | Filters replay execution by token symbol or display name. |
 
@@ -299,13 +303,13 @@ The `pumpfun-audit` CLI provides forensic trade accounting and incident analysis
 ### Command Syntax
 ```bash
 # Standalone binary
-pumpfun-audit [pnl | reconcile] --path <AUDIT_PATH> [OPTIONS]
+pumpfun-audit [pnl | reconcile | cuts] --path <AUDIT_PATH> [OPTIONS]
 
 # Unified CLI subcommand
-pumpfun audit [pnl | reconcile] --path <AUDIT_PATH> [OPTIONS]
+pumpfun audit [pnl | reconcile | cuts] --path <AUDIT_PATH> [OPTIONS]
 ```
 
-Without a command the audit records are listed (or summarised with `--summary`). `pnl` prints the net PnL report and `reconcile` checks the audit trail against the wallet on-chain (Sprint 24B, FEAT-49).
+Without a command the audit records are listed (or summarised with `--summary`). `pnl` prints the net PnL report, `reconcile` checks the audit trail against the wallet on-chain (Sprint 24B, FEAT-49) and `cuts` tests entry rules against a random cut.
 
 ### Options & Parameter Reference
 
@@ -327,7 +331,10 @@ Without a command the audit records are listed (or summarised with `--summary`).
 | `--limit` | Integer | `None` | Limits the number of records displayed. |
 | `--json` | Flag | `false` | Emits filtered records as raw JSON to stdout. |
 | `--export` | File Path | `None` | Exports filtered audit records to a target JSON file. |
-| `--group-by` | `day` / `reason` / `strategy` / `mint` | `None` | `pnl`: break the totals down (with `reason`, buys group under their entry reason and sells under their exit reason). |
+| `--group-by` | `day` / `hour` / `reason` / `strategy` / `mint` | `None` | `pnl`: break the totals down (with `reason`, a position's buy legs are booked under its first exit reason; with `hour`, a whole position is booked under the UTC hour of its buy, from `market_regime.hour_utc`). |
+| `--keep` | `METRIC<OP>VALUE` | `None` | `cuts`: an entry rule on the buy's `entry_metrics` (then `market_regime`), e.g. `top_buyer_share<0.3`, `hour_utc>=12`; operators `< <= > >= == !=`. Repeat for more rules; all of them together are tested too. |
+| `--strategy` | String | `None` | `cuts`: only positions of this lane (`momentum`, `pre_graduation`, `launch`). |
+| `--split-at` | `mid` / Timestamp | `None` | `cuts`: also report halves A and B, split at the middle of the entry times or at this Unix time. |
 | `--wallet` | Base58 | `None` | `reconcile`: wallet public key (required). |
 | `--rpc-url` | URL | `PUMPFUN_RPC_URL` / `SOLANA_RPC_URL` | `reconcile`: RPC used for `getTransaction`, token accounts and balance. |
 | `--start-balance` | Float | `None` | `reconcile`: wallet SOL at the start of the period; enables the whole-wallet check. |
@@ -374,7 +381,15 @@ Gross PnL, network and priority fees, Jito tips, token-account rent, net PnL, an
 ```bash
 pumpfun-audit pnl --path data/audit_trail.jsonl --date-from 2026-10-16 --group-by reason
 ```
-Records written before Sprint 24B have no cost fields (`cost_source: none`); the report flags how many.
+Records written before Sprint 24B have no cost fields (`cost_source: none`); the report flags how many. `--group-by hour` books each position under the UTC hour of its buy, to check time-of-day effects; `--group-by strategy` splits the lanes.
+
+#### Recipe 5b: Test an Entry Rule Against a Random Cut
+Any filter on a losing lane looks better because it trades less. `cuts` compares the net of the closed positions a rule keeps with the same share of all positions' net (a random cut), per half with `--split-at mid`, and calls the rule `beats random cut` only when its edge is positive in both halves. Rules read what the buy recorded (`entry_metrics`, `market_regime`); positions without the metric count as `Missing` and are not kept:
+```bash
+pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
+  --keep 'top_buyer_share<0.3' --keep 'wallet_diversity>=0.3'
+```
+Confirm a rule on a second capture before gating on it.
 
 #### Recipe 6: Reconcile the Wallet Against the Audit Trail
 Compares every live trade signature's on-chain SOL change with the recorded `cash_flow_sol`, lists closed positions that still hold tokens and open positions that hold none, and (with `--start-balance`) the whole-wallet change. Live profit sweeps (audit `sweep` records, FEAT-42) count in the whole-wallet check and are printed as `profit sweeps`. Exits with code 1 when a gap exceeds max(0.002 SOL, 5%). The result is also stored in `reconcile_status.json` next to the audit trail, which the running bot's dashboard shows as `Reconciliation` and alerts on when it is a new `GAP`. `deploy/systemd/pumpfun-reconcile.timer` runs it daily under systemd:

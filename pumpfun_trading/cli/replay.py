@@ -114,6 +114,31 @@ def build_parser(
         default=100.0,
         help="Initial cash balance in SOL",
     )
+    parser.add_argument(
+        "--shadow-report",
+        action="store_true",
+        help=(
+            "Read out the capture's shadow variants (FEAT-58): signals, fill drift, "
+            "refusals and a modelled net PnL per variant against a random cut of "
+            "the baseline variant; needs --config (the capture's config)"
+        ),
+    )
+    parser.add_argument(
+        "--split-at",
+        default=None,
+        metavar="mid|TIMESTAMP",
+        help="--shadow-report: also report halves A/B split at this time ('mid' = middle)",
+    )
+    parser.add_argument(
+        "--shadow-baseline",
+        default="baseline",
+        help="--shadow-report: variant the random cut is taken from (default: baseline)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="--shadow-report: print the report as JSON",
+    )
     return parser
 
 
@@ -142,6 +167,10 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
         from pumpfun_trading.strategies.presets import resolve_strategy_config
 
         config = resolve_strategy_config(preset)
+
+    if getattr(args, "shadow_report", False):
+        _run_shadow_report(target_path, config, args)
+        return
 
     initial_cash_val = getattr(args, "initial_cash", None)
 
@@ -199,6 +228,46 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
         render_replay_trades(summary.get("trades", []), console)
         return
     render_replay_dashboard(summary, console)
+
+
+def _run_shadow_report(target_path: str, config: Any, args: argparse.Namespace) -> None:
+    """Print the shadow-variant read-out of a paper capture (FEAT-58)."""
+    import json
+
+    from pumpfun_trading.engines.replay import PaperTradingEngine
+    from pumpfun_trading.engines.shadow_report import (
+        build_shadow_report,
+        render_shadow_report,
+    )
+
+    if config is None:
+        raise SystemExit(
+            "--shadow-report needs --config (the config the capture ran with) or "
+            "--preset, for the exits and the paper entry penalty"
+        )
+    cost_model = None
+    if not getattr(args, "no_costs", False):
+        from pumpfun_trading.engines.costs import ReplayCostModel
+
+        cost_model = ReplayCostModel.from_env(
+            close_token_account_on_full_exit=config.close_token_account_on_full_exit,
+            priority_fee_lamports=getattr(args, "priority_fee_lamports", 0),
+            tip_lamports=getattr(args, "tip_lamports", None),
+        )
+    try:
+        report = build_shadow_report(
+            PaperTradingEngine.load_history(target_path),
+            config,
+            cost_model=cost_model,
+            split_at=getattr(args, "split_at", None),
+            baseline=getattr(args, "shadow_baseline", None) or "baseline",
+        )
+    except ValueError as exc:
+        raise SystemExit(f"--shadow-report: {exc}") from exc
+    if getattr(args, "json", False):
+        console.print_json(json.dumps(report, default=str))
+        return
+    render_shadow_report(report, console)
 
 
 def _run_parity(

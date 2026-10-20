@@ -1547,3 +1547,75 @@ def test_pre_graduation_replay_needs_the_near_graduation_set_and_watch_polls() -
     ).run(_pre_grad_snaps())
     assert summary["buy_count"] == 0
     assert summary["watch_stats"]["cost_guard_refused"] >= 1
+
+
+def test_mirrored_fill_rows_carry_lane_penalty_and_buy_flow() -> None:
+    """Synthetic fills (shadow read-out) set the lane, apply the paper penalty
+    and feed the buy-flow stagnation clock; recorded bot fills stay as before."""
+    config = _config(
+        entry_mode="confirmed",
+        stagnant_min_buy_sol=0.1,
+        stagnant_timeout_seconds=30.0,
+        max_hold_time_seconds=10_000.0,
+    )
+    shadow_fill = {
+        "mint": MINT_A,
+        "price": 40.0,
+        "timestamp": 100.0,
+        "signal": "buy",
+        "reason": "shadow:baseline",
+        "strategy": "momentum",
+        "creator": "Dev",
+        "entry_penalty_bps": 100,
+        "entry_metrics": {"unique_buyers": 5},
+    }
+    bot_fill = {
+        "mint": MINT_B,
+        "price": 40.0,
+        "timestamp": 100.0,
+        "signal": "buy",
+        "reason": "momentum_confirmed",
+    }
+
+    def trade(
+        mint: str, ts: float, user: str, sol: float = 0.5, price: float = 40.0
+    ) -> dict:
+        return {
+            "mint": mint,
+            "price": price,
+            "timestamp": ts,
+            "is_buy": True,
+            "sol_amount": sol,
+            "user": user,
+        }
+
+    snaps = [
+        shadow_fill,
+        bot_fill,
+        trade(MINT_A, 120.0, "Buyer", price=41.0),
+        trade(MINT_B, 120.0, "Buyer"),
+        # The creator and small buys never count as demand.
+        trade(MINT_A, 125.0, "Dev", price=42.0),
+        trade(MINT_A, 140.0, "Small", sol=0.01, price=43.0),
+        trade(MINT_B, 145.0, "Buyer"),
+    ]
+    engine = PaperTradingEngine(
+        initial_cash=1.0,
+        strategy_config=config,
+        live_fidelity=True,
+        entry_mode="live_fills",
+    )
+
+    summary = engine.run(snaps)
+
+    buys = {t["mint"]: t for t in summary["trades"] if t["action"] == "buy"}
+    assert buys[MINT_A]["strategy"] == "momentum"
+    assert buys[MINT_A]["entry_metrics"] == {"unique_buyers": 5}
+    assert buys[MINT_A]["entry_price"] == pytest.approx(40.0 / 0.99)
+    assert "strategy" not in buys[MINT_B]
+    assert buys[MINT_B]["entry_price"] == pytest.approx(40.0)
+    sells = {t["mint"]: t["reason"] for t in summary["trades"] if t["action"] == "sell"}
+    # A's last qualifying buy was at 120 s, so at 145 s it is still held. B is
+    # not a momentum fill, its clock was never fed, and it exits 45 s in.
+    assert MINT_A not in sells
+    assert sells[MINT_B] == "stagnant_buy_flow"

@@ -658,6 +658,36 @@ class PaperTradingEngine:
             metrics["fill_market_cap_sol"] = round(entry_price, 4)
             metrics["fill_drift_pct"] = round(price / signal_price - 1.0, 4)
 
+    def _apply_mirrored_entry(
+        self,
+        position: dict[str, Any],
+        trades: list[dict[str, Any]],
+        snapshot: dict[str, Any],
+        *,
+        price: float,
+        ts: float,
+    ) -> None:
+        """Lane, creator, metrics and paper penalty a mirrored fill row carries.
+
+        The shadow-variant read-out (``engines/shadow_report.py``) mirrors
+        synthetic fills that carry these keys; fills the bot recorded carry none
+        of them, so they mirror exactly as before.
+        """
+        strategy = snapshot.get("strategy")
+        if isinstance(strategy, str) and strategy:
+            position["strategy"] = strategy
+            position["creator"] = snapshot.get("creator")
+            trades[-1]["strategy"] = strategy
+        metrics = snapshot.get("entry_metrics")
+        if isinstance(metrics, dict):
+            trades[-1]["entry_metrics"] = dict(metrics)
+        penalty = snapshot.get("entry_penalty_bps")
+        if isinstance(penalty, int) and not isinstance(penalty, bool) and penalty > 0:
+            position["buy_trade_index"] = len(trades) - 1
+            self._fill_entry(
+                position, trades, price=price, ts=ts, penalty_bps=min(5_000, penalty)
+            )
+
     @staticmethod
     def _cancel_entry(
         position: dict[str, Any],
@@ -1165,9 +1195,13 @@ class PaperTradingEngine:
             ):
                 graduation_triggered = self.enable_raydium_graduation
 
+            if (
+                trade_info is not None
+                and mint in positions
+                and (confirmed or positions[mint].get("strategy") == "momentum")
+            ):
+                self._note_replay_follow_on_buy(positions[mint], trade_info, ts)
             if confirmed:
-                if trade_info is not None and mint in positions:
-                    self._note_replay_follow_on_buy(positions[mint], trade_info, ts)
                 if last_expiry_at is None or ts - last_expiry_at >= 1.0:
                     last_expiry_at = ts
                     self._expire_watch(ts, watch_stats)
@@ -1384,6 +1418,10 @@ class PaperTradingEngine:
                             positions[mint]["creator"] = (
                                 screening.get(mint) or {}
                             ).get("creator")
+                        if mirror_live_entries:
+                            self._apply_mirrored_entry(
+                                positions[mint], trades, snapshot, price=price, ts=ts
+                            )
                         if self.live_fidelity and (
                             entry_delay > 0 or entry_penalty_bps > 0
                         ):
