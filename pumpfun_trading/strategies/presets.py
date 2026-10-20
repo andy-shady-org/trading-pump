@@ -601,6 +601,10 @@ def resolve_strategy_config(
         momentum_max_entry_drift_pct=max(
             0.0, float(base.get("momentum_max_entry_drift_pct", 0.0))
         ),
+        enable_pumpswap_exit=bool(base.get("enable_pumpswap_exit", True)),
+        graduation_backfill_seconds=max(
+            0.0, float(base.get("graduation_backfill_seconds", 30.0))
+        ),
         enable_raydium_migration_sniping=bool(
             base.get("enable_raydium_migration_sniping", True)
         ),
@@ -744,6 +748,21 @@ def resolve_strategy_config(
         min_arbitrage_input_sol=float(base.get("min_arbitrage_input_sol", 0.01)),
         arbitrage_jito_tip_profit_share_pct=float(
             base.get("arbitrage_jito_tip_profit_share_pct", 0.50)
+        ),
+        # Every field must be passed here, or a config file value is dropped
+        # without a word (BUG-125); test_presets checks the full field list.
+        replay_log_path=(
+            str(base["replay_log_path"]) if base.get("replay_log_path") else None
+        ),
+        daily_summary_alert=bool(base.get("daily_summary_alert", True)),
+        daily_summary_hour_utc=int(base.get("daily_summary_hour_utc", 0)),
+        degradation_alert_minutes=float(base.get("degradation_alert_minutes", 5.0)),
+        profit_sweep_enabled=bool(base.get("profit_sweep_enabled", False)),
+        profit_sweep_destination=str(base.get("profit_sweep_destination", "") or ""),
+        profit_sweep_hot_floor_sol=float(base.get("profit_sweep_hot_floor_sol", 0.0)),
+        profit_sweep_min_sol=float(base.get("profit_sweep_min_sol", 0.05)),
+        profit_sweep_interval_seconds=float(
+            base.get("profit_sweep_interval_seconds", 3600.0)
         ),
     )
     if config.buy_amount_sol <= 0:

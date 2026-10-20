@@ -727,12 +727,12 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         use_jito: Optional[bool] = None,
         conviction_score: float = 1.0,
     ) -> str:
-        should_jito = self.use_jito if use_jito is None else use_jito
-        tip_lamports = None
-        if should_jito:
-            tip_lamports = await self.calculate_dynamic_jito_tip(
-                trade_amount_sol=sol_amount, conviction_score=conviction_score
-            )
+        should_jito, tip_lamports = await self.resolve_trade_tip(
+            is_buy=True,
+            trade_amount_sol=sol_amount,
+            conviction_score=conviction_score,
+            use_jito=use_jito,
+        )
         tx = await self.build_buy_tx(
             mint,
             bonding_curve,
@@ -757,15 +757,15 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         conviction_score: float = 1.0,
         close_token_account: bool = False,
     ) -> str:
-        should_jito = self.use_jito if use_jito is None else use_jito
-        tip_lamports = None
-        if should_jito:
-            approx_sol = (
-                (float(min_sol_output) / 1_000_000_000) if min_sol_output > 0 else 0.0
-            )
-            tip_lamports = await self.calculate_dynamic_jito_tip(
-                trade_amount_sol=approx_sol, conviction_score=conviction_score
-            )
+        approx_sol = (
+            (float(min_sol_output) / 1_000_000_000) if min_sol_output > 0 else 0.0
+        )
+        should_jito, tip_lamports = await self.resolve_trade_tip(
+            is_buy=False,
+            trade_amount_sol=approx_sol,
+            conviction_score=conviction_score,
+            use_jito=use_jito,
+        )
         tx = await self.build_sell_tx(
             mint,
             bonding_curve,

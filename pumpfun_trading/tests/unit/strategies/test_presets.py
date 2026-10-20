@@ -12,6 +12,63 @@ from pumpfun_trading.strategies.presets import resolve_strategy_config
 from pumpfun_trading.tests.support.factories import make_config
 
 
+def _non_default(value: object) -> object:
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value + 1
+    if isinstance(value, float):
+        return value + 0.125
+    return value
+
+
+@pytest.mark.regression("BUG-125")
+def test_every_config_field_survives_a_config_file() -> None:
+    """A field the resolver doesn't pass on is dropped without a word.
+
+    ``profit_sweep_enabled``, the FEAT-50 alerts, ``replay_log_path`` and
+    ``enable_pumpswap_exit`` were all ignored in a config file.
+    """
+    import dataclasses
+
+    defaults = TradingBotConfig()
+    skipped = {"strategy_preset", "copy_trading_wallets", "event_log_subsystems"}
+    dropped = []
+    for field in dataclasses.fields(TradingBotConfig):
+        if field.name in skipped:
+            continue
+        default = getattr(defaults, field.name)
+        if isinstance(default, (bool, int, float)):
+            wanted: object = _non_default(default)
+        elif isinstance(default, str) or default is None:
+            wanted = "x-" + field.name
+        else:
+            continue
+        try:
+            resolved = resolve_strategy_config(
+                "balanced", overrides={field.name: wanted}
+            )
+        except ValueError:
+            continue  # validation refuses this value; the field is still read
+        if getattr(resolved, field.name) != wanted:
+            dropped.append(field.name)
+    # Normalised / clamped on purpose, so a probe value comes back changed.
+    normalised = {
+        "entry_mode",
+        "drawdown_reference_mode",
+        "log_rotation_type",
+        "priority_fee_mode",
+        "stream_url",
+        "api_base_url",
+        "copy_trading_sizing_mode",
+        "paper_entry_slippage_bps",
+        "trade_feed_probe_seconds",
+        "log_file",
+        "event_log_path",
+    }
+    assert [name for name in dropped if name not in normalised] == []
+
+
 def test_strategy_presets_circuit_breaker_config():
     cons = resolve_strategy_config("conservative")
     assert cons.max_daily_drawdown_pct == 0.15

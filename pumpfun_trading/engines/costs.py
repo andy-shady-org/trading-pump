@@ -12,9 +12,12 @@ import os
 from dataclasses import dataclass
 
 from pumpfun_trading.sdk.costs import (
+    ENTRY_TIP_ENV,
+    EXIT_TIP_ENV,
     TOKEN_ACCOUNT_RENT_LAMPORTS,
     TransactionCosts,
     model_transaction_costs,
+    side_tip_lamports_from_env,
 )
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS
 
@@ -30,12 +33,31 @@ class ReplayCostModel:
     tip_lamports: int = DEFAULT_JITO_TIP_LAMPORTS
     rent_lamports: int = TOKEN_ACCOUNT_RENT_LAMPORTS
     close_token_account_on_full_exit: bool = True
+    # ``None`` = the shared ``tip_lamports`` on that side.
+    entry_tip_lamports: int | None = None
+    exit_tip_lamports: int | None = None
+
+    @property
+    def buy_tip_lamports(self) -> int:
+        return (
+            self.tip_lamports
+            if self.entry_tip_lamports is None
+            else self.entry_tip_lamports
+        )
+
+    @property
+    def sell_tip_lamports(self) -> int:
+        return (
+            self.tip_lamports
+            if self.exit_tip_lamports is None
+            else self.exit_tip_lamports
+        )
 
     def buy_costs(self) -> TransactionCosts:
         """A fresh position pays the token-account rent."""
         return model_transaction_costs(
             priority_fee_lamports=self.priority_fee_lamports,
-            tip_lamports=self.tip_lamports,
+            tip_lamports=self.buy_tip_lamports,
             rent_lamports=self.rent_lamports,
         )
 
@@ -48,7 +70,7 @@ class ReplayCostModel:
         )
         return model_transaction_costs(
             priority_fee_lamports=self.priority_fee_lamports,
-            tip_lamports=self.tip_lamports,
+            tip_lamports=self.sell_tip_lamports,
             rent_lamports=refund,
         )
 
@@ -68,15 +90,25 @@ class ReplayCostModel:
         close_token_account_on_full_exit: bool = True,
         priority_fee_lamports: int | None = None,
         tip_lamports: int | None = None,
+        entry_tip_lamports: int | None = None,
+        exit_tip_lamports: int | None = None,
     ) -> ReplayCostModel:
         """The tip the live bot would pay: ``PUMPFUN_JITO_TIP_LAMPORTS`` when
-        ``PUMPFUN_USE_JITO`` is on (the live defaults), else no tip."""
+        ``PUMPFUN_USE_JITO`` is on (the live defaults), else no tip.
+
+        ``PUMPFUN_JITO_ENTRY_TIP_LAMPORTS`` / ``PUMPFUN_JITO_EXIT_TIP_LAMPORTS``
+        replace it on one side, as they do live; explicit arguments win.
+        """
+        use_jito = os.getenv("PUMPFUN_USE_JITO", "true").strip().lower() not in {
+            "false",
+            "0",
+            "no",
+        }
+        if entry_tip_lamports is None and use_jito:
+            entry_tip_lamports = side_tip_lamports_from_env(ENTRY_TIP_ENV)
+        if exit_tip_lamports is None and use_jito:
+            exit_tip_lamports = side_tip_lamports_from_env(EXIT_TIP_ENV)
         if tip_lamports is None:
-            use_jito = os.getenv("PUMPFUN_USE_JITO", "true").strip().lower() not in {
-                "false",
-                "0",
-                "no",
-            }
             try:
                 env_tip = int(
                     os.getenv(
@@ -90,6 +122,12 @@ class ReplayCostModel:
             priority_fee_lamports=max(0, int(priority_fee_lamports or 0)),
             tip_lamports=max(0, int(tip_lamports)),
             close_token_account_on_full_exit=close_token_account_on_full_exit,
+            entry_tip_lamports=(
+                None if entry_tip_lamports is None else max(0, int(entry_tip_lamports))
+            ),
+            exit_tip_lamports=(
+                None if exit_tip_lamports is None else max(0, int(exit_tip_lamports))
+            ),
         )
 
 

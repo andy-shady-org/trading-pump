@@ -227,12 +227,12 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
         close_token_account: bool = False,
     ) -> str:
         """Sell a graduated coin into its PumpSwap pool (Jito bundle or RPC)."""
-        should_jito = self.use_jito if use_jito is None else use_jito
-        tip_lamports = None
-        if should_jito:
-            tip_lamports = await self.calculate_dynamic_jito_tip(
-                trade_amount_sol=0.01, conviction_score=conviction_score
-            )
+        should_jito, tip_lamports = await self.resolve_trade_tip(
+            is_buy=False,
+            trade_amount_sol=0.01,
+            conviction_score=conviction_score,
+            use_jito=use_jito,
+        )
         tx = await self.build_pumpswap_sell_tx(
             mint,
             token_amount,

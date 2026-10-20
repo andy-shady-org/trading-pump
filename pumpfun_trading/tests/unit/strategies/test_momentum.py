@@ -529,6 +529,48 @@ def test_buy_flow_concentration_scores_spread_and_concentrated_flow() -> None:
     assert whale["wallet_diversity"] == round((2 / 5) * (1 - 8.0 / 8.1), 4)
 
 
+def test_round_trip_flow_measures_wallets_trading_against_themselves() -> None:
+    """FEAT-57: matched in-and-out volume per wallet, and quick reversals."""
+    engine = OrderFlowEngine()
+    assert engine.round_trip_flow("none") == {
+        "round_trip_wallets": 0,
+        "round_trip_share": 0.0,
+        "quick_flips": 0,
+    }
+
+    # Organic: four buyers, one unrelated seller.
+    for user in ("a", "b", "c", "d"):
+        engine.record_trade("organic", True, 0.5, user, timestamp=100.0)
+    engine.record_trade("organic", False, 0.5, "e", timestamp=101.0)
+    assert engine.round_trip_flow("organic")["round_trip_share"] == 0.0
+
+    # Wash: "w" buys 1.0 and sells 1.0 within a second, twice; "a" buys 2.0.
+    engine.record_trade("wash", True, 1.0, "w", timestamp=100.0)
+    engine.record_trade("wash", False, 1.0, "w", timestamp=100.5)
+    engine.record_trade("wash", True, 1.0, "w", timestamp=110.0)
+    engine.record_trade("wash", False, 1.0, "w", timestamp=111.0)
+    engine.record_trade("wash", True, 2.0, "a", timestamp=112.0)
+    # Excluded and future trades don't count.
+    engine.record_trade("wash", False, 9.0, "creator", timestamp=105.0)
+    engine.record_trade("wash", False, 2.0, "a", timestamp=200.0)
+
+    wash = engine.round_trip_flow(
+        "wash", exclude_users=frozenset({"creator"}), current_time=150.0
+    )
+    assert wash["round_trip_wallets"] == 1
+    # matched 2 * min(2, 2) = 4 of 6 SOL traded
+    assert wash["round_trip_share"] == round(4.0 / 6.0, 4)
+    # buy->sell at +0.5 s, sell->buy at +9 s (too slow), buy->sell at +1 s
+    assert wash["quick_flips"] == 2
+    slow = engine.round_trip_flow(
+        "wash",
+        exclude_users=frozenset({"creator"}),
+        current_time=150.0,
+        quick_flip_seconds=0.75,
+    )
+    assert slow["quick_flips"] == 1
+
+
 def test_first_poll_is_kept_after_later_polls() -> None:
     engine = OrderFlowEngine()
     engine.watch("m", created_at=10.0, now=11.0, real_sol=0.5)

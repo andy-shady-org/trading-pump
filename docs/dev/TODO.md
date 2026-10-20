@@ -822,7 +822,7 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] Branch `strategy-pivot-momentum` from `main`
 - [x] [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md): evidence, new strategy, cost model at 0.02 SOL, sprints and go/no-go
 - [x] FEAT-51/52/53 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md); pivot section in [`docs/STRATEGY.md`](../STRATEGY.md); canary at 0.02 SOL / `entry_mode: confirmed` in [`RELEASE-GATE.md` §3.3](RELEASE-GATE.md#33-stage-1--live-canary-configuration); CHANGELOG Unreleased entry; AGENTS.md learning
-- [ ] Tip experiment on paper/landing: 0 / 25k / 50k lamports
+- [ ] Tip experiment on paper/landing: 0 / 25k / 50k lamports, shared and split by side (`PUMPFUN_JITO_ENTRY_TIP_LAMPORTS` / `PUMPFUN_JITO_EXIT_TIP_LAMPORTS`, added 2026-10-20; e.g. entry 0, exit 25k / 50k)
 
 ### Sprint 24F: Watch List & Batch Curve Poller (FEAT-51)
 - [x] `entry_mode`, `watch_*` config keys with validation (`strategies/base.py`)
@@ -848,7 +848,8 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] Market regime on every buy and screened launch (`market_regime`: UTC hour / weekday, launches per minute, graduations per hour over 15 min; `strategies/regime.py`), in the status file, and graduations from the free `subscribeMigration` feed recorded as `event: migration` capture records *(tests: `unit/strategies/test_regime.py`, `unit/bot/test_run.py`)*
 - [x] FEAT-55 creator reputation book tested offline: no edge, not built ([`STRATEGY-PIVOT.md` §6.5](STRATEGY-PIVOT.md#65-ideas-from-other-projects-tested-offline-2026-10-20))
 - [x] FEAT-56 wallet-diversity / sniper-volume inputs recorded in momentum `entry_metrics` (`top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth`, `first_poll_age_seconds`); offline they beat a random cut on both captures but do not make rc.1 positive, so nothing gates on them yet
-- [ ] On the rc.2 capture: net PnL by `market_regime.hour_utc` and graduation rate, and the FEAT-56 keep rules against a random cut; gate only what holds on that unseen data
+- [x] FEAT-57 wash-trade inputs recorded in momentum `entry_metrics` (`round_trip_wallets`, `round_trip_share`, `quick_flips`; `OrderFlowEngine.round_trip_flow`); offline they beat a random cut on the v0.2.3 replay but not on rc.1 (paper or replay), so nothing gates on them ([`STRATEGY-PIVOT.md` §6.6](STRATEGY-PIVOT.md#66-wash-trade-inputs-graduation-backfill-and-split-tips-2026-10-20))
+- [ ] On the rc.2 capture: net PnL by `market_regime.hour_utc` and graduation rate, and the FEAT-56 / FEAT-57 rules against a random cut; gate only what holds on that unseen data
 - [ ] Close the remaining parity gap (+0.014 SOL vs ±0.010 allowed): fills priced from curve reads that see trades the capture's trade stream misses
 - **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
 
@@ -859,6 +860,8 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] `RUNBOOK.md` §6.3: capture → replay gate → Stage 0 → Stage 1 at 0.02 SOL, the tip experiment and the pre-graduation paper pilot
 - [x] Exit through PumpSwap after graduation (BUG-123): completion is seen from the curve refresh, Geyser and `subscribeMigration`; the position is priced and sold in the canonical PumpSwap pool (`sdk/pumpswap.py`, `OrderExecutor.execute_pumpswap_sell`, `enable_pumpswap_exit`). Required before the pre-graduation pilot
 - [x] Non-SOL quote mints refused (BUG-124)
+- [x] Graduation backfill: held mints checked against the Pump.fun API every `graduation_backfill_seconds` (30 s), a third completion source next to the curve refresh and `subscribeMigration` *(tests: `unit/bot/test_run.py`)*
+- [x] `resolve_strategy_config` reads every config field (BUG-125: `enable_pumpswap_exit`, `replay_log_path`, the FEAT-50 alert and FEAT-42 sweep keys were dropped from config files) *(guard test: `unit/strategies/test_presets.py`)*
 - [ ] One live PumpSwap sell at the smallest size before any lane relies on it with real capital (the instruction is pinned to mainnet accounts, but no transaction from this code has landed yet)
 - [ ] 72 h paper pilot of the pre-graduation lane; Stage 1 canary
 - **Acceptance:** lane positive in a 72 h paper pilot; Stage 1: ≥ 100 trades, net > 0, reconciled

@@ -3937,6 +3937,10 @@ class TradingBot:
         )
         metrics["top_buyer_share"] = flow["top_buyer_share"]
         metrics["wallet_diversity"] = flow["wallet_diversity"]
+        # FEAT-57 wash-trade inputs, recorded only until they beat a random cut.
+        metrics.update(
+            engine.round_trip_flow(mint, exclude_users=exclude, current_time=now)
+        )
         if entry.first_polled_real_sol is not None and entry.start_real_sol is not None:
             # SOL added between the create and the first curve poll (a few
             # seconds): a proxy for sniper volume, since no capture sees the
@@ -4332,6 +4336,51 @@ class TradingBot:
         if mint in self.active_positions:
             await self._exit_graduated_position(mint)
 
+    async def _graduation_backfill_pass(self) -> int:
+        """Third graduation source: ask the Pump.fun API about each held mint.
+
+        Catches a migration the curve refresh and ``subscribeMigration`` both
+        missed (reconnect, restart). Bounded per mint; a failed lookup just
+        waits for the next pass. Returns the number of graduations found.
+        """
+        found = 0
+        for mint in list(self.active_positions):
+            if mint in self._migrating_mints or self._stop_requested:
+                continue
+            try:
+                coin = await asyncio.wait_for(self.api.get_coin(mint), timeout=5.0)
+            except Exception as exc:
+                self._log(
+                    f"Graduation backfill lookup failed for {mint[:8]}: {exc}",
+                    level=logging.DEBUG,
+                )
+                continue
+            if not isinstance(coin, dict) or not (
+                coin.get("complete") is True or coin.get("pump_swap_pool")
+            ):
+                continue
+            found += 1
+            self._count_watch("graduation_backfill")
+            self._record_event(
+                f"graduation backfill: {mint[:8]} completed (missed by stream)",
+                alert=False,
+            )
+            await self._exit_graduated_position(mint)
+        return found
+
+    async def _run_graduation_backfill_loop(self) -> None:
+        interval = float(getattr(self.config, "graduation_backfill_seconds", 0) or 0)
+        if interval <= 0:
+            return
+        while not self._stop_requested:
+            try:
+                await asyncio.sleep(interval)
+                await self._graduation_backfill_pass()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._log(f"Graduation backfill exception: {exc}", level=logging.DEBUG)
+
     def _market_regime(self) -> MarketRegimeTracker:
         tracker = getattr(self, "market_regime", None)
         if tracker is None:
@@ -4654,6 +4703,7 @@ class TradingBot:
         health_task = asyncio.create_task(self._run_health_loop())
         refresh_task = asyncio.create_task(self._run_position_refresh_loop())
         watch_task = asyncio.create_task(self._run_watch_poll_loop())
+        backfill_task = asyncio.create_task(self._run_graduation_backfill_loop())
         render_task = None
         if self.verbose and not self.headless:
             render_task = asyncio.create_task(self._render_loop())
@@ -4745,6 +4795,7 @@ class TradingBot:
             health_task.cancel()
             refresh_task.cancel()
             watch_task.cancel()
+            backfill_task.cancel()
             if render_task:
                 render_task.cancel()
             if self.geyser_client and hasattr(self.geyser_client, "stop"):

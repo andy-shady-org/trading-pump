@@ -128,6 +128,10 @@ class TradingBotConfig:
     # Exit a position held through graduation on its canonical PumpSwap pool;
     # Pump.fun no longer migrates to Raydium (BUG-123).
     enable_pumpswap_exit: bool = True
+    # Third graduation source for held mints: ask the Pump.fun API whether the
+    # coin completed this often (0 = off), so a migration missed by the curve
+    # refresh and ``subscribeMigration`` (reconnect, restart) still exits.
+    graduation_backfill_seconds: float = 30.0
     enable_raydium_migration_sniping: bool = True
     raydium_pre_migration_sol_threshold: float = 80.0
     raydium_buy_amount_sol: float = 0.02
@@ -308,6 +312,7 @@ class TradingBotConfig:
             "max_entry_cost_share_pct": self.max_entry_cost_share_pct,
             "momentum_max_entry_drift_pct": self.momentum_max_entry_drift_pct,
             "enable_pumpswap_exit": self.enable_pumpswap_exit,
+            "graduation_backfill_seconds": self.graduation_backfill_seconds,
             "enable_raydium_migration_sniping": self.enable_raydium_migration_sniping,
             "raydium_pre_migration_sol_threshold": self.raydium_pre_migration_sol_threshold,
             "raydium_buy_amount_sol": self.raydium_buy_amount_sol,

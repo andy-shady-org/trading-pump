@@ -160,6 +160,8 @@ class ExecutionClientBase:
         jito_client: Optional[JitoClient] = None,
         jito_tip_config: Optional[JitoTipConfig] = None,
         default_slippage_bps: int = 500,
+        jito_entry_tip_lamports: Optional[int] = None,
+        jito_exit_tip_lamports: Optional[int] = None,
     ):
         self.private_key_b58 = private_key_b58
 
@@ -186,6 +188,10 @@ class ExecutionClientBase:
         self.compute_unit_limit = compute_unit_limit
         self.compute_unit_price_micro_lamports = compute_unit_price_micro_lamports
         self.jito_tip_lamports = jito_tip_lamports
+        # Fixed per-side tips for the entry/exit tip experiment; ``None`` keeps the
+        # shared tip and 0 sends that side over plain RPC without a tip.
+        self.jito_entry_tip_lamports = jito_entry_tip_lamports
+        self.jito_exit_tip_lamports = jito_exit_tip_lamports
         self.jito_block_engine_url = jito_block_engine_url
         self.use_jito = bool(use_jito or jito_tip_lamports > 0 or jito_block_engine_url)
         self.jito_fallback_to_rpc = jito_fallback_to_rpc

@@ -159,6 +159,7 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-20 | same, 24.2 h, replay | momentum | `configs/canary.json`, tip 0 | 112 | −0.077 | — | NO-GO; parity gap +0.022 (allowed ±0.010) |
 | 2026-10-20 | same, audit trail, drift guard applied after the fact | momentum | + `momentum_max_entry_drift_pct` 0.08 | 101 | −0.046 | — | helps in both halves (A −0.075, B +0.029), still negative |
 | 2026-10-20 | rc.1 replay, FEAT-56 filters (top buyer < 50%, diversity ≥ 0.3, early inflow < 5 SOL) | momentum | `configs/canary.json`, tip 0 | 47 | −0.004 | — | beats a random cut on 3 sets; recorded in rc.2, not gated (§6.5) |
+| 2026-10-20 | v0.2.3 / rc.1 replay + rc.1 paper, FEAT-57 wash inputs (skip `round_trip_share` > 0.2) | momentum | `configs/canary.json`, tip 0 | 85 / 77 / 85 | +0.094 / −0.059 / −0.091 | — | beats a random cut on v0.2.3 only; recorded in rc.2, not gated (§6.6) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -264,3 +265,21 @@ Ideas taken from a review of `pumpfun-bonkfun-bot`, `pumpfun-sniper-bot` and `Pu
 
   Each rule beats a random cut of the same size on all three sets (+0.016 to +0.054 SOL), but the combination only brings rc.1 to about break-even, on 47–58 positions. The thresholds are round numbers chosen before looking, not tuned. The inflow measure overlaps the rc.2 drift guard on rc.1 (it is everything before promotion there), so the two gains will not simply add up.
 - **Verdict:** no gate in rc.2. rc.2 records the inputs on every momentum buy (`entry_metrics.top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth`, `first_poll_age_seconds`) and the market regime on every buy and screened launch (`market_regime`: UTC hour and weekday, launches per minute and graduations per hour over 15 min, `warm` once a full window has passed). The rc.2 capture is unseen data for all of them: add a filter only if it beats a random cut there too, then Stage 0 it.
+
+### 6.6 Wash-trade inputs, graduation backfill and split tips (2026-10-20)
+Ideas taken from the `launch-relay` review, applied to trading only (we detect wash trading, we never do it).
+
+- **Wash-trade inputs (FEAT-57): no consistent edge.** `OrderFlowEngine.round_trip_flow` scores the flow before each entry (creator and our wallet excluded): `round_trip_wallets`, `round_trip_share` (matched in-and-out volume over all volume) and `quick_flips` (a wallet reversing within 2 s; trade messages carry no slot). Skipping flagged entries, edge against a random cut of the same size (`data/analysis-2026-10-20/wash.py`):
+
+| Skip rule | v0.2.3 replay (117) | rc.1 replay (105) | rc.1 paper (118) |
+|---|---|---|---|
+| `round_trip_share` > 0.1 | +0.061 | −0.001 | −0.023 |
+| `round_trip_share` > 0.2 | +0.052 | −0.000 | −0.020 |
+| `round_trip_share` > 0.4 | +0.040 | +0.009 | −0.002 |
+| `round_trip_wallets` ≥ 2 | +0.044 | −0.006 | −0.009 |
+| `quick_flips` ≥ 1 | +0.043 | −0.018 | −0.012 |
+
+  It helps on v0.2.3 and is no better than chance on rc.1, including the paper run. Shared funders are not measured (a per-wallet funding lookup is too slow for the entry path). The FEAT-26 sybil detector never ran: it needs `funding_links`, which the Pump.fun API does not send.
+- **Verdict:** rc.2 records the three inputs on every momentum buy; nothing gates on them. Re-test on the rc.2 capture.
+- **Graduation backfill.** A third completion source for held mints: every `graduation_backfill_seconds` (default 30 s) the bot asks the Pump.fun API about each held mint; `complete` or a `pump_swap_pool` sends it to the PumpSwap exit (BUG-123). It covers migrations missed across a reconnect or restart. The API is only a hint: the exit still prices and sells from the on-chain pool.
+- **Split tips.** `PUMPFUN_JITO_ENTRY_TIP_LAMPORTS` / `PUMPFUN_JITO_EXIT_TIP_LAMPORTS` set a fixed tip per side (`0` = plain RPC, no tip). Paper and replay model the same per-side costs, so the RUNBOOK tip experiment can test "no tip on entries, paid exits".
