@@ -25,8 +25,10 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **Zero-Copy Alignment Checks:** Any structural or byte changes made to binary parsers inside `streams/` must explicitly match the layout offsets of Yellowstone Geyser streaming payloads to prevent memory allocation crashes.
 - **Volatile Key Erasure:** Methods handling private keys within the Web UI runtime must clear variables from scope immediately after building transaction signatures to maintain strict memory security.
 - **Fail-Fast Risk Validation:** All pre-execution checks (such as Gini coefficient boundaries and daily circuit breakers) must execute within a unified, atomic risk pipeline before hitting the instruction assembly layer.
-- **Income Path First:** The terminal UI (`pumpbot`) must earn the money that funds the Web UI. Prioritise Phase 4b (`docs/dev/TODO.md`) over refactors and Web UI work, never regress `pumpbot`, report profit net of fees/priority fees/Jito tips/rent, and don't start Phase 6 before the funding gate (`docs/dev/RELEASE-GATE.md` §3.7).
+- **Income Path First:** The terminal UI (`pumpbot`) must earn the money that funds the Web UI. Prioritise Phases 4b/4c (`docs/dev/TODO.md`) over refactors and Web UI work, never regress `pumpbot`, report profit net of fees/priority fees/Jito tips/rent, and don't start Phase 6 before the funding gate (`docs/dev/RELEASE-GATE.md` §3.7).
 - **Mirrored Test Layout:** New tests go in `pumpfun_trading/tests/unit/<pkg>/test_<module>.py` (cross-component flows in `integration/`, Hypothesis in `property/`), build configs/bots/payloads from `tests/support/` factories, and never use coverage-named files (`test_coverage_*`, `*_boost*`, `*_full`). See `docs/dev/TESTING.md`.
+- **Feature Docs Track Code:** Document a new, unbuilt feature in `docs/dev/PROPOSED-FEATURES.md` (next free FEAT-ID, catalogue row). When its code ships, move it to `docs/FEATURES.md` and leave a pointer behind. For a partly built feature, list what ships in `FEATURES.md`, mark the missing parts **Not built** there, and keep those parts in `PROPOSED-FEATURES.md`. Never list unbuilt work in `FEATURES.md` (FEAT-10 was listed as implemented with no code).
+- **TODO Lists Open Work Only:** `docs/dev/TODO.md` holds open items; finished work lives in `docs/dev/DONE.md` under its original heading. When a sprint's last box is ticked, move it to `DONE.md` with a link to its CHANGELOG release; in a partly done sprint, move the ticked items and leave one "Done:" line. Verify a completion against the code before ticking or moving it, put evidence and results in `STRATEGY-PIVOT.md` §6 or `releases/`, not in TODO, and never leave an open box in `DONE.md` (mark it superseded, moved or closed with the reason).
 
 ## Learnings Log & Avoided Mistakes
 - **[CRITICAL] Slippage Calculation Target:** Avoided calculating slippage based on static REST API prices. Pump.fun bonding curve prices can shift drastically within a single slot. Always compute slippage against the dynamic, local virtual reserves tracked directly from the real-time Geyser stream.
@@ -131,7 +133,7 @@ Accessible to end-users, quant traders, and bot operators; planned to be publish
 * [**`docs/RISK.md`**](docs/RISK.md): Multi-tier capital preservation, position concentration caps, daily hard-stop circuit breakers (FEAT-09), startup on-chain reconciliation, and emergency exit queues.
 * [**`docs/TERMINAL-UI.md`**](docs/TERMINAL-UI.md): Rich console dashboard manual, sub-millisecond slot latency telemetry, and multi-channel alerting (Discord, Slack, Telegram) for operator self-funding.
 * [**`docs/WEB-UI.md`**](docs/WEB-UI.md): Architecture specification for the hosted multi-tenant Web Dashboard (FEAT-10): FastAPI control plane, Vue 3 + Vuetify MD3 PWA, container-per-tenant bots, zero-knowledge key ingestion, draft API, and terminal UI deprecation roadmap.
-* [**`docs/FEATURES.md`**](docs/FEATURES.md): Standardized catalog of completed architectural capabilities (FEAT-01 through FEAT-30).
+* [**`docs/FEATURES.md`**](docs/FEATURES.md): Catalog of shipped capabilities only (§1–37); unbuilt parts are marked **Not built** and tracked in `docs/dev/PROPOSED-FEATURES.md`.
 * [**`docs/REPLAY-ENGINE.md`**](docs/REPLAY-ENGINE.md): Historical market replay and strategy backtesting simulator (`pumpfun-replay`).
 * [**`docs/AUDIT-TOOL.md`**](docs/AUDIT-TOOL.md): Forensic trade accounting and telemetry inspection CLI (`pumpfun-audit`).
 
@@ -139,12 +141,13 @@ Accessible to end-users, quant traders, and bot operators; planned to be publish
 Internal engineering documentation for maintainers, contributors, and SRE:
 
 * [**`docs/dev/README.md`**](docs/dev/README.md): Developer and contributor portal index.
-* [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Sprint backlog, milestone tracking (Phases 0–6, incl. Phase 4b Terminal Income Track with the Web UI funding gate, Phase 5 Platform Refactor and Phase 6 Hosted Web UI), and architectural tasks.
+* [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Open work only: Now / Next / Later and the open sprints of Phase 4b (Terminal Income Track, with the Web UI funding gate), Phase 4c (Strategy Pivot), Phase 5 (Platform Refactor) and Phase 6 (Hosted Web UI).
+* [**`docs/dev/DONE.md`**](docs/dev/DONE.md): Archive of finished phases, sprints and items (Phases 0–5) moved out of `TODO.md`, under their original headings.
 * [**`docs/dev/ARCHITECTURE-DECISIONS.md`**](docs/dev/ARCHITECTURE-DECISIONS.md): Architecture decision records (web stack, control plane, tenant isolation, key handling, database, docs tooling, test layout).
 * [**`docs/dev/TESTING.md`**](docs/dev/TESTING.md): Test architecture, conventions, markers, and the file-by-file test migration map.
 * [**`docs/dev/DOCUMENTATION-PLAN.md`**](docs/dev/DOCUMENTATION-PLAN.md): Documentation gap analysis, Zensical / Material docs-site plan, and styling conventions.
 * [**`docs/dev/BUGS.md`**](docs/dev/BUGS.md): Bug tracker, root cause analyses, and resolution verification matrix.
-* [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Candidate architectural proposals, alpha enhancement ideas, and unscheduled feature backlog.
+* [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Unbuilt features only: candidate proposals, alpha ideas and the unscheduled backlog. An entry moves to `docs/FEATURES.md` once its code ships.
 * [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook: runtime layout, paper pilot, incident drills, wallet reconciliation, operator pause, unattended alerts, profit sweep, supervised deployment, incident response and rollback.
 * [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Per-release checklist, staged live capital gate (paper → canary → scale-up), hosted security gate, and versioning policy.
 * [**`docs/dev/STRATEGY-PIVOT.md`**](docs/dev/STRATEGY-PIVOT.md): v0.3.0 strategy pivot (confirmed momentum + pre-graduation), evidence, cost model, Phase 4c sprints 24E–24H and go/no-go rules.
@@ -201,7 +204,7 @@ All contributions must strictly satisfy project quality gates:
 * **Code Formatting & Linting**: 100% compliance with Ruff and Black (`nox -s format`, `nox -s lint`).
 * **Static Type Safety**: 0 type violations under strict Mypy checks (`nox -s mypy`).
 * **Unit & Integration Test Coverage**: Mandatory minimum of **95% statement and branch coverage** across all modules (`nox -s tests`).
-* **Clean Commits & Documentation**: Keep `docs/dev/TODO.md` and feature docs updated with all architectural changes.
+* **Clean Commits & Documentation**: Keep `docs/dev/TODO.md` (open work), `docs/dev/DONE.md` (finished work) and feature docs updated with all architectural changes.
 * **Bugs & Regression Prevention**: All runtime failures, edge cases, and user corrections must be logged in the **"Learnings Log"** section of this file with actionable rules to prevent recurrence. All bugs must be logged in `docs/dev/BUGS.md` with root cause analysis and resolution verification.
 ---
 

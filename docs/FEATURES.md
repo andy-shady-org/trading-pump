@@ -2,6 +2,8 @@
 
 This document provides a comprehensive and accurate overview of all features and architectural capabilities implemented in the `pumpfun-trading` repository. It covers the public API client, on-chain execution SDK, low-latency streaming pipeline, private mempool MEV protection, trading bot runtime, risk guards, historical replay engine, forensic audit tooling, and CLI suites.
 
+Only shipped code belongs here. Unbuilt features and the unbuilt parts of a shipped one are tracked in [`dev/PROPOSED-FEATURES.md`](dev/PROPOSED-FEATURES.md); each section below says what is still missing under **Not built**.
+
 ---
 
 ## 1. Yellowstone Geyser gRPC Streaming Engine (FEAT-01)
@@ -11,6 +13,7 @@ This document provides a comprehensive and accurate overview of all features and
 - **Instruction Inner Data & Event Decoding**: Real-time trade instruction parser (`TradeInstructionBinaryParser`) decoding Buy/Sell instructions and Anchor program log events (`Program data: <base64>`) for instantaneous swap and curve graduation detection.
 - **Resilient Connection Lifecycle**: Auto-reconnect handling with exponential backoff and randomized jitter (`0.85x`–`1.25x`), queue overflow drop tracking, and keepalive heartbeats.
 - **Slot-Time Latency Telemetry**: Microsecond-precision benchmarking measuring slot-to-processing latencies displayed live in runtime telemetry.
+- **Not built**: a production Yellowstone gRPC transport. Without an injected `custom_transport` the client raises `GeyserTransportUnavailableError` and the bot runs on the PumpPortal WebSocket stream; the transport is [FEAT-39](dev/PROPOSED-FEATURES.md#feat-39-production-yellowstone-grpc-transport).
 
 ---
 
@@ -172,17 +175,13 @@ This document provides a comprehensive and accurate overview of all features and
 
 - **Project-Wide Test Coverage**: 100% test pass rate with strict project-wide coverage enforcement ($\ge 95\%$ statement and branch coverage).
 - **Automated Quality Pipeline**: Configured with `nox` covering code formatting (`black`), linting (`ruff`), and async test execution (`pytest`).
-- **CI/CD Integration**: GitHub Actions workflows for automated testing and release artifact builds with Codecov coverage verification.
+- **CI Integration**: GitHub Actions workflow (`tests.yml`) running the test matrix on Python 3.11–3.14 plus lint, mypy, audit and package checks, with a Codecov upload. There is no release or publish workflow (proprietary, private tags only).
 
 ---
 
-## 13. Full-Featured Web Control Dashboard, FastAPI Portal & Mobile Telegram Bot (FEAT-10)
+## 13. Web Control Dashboard & Telegram Bot (FEAT-10): moved to proposed
 
-- **FastAPI Asynchronous Backend**: High-performance ASGI service streaming real-time bot state, active positions, and telemetry over WebSockets.
-- **Full Operational Control Center**: Web-based bot control interface supporting live start/pause/stop, emergency position liquidation (`sell_all`), and hot config mutation without bot process restarts.
-- **Interactive Portfolio Visualization**: Real-time equity curves, drawdown monitoring, and live position inspection tables.
-- **Embedded In-App Documentation Hub**: Direct in-dashboard browser and search for all project Markdown documentation (`User Guide`, `Strategy Logic`, `Risk Controls`, `Architecture`, `Runbooks`).
-- **Integrated Telegram Bot**: Command-based remote control (`/status`, `/positions`, `/sell_all`, `/pause`, `/resume`, `/pnl`) with push alerts for key trade events.
+Not implemented: the package has no FastAPI service, web dashboard, in-app docs browser or Telegram command bot. This section was removed on 2026-10-20; the work is tracked in [`PROPOSED-FEATURES.md` §3](dev/PROPOSED-FEATURES.md#3-web-ui-platform-required) as FEAT-10 (umbrella) and FEAT-31…37, with the Telegram bot as FEAT-45. What ships today is the terminal dashboard and push alerts (§11) and the `SIGUSR1` operator pause (§31).
 
 ---
 
@@ -218,6 +217,7 @@ This document provides a comprehensive and accurate overview of all features and
 - **Live Bot Stream Event Routing**: Directly connects Geyser `BondingCurveStateUpdate`, `CompleteEventUpdate`, and Raydium pool creation streams in `TradingBot`, triggering automated curve position liquidations on graduation and sniping newly initialized Raydium pools with reason `raydium_graduation_snipe`.
 - **Historical Paper Trading Replay**: Simulates bonding curve graduation and Raydium pool entries in `PaperTradingEngine` for backtesting migration capture strategies.
 - **Preset Sensitivity Profiles**: Configured thresholds across `conservative` (0.01 SOL buy, 300 bps slippage, 82 SOL threshold), `balanced` (0.02 SOL buy, 500 bps slippage, 80 SOL threshold), and `aggressive` (0.05 SOL buy, 800 bps slippage, 75 SOL threshold, 200k priority fee).
+- **Limits**: Pump.fun now migrates graduated coins to PumpSwap, not Raydium (BUG-123), so the Raydium snipe path does not fire on current graduations, and the Raydium pool feed needs Geyser (FEAT-39). Held coins exit on PumpSwap (§35). **Not built**: buying on PumpSwap after graduation.
 
 ---
 
@@ -254,7 +254,8 @@ This document provides a comprehensive and accurate overview of all features and
 - **Token Enrichment & Screening Engine (`TokenEnricher`)**: Encapsulates off-chain token metadata queries, creator deployment history profiling, top holder Gini concentration scoring, and thread-safe screening verdict caching (`ScreeningCache`) in `pumpfun_trading/bot/enrichment.py`.
 - **Stream Event Routing (`EventRouter`)**: Decouples stream networking from business logic, routing Yellowstone Geyser gRPC updates (`BondingCurveStateUpdate`, `TradeEventUpdate`, `CompleteEventUpdate`) and WebSocket messages to registered strategy handlers in `pumpfun_trading/bot/event_router.py`.
 - **Telemetry, Persistence & Multi-Channel Alerting**: Extracted `StatusPersistenceManager` (`pumpfun_trading/bot/persistence.py`) and `AlertDispatcher` (`pumpfun_trading/bot/alerts.py`) for atomic snapshot writing, append-only audit logging, and isolated webhook notifications.
-- **Lightweight Orchestrator Facade**: Refactors `TradingBot` in `pumpfun_trading/bot/run.py` into a clean orchestrator facade retaining 100% backward compatibility for all public APIs, CLI commands, and test suites.
+- **Composition Root & Stream Handlers** (Sprints 28a/28b): `bot/factory.py` builds the components, `streams/websocket.py` owns the PumpPortal loop, `ops/metrics.py` the counters, `execution/sell_pipeline.py` the sell maths, and `bot/handlers/` the stream handlers, with one-line delegates kept on `TradingBot` so public APIs, CLI commands and tests are unchanged.
+- **Not built**: a lightweight `TradingBot` facade. `bot/run.py` is still ~3,570 lines (buy / sell paths, status snapshot, supervision loops); the < 800-line target is Sprint 28c in [`TODO.md`](dev/TODO.md).
 
 ---
 
@@ -387,6 +388,7 @@ This document provides a comprehensive and accurate overview of all features and
 - **Composite Screening & Enrichment Integration (`FundingClusterAnalyzer`)**:
   - Seamlessly integrated into `TokenEnricher` (`bot/enrichment.py`), `TradingStrategy.screen_token` (`strategies/decision.py`), `passes_anti_rug_screening` (`strategies/filters.py`), and `TradingBotConfig` presets.
   - Configurable via environment variables (`PUMPFUN_CLUSTER_ANALYSIS_ENABLED`, `PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT`, `PUMPFUN_MAX_SINGLE_CLUSTER_PCT`, `PUMPFUN_MAX_SYBIL_WASH_RATIO`, `PUMPFUN_CLUSTER_TRACE_DEPTH`).
+- **Not built**: a source of funding links. `TokenEnricher` only runs the analyser when the API record carries `funding_links`, and the Pump.fun API never sends that field, so the analyser never runs on live tokens. The funder lookup is [FEAT-63](dev/PROPOSED-FEATURES.md#feat-63-funding-source-lookup-for-the-cluster-analyser).
 
 ---
 
@@ -432,3 +434,98 @@ This document provides a comprehensive and accurate overview of all features and
 - **Dedicated Arbitrage CLI (`pumpfun-arb` / `pumpfun arb`) & Replay Backtesting**:
   - Standalone and unified CLI tooling for live spread monitoring, dry-run simulation, and JSON history exports.
   - Multi-venue arbitrage simulation support in `PaperTradingEngine` (`pumpfun-replay`).
+- **Not built**: a live reserve feed. `pumpfun-arb --monitor/--live` evaluate sample reserves (BUG-90, mitigated), and arbitrage stays off for the canary ([`RELEASE-GATE.md` §3.5](dev/RELEASE-GATE.md)); the chain-read feed is [FEAT-40](dev/PROPOSED-FEATURES.md#feat-40-live-cross-venue-arbitrage-feed).
+
+---
+
+## 30. Net PnL Accounting & Wallet Reconciliation (FEAT-49)
+
+Shipped in v0.2.0 (Sprint 24B), with BUG-96 token-account rent recovery.
+
+- **Per-Trade Costs**: `sdk/costs.py` reads the network fee, priority fee, Jito tip, token-account rent and the exact SOL swapped from the confirmed transaction (`getTransaction`, capped at 8 s). Paper and dry-run trades use the same cost model.
+- **Net PnL On Every Record**: `bot/pnl.py`; trade records carry `signature`, the fee / tip / rent fields, `costs_sol`, `gross_pnl_sol`, `net_pnl_sol` and `cash_flow_sol`. The daily circuit breaker runs on net PnL.
+- **Rent Recovery**: the sell that empties a token account closes it in the same transaction (`close_token_account_on_full_exit`, default `true`).
+- **`pumpfun-audit pnl`**: realized profit after costs per closed position, `--group-by` day, reason, strategy, mint or hour, `--json`.
+- **`pumpfun-audit reconcile --wallet`**: checks live trades against the chain (token balances, whole-wallet SOL change within `--tolerance-sol`), exit code 1 on a gap; the result is stored in `reconcile_status.json` and shown on the dashboard Risk panel.
+
+---
+
+## 31. Operator Pause, Unattended Alerts & Supervised Deployment (FEAT-50)
+
+Shipped in v0.2.1 (Sprint 24D). See [`RUNBOOK.md` §5.5, §8](dev/RUNBOOK.md).
+
+- **Operator Pause**: `SIGUSR1` toggles "no new buys, keep managing exits" (`bot/operator.py`); persisted in `bot_status.json`, audited, alerted and shown on the dashboard.
+- **Unattended Alerts** (`bot/supervision.py`): daily summary at `daily_summary_hour_utc`, prolonged stream / RPC degradation (`degradation_alert_minutes`) and recovery, new reconciliation gaps, `bot started` / `bot stopped`.
+- **Supervisor Templates** (`deploy/`): `pumpbot-run.sh`, systemd `pumpbot.service` and `pumpfun-reconcile.{service,timer}`, launchd `com.pumpfun.pumpbot.plist`. `pumpbot` exits with code 1 when its stream loop ends without a shutdown request, so a supervisor restarts it.
+- **Not yet done**: the RUNBOOK §7 drills and a 7-day unattended run.
+
+---
+
+## 32. Automated Treasury Profit Sweep (FEAT-42)
+
+Shipped in v0.2.1 (Sprint 24D), **off by default**. See [`RUNBOOK.md` §5.6](dev/RUNBOOK.md).
+
+- **Policy** (`bot/sweep.py`): `profit_sweep_enabled`, `profit_sweep_destination`, `profit_sweep_hot_floor_sol`, `profit_sweep_min_sol`, `profit_sweep_interval_seconds`; the floor never drops below `reserve_balance_sol + max_total_exposure_sol + 0.01`.
+- **Transfer**: `PumpFunExecutionClient.transfer_sol` with compute-budget instructions and no Jito tip, under the trade lock; paper / dry-run simulate it.
+- **Accounting**: a `sweep` audit record per sweep, counted by `pumpfun-audit reconcile`; the breaker treats it as a withdrawal (`DailyEquityTracker.record_withdrawal`), not a drawdown.
+- **Limits**: sweeps all SOL above the floor (deposits too); needs its paper drill before use on a funded wallet.
+
+---
+
+## 33. Watch List & Batch Curve Poller (FEAT-51)
+
+Shipped in v0.3.0-rc.1 (Sprint 24F); extended in rc.2.
+
+- **Watch Instead Of Buy**: with `entry_mode: "confirmed"` a screened launch goes onto a bounded TTL watch list (`OrderFlowEngine.watch`, `WatchEntry`; `watch_ttl_seconds`, `watch_max_mints`) instead of being bought. `"launch"` stays the default for back-compat.
+- **Batch Curve Poller** (`bot/handlers/watch.py`): reads all watched curves with one `getMultipleAccounts` call per 100 mints every `watch_poll_interval_seconds` (`PumpFunExecutionClient.get_bonding_curve_states`, with the BUG-104/108/124 owner, reserve and quote-mint checks) and feeds the watch list and `GraduationEngine`.
+- **Subscription Budget**: only mints whose real SOL grew by `watch_promote_min_sol_growth` get a billed trade subscription, at most `watch_max_trade_subscriptions`; expired or rejected mints are unsubscribed.
+- **Near-Graduation Set** (rc.2, `near_graduation_*`, off by default): keeps growing curves past the watch TTL, polled more slowly, for the pre-graduation lane.
+- **Curve Reads In The Capture** (rc.2, `capture_curve_polls`): every curve read is written to the `--record-replay` capture as an `event: "curve_poll"` row, so replay prices fills and the drift guard from the reads paper used.
+- **Telemetry**: watch-list size, subscribed mints and funnel counters in `bot_status.json` and on the dashboard.
+
+---
+
+## 34. Confirmed Momentum Entry & Momentum Exits (FEAT-52)
+
+Shipped in v0.3.0-rc.1 (Sprint 24G); drift guard in rc.2. The lane is still a paper-only **NO-GO** ([`STRATEGY-PIVOT.md` §6](dev/STRATEGY-PIVOT.md)).
+
+- **Confirmation** (`bot/handlers/trade.py`): a promoted watched mint is bought only inside the token-age window and market-cap band (`momentum_min/max_token_age_seconds`, `min_market_cap_sol` to `momentum_max_market_cap_sol`), when `OrderFlowEngine` confirms buyers, inflow, buy ratio and z-score (creator and our wallet left out), and `_should_buy` passes.
+- **Cost Guard**: refuses buys whose modelled fixed round-trip costs exceed `max_entry_cost_share_pct` of the position.
+- **Drift Guard** (`momentum_max_entry_drift_pct`): paper re-reads the curve after the entry delay and skips the buy above the limit; live refuses or caps slippage at the room left; replay models the same rule.
+- **Momentum Exits** (`strategies/exits.py`): buy-flow stagnation exit (`stagnant_min_buy_sol`), break-even ratchet (`breakeven_ratchet_activation_pct`, `breakeven_buffer_pct`), and the stop-loss redesign keys (`stop_loss_arm_seconds`, `stop_loss_demand_hold_seconds`, `stop_loss_hard_floor`; all `0` = plain stop).
+- **Reporting**: buys record `strategy: "momentum"` and `entry_metrics`; `momentum` preset; confirmed-entry replay (`entries_from: confirmed`) and optimizer search space.
+
+---
+
+## 35. Pre-Graduation Lane Via The RPC Poller & PumpSwap Exit (FEAT-53, BUG-123)
+
+Shipped in v0.3.0-rc.1 (Sprint 24H); near-graduation set and PumpSwap exit in rc.2. **Off in `configs/canary.json`** until its 72 h paper pilot passes ([`RELEASE-GATE.md` §3.5](dev/RELEASE-GATE.md)).
+
+- **One Entry Helper** (`bot/handlers/curve.py`): the pre-graduation entry runs from the Geyser curve handler and from the watch poller, so it works on the WebSocket deployment; polled entries need enough readings in the acceleration window. Buys record `strategy: "pre_graduation"` with curve progress and acceleration.
+- **Tranche Exits**: sell before the curve completes.
+- **PumpSwap Exit** (`sdk/pumpswap.py`, `sdk/pumpswap_execution.py`, `enable_pumpswap_exit`): a held position whose coin graduates is priced from its PumpSwap pool and sold there. Completion is seen from the position refresh, Geyser, PumpPortal `subscribeMigration` and the graduation backfill (`graduation_backfill_seconds`). No live PumpSwap sell built by this code has landed yet.
+- **Pilot Config**: `configs/pregrad_pilot.json` (paper, lane and near-graduation set on, no momentum subscriptions).
+
+---
+
+## 36. Shadow Variants & Capture Read-Out Tooling (FEAT-58)
+
+Shipped in v0.3.0-rc.2; read-out tooling and rc.3 additions in Unreleased. Shadow variants never trade.
+
+- **Shadow Variants** (`strategies/shadow.py`, `shadow_variants`): momentum rules logged on paper with their own thresholds, drift guard and flow filters; when one fires, the bot reads the curve after the paper delay and writes an `event: "shadow_entry"` row (fill, drift, refusal). Kinds `pullback` / `pullback_curve` (FEAT-59) were added for rc.3.
+- **`pumpfun-replay --shadow-report`** (`engines/shadow_report.py`): per variant signals, refusals, fill drift and a modelled net PnL against a random cut of the baseline, per half with `--split-at`; `--shadow-scan` (`engines/shadow_scan.py`) rebuilds the rows from an older capture.
+- **Rule Checks Against A Random Cut**: `pumpfun-audit cuts` (`bot/selection.py`) on audit trails and `pumpfun-replay --keep RULE` (`engines/cuts.py`) on replayed positions.
+- **Parameter Sweeps**: `pumpfun-replay --sweep KEY=V1,V2` (`engines/sweep.py`), net per half against the base config.
+
+---
+
+## 37. Recorded Entry Research Inputs (FEAT-54 Phase 1, FEAT-56, FEAT-57, FEAT-60, FEAT-61)
+
+Measurement only: these inputs are recorded and can be used as shadow filters and `--keep` rules, but **no buy is gated on them**. The gating rules and later phases stay in [`PROPOSED-FEATURES.md`](dev/PROPOSED-FEATURES.md).
+
+- **Wallet Scores (FEAT-54 phase 1)**: `pumpfun-replay --wallet-scores [--validate-path]` (`engines/wallets.py`) ranks wallets by our simulated copy net after delay, penalty and costs.
+- **Buy-Flow Concentration (FEAT-56)**: `top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth`, `first_poll_age_seconds` (`OrderFlowEngine.buy_flow_concentration`).
+- **Wash-Trade Inputs (FEAT-57)**: `round_trip_wallets`, `round_trip_share`, `quick_flips` (`OrderFlowEngine.round_trip_flow`).
+- **Buy Timing (FEAT-60)**: `timing_buys`, `buy_gap_median_seconds`, `buy_gap_cv`, `burst_share`, `buy_size_cv`, `small_buy_share` (`OrderFlowEngine.buy_timing`).
+- **Bundle Proxy (FEAT-61)**: `early_holders`, `early_holder_pct` (`HolderDistribution.early_holder_cluster`) in screening capture records.
+- **Market Regime**: `market_regime` (UTC hour and weekday, launch and graduation rates) on buys, screening records and the status file (`strategies/regime.py`).
