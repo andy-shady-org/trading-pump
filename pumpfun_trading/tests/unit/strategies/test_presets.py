@@ -458,6 +458,12 @@ def test_entry_mode_defaults_to_launch_and_loads_watch_keys() -> None:
         ({"watch_poll_interval_seconds": 0.01}, "watch_poll_interval_seconds"),
         ({"watch_promote_min_sol_growth": -1}, "watch_promote_min_sol_growth"),
         ({"watch_max_trade_subscriptions": -1}, "watch_max_trade_subscriptions"),
+        ({"near_graduation_max_mints": -1}, "near_graduation_max_mints"),
+        ({"near_graduation_min_progress_pct": 1.0}, "near_graduation_min_progress"),
+        ({"near_graduation_stall_seconds": 0}, "near_graduation_stall_seconds"),
+        ({"near_graduation_ttl_seconds": 60.0}, "near_graduation_ttl_seconds"),
+        ({"near_graduation_poll_interval_seconds": 0}, "near_graduation_poll"),
+        ({"shadow_variants": [{"name": "x", "stop_loss": 0.5}]}, "unknown key"),
     ],
 )
 def test_invalid_watch_settings_fail_fast(
@@ -465,6 +471,57 @@ def test_invalid_watch_settings_fail_fast(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         resolve_strategy_config("balanced", overrides=override)
+
+
+def test_near_graduation_set_curve_capture_and_shadow_variants_load() -> None:
+    default = resolve_strategy_config("balanced")
+    assert default.near_graduation_max_mints == 0  # off unless configured
+    assert default.capture_curve_polls is True
+    assert default.shadow_variants == ()
+
+    config = TradingBotConfig.from_dict(
+        {
+            "near_graduation_max_mints": 50,
+            "near_graduation_min_progress_pct": 0.4,
+            "capture_curve_polls": False,
+            "shadow_variants": [{"name": "b8", "momentum_min_unique_buyers": 8}],
+        }
+    )
+
+    assert config.near_graduation_max_mints == 50
+    assert config.capture_curve_polls is False
+    data = config.to_dict()
+    assert data["near_graduation_min_progress_pct"] == 0.4
+    assert data["shadow_variants"] == [{"name": "b8", "momentum_min_unique_buyers": 8}]
+
+
+def test_capture_config_records_curves_near_graduation_and_shadow_variants() -> None:
+    raw = json.loads(
+        (Path(__file__).parents[4] / "configs" / "capture.json").read_text()
+    )
+    config = TradingBotConfig.from_dict(raw)
+
+    assert config.entry_mode == "confirmed"
+    assert config.capture_curve_polls is True
+    assert config.near_graduation_max_mints > 0
+    names = [variant["name"] for variant in config.shadow_variants]
+    assert "baseline" in names and len(names) == len(set(names))
+
+
+def test_pre_graduation_pilot_config_isolates_the_lane() -> None:
+    raw = json.loads(
+        (Path(__file__).parents[4] / "configs" / "pregrad_pilot.json").read_text()
+    )
+    config = TradingBotConfig.from_dict(raw)
+
+    assert config.paper_trade is True
+    assert config.enable_pre_graduation_harvesting is True
+    assert config.near_graduation_max_mints > 0
+    # No momentum buys and no billed trade feed for watched mints.
+    assert config.watch_max_trade_subscriptions == 0
+    assert config.pre_graduation_entry_progress_pct < (
+        config.pre_graduation_max_entry_progress_pct
+    )
 
 
 def test_momentum_preset_uses_confirmed_entries_at_canary_size() -> None:

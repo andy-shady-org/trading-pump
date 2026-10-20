@@ -572,6 +572,21 @@ def resolve_strategy_config(
         watch_max_trade_subscriptions=int(
             base.get("watch_max_trade_subscriptions", 20)
         ),
+        near_graduation_max_mints=int(base.get("near_graduation_max_mints", 0) or 0),
+        near_graduation_min_progress_pct=float(
+            base.get("near_graduation_min_progress_pct", 0.50)
+        ),
+        near_graduation_stall_seconds=float(
+            base.get("near_graduation_stall_seconds", 300.0)
+        ),
+        near_graduation_ttl_seconds=float(
+            base.get("near_graduation_ttl_seconds", 3600.0)
+        ),
+        near_graduation_poll_interval_seconds=float(
+            base.get("near_graduation_poll_interval_seconds", 6.0)
+        ),
+        capture_curve_polls=bool(base.get("capture_curve_polls", True)),
+        shadow_variants=tuple(base.get("shadow_variants") or ()),
         enable_momentum_signals=bool(base.get("enable_momentum_signals", True)),
         momentum_window_seconds=int(base.get("momentum_window_seconds", 30)),
         momentum_min_buy_ratio=float(base.get("momentum_min_buy_ratio", 3.0)),
@@ -831,6 +846,19 @@ def _validate_entry_pipeline(config: TradingBotConfig) -> None:
         raise ValueError("watch_promote_min_sol_growth must not be negative.")
     if config.watch_max_trade_subscriptions < 0:
         raise ValueError("watch_max_trade_subscriptions must not be negative.")
+    if config.near_graduation_max_mints < 0:
+        raise ValueError("near_graduation_max_mints must not be negative.")
+    if not 0.0 < config.near_graduation_min_progress_pct < 1.0:
+        raise ValueError("near_graduation_min_progress_pct must be between 0 and 1.")
+    if config.near_graduation_stall_seconds <= 0:
+        raise ValueError("near_graduation_stall_seconds must be greater than zero.")
+    if config.near_graduation_ttl_seconds < config.watch_ttl_seconds:
+        raise ValueError("near_graduation_ttl_seconds must be >= watch_ttl_seconds.")
+    if config.near_graduation_poll_interval_seconds < 0.1:
+        raise ValueError("near_graduation_poll_interval_seconds must be at least 0.1.")
+    from pumpfun_trading.strategies.shadow import parse_shadow_variants
+
+    parse_shadow_variants(config.shadow_variants)
     if config.entry_mode != "confirmed":
         return
     # The momentum band only applies to confirmed entries (FEAT-52).

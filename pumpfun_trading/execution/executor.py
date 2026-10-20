@@ -201,6 +201,7 @@ class OrderExecutor:
         drift: float,
         limit: float,
         dry_run: bool,
+        fill_curve_market_cap_sol: float | None = None,
     ) -> ExecutionResult:
         """A momentum buy skipped because the price ran away from the signal."""
         logger.info(
@@ -217,7 +218,14 @@ class OrderExecutor:
             reason=reason,
             error=f"entry_drift: {drift:+.4f} > {limit:.4f}",
             dry_run=dry_run,
-            metadata={"fill_drift_pct": round(drift, 4)},
+            metadata={
+                "fill_drift_pct": round(drift, 4),
+                **(
+                    {"fill_curve_market_cap_sol": fill_curve_market_cap_sol}
+                    if fill_curve_market_cap_sol
+                    else {}
+                ),
+            },
         )
 
     @staticmethod
@@ -425,10 +433,23 @@ class OrderExecutor:
                     )
                 except (NonStandardCurveError, NotPumpFunCurveError) as exc:
                     return self._refused_buy(mint, amount_sol, reason, exc, True)
+            # The curve the paper fill is priced from, before the penalty; the
+            # runtime records it so replay fills read the same curve.
+            fill_curve_mc = (
+                calculate_market_cap_sol(reserves[0], reserves[1])
+                if reserves is not None
+                else None
+            )
             drift = self._entry_drift(reserves, signal_market_cap_sol)
             if drift_limit > 0 and drift is not None and drift > drift_limit:
                 return self._drift_refused_buy(
-                    mint, amount_sol, reason, drift, drift_limit, True
+                    mint,
+                    amount_sol,
+                    reason,
+                    drift,
+                    drift_limit,
+                    True,
+                    fill_curve_market_cap_sol=fill_curve_mc,
                 )
             penalty_bps = self._paper_entry_slippage_bps()
             simulated_token_amount = self._estimate_buy_tokens(amount_sol, reserves)
@@ -441,6 +462,7 @@ class OrderExecutor:
             dry_signature = f"dry_run_buy_{mint[:8]}_{int(time.time())}"
             metadata: dict[str, Any] = {}
             if reserves is not None:
+                metadata["fill_curve_market_cap_sol"] = fill_curve_mc
                 # Paper entries are priced from the same curve as exits (BUG-104),
                 # worsened by the configured latency penalty.
                 metadata["entry_market_cap_sol"] = (

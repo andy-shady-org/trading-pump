@@ -23,8 +23,11 @@ from pumpfun_trading.strategies.exits import (
     PositionExitState,
     evaluate_exit_strategy,
 )
-from pumpfun_trading.strategies.graduation import GraduationEngine
-from pumpfun_trading.strategies.momentum import OrderFlowEngine
+from pumpfun_trading.strategies.graduation import (
+    PRE_GRADUATION_MIN_POLLED_SAMPLES,
+    GraduationEngine,
+)
+from pumpfun_trading.strategies.momentum import OrderFlowEngine, near_graduation_expiry
 
 # Abstract token units per replay position. The live exit stack works in raw
 # token amounts; replay only needs the fraction sold, so each position starts
@@ -35,6 +38,11 @@ LIVE_POSITION_TOKEN_UNITS = 10**12
 # market cap in SOL maps back to the curve's virtual (and so real) SOL reserve.
 CURVE_K_SOL_TOKENS = 30.0 * 1_073_000_000.0
 CURVE_INITIAL_VIRTUAL_SOL = 30.0
+# A paper buy reads the curve just after its entry delay; a recorded curve read
+# of the mint this soon after the fill is due is that read (curve_poll rows).
+CURVE_READ_FILL_TOLERANCE_SECONDS = 1.0
+# Capture rows that are not market data.
+NON_MARKET_EVENTS = frozenset({"screening", "shadow_entry"})
 
 
 def real_sol_from_market_cap(market_cap_sol: float) -> float:
@@ -464,17 +472,42 @@ class PaperTradingEngine:
         entry = engine.get_watch(mint)
         if entry is None:
             return None
-        if ts - entry.watched_at > float(cfg.watch_ttl_seconds):
-            engine.unwatch(mint)
-            count("expired")
-            return None
+        if not entry.near_graduation and ts - entry.watched_at > float(
+            cfg.watch_ttl_seconds
+        ):
+            self._expire_watch(ts, stats)
+            entry = engine.get_watch(mint)
+            if entry is None:
+                return None
+        # A recorded curve read carries the real reserve; trades only the price.
+        recorded_real_sol = self._snapshot_float(snapshot, "real_sol_reserves")
         engine.update_watch_curve(
             mint,
-            real_sol=real_sol_from_market_cap(market_cap),
+            real_sol=(
+                recorded_real_sol
+                if recorded_real_sol > 0
+                else real_sol_from_market_cap(market_cap)
+            ),
             market_cap_sol=market_cap,
             now=ts,
         )
+        if entry.near_graduation:
+            return None  # polled for the pre-graduation lane only
         if trade is None:
+            if (
+                snapshot.get("event") == "curve_poll"
+                and snapshot.get("source", "watch") == "watch"
+                and not entry.subscribed
+                and entry.sol_growth >= float(cfg.watch_promote_min_sol_growth)
+            ):
+                # Live promotion runs on the watch poll, as here.
+                if engine.watch_subscribed_count >= int(
+                    cfg.watch_max_trade_subscriptions
+                ):
+                    count("budget_full")
+                else:
+                    engine.mark_watch_subscribed(mint)
+                    count("promoted")
             return None
         if not entry.subscribed:
             if entry.sol_growth < float(cfg.watch_promote_min_sol_growth):
@@ -505,14 +538,8 @@ class PaperTradingEngine:
             market_cap_sol=market_cap,
         ):
             return None
-        limit = float(getattr(cfg, "max_entry_cost_share_pct", 0.0) or 0.0)
-        if self.cost_model is not None and limit > 0:
-            share = self.cost_model.round_trip_fixed_costs_sol() / max(
-                float(cfg.buy_amount_sol), 1e-9
-            )
-            if share > limit:
-                count("cost_guard_refused")
-                return None
+        if self._cost_guard_refuses(stats):
+            return None
         count("confirmed")
         return {
             "unique_buyers": signal.unique_buyers,
@@ -523,6 +550,41 @@ class PaperTradingEngine:
             "market_cap_sol": round(market_cap, 4),
             "sol_growth": round(entry.sol_growth, 6),
         }
+
+    def _cost_guard_refuses(self, stats: dict[str, int]) -> bool:
+        """``max_entry_cost_share_pct`` as ``_should_buy`` applies it live."""
+        cfg = self.strategy_config
+        limit = float(getattr(cfg, "max_entry_cost_share_pct", 0.0) or 0.0)
+        if self.cost_model is None or limit <= 0:
+            return False
+        share = self.cost_model.round_trip_fixed_costs_sol() / max(
+            float(getattr(cfg, "buy_amount_sol", 0.0)), 1e-9
+        )
+        if share > limit:
+            stats["cost_guard_refused"] = stats.get("cost_guard_refused", 0) + 1
+            return True
+        return False
+
+    def _expire_watch(self, ts: float, stats: dict[str, int]) -> None:
+        """Watch-list expiry as the live poller runs it, near-graduation set
+        included (FEAT-53)."""
+        cfg = self.strategy_config
+        assert cfg is not None
+        engine = self.order_flow_engine
+        expired = engine.expire_watch(
+            ttl=float(cfg.watch_ttl_seconds), now=ts, **near_graduation_expiry(cfg)
+        )
+        if expired:
+            stats["expired"] = stats.get("expired", 0) + len(expired)
+        moved = engine.drain_near_graduation()
+        if moved:
+            stats["near_graduation"] = stats.get("near_graduation", 0) + len(moved)
+        engine.drain_watch_evictions()
+
+    def _curve_progress(self, mint: str) -> float | None:
+        """Curve progress (0-100) the graduation engine has for ``mint``."""
+        candidate = self.graduation_engine.get_candidate(mint)
+        return candidate.progress_pct if candidate is not None else None
 
     def _paper_entry_model(self) -> tuple[float, int]:
         """``(delay_seconds, penalty_bps)`` the live paper executor applies."""
@@ -727,6 +789,9 @@ class PaperTradingEngine:
                     state,
                     current_market_cap=price if pos_mint == mint else None,
                     now=ts,
+                    # Live exits read curve progress for the pre-graduation
+                    # tranches; replay has it only from recorded curve reads.
+                    curve_progress_pct=self._curve_progress(pos_mint),
                 )
             if decision.action == ExitAction.HOLD:
                 continue
@@ -822,12 +887,18 @@ class PaperTradingEngine:
         )
         # Entries waiting for their paper fill: mint -> time the buy lands.
         pending_fills: dict[str, float] = {}
+        # Last price of a pending mint as of its fill time, kept while waiting
+        # for the curve read the paper fill takes just after it.
+        due_prices: dict[str, float] = {}
+        # Captures from rc.2 on record polled curves; without them a fill is
+        # priced at the first snapshot after it is due, as before.
+        has_curve_reads = any(s.get("event") == "curve_poll" for s in snapshots)
         # Buys the entry drift guard skipped at the fill.
         refused_buys = 0
 
         for index, snapshot in enumerate(snapshots):
-            if snapshot.get("event") == "screening":
-                # Screener inputs recorded for filter tuning, not market data.
+            if snapshot.get("event") in NON_MARKET_EVENTS:
+                # Screener inputs and shadow fills: analysis data, not market data.
                 continue
             mint = self._snapshot_mint(snapshot)
             name = self._snapshot_name(snapshot)
@@ -839,25 +910,38 @@ class PaperTradingEngine:
             ts = parsed_ts if parsed_ts is not None else float(index)
 
             # A delayed paper buy fills at the curve as it was when it landed:
-            # the last price seen before this (later) snapshot (BUG-121).
+            # the last price seen before this (later) snapshot (BUG-121), or the
+            # recorded curve read of the mint just after it, which is the read
+            # the paper fill itself takes.
+            is_curve_read = snapshot.get("event") == "curve_poll"
             for pending_mint, due in list(pending_fills.items()):
-                if ts >= due:
-                    del pending_fills[pending_mint]
-                    if self._drift_refused(
-                        positions[pending_mint], last_prices[pending_mint]
-                    ):
-                        cash += self._cancel_entry(
-                            positions.pop(pending_mint), trades, buys_per_mint
-                        )
-                        refused_buys += 1
-                        continue
-                    self._fill_entry(
-                        positions[pending_mint],
-                        trades,
-                        price=last_prices[pending_mint],
-                        ts=due,
-                        penalty_bps=entry_penalty_bps,
+                if ts < due:
+                    continue
+                due_prices.setdefault(pending_mint, last_prices[pending_mint])
+                curve_read_now = is_curve_read and pending_mint == mint
+                if (
+                    has_curve_reads
+                    and not curve_read_now
+                    and ts < due + CURVE_READ_FILL_TOLERANCE_SECONDS
+                ):
+                    continue
+                fill_price = due_prices.pop(pending_mint)
+                if curve_read_now and ts <= due + CURVE_READ_FILL_TOLERANCE_SECONDS:
+                    fill_price = price
+                del pending_fills[pending_mint]
+                if self._drift_refused(positions[pending_mint], fill_price):
+                    cash += self._cancel_entry(
+                        positions.pop(pending_mint), trades, buys_per_mint
                     )
+                    refused_buys += 1
+                    continue
+                self._fill_entry(
+                    positions[pending_mint],
+                    trades,
+                    price=fill_price,
+                    ts=due,
+                    penalty_bps=entry_penalty_bps,
+                )
 
             last_prices[mint] = price
 
@@ -933,6 +1017,8 @@ class PaperTradingEngine:
             # Process bonding curve graduation tracking
             graduation_triggered = False
             pre_grad_triggered = False
+            # Entry metrics of a confirmed-mode pre-graduation buy (FEAT-53).
+            confirmed_pre_grad: dict[str, Any] | None = None
             real_sol = self._snapshot_float(
                 snapshot, "real_sol_reserves", "realSolReserves"
             )
@@ -1042,8 +1128,35 @@ class PaperTradingEngine:
                     max_progress_pct=max_p,
                     min_acceleration=self.strategy_config.pre_graduation_min_acceleration,
                     current_time=ts,
+                    # Confirmed mode runs the lane on polled curves, as live.
+                    min_samples=PRE_GRADUATION_MIN_POLLED_SAMPLES if confirmed else 0,
                 )
                 pre_grad_triggered = grad_sig.triggered
+                if (
+                    confirmed
+                    and pre_grad_triggered
+                    and snapshot.get("event") == "curve_poll"
+                    and self.order_flow_engine.is_watched(mint)
+                    and mint not in traded_mints
+                    and mint not in positions
+                    and not self._cost_guard_refuses(watch_stats)
+                ):
+                    # FEAT-53: live runs the lane from the watch poll only.
+                    trajectory = grad_sig.trajectory
+                    confirmed_pre_grad = {
+                        "curve_progress_pct": (
+                            trajectory.progress_pct if trajectory else None
+                        ),
+                        "acceleration_sol_per_sec2": (
+                            round(trajectory.acceleration_sol_per_sec2, 6)
+                            if trajectory
+                            else None
+                        ),
+                        "real_sol_reserves": round(grad_sig.real_sol_reserves, 4),
+                        "market_cap_sol": round(
+                            self._snapshot_market_cap(snapshot, price), 4
+                        ),
+                    }
 
             if (
                 snapshot.get("event") == "raydium_pool_created"
@@ -1057,15 +1170,7 @@ class PaperTradingEngine:
                     self._note_replay_follow_on_buy(positions[mint], trade_info, ts)
                 if last_expiry_at is None or ts - last_expiry_at >= 1.0:
                     last_expiry_at = ts
-                    expired = self.order_flow_engine.expire_watch(
-                        ttl=float(self.strategy_config.watch_ttl_seconds),  # type: ignore[union-attr]
-                        now=ts,
-                    )
-                    if expired:
-                        watch_stats["expired"] = watch_stats.get("expired", 0) + len(
-                            expired
-                        )
-                    self.order_flow_engine.drain_watch_evictions()
+                    self._expire_watch(ts, watch_stats)
 
             exited_this_snapshot = False
             if self.live_fidelity:
@@ -1167,7 +1272,7 @@ class PaperTradingEngine:
                 mint not in positions
                 and not exited_this_snapshot
                 and (
-                    confirmed_metrics is not None
+                    (confirmed_metrics is not None or confirmed_pre_grad is not None)
                     if confirmed
                     else (
                         self._is_live_fill(snapshot, "buy")
@@ -1233,6 +1338,10 @@ class PaperTradingEngine:
                             buy_reason = "momentum_confirmed"
                             self.order_flow_engine.unwatch(mint)
                             traded_mints.add(mint)
+                        elif confirmed_pre_grad is not None:
+                            buy_reason = "pre_graduation_harvesting_entry"
+                            self.order_flow_engine.unwatch(mint)
+                            traded_mints.add(mint)
                         elif copy_trade_buy_triggered:
                             buy_reason = f"copy_trade_{copy_wallet_label}"
                         elif graduation_triggered:
@@ -1262,10 +1371,16 @@ class PaperTradingEngine:
                                 "reason": buy_reason,
                             }
                         )
-                        if confirmed_metrics is not None:
-                            trades[-1]["strategy"] = "momentum"
-                            trades[-1]["entry_metrics"] = confirmed_metrics
-                            positions[mint]["strategy"] = "momentum"
+                        lane_metrics = confirmed_metrics or confirmed_pre_grad
+                        if lane_metrics is not None:
+                            lane = (
+                                "momentum"
+                                if confirmed_metrics is not None
+                                else "pre_graduation"
+                            )
+                            trades[-1]["strategy"] = lane
+                            trades[-1]["entry_metrics"] = lane_metrics
+                            positions[mint]["strategy"] = lane
                             positions[mint]["creator"] = (
                                 screening.get(mint) or {}
                             ).get("creator")
@@ -1304,7 +1419,8 @@ class PaperTradingEngine:
 
         # Buys still landing when the data ends fill at the last price seen.
         for pending_mint, due in pending_fills.items():
-            if self._drift_refused(positions[pending_mint], last_prices[pending_mint]):
+            end_price = due_prices.get(pending_mint, last_prices[pending_mint])
+            if self._drift_refused(positions[pending_mint], end_price):
                 cash += self._cancel_entry(
                     positions.pop(pending_mint), trades, buys_per_mint
                 )
@@ -1313,7 +1429,7 @@ class PaperTradingEngine:
             self._fill_entry(
                 positions[pending_mint],
                 trades,
-                price=last_prices[pending_mint],
+                price=end_price,
                 ts=due,
                 penalty_bps=entry_penalty_bps,
             )

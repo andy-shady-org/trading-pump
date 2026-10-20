@@ -89,6 +89,12 @@ When the config sets `entry_mode: "confirmed"` (the `momentum` preset, `configs/
 
 `watch_stats` in the summary counts `watched`, `screen_rejected`, `promoted`, `budget_full`, `expired`, `cost_guard_refused`, `confirmed` and `drift_refused`. `pumpfun-optimize` with a confirmed base config also searches the watch, band and momentum-exit keys.
 
+**Recorded curve reads (rc.2 captures on).** The bot writes every curve it reads as an `event: "curve_poll"` row (`source`: `watch`, `position`, `entry_fill`, `shadow_fill`; `market_cap_sol`, `price`, real / virtual SOL reserves). When a capture has them, a delayed fill waits up to 1 s after it is due for the mint's next curve read and fills at that price, which is the read the paper fill itself took; the drift guard judges the same price, so on rc.2 captures replay can judge the guard too. Without a read in that second it falls back to the last price at the due time. Watched mints are promoted on `watch` polls (growth from the recorded real reserve) as the live poller does, and the reserves feed `GraduationEngine`, so exits get curve progress for the pre-graduation tranches. Captures without `curve_poll` rows replay exactly as before.
+
+**Near-graduation set and pre-graduation lane (FEAT-53).** With `near_graduation_max_mints` > 0, an expiring watched mint whose curve is still growing past `near_graduation_min_progress_pct` stays watched (never promoted), as live (`watch_stats.near_graduation`). With `enable_pre_graduation_harvesting` on, the lane fires only on a `watch` poll of a watched mint, needs 4 curve readings in the 30 s window, applies the cost guard and records `strategy: pre_graduation` with curve progress and acceleration.
+
+`event: "shadow_entry"` rows (FEAT-58 shadow variants) and `event: "screening"` rows are never read as market data. To check a shadow variant, replay with its settings: its fill is priced from the recorded `shadow_fill` read.
+
 !!! warning "Confirmed replay on launch-mode captures"
     A capture from a launch-mode bot only has trade flow for the mints that bot bought, so confirmed replay can only buy among them. Use it to compare thresholds, and confirm on a capture recorded in confirmed mode (`configs/capture.json`) before trusting the PnL. Results and the train/test split are in [`dev/STRATEGY-PIVOT.md` §6](dev/STRATEGY-PIVOT.md#6-results-log).
 

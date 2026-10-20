@@ -100,6 +100,23 @@ class TradingBotConfig:
     # billed trade subscription.
     watch_promote_min_sol_growth: float = 1.5
     watch_max_trade_subscriptions: int = 20
+    # Near-graduation set (FEAT-53): a watched mint past ``watch_ttl_seconds``
+    # stays polled (without a trade subscription) while its curve is at least
+    # this far along and still growing, so the pre-graduation lane sees coins
+    # older than the watch TTL. 0 mints = off.
+    near_graduation_max_mints: int = 0
+    near_graduation_min_progress_pct: float = 0.50
+    near_graduation_stall_seconds: float = 300.0
+    near_graduation_ttl_seconds: float = 3600.0
+    near_graduation_poll_interval_seconds: float = 6.0
+    # Write every polled curve (watch list and held positions) to the replay
+    # capture as ``event: "curve_poll"`` rows, so replay can rebuild curve
+    # history for fills, the drift guard and the pre-graduation lane.
+    capture_curve_polls: bool = True
+    # Momentum rules logged on paper but never traded (FEAT-58): each entry is
+    # ``{"name": ..., <momentum_* overrides>, "max_entry_drift_pct": ...,
+    # <FEAT-56/57 flow filters>}``; see strategies/shadow.py.
+    shadow_variants: tuple[dict[str, Any], ...] = ()
     enable_momentum_signals: bool = True
     momentum_window_seconds: int = 30
     momentum_min_buy_ratio: float = 3.0
@@ -296,6 +313,13 @@ class TradingBotConfig:
             "watch_poll_interval_seconds": self.watch_poll_interval_seconds,
             "watch_promote_min_sol_growth": self.watch_promote_min_sol_growth,
             "watch_max_trade_subscriptions": self.watch_max_trade_subscriptions,
+            "near_graduation_max_mints": self.near_graduation_max_mints,
+            "near_graduation_min_progress_pct": self.near_graduation_min_progress_pct,
+            "near_graduation_stall_seconds": self.near_graduation_stall_seconds,
+            "near_graduation_ttl_seconds": self.near_graduation_ttl_seconds,
+            "near_graduation_poll_interval_seconds": self.near_graduation_poll_interval_seconds,
+            "capture_curve_polls": self.capture_curve_polls,
+            "shadow_variants": [dict(v) for v in self.shadow_variants],
             "enable_momentum_signals": self.enable_momentum_signals,
             "momentum_window_seconds": self.momentum_window_seconds,
             "momentum_min_buy_ratio": self.momentum_min_buy_ratio,

@@ -145,7 +145,18 @@ from pumpfun_trading.sdk.costs import (
     model_transaction_costs,
 )
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
+from pumpfun_trading.strategies.graduation import (
+    GRADUATION_REAL_SOL,
+    PRE_GRADUATION_MIN_POLLED_SAMPLES,
+)
+from pumpfun_trading.strategies.momentum import near_graduation_expiry
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
+from pumpfun_trading.strategies.shadow import (
+    ShadowSignal,
+    ShadowVariantBook,
+    parse_shadow_variants,
+    shadow_fill_record,
+)
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -170,9 +181,25 @@ RAW_TOKEN_UNITS_THRESHOLD = 1_000_000_000_000
 # Mints bought before; persisted in the status file and capped so the snapshot
 # stays small (~2k new buys a day in the Stage 0 paper run) (BUG-109).
 TRADED_MINTS_LIMIT = 10_000
-# Curve readings in the 30 s window before a polled pre-graduation entry
-# (FEAT-53); fewer give an acceleration of 0 by construction.
-PRE_GRADUATION_MIN_POLLED_SAMPLES = 4
+# A near-graduation entry this close (curve share) below the pre-graduation
+# entry band is polled at the normal watch interval again.
+NEAR_GRADUATION_FAST_POLL_MARGIN = 0.10
+# Shadow fills waiting for their delayed curve read; more are counted and
+# skipped so a burst of signals can't pile up RPC reads (FEAT-58).
+MAX_PENDING_SHADOW_FILLS = 50
+
+
+def _curve_market_cap(curve: Any) -> float | None:
+    """Market cap (SOL) of a decoded curve, or ``None`` when it has no price."""
+    if not isinstance(curve, dict) or curve.get("complete") is True:
+        return None
+    mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
+    if mc <= 0.0:
+        vt = int(curve.get("virtual_token_reserves", 0) or 0)
+        vs = int(curve.get("virtual_sol_reserves", 0) or 0)
+        if vt > 0 and vs > 0:
+            mc = (vs / 1_000_000_000.0) * (1_000_000_000.0 / (vt / 1_000_000.0))
+    return mc if mc > 0.0 else None
 
 
 class TradingBot:
@@ -1862,6 +1889,17 @@ class TradingBot:
             **drift_guard,
         )
         exec_latency_ms = (time.perf_counter() - t_exec_start) * 1000.0
+        exec_meta = getattr(exec_res, "metadata", None)
+        fill_curve_mc = (
+            exec_meta.get("fill_curve_market_cap_sol")
+            if isinstance(exec_meta, dict)
+            else None
+        )
+        if isinstance(fill_curve_mc, (int, float)):
+            # The curve the paper fill read: replay prices its fill from it.
+            self._record_curve_poll(
+                mint, float(fill_curve_mc), ts=time.time(), source="entry_fill"
+            )
 
         if hasattr(self, "event_logger") and self.event_logger is not None:
             self.event_logger.emit(
@@ -3575,6 +3613,7 @@ class TradingBot:
                 }
             )
 
+        self._evaluate_shadow_variants(mint, current_market_cap, now=ts)
         if mint in self.active_positions:
             self._note_follow_on_buy(mint, is_buy, sol_amount, user, ts)
         elif self._entry_mode() == "confirmed":
@@ -3978,6 +4017,100 @@ class TradingBot:
                     await self._unsubscribe_from_token_trades(None, mint)
             return bought
 
+    # -- Shadow variants: momentum rules logged on paper, never traded (FEAT-58) --
+
+    def _shadow_book(self) -> ShadowVariantBook | None:
+        book: ShadowVariantBook | None = getattr(self, "_shadow_variant_book", None)
+        if book is None:
+            variants = parse_shadow_variants(
+                getattr(self.config, "shadow_variants", ()) or ()
+            )
+            book = self._shadow_variant_book = ShadowVariantBook(self.config, variants)
+        return book if book.enabled else None
+
+    def _evaluate_shadow_variants(
+        self, mint: str, market_cap_sol: float, *, now: float
+    ) -> None:
+        """Evaluate the shadow variants on a trade of a subscribed watched mint,
+        or of a mint seen that way before (bought since, or still trading)."""
+        if self.replay_recorder is None or self._entry_mode() != "confirmed":
+            return  # the result only exists in the capture
+        book = self._shadow_book()
+        if book is None:
+            return
+        entry = self.order_flow_engine.get_watch(mint)
+        if entry is not None and entry.subscribed:
+            book.remember(mint, created_at=entry.created_at, creator=entry.creator)
+        elif not book.knows(mint):
+            return
+        own = self._own_wallet()
+        for shadow in book.evaluate(
+            self.order_flow_engine,
+            mint,
+            now=now,
+            market_cap_sol=market_cap_sol,
+            exclude_users=frozenset({own}) if own else frozenset(),
+        ):
+            self._schedule_shadow_fill(shadow)
+
+    def _schedule_shadow_fill(self, shadow: ShadowSignal) -> None:
+        tasks: set[asyncio.Task[None]] | None = getattr(
+            self, "_shadow_fill_tasks", None
+        )
+        if tasks is None:
+            tasks = set()
+            self._shadow_fill_tasks: set[asyncio.Task[None]] = tasks
+        if len(tasks) >= MAX_PENDING_SHADOW_FILLS:
+            self._count_watch("shadow_skipped")
+            return
+        self._count_watch("shadow_signals")
+        task = asyncio.get_running_loop().create_task(self._record_shadow_fill(shadow))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    async def _record_shadow_fill(self, shadow: ShadowSignal) -> None:
+        """Read the curve when a paper buy would land and record the shadow fill."""
+        delay = float(getattr(self.config, "paper_entry_delay_seconds", 0.0) or 0.0)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        market_cap: float | None = None
+        error: str | None = None
+        curve: Any = None
+        try:
+            curve = await asyncio.wait_for(
+                self.execution.get_bonding_curve_state(shadow.mint), timeout=5.0
+            )
+            market_cap = _curve_market_cap(curve)
+        except Exception as exc:
+            error = f"curve_error: {type(exc).__name__}"
+        fill_time = time.time()
+        if self.replay_recorder is None:
+            return
+        if market_cap:
+            self._record_curve_poll(
+                shadow.mint,
+                market_cap,
+                ts=fill_time,
+                source="shadow_fill",
+                real_sol=int(curve.get("real_sol_reserves", 0) or 0) / 1e9,
+                virtual_sol=int(curve.get("virtual_sol_reserves", 0) or 0) / 1e9,
+            )
+        self.replay_recorder.record_snapshot(
+            shadow_fill_record(
+                shadow,
+                fill_market_cap_sol=market_cap,
+                fill_time=fill_time,
+                error=error,
+            )
+        )
+
+    async def _cancel_shadow_fills(self) -> None:
+        tasks = list(getattr(self, "_shadow_fill_tasks", None) or ())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def watch_list_status(self) -> dict[str, Any]:
         """Watch list size, subscriptions and counters for status and dashboard."""
         engine = self.order_flow_engine
@@ -3985,6 +4118,7 @@ class TradingBot:
             "entry_mode": self._entry_mode(),
             "watched": engine.watch_count,
             "subscribed": engine.watch_subscribed_count,
+            "near_graduation": engine.near_graduation_count,
             "max_mints": int(getattr(self.config, "watch_max_mints", 300)),
             "subscription_budget": int(
                 getattr(self.config, "watch_max_trade_subscriptions", 20)
@@ -4006,12 +4140,70 @@ class TradingBot:
             except Exception as exc:
                 self._log(f"Watch poll exception: {exc}", level=logging.DEBUG)
 
+    def _watch_poll_due(self, mint: str, now: float) -> bool:
+        """Near-graduation entries are polled slowly until they get close to the
+        pre-graduation entry band, where acceleration needs every reading."""
+        entry = self.order_flow_engine.get_watch(mint)
+        if entry is None or not entry.near_graduation:
+            return True
+        progress = (entry.last_real_sol or 0.0) / GRADUATION_REAL_SOL
+        entry_pct = float(self.config.pre_graduation_entry_progress_pct)
+        entry_pct = entry_pct / 100.0 if entry_pct > 1.0 else entry_pct
+        if progress >= entry_pct - NEAR_GRADUATION_FAST_POLL_MARGIN:
+            return True
+        interval = float(
+            getattr(self.config, "near_graduation_poll_interval_seconds", 6.0)
+        )
+        return now - entry.last_polled_at >= interval
+
+    def _record_curve_poll(
+        self,
+        mint: str,
+        market_cap_sol: float,
+        *,
+        ts: float,
+        source: str,
+        real_sol: float | None = None,
+        virtual_sol: float | None = None,
+    ) -> None:
+        """Write one polled curve to the capture, so replay can rebuild the curve
+        history the bot saw (fills, drift guard, pre-graduation lane)."""
+        if (
+            self.replay_recorder is None
+            or market_cap_sol <= 0.0
+            or not getattr(self.config, "capture_curve_polls", True)
+        ):
+            return
+        row: dict[str, Any] = {
+            "timestamp": ts,
+            "mint": mint,
+            "event": "curve_poll",
+            "source": source,
+            "price": market_cap_sol / 1_000_000_000.0,
+            "market_cap_sol": round(market_cap_sol, 6),
+        }
+        if real_sol is not None:
+            row["real_sol_reserves"] = round(real_sol, 9)
+        if virtual_sol is not None:
+            row["virtual_sol_reserves"] = round(virtual_sol, 9)
+        self.replay_recorder.record_snapshot(row)
+
     async def _poll_watch_list(self) -> None:
         """One poll: expire, read curves, feed the engines, drop bad curves, promote."""
         engine = self.order_flow_engine
         now = time.time()
-        engine.expire_watch(ttl=float(self.config.watch_ttl_seconds), now=now)
-        mints = engine.watched_mints()
+        engine.expire_watch(
+            ttl=float(self.config.watch_ttl_seconds),
+            now=now,
+            **near_graduation_expiry(self.config),
+        )
+        for moved, was_subscribed in engine.drain_near_graduation():
+            # Past the TTL the momentum lane is done with it: free the billed
+            # trade slot, keep polling the curve for the pre-graduation lane.
+            self._count_watch("near_graduation")
+            if was_subscribed and moved.mint not in self.active_positions:
+                await self._unsubscribe_from_token_trades(None, moved.mint)
+        mints = [m for m in engine.watched_mints() if self._watch_poll_due(m, now)]
         rejected: dict[str, str] = {}
         if mints:
             try:
@@ -4044,6 +4236,14 @@ class TradingBot:
                 v_tok = int(state.get("virtual_token_reserves", 0) or 0) / 1e6
                 real_sol = int(state.get("real_sol_reserves", 0) or 0) / 1e9
                 market_cap = v_sol * (1_000_000_000.0 / v_tok) if v_tok > 0 else 0.0
+                self._record_curve_poll(
+                    mint,
+                    market_cap,
+                    ts=now,
+                    source="watch",
+                    real_sol=real_sol,
+                    virtual_sol=v_sol,
+                )
                 self.graduation_engine.update_bonding_curve(
                     mint=mint,
                     bonding_curve="",
@@ -4241,6 +4441,17 @@ class TradingBot:
                             mc = (vs / 1_000_000_000.0) * (
                                 1_000_000_000.0 / (vt / 1_000_000.0)
                             )
+                    # Paper exits price from this read: record it so replay
+                    # exits see the same curve.
+                    self._record_curve_poll(
+                        mint,
+                        mc,
+                        ts=time.time(),
+                        source="position",
+                        real_sol=int(curve.get("real_sol_reserves", 0) or 0) / 1e9,
+                        virtual_sol=int(curve.get("virtual_sol_reserves", 0) or 0)
+                        / 1e9,
+                    )
                     if self._entry_mode() == "confirmed" and mc > 0.0:
                         # Keep curve progress fresh for held mints so the
                         # pre-graduation tranches sell before migration (FEAT-53).
@@ -4798,6 +5009,8 @@ class TradingBot:
             backfill_task.cancel()
             if render_task:
                 render_task.cancel()
+            # Shadow reads still waiting are dropped before the recorder closes.
+            await self._cancel_shadow_fills()
             if self.geyser_client and hasattr(self.geyser_client, "stop"):
                 await self.geyser_client.stop()
             if self.rpc_pool:
