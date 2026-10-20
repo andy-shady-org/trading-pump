@@ -1788,6 +1788,7 @@ class TradingBot:
         effective_buy_amount = (
             buy_amount_sol if buy_amount_sol is not None else self.buy_amount_sol
         )
+        self._last_buy_error: str | None = None
         if not self._should_buy(
             mint,
             market_cap_sol,
@@ -1832,6 +1833,16 @@ class TradingBot:
             # Never send a new order once shutdown was requested (BUG-91).
             return False
 
+        drift_guard: dict[str, Any] = {}
+        drift_limit = float(
+            getattr(self.config, "momentum_max_entry_drift_pct", 0.0) or 0.0
+        )
+        if strategy == "momentum" and drift_limit > 0 and market_cap_sol > 0:
+            # Skip the buy if the price ran away between signal and fill.
+            drift_guard = {
+                "signal_market_cap_sol": float(market_cap_sol),
+                "max_entry_drift_pct": drift_limit,
+            }
         t_exec_start = time.perf_counter()
         exec_res = await self.executor.execute_buy(
             mint=mint,
@@ -1839,6 +1850,7 @@ class TradingBot:
             reason=reason or "entry",
             token_name=position_name,
             dry_run=self.dry_run,
+            **drift_guard,
         )
         exec_latency_ms = (time.perf_counter() - t_exec_start) * 1000.0
 
@@ -1863,6 +1875,7 @@ class TradingBot:
             )
 
         if not exec_res.success:
+            self._last_buy_error = exec_res.error
             self._buy_attempts[mint] = self._buy_attempts.get(mint, 0) + 1
             self._transition_to(
                 TradingBotState.MONITORING,
@@ -1871,6 +1884,13 @@ class TradingBot:
             return False
 
         exec_metadata = getattr(exec_res, "metadata", None)
+        fill_drift = (
+            exec_metadata.get("fill_drift_pct")
+            if isinstance(exec_metadata, dict)
+            else None
+        )
+        if isinstance(fill_drift, (int, float)) and entry_metrics is not None:
+            entry_metrics = {**entry_metrics, "fill_drift_pct": float(fill_drift)}
         curve_entry_mc = (
             exec_metadata.get("entry_market_cap_sol")
             if isinstance(exec_metadata, dict)
@@ -3887,6 +3907,14 @@ class TradingBot:
                 # Keep the trade subscription: the position needs it now.
                 engine.unwatch(mint)
                 self._count_watch("bought")
+            elif str(getattr(self, "_last_buy_error", "") or "").startswith(
+                "entry_drift"
+            ):
+                # The move already happened: stop watching (replay does the same).
+                self._count_watch("drift_refused")
+                engine.unwatch(mint)
+                if entry.subscribed:
+                    await self._unsubscribe_from_token_trades(None, mint)
             return bought
 
     def watch_list_status(self) -> dict[str, Any]:

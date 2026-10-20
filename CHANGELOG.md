@@ -10,6 +10,11 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 Work towards `v0.3.0-rc.2`. The v0.3.0-rc.1 capture is a **NO-GO** for the momentum lane: paper −0.100 SOL over 65 positions (21.5% profitable), replay with the frozen `configs/canary.json` −0.084 SOL over 62 ([`STRATEGY-PIVOT.md` §6.3](docs/dev/STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19)). Stage 0 does not start on this lane. The runtime side (watch list, poller, subscription budget) passed its paper exit gate.
 
+The full 24.2 h rc.1 capture confirms it: paper −0.099 SOL over 118 positions (29.7% profitable); the last 11.5 h, which no sweep had seen, broke even (+0.001 SOL over 53). The 8-buyer setting, a buy/sell-ratio cap and a 60 s age cap all failed on those hours. The one change that helped in both halves, skipping buys whose price ran away between signal and fill, is added below; it cuts the loss but is not a profit on its own, and replay cannot judge it, so the next 24 h capture is the last test of this lane ([`STRATEGY-PIVOT.md` §6.4](docs/dev/STRATEGY-PIVOT.md#64-v030-rc1-capture-full-24-h-still-no-go-drift-guard-added-2026-10-20)).
+
+### Added
+- Momentum entry drift guard, `momentum_max_entry_drift_pct` (default `0` = off; `0.08` in the `momentum` preset, `configs/canary.json` and `configs/capture.json`). For `strategy=momentum` buys the bot passes the signal's market cap to `OrderExecutor.execute_buy`: paper re-reads the curve after `paper_entry_delay_seconds` and skips the buy (`entry_drift` error, no costs) when the curve is more than the limit above the signal; live refuses before sending when the curve is already past it and otherwise caps the slippage at the headroom left. A refused mint is dropped from the watch list and unsubscribed (`watch_list.stats.drift_refused`). Filled buys record `entry_metrics.fill_drift_pct`. Replay applies the same rule to delayed confirmed fills and refunds the cash (`entry_rejections.entry_drift`). On the rc.1 audit trail the guard at 8% would have skipped 17 buys and moved the 24 h result from −0.099 to −0.046 SOL (first half −0.100 → −0.075, second half +0.001 → +0.029).
+
 ### Fixed
 - BUG-121: `pumpfun-replay` filled confirmed and signal entries at the signal price and ignored `paper_entry_delay_seconds` and `paper_entry_slippage_bps`, so replay ran 0.016–0.023 SOL better than the paper bot on the rc.1 capture. Entries now fill at the last recorded price at signal + delay, cut by the penalty, with no exits before the fill; `entry_metrics` gain `fill_market_cap_sol` and `fill_drift_pct`. Earlier confirmed-lane replay results were optimistic: the v0.2.3 capture drops from +0.139 to +0.062 SOL. Replays without those settings, and entries mirrored from recorded fills, are unchanged.
 
@@ -21,6 +26,9 @@ Work towards `v0.3.0-rc.2`. The v0.3.0-rc.1 capture is a **NO-GO** for the momen
   - `execution/sell_pipeline.py`: sell sizing, proceeds and replay-record helpers used by `_sell_token_locked`.
   - `sdk/execution.py` split into `execution_types.py`, `execution_base.py`, `transport.py`, `pumpfun_execution.py` and `raydium_execution.py`; every name still imports from `sdk.execution`.
   - `bot/run.py` 5,078 → 4,631 lines, `sdk/execution.py` 1,953 → 165. Golden replay unchanged.
+
+### Known issues
+- BUG-122 (open): stream reconnects are not counted in `connection_loss`; the rc.1 capture connected 7 times with the counter at 0. Telemetry only.
 
 ## [0.3.0-rc.1] - 2026-10-18
 

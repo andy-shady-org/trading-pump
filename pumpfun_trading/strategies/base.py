@@ -121,6 +121,10 @@ class TradingBotConfig:
     # Refuse a buy whose modelled fixed round-trip costs (network fees, tip,
     # unrefunded rent) exceed this share of the position (0 = off).
     max_entry_cost_share_pct: float = 0.10
+    # Entry drift guard (momentum lane): skip the buy when the curve market cap
+    # at the fill is more than this share above the signal's (0 = off). Live it
+    # also caps the buy slippage at the remaining headroom.
+    momentum_max_entry_drift_pct: float = 0.0
     enable_raydium_migration_sniping: bool = True
     raydium_pre_migration_sol_threshold: float = 80.0
     raydium_buy_amount_sol: float = 0.02
@@ -299,6 +303,7 @@ class TradingBotConfig:
             "breakeven_ratchet_activation_pct": self.breakeven_ratchet_activation_pct,
             "breakeven_buffer_pct": self.breakeven_buffer_pct,
             "max_entry_cost_share_pct": self.max_entry_cost_share_pct,
+            "momentum_max_entry_drift_pct": self.momentum_max_entry_drift_pct,
             "enable_raydium_migration_sniping": self.enable_raydium_migration_sniping,
             "raydium_pre_migration_sol_threshold": self.raydium_pre_migration_sol_threshold,
             "raydium_buy_amount_sol": self.raydium_buy_amount_sol,

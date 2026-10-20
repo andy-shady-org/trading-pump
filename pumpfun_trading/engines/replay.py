@@ -533,6 +533,23 @@ class PaperTradingEngine:
         penalty = int(penalty) if isinstance(penalty, int) else 0
         return max(0.0, delay), max(0, min(5_000, penalty))
 
+    def _entry_drift_limit(self) -> float:
+        """``momentum_max_entry_drift_pct`` (0 = off), as the paper executor reads it."""
+        value = getattr(self.strategy_config, "momentum_max_entry_drift_pct", 0.0)
+        return max(0.0, float(value)) if isinstance(value, (int, float)) else 0.0
+
+    def _drift_refused(self, position: dict[str, Any], price: float) -> bool:
+        """True when the drift guard skips this momentum entry at its fill.
+
+        Mirrors ``execution/executor.py``: the curve at the fill (before the
+        paper penalty) against the market cap the signal fired at.
+        """
+        limit = self._entry_drift_limit()
+        if limit <= 0 or position.get("strategy") != "momentum":
+            return False
+        signal_price = float(position.get("signal_price") or 0.0)
+        return signal_price > 0 and price / signal_price - 1.0 > limit
+
     def _fill_entry(
         self,
         position: dict[str, Any],
@@ -578,6 +595,23 @@ class PaperTradingEngine:
             signal_price = float(position.get("signal_price") or price)
             metrics["fill_market_cap_sol"] = round(entry_price, 4)
             metrics["fill_drift_pct"] = round(price / signal_price - 1.0, 4)
+
+    @staticmethod
+    def _cancel_entry(
+        position: dict[str, Any],
+        trades: list[dict[str, Any]],
+        buys_per_mint: dict[str, int],
+    ) -> float:
+        """Undo a buy the drift guard skipped; returns the cash to give back.
+
+        A skipped paper buy costs nothing, so the spend and its modelled costs
+        are refunded and the buy is flagged for removal from the ledger.
+        """
+        trades[int(position["buy_trade_index"])]["drift_refused"] = True
+        mint = str(position.get("mint") or "")
+        if buys_per_mint.get(mint, 0) > 0:
+            buys_per_mint[mint] -= 1
+        return float(position["cost_basis"]) + float(position.get("costs_sol", 0.0))
 
     def _live_entry_size(
         self,
@@ -788,6 +822,8 @@ class PaperTradingEngine:
         )
         # Entries waiting for their paper fill: mint -> time the buy lands.
         pending_fills: dict[str, float] = {}
+        # Buys the entry drift guard skipped at the fill.
+        refused_buys = 0
 
         for index, snapshot in enumerate(snapshots):
             if snapshot.get("event") == "screening":
@@ -807,6 +843,14 @@ class PaperTradingEngine:
             for pending_mint, due in list(pending_fills.items()):
                 if ts >= due:
                     del pending_fills[pending_mint]
+                    if self._drift_refused(
+                        positions[pending_mint], last_prices[pending_mint]
+                    ):
+                        cash += self._cancel_entry(
+                            positions.pop(pending_mint), trades, buys_per_mint
+                        )
+                        refused_buys += 1
+                        continue
                     self._fill_entry(
                         positions[pending_mint],
                         trades,
@@ -1260,6 +1304,12 @@ class PaperTradingEngine:
 
         # Buys still landing when the data ends fill at the last price seen.
         for pending_mint, due in pending_fills.items():
+            if self._drift_refused(positions[pending_mint], last_prices[pending_mint]):
+                cash += self._cancel_entry(
+                    positions.pop(pending_mint), trades, buys_per_mint
+                )
+                refused_buys += 1
+                continue
             self._fill_entry(
                 positions[pending_mint],
                 trades,
@@ -1267,6 +1317,13 @@ class PaperTradingEngine:
                 ts=due,
                 penalty_bps=entry_penalty_bps,
             )
+        if refused_buys:
+            # Refused buys never happened: drop them from the ledger.
+            trades = [t for t in trades if not t.get("drift_refused")]
+            for new_index, trade in enumerate(trades):
+                trade["index"] = new_index
+            entry_rejections["entry_drift"] = refused_buys
+            watch_stats["drift_refused"] = refused_buys
 
         sell_returns = [
             trade["return_pct"]
