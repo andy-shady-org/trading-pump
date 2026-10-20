@@ -213,6 +213,39 @@ class HolderDistribution:
             return 0.0
         return float(top5_sum / self.total_supply)
 
+    def early_holder_cluster(self, min_share: float = 0.01) -> dict[str, float | int]:
+        """Bundle proxy (FEAT-61, recorded only): wallets already holding a real
+        share of supply when the token is screened, about a second after the
+        create, which is mostly the create slot and the next few.
+
+        A bundled launch has many such accounts (20+ wallets taking 30-40% in
+        the create slot); an organic one has the creator and a few snipers.
+        ``getTokenLargestAccounts`` returns token accounts, not owners, so the
+        creator's account is matched by its initial-buy balance and left out,
+        as is the bonding curve. ``early_holders`` counts the remaining
+        accounts with at least ``min_share`` of supply and
+        ``early_holder_pct`` is their combined share.
+        """
+        curve = self.bonding_curve_address
+        balances = [
+            int(bal) for addr, bal in self.top_holders if not (curve and addr == curve)
+        ]
+        creator = int(self.creator_initial_balance or 0)
+        if creator <= 0 and self.creator_initial_pct > 0 and self.total_supply > 0:
+            creator = int(self.creator_initial_pct * self.total_supply)
+        if creator > 0 and balances:
+            closest = min(balances, key=lambda bal: abs(bal - creator))
+            if abs(closest - creator) <= max(1, creator // 100):
+                balances.remove(closest)
+        if self.total_supply <= 0:
+            return {"early_holders": 0, "early_holder_pct": 0.0}
+        threshold = float(min_share) * self.total_supply
+        early = [bal for bal in balances if bal >= threshold]
+        return {
+            "early_holders": len(early),
+            "early_holder_pct": round(sum(early) / self.total_supply, 6),
+        }
+
     def compute_gini_coefficient(self, exclude_bonding_curve: bool = True) -> float:
         curve_addr = self.bonding_curve_address
         balances = [
@@ -239,6 +272,14 @@ class TokenScreeningVerdict:
     @property
     def is_clean(self) -> bool:
         return self.passed and self.risk_score < 20.0
+
+
+def bundle_metrics(verdict: Any) -> dict[str, float | int]:
+    """The FEAT-61 bundle proxy of a screening verdict (empty without holder data)."""
+    holders = getattr(verdict, "holder_distribution", None)
+    if not isinstance(holders, HolderDistribution) or not holders.top_holders:
+        return {}
+    return holders.early_holder_cluster()
 
 
 # Alias for backward-compatible naming
@@ -725,6 +766,7 @@ __all__ = [
     "TokenMetadata",
     "TokenScreeningVerdict",
     "buy_attempts_within_limit",
+    "bundle_metrics",
     "calculate_gini_coefficient",
     "evaluate_cluster_heuristics",
     "evaluate_creator_holdings",

@@ -670,3 +670,59 @@ def test_first_poll_is_kept_after_later_polls() -> None:
     assert entry.first_polled_real_sol == 2.0
     assert entry.first_polled_at == 13.0
     assert entry.last_real_sol == 4.0
+
+
+def test_buy_timing_separates_drizzle_burst_and_random_buyers() -> None:
+    engine = OrderFlowEngine(max_retention_seconds=10_000)
+    # Drizzle: the same small buy every 30 s.
+    for i in range(6):
+        engine.record_trade("drizzle", True, 0.02, f"d{i}", timestamp=30.0 * i)
+    drizzle = engine.buy_timing("drizzle")
+    assert drizzle["timing_buys"] == 6
+    assert drizzle["buy_gap_cv"] == 0.0 and drizzle["buy_size_cv"] == 0.0
+    assert drizzle["buy_gap_median_seconds"] == 30.0
+    assert drizzle["small_buy_share"] == 1.0
+    assert drizzle["burst_share"] == pytest.approx(1 / 6, abs=1e-4)
+
+    # Burst: five buys inside 2 s, then one more a minute later.
+    for i, ts in enumerate((0.0, 0.5, 1.0, 1.5, 2.0, 62.0)):
+        engine.record_trade("burst", True, 0.1 + i * 0.1, f"b{i}", timestamp=ts)
+    burst = engine.buy_timing("burst")
+    assert burst["burst_share"] == pytest.approx(5 / 6, abs=1e-4)
+    assert burst["buy_gap_cv"] > 1.5
+    assert burst["buy_gap_median_seconds"] == 0.5
+    assert burst["small_buy_share"] == 0.0 and burst["buy_size_cv"] > 0
+
+
+def test_buy_timing_skips_sells_excluded_wallets_and_later_trades() -> None:
+    engine = OrderFlowEngine(max_retention_seconds=10_000)
+    engine.record_trade("m", True, 1.0, "dev", timestamp=1.0)
+    engine.record_trade("m", True, 0.5, "a", timestamp=2.0)
+    engine.record_trade("m", False, 0.5, "a", timestamp=3.0)
+    engine.record_trade("m", True, 0.5, "b", timestamp=4.0)
+    engine.record_trade("m", True, 0.5, "c", timestamp=9.0)
+
+    timing = engine.buy_timing("m", exclude_users=frozenset({"dev"}), current_time=5.0)
+    # Two buys: sizes and bursts, but no gap statistics.
+    assert timing == {
+        "timing_buys": 2,
+        "small_buy_share": 0.0,
+        "buy_size_cv": 0.0,
+        "burst_share": 1.0,
+    }
+    assert engine.buy_timing("unknown") == {"timing_buys": 0}
+    even = engine.buy_timing("m", exclude_users=frozenset({"dev"}))
+    assert even["buy_gap_median_seconds"] == pytest.approx(3.5)
+
+
+def test_get_metrics_can_leave_out_wallets() -> None:
+    engine = OrderFlowEngine()
+    engine.record_trade("m", True, 2.0, "dev", timestamp=100.0)
+    engine.record_trade("m", True, 0.5, "a", timestamp=101.0)
+
+    everyone = engine.get_metrics("m", window_seconds=30, current_time=102.0)
+    others = engine.get_metrics(
+        "m", window_seconds=30, current_time=102.0, exclude_users=frozenset({"dev"})
+    )
+    assert everyone.buy_volume_sol == pytest.approx(2.5)
+    assert others.buy_volume_sol == pytest.approx(0.5) and others.unique_buyers == 1

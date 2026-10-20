@@ -16,6 +16,17 @@ from typing import Any, Optional
 from pumpfun_trading.strategies.graduation import GRADUATION_REAL_SOL
 
 
+def _coefficient_of_variation(values: list[float]) -> float:
+    """Population standard deviation over the mean (0 when the mean is 0)."""
+    if not values:
+        return 0.0
+    mean = sum(values) / len(values)
+    if mean <= 0:
+        return 0.0
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    return math.sqrt(variance) / mean
+
+
 @dataclass(slots=True)
 class TradeRecord:
     """Individual trade execution record."""
@@ -454,6 +465,7 @@ class OrderFlowEngine:
         mint: str,
         window_seconds: int = 30,
         current_time: Optional[float] = None,
+        exclude_users: Optional[frozenset[str]] = None,
     ) -> WindowMetrics:
         """Retrieve rolling order flow metrics for a token."""
         tracker = self._trackers.get(mint)
@@ -472,8 +484,71 @@ class OrderFlowEngine:
                 trade_velocity=0.0,
             )
         return tracker.get_window_metrics(
-            window_seconds=window_seconds, current_time=current_time
+            window_seconds=window_seconds,
+            current_time=current_time,
+            exclude_users=exclude_users,
         )
+
+    def buy_timing(
+        self,
+        mint: str,
+        *,
+        exclude_users: frozenset[str] = frozenset(),
+        current_time: Optional[float] = None,
+        burst_seconds: float = 5.0,
+        small_buy_sol: float = 0.05,
+    ) -> dict[str, float | int]:
+        """Timing and size pattern of the retained buys (FEAT-60, recorded only).
+
+        Volume bots that keep a coin on the front page buy on a schedule: a
+        "drizzle" of small buys every 20-90 s (regular gaps, ``buy_gap_cv``
+        well below 1, and similar sizes, low ``buy_size_cv``) or a "burst"
+        of packed buys every few seconds (high ``burst_share``, the largest
+        share of all buys inside one ``burst_seconds`` window). Independent
+        buyers arrive roughly at random, so their gaps have a CV near 1.
+
+        ``timing_buys`` is always set; the gap statistics need at least three
+        buys (two gaps) and are left out otherwise, so a rule on them treats
+        the mint as missing data rather than as perfectly regular.
+        """
+        tracker = self._trackers.get(mint)
+        cutoff = float("inf") if current_time is None else float(current_time)
+        buys = [
+            trade
+            for trade in (tracker.trades if tracker is not None else ())
+            if trade.is_buy
+            and trade.user not in exclude_users
+            and trade.timestamp <= cutoff
+        ]
+        buys.sort(key=lambda t: t.timestamp)
+        out: dict[str, float | int] = {"timing_buys": len(buys)}
+        if not buys:
+            return out
+        sizes = [t.sol_amount for t in buys]
+        out["small_buy_share"] = round(
+            sum(1 for s in sizes if s < small_buy_sol) / len(sizes), 4
+        )
+        out["buy_size_cv"] = round(_coefficient_of_variation(sizes), 4)
+        times = [t.timestamp for t in buys]
+        start = 0
+        packed = 1
+        for end, ts in enumerate(times):
+            while ts - times[start] > burst_seconds:
+                start += 1
+            packed = max(packed, end - start + 1)
+        out["burst_share"] = round(packed / len(buys), 4)
+        if len(buys) >= 3:
+            gaps = [b - a for a, b in zip(times, times[1:])]
+            ordered = sorted(gaps)
+            middle = len(ordered) // 2
+            median = (
+                ordered[middle]
+                if len(ordered) % 2
+                else (ordered[middle - 1] + ordered[middle]) / 2.0
+            )
+            out["buy_gap_median_seconds"] = round(median, 3)
+            out["buy_gap_cv"] = round(_coefficient_of_variation(gaps), 4)
+        return out
 
     def buy_flow_concentration(
         self,

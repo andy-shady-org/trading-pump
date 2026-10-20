@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -108,3 +109,144 @@ def test_sync_bot_methods_delegate_to_trade_handlers(
     with patch.object(trade, function, handler):
         getattr(bot, method)(*args, **kwargs)
     handler.assert_called_once_with(bot, *args, **kwargs)
+
+
+def _polled(real_sol: float) -> dict[str, Any]:
+    real = int(real_sol * 1e9)
+    v_sol = 30_000_000_000 + real
+    return {
+        "virtual_sol_reserves": v_sol,
+        "virtual_token_reserves": int(30_000_000_000 * 1_073_000_000_000_000 / v_sol),
+        "real_sol_reserves": real,
+        "complete": False,
+    }
+
+
+def _shadow_rows(recorder: MagicMock) -> list[dict[str, Any]]:
+    return [
+        call.args[0]
+        for call in recorder.record_snapshot.call_args_list
+        if call.args[0].get("event") == "shadow_entry"
+    ]
+
+
+async def test_watch_polls_feed_pullback_curve_variants(tmp_path: Path) -> None:
+    from pumpfun_trading.strategies.filters import (
+        HolderDistribution,
+        TokenScreeningVerdict,
+    )
+
+    bot = make_bot(
+        tmp_path,
+        entry_mode="confirmed",
+        paper_entry_delay_seconds=0.0,
+        watch_promote_min_sol_growth=500.0,  # no trade subscriptions
+        shadow_variants=(
+            {
+                "name": "pbc",
+                "kind": "pullback_curve",
+                "pullback_min_token_age_seconds": 0,
+                "pullback_window_seconds": 6,
+                "pullback_min_peak_market_cap_sol": 35,
+            },
+        ),
+    )
+    recorder = MagicMock()
+    bot.replay_recorder = recorder
+    verdict = TokenScreeningVerdict(
+        mint=SAMPLE_PUMP_MINT,
+        passed=True,
+        risk_score=0.0,
+        holder_distribution=HolderDistribution(
+            total_supply=100, top_holders=[("A", 10), ("B", 5)]
+        ),
+    )
+    bot.order_flow_engine.watch(
+        SAMPLE_PUMP_MINT, created_at=0.0, creator="Dev", verdict=verdict, now=0.0
+    )
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value=_polled(10.0)
+    )
+    # Pump to ~20 SOL real, dump to 8, base for 10 s, then buying returns.
+    path = [(10.0, 20.0), (12.0, 8.0), (18.0, 8.1), (22.0, 8.6)]
+    for ts, real_sol in path:
+        bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+            return_value={SAMPLE_PUMP_MINT: _polled(real_sol)}
+        )
+        with patch("pumpfun_trading.bot.handlers.watch.time.time", return_value=ts):
+            await bot._poll_watch_list()
+    await asyncio.gather(*list(getattr(bot, "_shadow_fill_tasks", ())))
+
+    rows = _shadow_rows(recorder)
+    assert [row["variant"] for row in rows] == ["pbc"]
+    assert rows[0]["kind"] == "pullback_curve"
+    assert rows[0]["signal_timestamp"] == 22.0
+    metrics = rows[0]["entry_metrics"]
+    assert metrics["curve_inflow_sol"] == pytest.approx(0.6, abs=1e-6)
+    assert metrics["early_holders"] == 2  # FEAT-61 from the screening verdict
+
+
+def test_curve_variants_need_a_capture_confirmed_mode_and_a_known_mint(
+    tmp_path: Path,
+) -> None:
+    variants = ({"name": "pbc", "kind": "pullback_curve"},)
+    bot = make_bot(tmp_path, entry_mode="confirmed", shadow_variants=variants)
+    trade.evaluate_shadow_curve(bot, SAMPLE_PUMP_MINT, 40.0, 10.0, now=1.0)
+    assert bot._shadow_book() is None or not bot._shadow_book().knows(  # type: ignore[union-attr]
+        SAMPLE_PUMP_MINT
+    )
+
+    bot.replay_recorder = MagicMock()
+    trade.evaluate_shadow_curve(bot, "never_watched", 40.0, 10.0, now=1.0)
+    book = bot._shadow_book()
+    assert book is not None and not book.knows("never_watched")
+
+    # A mint seen before stays evaluated after its watch entry is gone.
+    bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=0.0)
+    trade.evaluate_shadow_curve(bot, SAMPLE_PUMP_MINT, 40.0, 10.0, now=1.0)
+    bot.order_flow_engine.unwatch(SAMPLE_PUMP_MINT)
+    trade.evaluate_shadow_curve(bot, SAMPLE_PUMP_MINT, 41.0, 10.1, now=3.0)
+    assert book.knows(SAMPLE_PUMP_MINT)
+    assert len(book._mints[SAMPLE_PUMP_MINT].curve) == 2
+
+    plain = make_bot(tmp_path, entry_mode="confirmed")
+    plain.replay_recorder = MagicMock()
+    trade.evaluate_shadow_curve(plain, SAMPLE_PUMP_MINT, 40.0, 10.0, now=1.0)
+    assert plain._shadow_book() is None
+
+
+async def test_momentum_buys_record_buy_timing_and_the_bundle_proxy(
+    tmp_path: Path,
+) -> None:
+    from pumpfun_trading.strategies.filters import (
+        HolderDistribution,
+        TokenScreeningVerdict,
+    )
+
+    bot = make_bot(tmp_path, entry_mode="confirmed")
+    verdict = TokenScreeningVerdict(
+        mint=SAMPLE_PUMP_MINT,
+        passed=True,
+        risk_score=0.0,
+        holder_distribution=HolderDistribution(
+            total_supply=100, top_holders=[("A", 10)]
+        ),
+    )
+    now = 1_000.0
+    bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=now - 120, verdict=verdict)
+    for i, user in enumerate(("a", "b", "c")):
+        bot.order_flow_engine.record_trade(
+            SAMPLE_PUMP_MINT, True, 0.5, user, timestamp=now - 10 + 3 * i
+        )
+    bot.strategy.should_buy_momentum = MagicMock(return_value=True)  # type: ignore[method-assign]
+    bot._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    assert await trade.maybe_buy_confirmed_momentum(
+        bot, SAMPLE_PUMP_MINT, 50.0, "Tok", now=now
+    )
+
+    metrics = bot._buy_token.await_args_list[0].kwargs["entry_metrics"]
+    assert metrics["timing_buys"] == 3
+    assert metrics["buy_gap_cv"] == 0.0 and metrics["buy_gap_median_seconds"] == 3.0
+    assert {"burst_share", "buy_size_cv", "small_buy_share"} <= set(metrics)
+    assert metrics["early_holders"] == 1 and metrics["early_holder_pct"] == 0.1

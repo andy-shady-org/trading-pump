@@ -164,6 +164,8 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-20 | same, stop armed after 5–30 s or held while buys continue | momentum | `configs/canary.json`, tip 0 | 117 / 105 | worse in every half (arming after 5 s: flat on rc.1 B, +0.0003) | — | rejected (§6.8) |
 | 2026-10-20 | v0.2.3 / rc.1 replay, FEAT-56 + FEAT-57 + creator book together (rebuilt from the capture) | momentum | `configs/canary.json`, tip 0 | 64 / 39 | +0.097 / +0.004 | — | beats a random cut in all four halves; rc.1 only breaks even (§6.8) |
 | 2026-10-20 | FEAT-54 copy simulation, top v0.2.3 wallets copied on rc.1 | copy (sim) | 0.02 SOL, 1.5 s, 100 bps, tip 0 | 92 copies | −0.125 | — | **no edge**: every wallet set loses at our delay and costs (§6.8) |
+| 2026-10-20 | v0.2.3 / rc.1, pullback rule on the trade feed (FEAT-59), `--shadow-scan` | pullback (shadow) | `configs/capture.json`, tip 0 | 7 / 7 | −0.006 / −0.007 | — | too few signals (10–11 a day); below a random cut of the baseline in 3 of 4 halves (§6.9) |
+| 2026-10-20 | v0.2.3 / rc.1, FEAT-60 buy-timing filters (gap CV ≥ 0.5, burst ≤ 50%, size CV ≥ 0.5), `--shadow-scan` | momentum (shadow) | `configs/capture.json`, tip 0 | 74–104 / 49–97 | — | — | **no edge**: none beats a random cut in both halves on either capture (§6.9) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -321,3 +323,24 @@ Offline work on the v0.2.3 and rc.1 captures (both in `runtime/archive/`) while 
 - Limit: captures only hold trades of mints the bot subscribed to, so each wallet has at most ~15 closed copies. A copy lane needs a capture that records wallets' own trades (`subscribeAccountTrade`) before it can be judged.
 
 **Verdict:** nothing changes in `canary.json`. On the rc.2 capture, re-run the stop-loss sweep (0.90 / 0.92 / 0.95), the `--keep` rules and the wallet scores; adopt only what holds there.
+
+### 6.9 Pullback entry, buy timing and the bundle proxy for rc.3 (2026-10-20)
+Items 2 and 3 of the "top 10 strategies" review: the **pullback entry** (wait for the first dump after a pump, buy when a base holds and buying comes back), **drizzle / burst detection** and an **anti-bundler proxy**. All three are logged only; none gates a buy, and the shipped buy, exit and sizing rules do not change.
+
+- **Pullback rule (FEAT-59)**, as a shadow variant kind. `"kind": "pullback"` runs on the trade feed of subscribed mints; `"kind": "pullback_curve"` runs on the watch poller's curve reads, so it covers every watched mint without a billed subscription. Defaults (`PULLBACK_DEFAULTS`, each overridable as `pullback_*`): peak ≥ 40 SOL market cap, now 30–70% below it, no new low for 10 s, ≥ 3% off the low, ≥ 0.2 SOL net inflow over 15 s (trade kind: from ≥ 2 other wallets; curve kind: the curve's real SOL change), token age 30–900 s.
+- **Buy timing (FEAT-60)**, `OrderFlowEngine.buy_timing`: `buy_gap_cv` (gap regularity; a drizzle bot is well below 1, independent buyers near 1), `buy_gap_median_seconds`, `burst_share` (largest share of buys inside 5 s), `buy_size_cv` (identical sizes = a bot), `small_buy_share` (< 0.05 SOL). Recorded on every momentum buy and shadow signal; usable as shadow filters (`min_buy_gap_cv`, `max_burst_share`, `min_buy_size_cv`, `max_small_buy_share`) and as `--keep` rules (`engines/cuts.py` rebuilds them from any capture).
+- **Bundle proxy (FEAT-61)**, `HolderDistribution.early_holder_cluster`: non-creator accounts already holding ≥ 1% of supply when the token is screened (about a second after the create, so mostly the create slot) and their combined share. `getTokenLargestAccounts` returns token accounts, not owners, so the creator's account is matched by its initial-buy balance. Recorded in every screening capture record (`early_holders`, `early_holder_pct`) and on momentum buys; shadow filters `max_early_holders`, `max_early_holder_pct`. Linked funding (the BubbleMaps view) is still not measured: it needs a funder lookup per wallet.
+- **Offline test** (`pumpfun-replay --shadow-report --shadow-scan`, new `engines/shadow_scan.py`: the same shadow book run over a capture's recorded trades and watch polls, filled at the first recorded price after the 1.5 s delay). On the rc.2 capture so far the scan reproduces the 13 recorded shadow rows exactly. Edge against a random cut of the baseline, A / B:
+
+| Variant | v0.2.3 (baseline 169 signals) | rc.1 (baseline 118 signals) |
+|---|---|---|
+| pullback (trade feed) | 10 signals; −0.004 / −0.005 | 11 signals; −0.006 / −0.002 |
+| `min_buy_gap_cv` 0.5 | −0.004 / +0.019 | +0.003 / −0.013 |
+| `max_burst_share` 0.5 | +0.007 / −0.009 | +0.007 / −0.037 |
+| `min_buy_size_cv` 0.5 | −0.002 / +0.008 | +0.013 / −0.019 |
+| pullback on curve reads, bundle filters | no data (no watch polls / holder snapshot before rc.2 / rc.3) | no data |
+
+- **Read the numbers as relative only.** Scanned fills come from recorded data: the scanned baseline on rc.1 models −0.006 SOL where paper lost −0.099 on the same 118 signals, because the paper fill read curves that saw trades the capture missed (§6.4). A filter's edge over a random cut of that baseline is the usable figure, and even that leans optimistic.
+- **Why the trade-feed pullback fires so rarely:** it only sees subscribed mints (≥ 3 SOL growth, 10 min watch TTL), and most dumps come after the subscription ends. The curve kind sees every watched mint (35–65 an hour); in the first 1.5 h of the rc.2 capture 10 of 52 polled mints peaked above 32 SOL and 2 fell 30%, so expect a few dozen pullback signals per 24 h.
+- **rc.3 capture:** `configs/capture.json` logs 19 shadow variants (the nine rc.2 ones, three FEAT-60, two FEAT-61, the trade pullback and four curve pullbacks); `configs/pregrad_pilot.json` logs the four curve pullbacks on the pilot's wider set (near-graduation mints included).
+- **Verdict:** none of the three ships as a gate. Judge them on the rc.3 capture with `--shadow-report --split-at mid` (unseen data for all), per position and against a random cut; a pullback lane needs a clearly positive result there before it gets its own entry path and a paper pilot.

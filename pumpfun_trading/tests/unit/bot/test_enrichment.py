@@ -489,6 +489,9 @@ def test_screening_snapshot_records_what_the_screener_saw() -> None:
     assert screening["social_links"] == 1 and screening["twitter"] is True
     assert screening["holders_available"] is True and screening["holder_count"] == 2
     assert screening["top5_pct"] == pytest.approx(0.1)
+    # FEAT-61 bundle proxy: the 10% account (not the creator's 4%), curve left out.
+    assert screening["early_holders"] == 1
+    assert screening["early_holder_pct"] == pytest.approx(0.1)
     assert screening["creator"] == CREATOR
     assert screening["creator_launches_24h"] == 3
     assert screening["latency_ms"] == 812.3
@@ -504,6 +507,7 @@ def test_screening_snapshot_without_enrichment_data_has_nulls() -> None:
     assert screening["holders_available"] is False
     assert screening["holder_count"] == 0
     assert screening["top5_pct"] is None and screening["creator"] is None
+    assert "early_holders" not in screening
 
 
 SYSTEM_PROGRAM = "11111111111111111111111111111111"

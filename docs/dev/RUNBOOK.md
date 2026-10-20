@@ -242,7 +242,12 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
    pumpfun-replay --path capture/replay_capture.jsonl --config configs/capture.json \
      --compare-audit capture/audit_trail.jsonl --mode summary        # parity first
    pumpfun-replay --path capture/replay_capture.jsonl --config configs/capture.json \
-     --shadow-report --split-at mid                                   # FEAT-58 variants
+     --shadow-report --split-at mid                                   # FEAT-58/59 variants
+   pumpfun-replay --path pilot/replay_capture.jsonl --config configs/pregrad_pilot.json \
+     --shadow-report --split-at mid --shadow-baseline pullback_curve # pilot pullbacks
+   pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
+     --keep 'burst_share<=0.5' --keep 'buy_gap_cv>=0.5' \
+     --keep 'early_holder_pct<=0.25'                                  # FEAT-60/61 inputs (rc.3)
    pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by strategy
    pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by hour    # time of day
    pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
