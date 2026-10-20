@@ -16,6 +16,7 @@ from pumpfun_trading.bot.handlers.curve import (
     RAW_TOKEN_UNITS_THRESHOLD,
     curve_market_cap,
 )
+from pumpfun_trading.strategies.filters import bundle_metrics
 from pumpfun_trading.strategies.shadow import ShadowSignal, shadow_fill_record
 from pumpfun_trading.streams.geyser import TradeEventUpdate
 
@@ -509,6 +510,10 @@ async def maybe_buy_confirmed_momentum(
     metrics.update(
         engine.round_trip_flow(mint, exclude_users=exclude, current_time=now)
     )
+    # FEAT-60 buy timing (drizzle / burst) and FEAT-61 bundle proxy, recorded
+    # only until they beat a random cut on an unseen capture.
+    metrics.update(engine.buy_timing(mint, exclude_users=exclude, current_time=now))
+    metrics.update(bundle_metrics(entry.screening_verdict))
     if entry.first_polled_real_sol is not None and entry.start_real_sol is not None:
         # SOL added between the create and the first curve poll (a few
         # seconds): a proxy for sniper volume, since no capture sees the
@@ -557,7 +562,12 @@ def evaluate_shadow_variants(
         return
     entry = bot.order_flow_engine.get_watch(mint)
     if entry is not None and entry.subscribed:
-        book.remember(mint, created_at=entry.created_at, creator=entry.creator)
+        book.remember(
+            mint,
+            created_at=entry.created_at,
+            creator=entry.creator,
+            static_metrics=bundle_metrics(entry.screening_verdict),
+        )
     elif not book.knows(mint):
         return
     own = bot._own_wallet()
@@ -567,6 +577,36 @@ def evaluate_shadow_variants(
         now=now,
         market_cap_sol=market_cap_sol,
         exclude_users=frozenset({own}) if own else frozenset(),
+    ):
+        bot._schedule_shadow_fill(shadow)
+
+
+def evaluate_shadow_curve(
+    bot: TradingBot, mint: str, market_cap_sol: float, real_sol: float, *, now: float
+) -> None:
+    """Evaluate the ``pullback_curve`` shadow variants (FEAT-59) on a watch-poll
+    curve read: they cover every watched mint, not only the subscribed ones."""
+    if bot.replay_recorder is None or bot._entry_mode() != "confirmed":
+        return
+    book = bot._shadow_book()
+    if book is None:
+        return
+    entry = bot.order_flow_engine.get_watch(mint)
+    if entry is not None:
+        book.remember(
+            mint,
+            created_at=entry.created_at,
+            creator=entry.creator,
+            static_metrics=bundle_metrics(entry.screening_verdict),
+        )
+    elif not book.knows(mint):
+        return
+    for shadow in book.evaluate(
+        bot.order_flow_engine,
+        mint,
+        now=now,
+        market_cap_sol=market_cap_sol,
+        real_sol=real_sol,
     ):
         bot._schedule_shadow_fill(shadow)
 

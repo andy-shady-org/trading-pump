@@ -133,6 +133,16 @@ def build_parser(
         ),
     )
     parser.add_argument(
+        "--shadow-scan",
+        action="store_true",
+        help=(
+            "--shadow-report: rebuild the shadow_entry rows from the capture's "
+            "recorded trades with the config's shadow_variants (e.g. the FEAT-59 "
+            "pullback rule on a capture recorded before it existed); fills come "
+            "from recorded data only"
+        ),
+    )
+    parser.add_argument(
         "--shadow-baseline",
         default="baseline",
         help="--shadow-report: variant the random cut is taken from (default: baseline)",
@@ -466,8 +476,13 @@ def _run_shadow_report(target_path: str, config: Any, args: argparse.Namespace) 
             tip_lamports=getattr(args, "tip_lamports", None),
         )
     try:
+        records = PaperTradingEngine.load_history(target_path)
+        if getattr(args, "shadow_scan", False):
+            from pumpfun_trading.engines.shadow_scan import with_scanned_entries
+
+            records = with_scanned_entries(records, config)
         report = build_shadow_report(
-            PaperTradingEngine.load_history(target_path),
+            records,
             config,
             cost_model=cost_model,
             split_at=getattr(args, "split_at", None),

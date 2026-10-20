@@ -249,6 +249,7 @@ pumpfun replay --path <DATASET_PATH> [OPTIONS]
 | `--parity-tolerance-pct` | — | Float | `0.10` | Relative tolerance (fraction of live net PnL) for `--compare-audit`. |
 | `--shadow-report` | — | Flag | off | Shadow-variant read-out of a paper capture (FEAT-58): signals, fill drift, refusals and modelled net PnL per variant against a random cut of the baseline variant. Needs `--config` (the capture's config) or `--preset`. See [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#shadow-variant-read-out---shadow-report-feat-58). |
 | `--split-at` | — | `mid` / Timestamp | `None` | `--shadow-report` / `--sweep` / `--keep`: also report halves A and B, split at the middle of the capture or at this Unix time (`--sweep` defaults to `mid`). |
+| `--shadow-scan` | — | Flag | off | `--shadow-report`: rebuild the `shadow_entry` rows from the capture's recorded trades and watch polls with the config's `shadow_variants` (e.g. a FEAT-59 pullback variant on an older capture); fills come from recorded data only. |
 | `--shadow-baseline` | — | String | `baseline` | `--shadow-report`: the variant the random cut is taken from. |
 | `--json` | — | Flag | off | `--shadow-report` / `--sweep` / `--keep` / `--wallet-scores`: print the report as JSON. |
 | `--sweep` | — | `KEY=V1,V2,...` (repeatable) | — | Replay the config with each value (repeat for a grid) and report net per half against the base config. Needs `--config` or `--preset`. See [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#config-sweep-per-half---sweep). |

@@ -9,6 +9,7 @@ import pytest
 
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.presets import resolve_strategy_config
+from pumpfun_trading.strategies.shadow import parse_shadow_variants
 from pumpfun_trading.tests.support.factories import make_config
 
 
@@ -506,6 +507,10 @@ def test_capture_config_records_curves_near_graduation_and_shadow_variants() -> 
     assert config.near_graduation_max_mints > 0
     names = [variant["name"] for variant in config.shadow_variants]
     assert "baseline" in names and len(names) == len(set(names))
+    # rc.3: pullback rules (FEAT-59) and the FEAT-60/61 filters are logged too.
+    kinds = {variant.kind for variant in parse_shadow_variants(config.shadow_variants)}
+    assert kinds == {"momentum", "pullback", "pullback_curve"}
+    assert {"feat60_burst", "feat61_bundle_pct", "pullback_curve"} <= set(names)
 
 
 def test_pre_graduation_pilot_config_isolates_the_lane() -> None:
@@ -522,6 +527,9 @@ def test_pre_graduation_pilot_config_isolates_the_lane() -> None:
     assert config.pre_graduation_entry_progress_pct < (
         config.pre_graduation_max_entry_progress_pct
     )
+    # Only curve-fed shadow variants: the pilot has no trade subscriptions.
+    variants = parse_shadow_variants(config.shadow_variants)
+    assert variants and {v.kind for v in variants} == {"pullback_curve"}
 
 
 def test_momentum_preset_uses_confirmed_entries_at_canary_size() -> None:

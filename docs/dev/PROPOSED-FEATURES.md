@@ -34,6 +34,9 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | recorded in rc.2 |
 | FEAT-57 | Wash-trade detection as a buy filter | Income | P3 | recorded in rc.2 (no edge yet) |
 | FEAT-58 | Shadow variants of the momentum entry (paper) | Income | P1 | shipped for the rc.2 capture |
+| FEAT-59 | Pullback entry after the first dump | Income | P2 | shadow variants in rc.3 |
+| FEAT-60 | Buy-timing (drizzle / burst) inputs | Income | P3 | recorded in rc.3 (no edge yet) |
+| FEAT-61 | Create-slot bundle proxy | Income | P3 | recorded in rc.3 |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |
@@ -186,6 +189,26 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **How to read it:** a replay with the variant's settings (e.g. `momentum_min_unique_buyers: 8`) fires at the same trade as the live shadow and, because the shadow fill read is recorded as a curve read within 1 s of the fill time, prices its fill from that read. The exits come from the recorded trades and curve polls. The `shadow_entry` rows themselves give fill drift and refusals per variant without any replay.
 * **Limits:** a mint dropped from the watch list (drift refusal, expiry) is unsubscribed, so stricter variants stop seeing its trades; a variant looser than the bot fires earlier than the bot's own entry, a stricter one later (only while the mint is still subscribed). Shadow reads add one RPC call per variant signal.
 * **Dependencies:** FEAT-52, FEAT-56, FEAT-57; the `curve_poll` capture rows. **Impact:** no trading change; it turns one 24 h paper capture into a test of up to nine rules.
+* **rc.3 additions:** variant kinds `pullback` / `pullback_curve` (FEAT-59), FEAT-60 / FEAT-61 filters, and `pumpfun-replay --shadow-report --shadow-scan` (`engines/shadow_scan.py`), which rebuilds the `shadow_entry` rows from a capture's recorded trades and watch polls so a new variant can be read out on an older capture (fills from recorded data only, so nets are optimistic; compare against the scanned baseline).
+
+### FEAT-59: Pullback Entry After The First Dump
+* **Class / Priority:** Income · P2 (logged as shadow variants in rc.3; not a trading lane)
+* **Goal:** Strategy #5 of the "top 10" review: skip the launch candle, let the first wave of snipers sell, and buy the base when buying comes back. It targets our main loss directly (rc.1: 55 stop-loss exits, many filled 8%+ above the signal).
+* **Design** (`strategies/shadow.py`): a shadow variant with `"kind": "pullback"` (trade feed of subscribed mints) or `"kind": "pullback_curve"` (watch-poller curve reads, every watched mint, no billed subscription). Fires once per mint when the market cap peaked at ≥ `pullback_min_peak_market_cap_sol` (40), sits `pullback_min/max_drawdown_pct` (30–70%) below that peak, made no new low for `pullback_min_base_seconds` (10), is `pullback_min_rebound_pct` (3%) off the low, saw ≥ `pullback_min_net_inflow_sol` (0.2) over `pullback_window_seconds` (15; curve kind: real SOL change; trade kind: from ≥ `pullback_min_unique_buyers` other wallets), within `pullback_min/max_token_age_seconds` (30–900). The FEAT-56/57/60/61 filters can be added.
+* **Evidence so far:** trade-feed kind on v0.2.3 / rc.1 (`--shadow-scan`): 10–11 signals a day, below a random cut of the baseline in 3 of 4 halves. The curve kind needs `watch` polls (rc.2 captures on): 1 signal in the first 1.5 h of rc.2. "Community chat stays active" is not checkable.
+* **Next:** read out the four curve variants on the rc.3 capture and pilot; only a clearly positive, better-than-random result earns a real entry path and a 72 h paper pilot.
+
+### FEAT-60: Buy-Timing (Drizzle / Burst) Inputs
+* **Class / Priority:** Income · P3 (recorded in rc.3; offline: **no edge**)
+* **Goal:** Strategy #9: tell volume bots that keep a coin on the front page ("drizzle": small buys every 20–90 s; "burst": packed buys every few seconds) from independent buyers.
+* **Design:** `OrderFlowEngine.buy_timing` over the retained buys (creator and our wallet excluded): `timing_buys`, `buy_gap_median_seconds`, `buy_gap_cv` (needs ≥ 3 buys), `burst_share` (largest share inside 5 s), `buy_size_cv`, `small_buy_share` (< 0.05 SOL). Recorded on momentum buys and shadow signals; shadow filters `min_buy_gap_cv`, `max_burst_share`, `min_buy_size_cv`, `max_small_buy_share` (a missing metric leaves its filter unapplied); `engines/cuts.py` rebuilds them for `--keep`.
+* **Evidence:** on v0.2.3 and rc.1 no filter beat a random cut in both halves (e.g. `max_burst_share` 0.5: +0.007 / −0.009 and +0.007 / −0.037). Re-test on rc.3; do not gate.
+
+### FEAT-61: Create-Slot Bundle Proxy
+* **Class / Priority:** Income · P3 (recorded in rc.3; untested)
+* **Goal:** Strategy #10: skip launches where many wallets took a large share of supply in the create slot (bundled launches).
+* **Design:** `HolderDistribution.early_holder_cluster` on the screening holder snapshot (about 1 s after the create): `early_holders` (non-creator, non-curve accounts with ≥ 1% of supply) and `early_holder_pct`. The creator's token account is matched by its initial-buy balance, since `getTokenLargestAccounts` returns token accounts, not owners. Recorded in every screening capture record and on momentum buys; shadow filters `max_early_holders` / `max_early_holder_pct`.
+* **Limits:** no funding links (the BubbleMaps view needs a funder lookup per wallet, too slow for the entry path); only the top 20 accounts are returned. No capture before rc.3 has the fields.
 
 ---
 

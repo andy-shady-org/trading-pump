@@ -197,6 +197,42 @@ def test_shadow_report_flag_prints_the_read_out(tmp_path, monkeypatch):
     assert not summary.called
 
 
+def test_shadow_scan_rebuilds_the_rows_from_the_config_variants(tmp_path, monkeypatch):
+    output = Console(record=True, width=200, file=io.StringIO())
+    monkeypatch.setattr(cli_replay, "console", output)
+    capture, config = _shadow_capture(tmp_path)
+    config.write_text(
+        json.dumps(
+            {
+                "entry_mode": "confirmed",
+                "buy_amount_sol": 0.02,
+                "shadow_variants": [{"name": "scanned"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = build_replay_parser().parse_args(
+        [
+            "--path",
+            str(capture),
+            "--config",
+            str(config),
+            "--shadow-report",
+            "--shadow-scan",
+            "--no-costs",
+            "--json",
+        ]
+    )
+
+    run_replay_cli(args)
+
+    report = json.loads(output.export_text())
+    # The recorded "baseline" row is replaced; the capture has no trades, so the
+    # scanned variant never fires.
+    assert list(report["variants"]) == ["scanned"]
+    assert report["shadow_entries"] == 0
+
+
 def test_shadow_report_needs_a_config_and_a_valid_split(tmp_path):
     capture, config = _shadow_capture(tmp_path)
     with pytest.raises(SystemExit, match="needs --config"):

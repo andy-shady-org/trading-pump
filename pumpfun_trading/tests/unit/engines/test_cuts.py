@@ -45,7 +45,12 @@ def _records() -> list[dict[str, Any]]:
             "event": "screening",
             "screening": {"creator": "Dev"},
         },
-        {"timestamp": 1.6, "mint": "B", "event": "screening", "screening": {}},
+        {
+            "timestamp": 1.6,
+            "mint": "B",
+            "event": "screening",
+            "screening": {"early_holders": 4, "early_holder_pct": 0.21},
+        },
         {"timestamp": 3.0, "mint": "A", "event": "curve_poll", "price": 3e-8},
         _trade("A", 4.0, "W1", sol=1.0),
         _trade("A", 2.0, "Dev", sol=2.0),  # out of order; creator never counts
@@ -81,6 +86,11 @@ def test_flow_features_score_only_pre_entry_trades_without_the_creator() -> None
         "round_trip_wallets": 1,
         "round_trip_share": pytest.approx(0.75, abs=1e-3),
         "quick_flips": 1,
+        # FEAT-60 timing of the two buys: one 2 s window, sizes 1.0 / 0.5.
+        "timing_buys": 2,
+        "burst_share": 1.0,
+        "buy_size_cv": pytest.approx(0.3333, abs=1e-4),
+        "small_buy_share": 0.0,
     }
     assert flow_features(index, "A", until=1.0) is None
     assert flow_features(index, "missing", until=10.0) is None
@@ -126,5 +136,10 @@ def test_enrich_positions_prefers_recorded_metrics() -> None:
     assert first["creator_prior_loss"] == 0 and "early_sol" in first
     assert enriched[0]["creator"] == "Dev"
     assert "pre_entry_buys" not in enriched[1]["entry_metrics"]
-    assert enriched[2]["entry_metrics"] == {}
+    # FEAT-61 bundle proxy comes from the screening record when recorded.
+    assert enriched[2]["entry_metrics"] == {
+        "early_holders": 4,
+        "early_holder_pct": 0.21,
+    }
+    assert "early_holders" not in first
     assert positions[0]["entry_metrics"] == {"top_buyer_share": 0.1}

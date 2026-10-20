@@ -75,5 +75,12 @@
   "paper_entry_slippage_bps": 100,
   "position_refresh_seconds": 1.0,
   "require_trade_feed": true,
-  "trade_feed_probe_seconds": 300.0
+  "trade_feed_probe_seconds": 300.0,
+
+  "shadow_variants": [
+    {"name": "pullback_curve", "kind": "pullback_curve"},
+    {"name": "pullback_curve_dd20", "kind": "pullback_curve", "pullback_min_drawdown_pct": 0.2},
+    {"name": "pullback_curve_dd40", "kind": "pullback_curve", "pullback_min_drawdown_pct": 0.4},
+    {"name": "pullback_curve_base30", "kind": "pullback_curve", "pullback_min_base_seconds": 30}
+  ]
 }

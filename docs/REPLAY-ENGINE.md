@@ -109,6 +109,10 @@ Reads the `shadow_entry` rows of a paper capture and reports, per variant (in th
 
 Each variant is judged on its own: sizing caps are lifted, so no variant loses a fill to another one's open positions (the live shadow book also evaluates with empty capacity). Every variant is compared with a random cut of the baseline variant of the same size (`baseline × variant positions / baseline positions`); `--split-at mid` (or a timestamp) also reports halves A and B, and a variant only `beats a random cut` when its edge is positive in both. Exits only see what the capture holds for each mint: trades while the mint was subscribed and the watch, position and fill curve reads, so a mint that went quiet exits at its last recorded price. `--no-costs`, `--tip-lamports` and `--priority-fee-lamports` work as for a normal replay.
 
+Variants are momentum rules (the default), `"kind": "pullback"` (FEAT-59, on the trade feed) or `"kind": "pullback_curve"` (FEAT-59, on the watch poller's curve reads), each with optional FEAT-56/57/60/61 filters ([`STRATEGY-PIVOT.md` §6.9](dev/STRATEGY-PIVOT.md#69-pullback-entry-buy-timing-and-the-bundle-proxy-for-rc3-2026-10-20)).
+
+**`--shadow-scan`** rebuilds the `shadow_entry` rows instead of reading the recorded ones: the config's `shadow_variants` run over the capture's recorded trades (and `watch` curve polls, for `pullback_curve`) with the same shadow book the bot uses, and each fill is the first recorded market cap (trade or curve poll) at least `paper_entry_delay_seconds` after the signal, within 5 s (else `no_curve`). Use it to read out a new variant on a capture recorded before it existed. On the rc.2 capture the scan reproduces the recorded rows exactly; on older captures its fills are optimistic (the paper fill reads curves that saw trades the capture missed: the scanned rc.1 baseline models −0.006 SOL where paper lost −0.099), so compare a variant only with the scanned baseline, never with paper.
+
 ### Config sweep per half (`--sweep`)
 
 ```bash

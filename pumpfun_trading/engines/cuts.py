@@ -14,6 +14,11 @@ Features (added to a position's ``entry_metrics`` unless the buy recorded them):
   ``wallet_diversity`` (FEAT-56, ``OrderFlowEngine.buy_flow_concentration``);
 * ``round_trip_wallets``, ``round_trip_share``, ``quick_flips`` (FEAT-57,
   ``OrderFlowEngine.round_trip_flow``);
+* ``timing_buys``, ``buy_gap_median_seconds``, ``buy_gap_cv``,
+  ``burst_share``, ``buy_size_cv``, ``small_buy_share`` (FEAT-60,
+  ``OrderFlowEngine.buy_timing``);
+* ``early_holders`` / ``early_holder_pct`` (FEAT-61) from the screening record
+  when the capture recorded them (rc.3 on);
 * ``early_sol``: real SOL that entered the curve between the create event and
   the first recorded trade (a sniper-volume proxy; the captures never see the
   first seconds), and ``first_trade_gap_seconds``;
@@ -38,7 +43,14 @@ FLOW_FEATURES = (
     "round_trip_wallets",
     "round_trip_share",
     "quick_flips",
+    "timing_buys",
+    "buy_gap_median_seconds",
+    "buy_gap_cv",
+    "burst_share",
+    "buy_size_cv",
+    "small_buy_share",
 )
+SCREENING_FEATURES = ("early_holders", "early_holder_pct")
 
 
 def _float(value: Any) -> float:
@@ -53,6 +65,7 @@ class CaptureIndex:
     """Per-mint creator, create event and market trades of a capture."""
 
     creators: dict[str, str] = field(default_factory=dict)
+    screening: dict[str, dict[str, Any]] = field(default_factory=dict)
     creates: dict[str, dict[str, Any]] = field(default_factory=dict)
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
@@ -65,9 +78,17 @@ class CaptureIndex:
                 continue
             mint = str(mint)
             if record.get("event") == "screening":
-                creator = (record.get("screening") or {}).get("creator")
+                screening = record.get("screening") or {}
+                creator = screening.get("creator")
                 if creator:
                     index.creators[mint] = str(creator)
+                recorded = {
+                    key: screening[key]
+                    for key in SCREENING_FEATURES
+                    if screening.get(key) is not None
+                }
+                if recorded:
+                    index.screening[mint] = recorded
                 continue
             if record.get("event") or "reason" in record:
                 # Curve polls, shadow rows, migrations and the bot's own fills.
@@ -104,7 +125,9 @@ def flow_features(
     exclude = frozenset({creator}) if creator else frozenset()
     concentration = engine.buy_flow_concentration(mint, exclude_users=exclude)
     wash = engine.round_trip_flow(mint, exclude_users=exclude)
+    timing = engine.buy_timing(mint, exclude_users=exclude)
     return {
+        **timing,
         "pre_entry_buys": int(concentration["buys"]),
         "unique_buyers": int(concentration["unique_buyers"]),
         "top_buyer_share": float(concentration["top_buyer_share"]),
@@ -177,6 +200,7 @@ def enrich_positions(
             flow_features(index, mint, _float(position.get("entry_ts"))) or {}
         )
         rebuilt.update(early_inflow(index, mint) or {})
+        rebuilt.update(index.screening.get(mint, {}))
         if creators.get(mint):
             rebuilt["creator_prior_loss"] = flag
         recorded = position.get("entry_metrics")
@@ -190,6 +214,7 @@ def enrich_positions(
 
 __all__ = [
     "FLOW_FEATURES",
+    "SCREENING_FEATURES",
     "CaptureIndex",
     "creator_prior_losses",
     "early_inflow",

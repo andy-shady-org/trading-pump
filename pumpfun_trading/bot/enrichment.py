@@ -16,6 +16,7 @@ from pumpfun_trading.bot.strategy import (
 )
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 from pumpfun_trading.strategies.base import TradingBotConfig
+from pumpfun_trading.strategies.filters import bundle_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,9 @@ def screening_snapshot(
         "top5_pct": _round(holders.compute_top5_non_curve_pct()) if holders else None,
         "gini": _round(holders.compute_gini_coefficient()) if holders else None,
         "creator_pct": _round(holders.creator_initial_pct) if holders else None,
+        # FEAT-61 bundle proxy (recorded only): non-creator accounts already
+        # holding >= 1% of supply at screening, and their combined share.
+        **bundle_metrics(verdict),
         "creator": (dev.creator_address or None) if dev else None,
         "creator_launches_24h": dev.tokens_launched_24h if dev else None,
         "creator_total_launches": dev.total_tokens_launched if dev else None,

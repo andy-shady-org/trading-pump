@@ -13,6 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from pumpfun_trading.bot.handlers.trade import evaluate_shadow_curve
 from pumpfun_trading.ops.events import EventCategory, EventSeverity
 from pumpfun_trading.strategies.graduation import (
     GRADUATION_REAL_SOL,
@@ -174,6 +175,8 @@ async def poll_watch_list(bot: TradingBot) -> None:
             engine.update_watch_curve(
                 mint, real_sol=real_sol, market_cap_sol=market_cap, now=now
             )
+            # FEAT-59 pullback_curve shadow variants (logged only, never trade).
+            evaluate_shadow_curve(bot, mint, market_cap, real_sol, now=now)
             if bot.config.enable_pre_graduation_harvesting:
                 # Pre-graduation lane on polled curves (FEAT-53): needs a
                 # few readings before acceleration means anything.

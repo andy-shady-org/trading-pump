@@ -554,3 +554,62 @@ def test_min_holder_count_rejects_tokens_below_the_threshold(
     rejected = any(r.startswith("Too few holders") for r in verdict.reasons)
     assert rejected is (min_holder_count > 0 and not passes)
     assert bool(verdict.flags.get("too_few_holders")) is rejected
+
+
+def test_early_holder_cluster_leaves_out_the_curve_and_the_creator() -> None:
+    supply = 1_000_000_000_000_000
+    holders = HolderDistribution(
+        total_supply=supply,
+        creator_initial_balance=50_000_000_000_000,  # 5%
+        bonding_curve_address="Curve",
+        top_holders=[
+            ("Curve", 800_000_000_000_000),
+            ("CreatorAta", 50_100_000_000_000),  # within 1% of the initial buy
+            ("Sniper1", 30_000_000_000_000),
+            ("Sniper2", 20_000_000_000_000),
+            ("Dust", 5_000_000_000_000),  # 0.5%: below the 1% line
+        ],
+    )
+
+    assert holders.early_holder_cluster() == {
+        "early_holders": 2,
+        "early_holder_pct": 0.05,
+    }
+    assert holders.early_holder_cluster(min_share=0.001)["early_holders"] == 3
+
+
+def test_early_holder_cluster_falls_back_to_the_creator_share() -> None:
+    supply = 1_000_000
+    by_pct = HolderDistribution(
+        total_supply=supply,
+        creator_initial_pct=0.1,
+        top_holders=[("A", 100_000), ("B", 200_000)],
+    )
+    assert by_pct.early_holder_cluster() == {
+        "early_holders": 1,
+        "early_holder_pct": 0.2,
+    }
+    # No account near the creator's balance: nothing is left out.
+    unmatched = HolderDistribution(
+        total_supply=supply,
+        creator_initial_balance=500_000,
+        top_holders=[("A", 100_000)],
+    )
+    assert unmatched.early_holder_cluster()["early_holders"] == 1
+    empty_supply = HolderDistribution(total_supply=0, top_holders=[("A", 1)])
+    assert empty_supply.early_holder_cluster() == {
+        "early_holders": 0,
+        "early_holder_pct": 0.0,
+    }
+
+
+def test_bundle_metrics_needs_holder_data() -> None:
+    from pumpfun_trading.strategies.filters import bundle_metrics
+
+    verdict = TokenScreeningVerdict(mint="m", passed=True, risk_score=0.0)
+    assert bundle_metrics(verdict) == {}
+    assert bundle_metrics(None) == {}
+    verdict.holder_distribution = HolderDistribution(
+        total_supply=100, top_holders=[("A", 10)]
+    )
+    assert bundle_metrics(verdict) == {"early_holders": 1, "early_holder_pct": 0.1}
