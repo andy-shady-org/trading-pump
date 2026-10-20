@@ -1,6 +1,6 @@
 # Test Architecture & Migration Plan
 
-This document defines how the `pumpfun_trading` test suite is organised, the conventions every new test must follow, and the file-by-file plan for moving the current flat suite into that structure. The migration is scheduled in [`TODO.md`](TODO.md) as **Sprint 26 (Test Foundation)** and **Sprint 27 (Test Consolidation)**, both before the **Sprint 28** `bot/run.py` decomposition, so the restructured suite can act as its safety net. The decision is recorded as ADR-008 in [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md).
+This document defines how the `pumpfun_trading` test suite is organised, the conventions every new test must follow, and the file-by-file plan for moving the current flat suite into that structure. The migration was scheduled as **Sprint 26 (Test Foundation)** and **Sprint 27 (Test Consolidation)**, both before the **Sprint 28** `bot/run.py` decomposition, so the restructured suite can act as its safety net. Both sprints are done and archived in [`DONE.md`](DONE.md#phase-5-platform-refactor-required-before-the-web-ui). The decision is recorded as ADR-008 in [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md).
 
 ---
 

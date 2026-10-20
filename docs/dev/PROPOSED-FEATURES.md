@@ -24,19 +24,15 @@ This document lists candidate features and architectural enhancements for `pumpf
 
 | ID | Feature | Class | Priority | Sprint |
 |---|---|---|---|---|
-| FEAT-49 | Net PnL accounting & wallet reconciliation | Income | P1 | 24B |
-| FEAT-50 | Terminal operator pause & daily PnL digest | Income | P1 | 24D (implemented) |
-| FEAT-51 | Watch list & batch curve poller (confirmed entries) | Income | P1 | 24F |
-| FEAT-52 | Confirmed momentum entry & momentum exits | Income | P1 | 24G |
-| FEAT-53 | Pre-graduation lane via the RPC poller | Income | P2 | 24H |
-| FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I |
+| FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) |
 | FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
-| FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | recorded in rc.2 |
-| FEAT-57 | Wash-trade detection as a buy filter | Income | P3 | recorded in rc.2 (no edge yet) |
-| FEAT-58 | Shadow variants of the momentum entry (paper) | Income | P1 | shipped for the rc.2 capture |
-| FEAT-59 | Pullback entry after the first dump | Income | P2 | shadow variants in rc.3 |
-| FEAT-60 | Buy-timing (drizzle / burst) inputs | Income | P3 | recorded in rc.3 (no edge yet) |
-| FEAT-61 | Create-slot bundle proxy | Income | P3 | recorded in rc.3 |
+| FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built |
+| FEAT-57 | Wash-trade detection as a buy filter | Income | P3 | inputs recorded in rc.2 (no edge yet); gate not built |
+| FEAT-59 | Pullback entry after the first dump | Income | P2 | shadow variants in rc.3; entry path not built |
+| FEAT-60 | Buy-timing (drizzle / burst) inputs | Income | P3 | inputs recorded in rc.3 (no edge yet); gate not built |
+| FEAT-61 | Create-slot bundle proxy | Income | P3 | inputs recorded in rc.3; gate not built |
+| FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled |
+| FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P3 | not scheduled |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |
@@ -49,7 +45,6 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-41 | Prometheus / OpenTelemetry exporter + Grafana | Suggested | P2 | after 29 |
-| FEAT-42 | Automated treasury profit sweep to a cold wallet | Income | P2 | 24D (implemented, off by default) |
 | FEAT-43 | PnL / tax CSV export and performance reports | Suggested | P2 | after 30 |
 | FEAT-44 | Shadow paper-trading (A/B strategies alongside live) | Suggested | P3 | backlog |
 | FEAT-45 | Interactive Telegram bot (deferred from FEAT-10) | Suggested | P3 | backlog |
@@ -57,52 +52,16 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-47 | Replay analytics on Parquet + DuckDB | Suggested | P3 | backlog |
 | FEAT-48 | Strategy plugin registry via entry points | Suggested | P3 | backlog |
 
+**Implemented and moved to [`FEATURES.md`](../FEATURES.md)** (2026-10-20): FEAT-49 net PnL and reconciliation (§30), FEAT-50 operator pause and unattended alerts (§31), FEAT-42 profit sweep (§32), FEAT-51 watch list and curve poller (§33), FEAT-52 confirmed momentum entry and exits (§34), FEAT-53 pre-graduation lane via the poller (§35), FEAT-58 shadow variants and read-out tooling (§36). The recorded inputs already shipped for FEAT-54 (phase 1), FEAT-56, FEAT-57, FEAT-60 and FEAT-61 are listed in `FEATURES.md` §37; their gating rules and later phases stay below. "Implemented" means the code ships, not that the lane is profitable: see [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md).
+
+**Moved back from [`FEATURES.md`](../FEATURES.md)** (2026-10-20): FEAT-10 (`FEATURES.md` §13 listed the web dashboard, FastAPI portal, in-app docs and Telegram command bot as implemented; none of it is built, see FEAT-10 / FEAT-31…37 / FEAT-45 below). The unbuilt parts of shipped features are now marked **Not built** in `FEATURES.md` and point here: §1 Geyser transport (FEAT-39), §16 Raydium sniping after the move to PumpSwap, §19 the `bot/run.py` facade (Sprint 28c), §27 funding links for the cluster analyser (FEAT-63), §29 live arbitrage reserves (FEAT-40).
+
 ---
 
 ## 2. Terminal Income Track (Income)
 
-### FEAT-49: Net PnL Accounting & Wallet Reconciliation
-* **Class / Priority:** Income · P1 (Sprint 24B) — **implemented** on branch `sprint-24b-net-pnl` together with BUG-96 (token-account rent recovery); see `docs/dev/TODO.md` Sprint 24B for what remains
-* **Goal:** Know, every day, whether the bot made money after every cost, and prove it against the wallet.
-* **Evidence:** `TradingBot._record_trade` (`bot/run.py`) stores `cost_sol` / `proceeds_sol` only; realized PnL sent to `DailyEquityTracker` (`bot/risk.py`) is `sell_p - entry`, so the daily circuit breaker and the dashboard see **gross** PnL. Network fees, priority fees, Jito tips and ATA rent are not recorded, and there is no transaction signature on the trade record. The snapshot ledger keeps only the last 50 trades. `pumpfun-audit` can filter and summarise records but has no PnL or reconciliation command.
-* **Design:**
-  - Capture signature, fee, priority fee, tip, rent and the actual SOL delta (`getTransaction` pre/post balances) at confirmation in `sdk/execution.py` / `execution/executor.py`.
-  - Add `signature`, `fee_sol`, `tip_sol`, `rent_sol`, `gross_pnl_sol`, `net_pnl_sol` to trade and audit records; the breaker uses net PnL.
-  - `pumpfun-audit pnl` (daily, per strategy, per exit reason, cost share) and `pumpfun-audit reconcile --wallet` (exit code ≠ 0 on a gap above the `RELEASE-GATE.md` §3.4 tolerance).
-  - Terminal dashboard Risk panel: net vs. gross PnL, fees + tips today, last reconciliation result.
-* **Dependencies:** none; lands before live canary trading.
-* **Impact:** Makes the live capital gate measurable, stops the breaker under-counting losses, and gives the numbers needed to decide when the Web UI can be funded. Feeds FEAT-43 later.
-
-### FEAT-50: Terminal Operator Pause & Daily PnL Digest
-* **Class / Priority:** Income · P1 (Sprint 24D)
-* **Goal:** Run the terminal bot unattended for days, intervene without losing open positions, and see the day's result without logging in.
-* **Evidence:** the only operator controls today are `SIGINT` / `SIGTERM` (full stop); `bot/lifecycle.py` has no pause state; `bot/alerts.py` pushes per-trade alerts but no daily summary.
-* **Design:** `SIGUSR1` toggles "no new buys, keep managing exits", shown on the dashboard and audited. It is an early slice of the Sprint 29 `PAUSED` state and later becomes a trigger for `BotController.pause()`. A daily digest alert (net PnL, trades, fees + tips, breaker state, reconciliation result) and alerts on prolonged stream/RPC degradation. Documented systemd / launchd unit with restart limits.
-* **Dependencies:** FEAT-49 for the digest numbers.
-* **Impact:** Fewer missed sessions and fewer forced liquidations from full stops; the operator can pause through volatile periods.
-* **Status:** implemented in Sprint 24D (`bot/operator.py`, `bot/supervision.py`, `deploy/`; [`RUNBOOK.md` §5.5, §8](RUNBOOK.md#55-operator-pause-and-unattended-alerts-sprint-24d-feat-50)). The pause persists across restarts; the digest is the difference of the persisted session totals since the previous one. Drills and a 7-day unattended run are still to do.
-
-### FEAT-51: Watch List & Batch Curve Poller
-* **Class / Priority:** Income · P1 (Sprint 24F, [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md))
-* **Goal:** Observe screened launches cheaply instead of buying them at the create event.
-* **Evidence:** the v0.2.3 24 h capture lost −0.579 SOL over 1,675 launch-time positions (10.3% profitable); PumpPortal bills every trade message (BUG-112/120), so subscribing to every candidate is too expensive.
-* **Design:** `entry_mode: "confirmed"` puts passed tokens on a bounded, TTL watch list in `OrderFlowEngine` (`WatchEntry`); `_watch_poll_loop` batch-reads curves with `PumpFunExecutionClient.get_bonding_curve_states` (`getMultipleAccounts`, 100 per call, BUG-104/108 checks) and feeds the watch list and `GraduationEngine`; mints whose real SOL grew by `watch_promote_min_sol_growth` get a trade subscription, at most `watch_max_trade_subscriptions`; expired mints are unsubscribed.
-* **Dependencies:** none. **Impact:** confirmation data at near-zero message cost.
-
-### FEAT-52: Confirmed Momentum Entry & Momentum Exits
-* **Class / Priority:** Income · P1 (Sprint 24G)
-* **Goal:** Buy only watched tokens with real follow-on demand.
-* **Design:** `_handle_trade_update` runs `evaluate_momentum` / `should_buy_momentum` for subscribed watched mints, with a token-age window and a market-cap band, then `_should_buy` and the cost guard (`max_entry_cost_share_pct`); buys are tagged `strategy=momentum` with `entry_metrics`. Exits gain a buy-flow stagnation exit (`stagnant_min_buy_sol`) and a break-even ratchet. Replay models the watch → confirm path; a `momentum` preset ships the starting thresholds.
-* **Dependencies:** FEAT-51. **Impact:** targets the main cause of the losses (no follow-on buyers); judged per lane with `pumpfun-audit pnl --group-by strategy`.
-
-### FEAT-53: Pre-Graduation Lane via the RPC Poller
-* **Class / Priority:** Income · P2 (Sprint 24H)
-* **Goal:** Run the existing pre-graduation harvester on the WebSocket deployment.
-* **Design:** the poller feeds `GraduationEngine`; the pre-graduation entry block becomes a helper called from both the Geyser handler and the poller; buys are tagged `strategy=pre_graduation`; tranche exits sell before `complete`.
-* **Dependencies:** FEAT-51. Stays off in the canary until a ≥ 72 h paper pilot ([`RELEASE-GATE.md` §3.5](RELEASE-GATE.md#35-features-that-must-stay-off-until-proven)).
-
 ### FEAT-54: Smart-Wallet Discovery, Copy Simulation & Reviewed Watch List
-* **Class / Priority:** Income · P2 (Sprint 24I, after 24H; [`STRATEGY-PIVOT.md` §2.4](STRATEGY-PIVOT.md#24-lane-3--reviewed-smart-wallets-feat-54-p2))
+* **Class / Priority:** Income · P2 (Sprint 24I, after 24H; [`STRATEGY-PIVOT.md` §2.4](STRATEGY-PIVOT.md#24-lane-3--reviewed-smart-wallets-feat-54-p2)). Phase 1 scorer shipped ([`FEATURES.md` §37](../FEATURES.md)); steps 3–6 below are not built
 * **Goal:** Use wallets with a strong record as evidence for entries, without adding them to live copy trading automatically.
 * **Evidence:** a wallet with "100+ buys at 75% wins" is not proof of a copyable edge:
   - win rate is not net profit (the confirmed lane was net positive at a 41–55% win rate in replay; a wallet can win 75% and still lose on a few large losses);
@@ -178,19 +137,6 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Decision:** keep recording the three inputs in every momentum buy's `entry_metrics`; gate nothing. Re-test on the rc.2 capture; add `momentum_max_round_trip_share` (0 = off) only if it beats a random cut there and on rc.1.
 * **Dependencies:** FEAT-52, FEAT-56 (same recorded-inputs pattern). **Impact:** at most a small trim; no evidence yet that it changes the lane's result.
 
-### FEAT-58: Shadow Variants Of The Momentum Entry
-* **Class / Priority:** Income · P1 (shipped for the rc.2 capture; records only, never trades)
-* **Goal:** Test several momentum rules on **real paper fill prices** from one capture. Replay cannot judge a rule that acts on the fill price: the paper fill reads the curve, and a capture only holds the trades the bot subscribed to (AGENTS learning "Replay can't see what it didn't record").
-* **Design** (`strategies/shadow.py`, `bot/run.py::_evaluate_shadow_variants`):
-  - `shadow_variants` in the config: each entry has a `name`, any `momentum_*` threshold or `min_market_cap_sol` override, an optional `max_entry_drift_pct` (the variant's own drift guard) and optional FEAT-56/57 flow filters (`max_top_buyer_share`, `min_wallet_diversity`, `max_round_trip_share`, `max_quick_flips`). Unknown keys fail at load.
-  - On every trade of a promoted watched mint (and of a mint seen that way before, e.g. after the bot bought it), each variant is evaluated with its own thresholds against an empty book (no open positions, no attempts), so it measures the rule and not the bot's limits. It fires at most once per mint.
-  - When it fires, the bot waits `paper_entry_delay_seconds`, reads the curve (5 s timeout) and writes an `event: "shadow_entry"` row (`variant`, signal and fill market cap, `fill_drift_pct`, `refused`: `entry_drift` / `no_curve` / `curve_error: …`, entry metrics) and a `curve_poll` row with `source: "shadow_fill"`. At most 50 reads wait at once (`shadow_skipped` counts the rest); pending reads are cancelled at shutdown.
-  - Only in confirmed mode with `--record-replay`; the result exists only in the capture.
-* **How to read it:** a replay with the variant's settings (e.g. `momentum_min_unique_buyers: 8`) fires at the same trade as the live shadow and, because the shadow fill read is recorded as a curve read within 1 s of the fill time, prices its fill from that read. The exits come from the recorded trades and curve polls. The `shadow_entry` rows themselves give fill drift and refusals per variant without any replay.
-* **Limits:** a mint dropped from the watch list (drift refusal, expiry) is unsubscribed, so stricter variants stop seeing its trades; a variant looser than the bot fires earlier than the bot's own entry, a stricter one later (only while the mint is still subscribed). Shadow reads add one RPC call per variant signal.
-* **Dependencies:** FEAT-52, FEAT-56, FEAT-57; the `curve_poll` capture rows. **Impact:** no trading change; it turns one 24 h paper capture into a test of up to nine rules.
-* **rc.3 additions:** variant kinds `pullback` / `pullback_curve` (FEAT-59), FEAT-60 / FEAT-61 filters, and `pumpfun-replay --shadow-report --shadow-scan` (`engines/shadow_scan.py`), which rebuilds the `shadow_entry` rows from a capture's recorded trades and watch polls so a new variant can be read out on an older capture (fills from recorded data only, so nets are optimistic; compare against the scanned baseline).
-
 ### FEAT-59: Pullback Entry After The First Dump
 * **Class / Priority:** Income · P2 (logged as shadow variants in rc.3; not a trading lane)
 * **Goal:** Strategy #5 of the "top 10" review: skip the launch candle, let the first wave of snipers sell, and buy the base when buying comes back. It targets our main loss directly (rc.1: 55 stop-loss exits, many filled 8%+ above the signal).
@@ -210,6 +156,28 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Design:** `HolderDistribution.early_holder_cluster` on the screening holder snapshot (about 1 s after the create): `early_holders` (non-creator, non-curve accounts with ≥ 1% of supply) and `early_holder_pct`. The creator's token account is matched by its initial-buy balance, since `getTokenLargestAccounts` returns token accounts, not owners. Recorded in every screening capture record and on momentum buys; shadow filters `max_early_holders` / `max_early_holder_pct`.
 * **Limits:** no funding links (the BubbleMaps view needs a funder lookup per wallet, too slow for the entry path); only the top 20 accounts are returned. No capture before rc.3 has the fields.
 
+### FEAT-62: Moonshot (Solana) As A Second Venue, Capture First
+* **Class / Priority:** Income · P3 (proposed 2026-10-20; not scheduled; no code)
+* **Goal:** Find out whether the claim that Moonshot's curated, lower-volume launches give "cleaner" momentum signals than Pump.fun is true for us, after our 1.5 s delay and our costs, before writing any execution code.
+* **Why this venue and not the others reviewed:** Moonshot is on Solana, so the wallet, RPC pool, Jito path, cost model, audit trail, replay engine, watch → poll → confirm pipeline, exits and shadow variants all carry over (roughly 80% of the bot). The alternatives were rejected on effort or fit:
+  - Axiom / Fomo: trading front-ends with no public API for leaderboards or wallet data. Their "smart money" ranking is what `pumpfun-replay --wallet-scores` (FEAT-54) already computes from our captures, and copying captured wallets lost −4.67 SOL (v0.2.3) and −2.01 SOL (rc.1). Use them by hand only, to find candidate wallets for FEAT-54 scoring.
+  - Four.meme (BNB) / SunPump (Tron): everything below `strategies/` is Solana-specific (`sdk/`, `infra/rpc_pool`, `streams/`, costs, rent, reconciliation, keys), so this is a second bot behind a chain-abstraction layer (Phase 5-sized), with an unproven "smaller bot cartels" edge.
+  - Exchange IDOs (Polkastarter, Binance Launchpad): manual KYC and allocations, days-long holds, no bot API; none of the curve or order-flow logic applies.
+  - Moonshot on Base is EVM and falls under the Four.meme verdict.
+* **Design, in three gated phases** (each phase starts only if the previous one passes):
+  1. **Read-only recorder (no capital, no execution code).** A Moonshot program / curve-account decoder in `sdk/` pinned to real mainnet account bytes in tests (as for PumpSwap, BUG-123), with the same sanity checks as BUG-104/108/124 (owner, reserves, quote mint). A create and curve source written to the existing capture format (`event: "create"`, `curve_poll`, trades), tagged `venue: "moonshot"`. PumpPortal does not carry Moonshot, so the source is either polling the program's accounts over `rpc_pool` (as the watch poller does) or, later, a Geyser feed (FEAT-39). The program ID, account layout, fee schedule and migration target must be read from mainnet and the official IDL, not assumed.
+  2. **Offline evaluation.** A 24–48 h capture, then `pumpfun-replay` with the confirmed-momentum config and `--shadow-report --shadow-scan` with the momentum and `pullback_curve` variants, and `--keep` rules. Pass: a rule beats a random cut of the baseline in both halves (`--split-at mid`), net of modelled costs, and it trades often enough to matter (launch volume is much lower than on Pump.fun, so report trades per day next to net).
+  3. **Execution (only after phase 2 passes).** Buy and sell builders checked against real mainnet transactions, a `venue` field on positions, trade records and `pumpfun-audit pnl --group-by`, the venue's migration exit, then a 72 h paper pilot and the normal Stage 0 gate (`RELEASE-GATE.md` §3.1) before any capital.
+* **Risks:** fewer launches means fewer trades, so a small edge may not cover fixed costs; the "cleaner signal" may just be fewer data points; a second venue doubles the data and cost surface the operator has to watch. The decision rules are the same as on Pump.fun (AGENTS learnings "Beat a random cut", "Model the latency you pay").
+* **Dependencies:** none for phase 1; FEAT-58 / FEAT-59 shadow tooling for phase 2. Do not start it while the rc.2 / rc.3 Pump.fun captures and the pre-graduation pilot are still unread. **Impact:** an evidence-based answer on a second Solana venue at the cost of a recorder and one capture; no trading change until phase 3.
+
+### FEAT-63: Funding-Source Lookup For The Cluster Analyser
+* **Class / Priority:** Income · P3 (proposed 2026-10-20, split out of `FEATURES.md` §27; not scheduled)
+* **Goal:** Make the FEAT-26 funding-cluster and sybil analyser (`strategies/cluster.py`) run on live tokens.
+* **Evidence:** `bot/enrichment.py` only builds the funding graph when the Pump.fun API record carries `funding_links` (or a ready `cluster_analysis`); the API never sends either, so the analyser has never run outside tests.
+* **Design:** find each top holder's first funder (`getSignaturesForAddress` + `getTransaction`, bounded, through `rpc_pool`) and pass the edges as `funding_links`. Too slow for the 1.5 s momentum entry path, so run it on the slower lanes (pre-graduation, or momentum after promotion) or offline on captures first; record the result and gate only if it beats a random cut on two captures.
+* **Dependencies:** FEAT-61 (holder snapshot); FEAT-39 would make it cheaper. **Impact:** the BubbleMaps-style bundle check that FEAT-57 and FEAT-61 cannot do.
+
 ---
 
 ## 3. Web UI Platform (Required)
@@ -217,6 +185,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 ### FEAT-10: Web Control Dashboard (umbrella)
 * **Class / Priority:** Required · P1
 * **Goal:** A hosted, multi-tenant, Material Design 3 web dashboard that replaces the terminal UI for day-to-day operation on desktop and mobile.
+* **Status:** not built. Until 2026-10-20 `FEATURES.md` §13 listed it as implemented; that entry was moved back here.
 * **Re-scope:** FEAT-10 is now an umbrella. Its delivery is split into FEAT-31 (Agent API), FEAT-32 (control plane), FEAT-33 (PWA), FEAT-34 (orchestrator), FEAT-35 (persistence), FEAT-36 (key ingestion), and FEAT-37 (docs portal). The Telegram remote-control bot was moved out into **FEAT-45**. The earlier "in-app Markdown renderer" idea is replaced by the static docs site in FEAT-37.
 * **Capabilities kept from the original proposal:** start / pause / resume / stop / `sell_all`; hot strategy and risk changes without restarts; equity curve, PnL, positions, latency telemetry; audit search.
 * **Prerequisites:** the funding gate ([`RELEASE-GATE.md` §3.7](RELEASE-GATE.md#37-funding-gate-for-the-web-ui)) and the Phase 5 refactor (Sprints 25–31), especially the typed read-model, `PAUSED`/`HALTED` lifecycle states and `BotController` (Sprint 29).
@@ -321,12 +290,6 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Goal:** Standard observability for operators and the hosted SRE.
 * **Design:** `ops/metrics.py` (extracted in Sprint 28) exposes Prometheus metrics (slot latency, bundle landing rate, fill slippage, open exposure, circuit-breaker state) and optional OpenTelemetry traces; shipped Grafana dashboard JSON.
 
-### FEAT-42: Automated Treasury Profit Sweep
-* **Class / Priority:** Income · P2 (Sprint 24D) — banks the income that funds the Web UI and keeps the hot wallet at its stage limit
-* **Goal:** Reduce hot-wallet exposure by sweeping realised profit above a floor to a cold wallet.
-* **Design:** Policy in `bot/sweep.py` (floor, minimum, cadence; the floor never drops below `reserve_balance_sol + max_total_exposure_sol + 0.01`); transfer built in `sdk/execution.py` (`transfer_sol`) with compute-budget instructions and no Jito tip; a `sweep` audit record for every sweep; disabled by default.
-* **Status:** implemented in Sprint 24D ([`RUNBOOK.md` §5.6](RUNBOOK.md#56-profit-sweep-to-a-cold-wallet-feat-42-off-by-default)). The breaker treats a sweep as a withdrawal, not a drawdown, and `pumpfun-audit reconcile` counts it. Sweeps all SOL above the floor, not only realised profit: deposits above the floor are swept too. Needs its paper drill before use on a funded wallet.
-
 ### FEAT-43: PnL / Tax Export & Performance Reports
 * **Class / Priority:** Suggested · P2
 * **Goal:** Give operators and users downloadable trade history and periodic performance summaries.
@@ -337,6 +300,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Class / Priority:** Suggested · P3
 * **Goal:** Evaluate a candidate strategy on the live stream without risking capital.
 * **Design:** Run a second `strategies/` decision pipeline against the same events, with fills simulated by `engines/replay.py` logic; compare against live in the analytics view.
+* **Status:** FEAT-58 shadow variants (`FEATURES.md` §36) cover momentum-rule variants on paper; a full second pipeline compared against live is not built.
 
 ### FEAT-45: Interactive Telegram Bot
 * **Class / Priority:** Suggested · P3 (deferred from FEAT-10)
@@ -348,6 +312,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Class / Priority:** Suggested · P2
 * **Goal:** Reproducible deployment for the operator today and the base image for FEAT-34.
 * **Design:** Multi-stage slim image, non-root user, healthcheck on the Agent API; `compose.yaml` with optional Postgres; documented in the deployment guide.
+* **Status:** the systemd / launchd slice shipped in Sprint 24D (`deploy/`, `FEATURES.md` §31); no image or compose file yet.
 
 ### FEAT-47: Replay Analytics on Parquet + DuckDB
 * **Class / Priority:** Suggested · P3
@@ -365,7 +330,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 
 The order follows funding first, then dependencies; it matches the sprints in [`TODO.md`](TODO.md).
 
-1. **Phase 4b — Terminal Income Track (Sprints 24A–24D, Income).** Paper pilot and canary; **FEAT-49** net PnL and reconciliation; BUG-61 backtest fidelity and tuning on live captures; **FEAT-50** pause and daily digest; **FEAT-42** profit sweep; **FEAT-39** if latency costs entries.
+1. **Phase 4b — Terminal Income Track (Sprints 24A–24D, Income).** Paper pilot and canary; **FEAT-49** net PnL and reconciliation; BUG-61 backtest fidelity and tuning on live captures; **FEAT-50** pause and daily digest; **FEAT-42** profit sweep (all three done, now in `FEATURES.md`); **FEAT-39** if latency costs entries. Phase 4c (Sprints 24E–24I): FEAT-51/52/53/58 done; FEAT-54 and the FEAT-56/57/59/60/61 gates wait for capture evidence.
 2. **Phase 5 — Platform Refactor (Sprints 25–31, Required).** Sprints 25–27 (packaging, tests) run alongside Phase 4b; Sprints 28–30 (`bot/run.py` decomposition, typed state + `BotController` + event bus, persistence **FEAT-35**) start after canary Stage 1 passes; Sprint 31 docs site (**FEAT-37** build).
 3. **Funding gate** ([`RELEASE-GATE.md` §3.7](RELEASE-GATE.md#37-funding-gate-for-the-web-ui)). Phase 6 does not start before it passes.
 4. **Sprint 32 — FEAT-31 + FEAT-32.** Agent API and single-tenant control plane.

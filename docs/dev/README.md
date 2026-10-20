@@ -10,7 +10,8 @@ For user-facing manuals, trading strategy mathematics, and hosted web instance g
 
 | Document | Primary Audience | Description |
 | :--- | :--- | :--- |
-| [**Sprint Backlog & Roadmap (`TODO.md`)**](TODO.md) | Developers / Leads | Active engineering backlog, phased milestones (Phases 0–6, including the Phase 5 Platform Refactor and Phase 6 Hosted Web UI), completed deliverables, and sprint task breakdowns. |
+| [**Sprint Backlog & Roadmap (`TODO.md`)**](TODO.md) | Developers / Leads | Open work only: Now / Next / Later, the open sprints of Phases 4b–6 (income track, strategy pivot, Platform Refactor, Hosted Web UI) and the Web UI funding gate. |
+| [**Completed Work (`DONE.md`)**](DONE.md) | Developers / Leads | Archive of finished phases, sprints and items moved out of `TODO.md`, under their original headings. |
 | [**Architecture Decision Records (`ARCHITECTURE-DECISIONS.md`)**](ARCHITECTURE-DECISIONS.md) | Architects / Developers | Accepted decisions for the Web UI stack (FastAPI, Vue 3 + Vuetify MD3), control plane, container-per-tenant isolation, key handling, database, docs tooling, and test layout. |
 | [**Test Architecture & Migration Plan (`TESTING.md`)**](TESTING.md) | Developers / QA | Test-suite layout (mirrored `unit/`, `integration/`, `property/`, `support/`), markers, conventions, and the file-by-file migration map. |
 | [**Documentation Plan (`DOCUMENTATION-PLAN.md`)**](DOCUMENTATION-PLAN.md) | Writers / Developers | Documentation gap analysis, Zensical / Material docs-site navigation, `mkdocs.yml` outline, and styling conventions. |

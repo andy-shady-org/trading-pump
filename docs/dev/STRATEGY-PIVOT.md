@@ -1,6 +1,6 @@
 # Strategy Pivot: Confirmed Momentum & Pre-Graduation (v0.3.0)
 
-Branch: `strategy-pivot-momentum`. Sprints: **Phase 4c, 24E–24I** in [`TODO.md`](TODO.md#phase-4c-strategy-pivot-income-track-ahead-of-phase-5). Features: FEAT-51, FEAT-52, FEAT-53, FEAT-54 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md#2-terminal-income-track-income).
+Branch: `strategy-pivot-momentum`. Sprints: **Phase 4c, 24E–24I** in [`TODO.md`](TODO.md#phase-4c-strategy-pivot-income-track-ahead-of-phase-5). Features: FEAT-51, FEAT-52, FEAT-53 (implemented, [`FEATURES.md` §33–35](../FEATURES.md)) and FEAT-54 ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md#2-terminal-income-track-income)).
 
 This document records why the bot stops buying at the create event, what it does instead, what that costs, and the numbers each sprint must hit before live capital is risked. It is not a promise of profit: the strategy is a bet that is tested cheaply first (replay, then paper), and the go/no-go rules below decide whether it ships.
 
@@ -11,7 +11,7 @@ This document records why the bot stops buying at the create event, what it does
 | Run | Build | Result | Source |
 |---|---|---|---|
 | Stage 0 paper pilot | v0.2.1 | **FAIL** at T + 1 h 33 min: daily breaker locked buying after 34 positions, net −0.022975 SOL, 2 of 34 profitable | [`releases/v0.2.1-stage0.md`](releases/v0.2.1-stage0.md) |
-| 24 h capture run (paper) | v0.2.3 | **−0.579 SOL net over 1,675 positions, 10.3% profitable** | [`TODO.md` Sprint 24A](TODO.md#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
+| 24 h capture run (paper) | v0.2.3 | **−0.579 SOL net over 1,675 positions, 10.3% profitable** | [`DONE.md` Sprint 24A](DONE.md#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
 | Replay of that capture | v0.2.3+ | Exit timing barely changes the result; `min_holder_count: 6` was the only filter net positive in both halves of the day (+0.026 SOL over ~229 positions) | same |
 | Cost split at 0.01 SOL | v0.2.3 | Jito tips are **83%** of the separately listed costs (fee, priority fee, tip, rent) | same |
 

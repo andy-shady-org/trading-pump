@@ -175,7 +175,7 @@ Stop the bot, drop back one stage and open a `BUGS.md` entry if any of these hap
 - any key material appears in a log, snapshot or event file
 
 ### 3.7 Funding gate for the Web UI
-The terminal UI funds the Web UI. Phase 6 in [`TODO.md`](TODO.md#phase-4b-terminal-income-track-highest-priority) starts only when **all** of these are true and recorded in a release record:
+The terminal UI funds the Web UI. Phase 6 in [`TODO.md`](TODO.md#phase-6-hosted-web-ui-replaces-sprint-16) starts only when **all** of these are true and recorded in a release record:
 - [ ] Stage 1 passed and the bot runs at Stage 2 or above
 - [ ] Cumulative net profit (after fees, tips and rent, reconciled against the wallet) covers the agreed Phase 6 budget plus at least one month of running costs
 - [ ] Net profit positive for at least 4 consecutive weeks at the current stage
