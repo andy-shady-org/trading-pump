@@ -8,7 +8,13 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Work towards `v0.3.0-rc.2`. The v0.3.0-rc.1 capture is a **NO-GO** for the momentum lane: paper −0.100 SOL over 65 positions (21.5% profitable), replay with the frozen `configs/canary.json` −0.084 SOL over 62 ([`STRATEGY-PIVOT.md` §6.3](docs/dev/STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19)). Stage 0 does not start on this lane. The runtime side (watch list, poller, subscription budget) passed its paper exit gate.
+## [0.3.0-rc.2] - 2026-10-20
+
+Second release candidate of v0.3.0 (PRs #24–#29). It ships the one entry change that helped on unseen rc.1 hours (the momentum drift guard), the PumpSwap exit for graduated coins, and a capture that can test more than one rule per run: polled curves, shadow variants, the near-graduation set for the pre-graduation pilot, and recorded market-regime, FEAT-56 and FEAT-57 inputs. No new buy filter is gated on; FEAT-55/56/57 are recorded only.
+
+This is a **pre-release for paper testing only**, like rc.1: the 24 h momentum capture and the 72 h pre-graduation paper pilot run on this tag. It must not run on a funded wallet.
+
+The v0.3.0-rc.1 capture is a **NO-GO** for the momentum lane: paper −0.100 SOL over 65 positions (21.5% profitable), replay with the frozen `configs/canary.json` −0.084 SOL over 62 ([`STRATEGY-PIVOT.md` §6.3](docs/dev/STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19)). Stage 0 does not start on this lane. The runtime side (watch list, poller, subscription budget) passed its paper exit gate.
 
 The full 24.2 h rc.1 capture confirms it: paper −0.099 SOL over 118 positions (29.7% profitable); the last 11.5 h, which no sweep had seen, broke even (+0.001 SOL over 53). The 8-buyer setting, a buy/sell-ratio cap and a 60 s age cap all failed on those hours. The one change that helped in both halves, skipping buys whose price ran away between signal and fill, is added below; it cuts the loss but is not a profit on its own, and replay cannot judge it, so the next 24 h capture is the last test of this lane ([`STRATEGY-PIVOT.md` §6.4](docs/dev/STRATEGY-PIVOT.md#64-v030-rc1-capture-full-24-h-still-no-go-drift-guard-added-2026-10-20)).
 
@@ -46,6 +52,23 @@ The full 24.2 h rc.1 capture confirms it: paper −0.099 SOL over 118 positions 
 ### Known issues
 - BUG-122 (open): stream reconnects are not counted in `connection_loss`; the rc.1 capture connected 7 times with the counter at 0. Telemetry only.
 - The PumpSwap sell (BUG-123) is pinned to mainnet account data and a real PumpSwap sell, but no transaction built by this code has landed yet. Paper exercises the pricing only. Send one live sell at the smallest size before relying on it with real capital.
+- Replay ran +0.022 SOL better than paper on the rc.1 capture (tolerance ±0.010). The recorded curve reads should close most of that gap, but this is not yet shown; re-run `--compare-audit` on the rc.2 capture before trusting any sweep on it.
+- FEAT-55/56/57 and the shadow variants are recorded only; none of them gates a buy.
+
+### Release record – v0.3.0-rc.2 (2026-10-20)
+- Commit: the release commit on `release/v0.3.0rc2` (this record and `pyproject.toml` → `0.3.0rc2`); the code is that of `bb8a33a` (merge of PR #29, `feat/curve-poll-capture-near-grad-shadow` → `main`). The `v0.3.0rc2` tag goes on the merge of this branch into `main`.
+- Merged since v0.3.0-rc.1: `7c389e9` (PR #24, BUG-121 replay entry fidelity), `1544f4d` (PR #25, Sprint 28a runtime decomposition), `cdd5d46` (PR #26, momentum drift guard, rc.1 24 h results), `cc4f0c1` (PR #27, BUG-123/124 PumpSwap exit and quote mint, market regime, FEAT-55/56), `2e62858` (PR #28, FEAT-57, graduation backfill, split tips, BUG-125), `bb8a33a` (PR #29, curve polls in the capture, near-graduation set, FEAT-58 shadow variants)
+- Release gate: PASS (`nox -s lint mypy tests-3.14 package`; 3.11–3.13 in CI)
+- Tests: 1,729 collected, all passed; coverage 96.70% (statement + branch); golden replay unchanged in launch mode
+- Replay (rc.1 capture, frozen `configs/canary.json`, tip 0, net of costs): −0.080 SOL over 105 buys, 7 refused by the drift guard. The rc.1 capture has no `curve_poll` rows, so this is the rc.1 replay model; the guard's real test is the rc.2 paper capture
+- Replay parity: rc.1 capture +0.022 SOL vs paper (outside ±0.010); to re-run on the rc.2 capture
+- Money path changed (drift guard, PumpSwap exit, graduation backfill, per-side tips, quote-mint refusal), so no earlier Stage 0 result carries over
+- Runtime settings: `configs/capture.json` (paper, confirmed, drift guard 0.08, curve polls, 50 near-graduation curves, nine shadow variants, pre-graduation off), new `configs/pregrad_pilot.json` (paper, pre-graduation lane and near-graduation set on, no momentum subscriptions) and `configs/canary.json` (drift guard 0.08, pre-graduation off); copy them into the runtime folder. Archive the rc.1 capture first (`runtime/archive/capture-v0.3.0rc1/`)
+- Next: pin `runtime/pumpfun-trading` to `v0.3.0rc2`; run the 24 h momentum capture with `capture.json` and, in a second runtime folder, the 72 h pre-graduation paper pilot with `pregrad_pilot.json` ([RUNBOOK §6.3](docs/dev/RUNBOOK.md)); then `--compare-audit`, the shadow-variant read-out and the per-lane PnL. If the momentum lane is not clearly net positive with the drift guard on, stop tuning it ([`STRATEGY-PIVOT.md` §6.4](docs/dev/STRATEGY-PIVOT.md#64-v030-rc1-capture-full-24-h-still-no-go-drift-guard-added-2026-10-20))
+- RUNBOOK §7 drills: not yet run
+- Capital stage after this release: 0 (paper only)
+- Stage 0 paper pilot: not started on this build
+- Sign-off: –
 
 ## [0.3.0-rc.1] - 2026-10-18
 
@@ -326,8 +349,9 @@ First tagged build (`v0.0.1-alpha` points at the same commit). Baseline for the 
 - Capital stage after this release: 0
 - Sign-off: –
 
-[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0-rc.1...HEAD
-[0.3.0-rc.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.3...v0.3.0-rc.1
+[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc2...HEAD
+[0.3.0-rc.2]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc1...v0.3.0rc2
+[0.3.0-rc.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.3...v0.3.0rc1
 [0.2.3]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.0...v0.2.1
