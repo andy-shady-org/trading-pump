@@ -1300,3 +1300,52 @@ async def test_get_bonding_curve_states_raises_on_rpc_failure() -> None:
     with pytest.raises(RuntimeError):
         await client.get_bonding_curve_states([SAMPLE_MINT])
     assert await client.get_bonding_curve_states([]) == {}
+
+
+# --- BUG-124: non-SOL quote mints are refused, not mispriced -----------------------
+
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+
+def _quoted_curve(quote_mint: str | None) -> bytes:
+    virtual_sol, real_sol = STANDARD_CURVE_RESERVES[0]
+    data = bonding_curve_bytes(
+        virtual_sol_reserves=virtual_sol,
+        real_sol_reserves=real_sol,
+        creator=str(Pubkey.new_unique()),
+    )
+    data += b"\x00\x00"  # is_mayhem_mode, is_cashback_coin
+    if quote_mint is not None:
+        data += bytes(Pubkey.from_string(quote_mint))
+    return data
+
+
+def test_decoder_reads_the_quote_mint() -> None:
+    decode = PumpFunExecutionClient.decode_bonding_curve_data
+    assert decode(_quoted_curve(None))["quote_mint"] is None
+    assert decode(_quoted_curve(USDC_MINT))["quote_mint"] == USDC_MINT
+    # SOL-quoted curves carry a zeroed quote mint on mainnet.
+    zeroed = decode(_quoted_curve("11111111111111111111111111111111"))
+    assert zeroed["quote_mint"] == "11111111111111111111111111111111"
+
+
+@pytest.mark.regression("BUG-124")
+async def test_non_sol_quoted_curves_are_refused_as_non_standard() -> None:
+    client = _client()
+    for quote_mint in (None, WSOL_MINT, "11111111111111111111111111111111"):
+        state = client.decode_bonding_curve_data(_quoted_curve(quote_mint))
+        client._reject_non_standard_curve(SAMPLE_MINT, state)  # no raise
+    state = client.decode_bonding_curve_data(_quoted_curve(USDC_MINT))
+    with pytest.raises(NonStandardCurveError, match="quote mint"):
+        client._reject_non_standard_curve(SAMPLE_MINT, state)
+
+    usdc = {
+        "owner": PUMP_PROGRAM_ID,
+        "data": account_data_b64(_quoted_curve(USDC_MINT)),
+    }
+    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={"result": {"value": [usdc]}}
+    )
+    rejected: dict[str, str] = {}
+    assert await client.get_bonding_curve_states([SAMPLE_MINT], rejected=rejected) == {}
+    assert rejected == {SAMPLE_MINT: "non_standard"}

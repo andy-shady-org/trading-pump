@@ -145,6 +145,7 @@ from pumpfun_trading.sdk.costs import (
     model_transaction_costs,
 )
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
+from pumpfun_trading.strategies.regime import MarketRegimeTracker
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -152,6 +153,8 @@ from pumpfun_trading.streams.geyser import (
     YellowstoneGeyserClient,
 )
 from pumpfun_trading.streams.websocket import (
+    MIGRATION_SUBSCRIPTION,
+    MIGRATION_TX_TYPES,
     NEW_TOKEN_SUBSCRIPTION,
     run_websocket_stream,
     send_ws_message,
@@ -301,6 +304,8 @@ class TradingBot:
         # Entry lane per bought mint (momentum / pre_graduation), for sell records.
         self._entry_lane_by_mint: dict[str, str] = {}
         self.graduation_engine = build_graduation_engine(self.config)
+        # Hour / launch rate / graduation rate on every buy and screen record.
+        self.market_regime = MarketRegimeTracker()
         self.arb_monitor = build_arbitrage_monitor(self.config)
         self.backrun_engine = MempoolBackrunEngine(
             disparity_monitor=self.arb_monitor,
@@ -1155,6 +1160,8 @@ class TradingBot:
         }
         if entry_metrics:
             record["entry_metrics"] = dict(entry_metrics)
+        if "buy" in action:
+            record["market_regime"] = self._market_regime().snapshot()
         # Net of network fee, priority fee, Jito tip and token-account rent (FEAT-49).
         record.update(
             build_pnl_fields(
@@ -1489,6 +1496,7 @@ class TradingBot:
             "non_pump_rejections": dict(self._non_pump_rejections),
             "mayhem_rejections": int(getattr(self, "_mayhem_rejections", 0)),
             "watch_list": self.watch_list_status(),
+            "market_regime": self._market_regime().snapshot(),
             "trade_ledger": list(self._trade_ledger),
             "recent_actions": list(self._recent_actions),
             "recent_events": list(self._recent_events),
@@ -1570,6 +1578,7 @@ class TradingBot:
                     name=token_name,
                     market_cap_sol=market_cap_sol,
                     latency_ms=latency_ms,
+                    market_regime=self._market_regime().snapshot(),
                 )
             )
         if hasattr(self, "event_logger") and self.event_logger is not None:
@@ -2381,10 +2390,24 @@ class TradingBot:
         position = self.active_positions[mint]
         pos_name = position.get("name") or mint
         pool_keys = self._exit_pool_keys(mint, position)
+        use_pumpswap = False
         if pool_keys is None and mint in self._migrating_mints:
-            # The curve is complete; hold until the AMM pool is known (BUG-44).
-            self._last_event = f"awaiting pool {mint[:8]}"
-            return False
+            # The curve is complete and takes no sells (BUG-44). Pump.fun
+            # migrates into PumpSwap, not Raydium, so exit there (BUG-123).
+            pool_mc = (
+                await self._pumpswap_exit_market_cap(mint)
+                if bool(getattr(self.config, "enable_pumpswap_exit", True))
+                else None
+            )
+            if pool_mc is None:
+                self._last_event = f"awaiting pool {mint[:8]}"
+                return False
+            # Paper proceeds scale with market cap: price from the pool.
+            position["current_market_cap"] = pool_mc
+            position["peak_market_cap"] = max(
+                float(position.get("peak_market_cap", 0.0) or 0.0), pool_mc
+            )
+            use_pumpswap = True
 
         self._transition_to(
             TradingBotState.SELLING, reason=f"selling {mint} ({reason})"
@@ -2437,6 +2460,15 @@ class TradingBot:
                 slippage_bps=effective_slippage,
                 reason=reason,
                 dry_run=self.dry_run,
+            )
+        elif use_pumpswap:
+            exec_res = await self.executor.execute_pumpswap_sell(
+                mint,
+                tokens_to_sell,
+                slippage_bps=effective_slippage,
+                reason=reason,
+                dry_run=self.dry_run,
+                close_token_account=not is_partial,
             )
         else:
             exec_res = await self.executor.execute_sell(
@@ -3046,6 +3078,7 @@ class TradingBot:
             f"Bonding curve completed / graduated for {mint}! Bonding curve: {curve_key}"
         )
         self._last_event = f"graduated {mint[:8]}"
+        self._market_regime().record_graduation(mint)
         self.graduation_engine.record_graduation(
             mint=mint,
             bonding_curve=str(curve_key),
@@ -3061,7 +3094,7 @@ class TradingBot:
             if isinstance(pool, RaydiumPoolKeys):
                 self._raydium_exit_pools[mint] = pool
                 await self._sell_token(mint, reason="bonding_curve_graduated")
-            else:
+            elif not await self._sell_token(mint, reason="bonding_curve_graduated"):
                 self._log(
                     f"Position held for graduating token {mint}; waiting for the AMM pool to exit."
                 )
@@ -3289,6 +3322,7 @@ class TradingBot:
             return
 
         self._observed_tokens_count += 1
+        self._market_regime().record_launch()
         current_market_cap = float(
             data.get("market_cap", 0.0)
             or data.get("marketCapSol", 0.0)
@@ -3752,6 +3786,13 @@ class TradingBot:
         if (
             isinstance(data, dict)
             and data.get("mint")
+            and str(data.get("txType") or "").lower() in MIGRATION_TX_TYPES
+        ):
+            await self._handle_ws_migration(str(data["mint"]))
+            return
+        if (
+            isinstance(data, dict)
+            and data.get("mint")
             and str(data.get("txType") or "").lower() in {"buy", "sell"}
         ):
             # Trade data for a subscribed mint proves the feed delivers.
@@ -3890,6 +3931,22 @@ class TradingBot:
             "market_cap_sol": round(market_cap_sol, 4),
             "sol_growth": round(entry.sol_growth, 6),
         }
+        # Recorded for offline tests of the FEAT-56 filters; they gate nothing.
+        flow = engine.buy_flow_concentration(
+            mint, exclude_users=exclude, current_time=now
+        )
+        metrics["top_buyer_share"] = flow["top_buyer_share"]
+        metrics["wallet_diversity"] = flow["wallet_diversity"]
+        if entry.first_polled_real_sol is not None and entry.start_real_sol is not None:
+            # SOL added between the create and the first curve poll (a few
+            # seconds): a proxy for sniper volume, since no capture sees the
+            # first slots' trades.
+            metrics["first_poll_sol_growth"] = round(
+                entry.first_polled_real_sol - entry.start_real_sol, 6
+            )
+            metrics["first_poll_age_seconds"] = round(
+                max(0.0, entry.first_polled_at - entry.created_at), 1
+            )
         async with self._trade_lock:
             if mint in self.active_positions or not engine.is_watched(mint):
                 return False
@@ -3976,6 +4033,7 @@ class TradingBot:
                     rejected[mint] = "mayhem"
                     continue
                 if state.get("complete"):
+                    self._market_regime().record_graduation(mint)
                     rejected[mint] = "complete"
                     continue
                 v_sol = int(state.get("virtual_sol_reserves", 0) or 0) / 1e9
@@ -4110,6 +4168,9 @@ class TradingBot:
         self._last_status = "monitoring active tokens"
         self._health_ok = True
         await send_ws_message(ws, NEW_TOKEN_SUBSCRIPTION)
+        # Free feed: graduation rate for the regime record, and the exit signal
+        # for a held coin that migrates to PumpSwap (BUG-123).
+        await send_ws_message(ws, MIGRATION_SUBSCRIPTION)
         # Resubscribe to held and promoted watched mints.
         for mint in list(self.active_positions.keys()):
             await self._subscribe_to_token_trades(ws, mint)
@@ -4157,7 +4218,15 @@ class TradingBot:
             return
         for mint in list(self.active_positions.keys()):
             try:
+                if mint in self._migrating_mints:
+                    await self._exit_graduated_position(mint)
+                    continue
                 curve = await self.execution.get_bonding_curve_state(mint)
+                if isinstance(curve, dict) and curve.get("complete") is True:
+                    # Graduated while held: the curve has no reserves left to
+                    # price or sell against (BUG-123).
+                    await self._exit_graduated_position(mint)
+                    continue
                 mc = 0.0
                 if isinstance(curve, dict):
                     mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
@@ -4208,6 +4277,66 @@ class TradingBot:
                         await self._evaluate_and_execute_exit(mint, curr_mc)
                 except Exception:
                     pass
+
+    async def _pumpswap_exit_market_cap(self, mint: str) -> float | None:
+        """Market cap of a migrated coin's PumpSwap pool; ``None`` while it is missing."""
+        getter = getattr(self.execution, "get_pumpswap_market_state", None)
+        if getter is None:
+            return None
+        try:
+            state = await asyncio.wait_for(getter(mint), timeout=5.0)
+            mc = float(state.get("market_cap_sol", 0.0) or 0.0)
+        except Exception as exc:
+            self._log(
+                f"PumpSwap pool for {mint[:8]} not ready: {exc}", level=logging.DEBUG
+            )
+            return None
+        return mc if mc > 0.0 else None
+
+    async def _exit_graduated_position(self, mint: str) -> bool:
+        """A held curve completed: mark it migrating and sell the rest (BUG-123).
+
+        Called from every curve refresh, so a pool that is not there yet is
+        retried on the next pass.
+        """
+        if mint not in self.active_positions:
+            return False
+        if mint not in self._migrating_mints:
+            self._migrating_mints.add(mint)
+            self._exit_retry_queue.pop(mint, None)
+            self._market_regime().record_graduation(mint)
+            self.graduation_engine.record_graduation(
+                mint=mint, bonding_curve="", timestamp=time.time()
+            )
+            self._record_event(f"graduated while held {mint[:8]}", alert=False)
+        return await self._sell_token(mint, reason="bonding_curve_graduated")
+
+    async def _handle_ws_migration(self, mint: str) -> None:
+        """PumpPortal migration event: count it, drop a watched mint, exit a held one."""
+        if self._market_regime().record_graduation(mint) and (
+            self.replay_recorder is not None
+        ):
+            # No price field: replay skips it; regime analysis counts it.
+            self.replay_recorder.record_snapshot(
+                {"timestamp": time.time(), "mint": mint, "event": "migration"}
+            )
+        if self._stop_requested:
+            return
+        engine = self.order_flow_engine
+        entry = engine.get_watch(mint) if engine.is_watched(mint) else None
+        if entry is not None:
+            self._count_watch("dropped_complete")
+            engine.unwatch(mint)
+            if entry.subscribed and mint not in self.active_positions:
+                await self._unsubscribe_from_token_trades(None, mint)
+        if mint in self.active_positions:
+            await self._exit_graduated_position(mint)
+
+    def _market_regime(self) -> MarketRegimeTracker:
+        tracker = getattr(self, "market_regime", None)
+        if tracker is None:
+            tracker = self.market_regime = MarketRegimeTracker()
+        return tracker
 
     def _position_refresh_interval(self) -> float:
         try:

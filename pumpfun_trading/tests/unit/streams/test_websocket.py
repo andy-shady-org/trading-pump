@@ -13,6 +13,8 @@ import aiohttp
 
 from pumpfun_trading.streams import websocket as ws_module
 from pumpfun_trading.streams.websocket import (
+    MIGRATION_SUBSCRIPTION,
+    MIGRATION_TX_TYPES,
     NEW_TOKEN_SUBSCRIPTION,
     run_websocket_stream,
     send_ws_message,
@@ -101,6 +103,9 @@ def test_token_trade_message_shape() -> None:
         "keys": ["MINT"],
     }
     assert NEW_TOKEN_SUBSCRIPTION == {"method": "subscribeNewToken"}
+    # Free (not metered) like the create feed; carries graduations (BUG-123).
+    assert MIGRATION_SUBSCRIPTION == {"method": "subscribeMigration"}
+    assert "migrate" in MIGRATION_TX_TYPES
 
 
 async def test_send_prefers_send_json_unless_raw_send_requested() -> None:

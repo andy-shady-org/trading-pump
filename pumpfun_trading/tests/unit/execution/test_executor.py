@@ -885,3 +885,102 @@ async def test_execute_buy_on_mayhem_curve_is_refused(dry_run: bool) -> None:
         MINT, 0.01, dry_run=True
     )
     assert allowed.success
+
+
+# --- PumpSwap exit for graduated coins (BUG-123) -----------------------------------
+
+
+def _pumpswap_client(**overrides: Any) -> MagicMock:
+    client = _client(
+        quote_pumpswap_sell=AsyncMock(return_value=40_000_000),
+        pumpswap_sell=AsyncMock(return_value="SwapSig111"),
+    )
+    for name, value in overrides.items():
+        setattr(client, name, value)
+    return client
+
+
+@pytest.mark.regression("BUG-123")
+async def test_pumpswap_sell_dry_run_prices_from_the_pool() -> None:
+    client = _pumpswap_client()
+    executor = OrderExecutor(client, config=TradingBotConfig(), dry_run=True)
+
+    res = await executor.execute_pumpswap_sell(MINT, TOKENS, close_token_account=True)
+
+    assert res.success and res.dry_run
+    assert res.amount_sol == pytest.approx(0.04)
+    assert res.metadata == {"venue": "pumpswap", "closed_token_account": True}
+    assert res.costs is not None
+    assert res.costs.rent_lamports == -TOKEN_ACCOUNT_RENT_LAMPORTS
+    client.pumpswap_sell.assert_not_awaited()
+
+
+async def test_pumpswap_sell_fails_while_the_pool_is_missing() -> None:
+    client = _pumpswap_client(
+        quote_pumpswap_sell=AsyncMock(side_effect=RuntimeError("no pool yet"))
+    )
+    res = await _executor(client).execute_pumpswap_sell(MINT, TOKENS)
+    assert not res.success
+    assert (res.error or "").startswith("pumpswap_pool_unavailable")
+    client.pumpswap_sell.assert_not_awaited()
+
+
+async def test_pumpswap_live_sell_books_meta_proceeds_and_closes() -> None:
+    client = _pumpswap_client(
+        get_transaction_costs=AsyncMock(
+            return_value=_meta_costs(39_500_000, rent=-TOKEN_ACCOUNT_RENT_LAMPORTS)
+        )
+    )
+    client.get_token_balance = AsyncMock(side_effect=[TOKENS, 0])
+
+    res = await _executor(client).execute_pumpswap_sell(
+        MINT, TOKENS, slippage_bps=700, close_token_account=True
+    )
+
+    assert res.success
+    assert client.pumpswap_sell.await_args.kwargs == {
+        "slippage_bps": 700,
+        "close_token_account": True,
+    }
+    assert res.amount_sol == pytest.approx(0.0395)
+    assert res.metadata["proceeds_source"] == "transaction_meta"
+    assert res.metadata["venue"] == "pumpswap"
+
+
+async def test_pumpswap_live_sell_falls_back_to_wallet_delta_then_quote() -> None:
+    client = _pumpswap_client()
+    client.get_balance_sol = AsyncMock(side_effect=[1.0, 1.039])
+    res = await _executor(client).execute_pumpswap_sell(MINT, TOKENS)
+    assert res.metadata["proceeds_source"] == "sol_balance_delta"
+    assert res.amount_sol == pytest.approx(0.039)
+    assert res.costs is None
+    # Default slippage comes from the client when none is given.
+    assert client.pumpswap_sell.await_args.kwargs["slippage_bps"] == 250
+
+    client = _pumpswap_client()
+    client.get_balance_sol = AsyncMock(side_effect=RuntimeError("rpc down"))
+    res = await _executor(client).execute_pumpswap_sell(MINT, TOKENS)
+    assert res.metadata["proceeds_source"] == "pre_trade_quote"
+    assert res.amount_sol == pytest.approx(0.04)
+    assert res.costs is not None
+
+
+async def test_pumpswap_live_sell_failures() -> None:
+    client = _pumpswap_client(pumpswap_sell=AsyncMock(side_effect=RuntimeError("x")))
+    client.get_token_balance = AsyncMock(return_value=TOKENS)
+    executor = _executor(client)
+    res = await executor.execute_pumpswap_sell(MINT, TOKENS, close_token_account=True)
+    assert (res.error or "").startswith("pumpswap_sell_failed")
+    # A failed closing sell disables the close for the retry (BUG-96).
+    assert MINT in executor._close_disabled_mints
+
+    client.pumpswap_sell = AsyncMock(return_value="")
+    res = await executor.execute_pumpswap_sell(MINT, TOKENS)
+    assert res.error == "pumpswap_sell_signature_missing"
+
+    executor._close_disabled_mints.clear()
+    client.pumpswap_sell = AsyncMock(return_value="Sig")
+    client.confirm_transaction = AsyncMock(return_value=False)
+    res = await executor.execute_pumpswap_sell(MINT, TOKENS, close_token_account=True)
+    assert res.error == "pumpswap_sell_confirmation_failed"
+    assert MINT in executor._close_disabled_mints

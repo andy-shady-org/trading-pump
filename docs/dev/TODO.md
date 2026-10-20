@@ -845,6 +845,10 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] Entry drift guard `momentum_max_entry_drift_pct` (0.08 in `canary.json` / `capture.json` / `momentum` preset): paper skips a buy whose curve ran past the limit by the fill, live refuses or caps slippage at the headroom, replay drops and refunds the fill *(tests: `unit/execution/test_executor.py`, `unit/engines/test_replay.py`, `unit/bot/test_run.py`, `unit/strategies/test_presets.py`; on the audit trail −0.099 → −0.046 SOL, helps in both halves; replay cannot see most runaway fills, so only paper can judge it)*
 - [ ] **Last test of the momentum lane:** rc.2 build, 24 h capture with `configs/capture.json` (drift guard on). If not clearly net positive, stop tuning momentum and move to the pre-graduation paper pilot / a faster data source. A shorter signal-to-fill latency is the only idea not yet tried
 - [ ] BUG-122: count stream reconnects in `connection_loss` (telemetry; can ship in rc.2)
+- [x] Market regime on every buy and screened launch (`market_regime`: UTC hour / weekday, launches per minute, graduations per hour over 15 min; `strategies/regime.py`), in the status file, and graduations from the free `subscribeMigration` feed recorded as `event: migration` capture records *(tests: `unit/strategies/test_regime.py`, `unit/bot/test_run.py`)*
+- [x] FEAT-55 creator reputation book tested offline: no edge, not built ([`STRATEGY-PIVOT.md` §6.5](STRATEGY-PIVOT.md#65-ideas-from-other-projects-tested-offline-2026-10-20))
+- [x] FEAT-56 wallet-diversity / sniper-volume inputs recorded in momentum `entry_metrics` (`top_buyer_share`, `wallet_diversity`, `first_poll_sol_growth`, `first_poll_age_seconds`); offline they beat a random cut on both captures but do not make rc.1 positive, so nothing gates on them yet
+- [ ] On the rc.2 capture: net PnL by `market_regime.hour_utc` and graduation rate, and the FEAT-56 keep rules against a random cut; gate only what holds on that unseen data
 - [ ] Close the remaining parity gap (+0.014 SOL vs ±0.010 allowed): fills priced from curve reads that see trades the capture's trade stream misses
 - **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
 
@@ -853,6 +857,9 @@ The 24 h capture on v0.2.3 lost **−0.579 SOL net over 1,675 positions (10.3% p
 - [x] Acceleration from the polled curve history: a polled entry needs `PRE_GRADUATION_MIN_POLLED_SAMPLES` (4) readings in the 30 s window (`GraduationTracker.sample_count`, `min_samples`); held confirmed positions keep their curve progress fresh from the refresh loop; in confirmed mode the last tranche sells the whole remainder before `complete` *(tests: `unit/strategies/test_graduation.py`, `unit/strategies/test_exits.py`, `unit/bot/test_run.py`)*
 - [x] `enable_pre_graduation_harvesting` off in `configs/canary.json` until a 72 h paper run passes (`RELEASE-GATE.md` §3.5)
 - [x] `RUNBOOK.md` §6.3: capture → replay gate → Stage 0 → Stage 1 at 0.02 SOL, the tip experiment and the pre-graduation paper pilot
+- [x] Exit through PumpSwap after graduation (BUG-123): completion is seen from the curve refresh, Geyser and `subscribeMigration`; the position is priced and sold in the canonical PumpSwap pool (`sdk/pumpswap.py`, `OrderExecutor.execute_pumpswap_sell`, `enable_pumpswap_exit`). Required before the pre-graduation pilot
+- [x] Non-SOL quote mints refused (BUG-124)
+- [ ] One live PumpSwap sell at the smallest size before any lane relies on it with real capital (the instruction is pinned to mainnet accounts, but no transaction from this code has landed yet)
 - [ ] 72 h paper pilot of the pre-graduation lane; Stage 1 canary
 - **Acceptance:** lane positive in a 72 h paper pilot; Stage 1: ≥ 100 trades, net > 0, reconciled
 

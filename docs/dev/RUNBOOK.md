@@ -242,6 +242,8 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
 
 **Pre-graduation lane (FEAT-53).** It runs from the same poller on watched and held curves, but stays `enable_pre_graduation_harvesting: false` in `canary.json`. To test it, run a separate 72 h paper instance with the flag on (own runtime folder and paths as in §6.2) and judge the `pre_graduation` row of `pumpfun-audit pnl --group-by strategy`. It can only see curves still on the watch list (`watch_ttl_seconds`) or already held; enable it in the canary only after that pilot is net positive (`RELEASE-GATE.md` §3.5).
 
+**Graduated positions (BUG-123).** A held coin whose curve completes is sold into its PumpSwap pool (`enable_pumpswap_exit`, on by default). Look for `graduated while held` in the events and `bonding_curve_graduated` sells in the audit trail; `awaiting pool <mint>` on the dashboard means the pool was not readable yet and the next position refresh retries. Paper prices these exits from the pool. Before any lane that can reach graduation runs with real capital, send one live PumpSwap sell at the smallest size and reconcile it.
+
 ## 7. Incident drills
 
 Run these in paper mode before Stage 1 and after any release that touches lifecycle, persistence or execution.

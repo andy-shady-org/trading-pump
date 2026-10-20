@@ -178,8 +178,12 @@ def screening_snapshot(
     market_cap_sol: float = 0.0,
     latency_ms: float | None = None,
     timestamp: float | None = None,
+    market_regime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Replay-capture record of what the screener saw for one token.
+
+    ``market_regime`` (hour, launch and graduation rate) is stored next to the
+    verdict so time-of-day effects can be tested on captures.
 
     Captures used to hold no social links, holders or creator history, so
     filters could not be tuned from them. The record has no price field and
@@ -213,13 +217,16 @@ def screening_snapshot(
             if isinstance(value, (bool, int, float, str)) or value is None
         },
     }
-    return {
+    record: dict[str, Any] = {
         "timestamp": time.time() if timestamp is None else timestamp,
         "mint": verdict.mint,
         "name": name or verdict.mint,
         "event": SCREENING_EVENT,
         "screening": screening,
     }
+    if market_regime is not None:
+        record["market_regime"] = dict(market_regime)
+    return record
 
 
 class TokenEnricher:

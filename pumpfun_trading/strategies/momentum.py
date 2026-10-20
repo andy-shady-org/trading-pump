@@ -101,6 +101,9 @@ class WatchEntry:
     subscribed: bool = False
     screening_verdict: Any = None
     last_polled_at: float = 0.0
+    # First curve poll (FEAT-56): growth this early is mostly sniper volume.
+    first_polled_real_sol: float | None = None
+    first_polled_at: float = 0.0
 
     @property
     def sol_growth(self) -> float:
@@ -460,6 +463,40 @@ class OrderFlowEngine:
             window_seconds=window_seconds, current_time=current_time
         )
 
+    def buy_flow_concentration(
+        self,
+        mint: str,
+        *,
+        exclude_users: frozenset[str] = frozenset(),
+        current_time: Optional[float] = None,
+    ) -> dict[str, float | int]:
+        """How spread out the retained buy flow is (FEAT-56, recorded only).
+
+        ``top_buyer_share`` is the largest buyer's share of buy volume and
+        ``wallet_diversity`` is ``unique_buyers / buys * (1 - top_buyer_share)``:
+        one wallet splitting its buys, or one whale, both score low.
+        """
+        tracker = self._trackers.get(mint)
+        cutoff = float("inf") if current_time is None else float(current_time)
+        volume: dict[str, float] = {}
+        buys = 0
+        for trade in tracker.trades if tracker is not None else ():
+            if not trade.is_buy or trade.user in exclude_users:
+                continue
+            if trade.timestamp > cutoff:
+                continue
+            buys += 1
+            volume[trade.user] = volume.get(trade.user, 0.0) + trade.sol_amount
+        total = sum(volume.values())
+        top_share = max(volume.values()) / total if total > 0 else 0.0
+        diversity = (len(volume) / buys) * (1.0 - top_share) if buys else 0.0
+        return {
+            "buys": buys,
+            "unique_buyers": len(volume),
+            "top_buyer_share": round(top_share, 4),
+            "wallet_diversity": round(diversity, 4),
+        }
+
     def get_velocity_z_score(
         self,
         mint: str,
@@ -636,6 +673,9 @@ class OrderFlowEngine:
         entry.last_real_sol = float(real_sol)
         entry.market_cap_sol = float(market_cap_sol)
         entry.last_polled_at = float(now if now is not None else time.time())
+        if entry.first_polled_real_sol is None:
+            entry.first_polled_real_sol = float(real_sol)
+            entry.first_polled_at = entry.last_polled_at
         return entry
 
     def promotable(self, *, min_sol_growth: float, budget: int) -> list[str]:

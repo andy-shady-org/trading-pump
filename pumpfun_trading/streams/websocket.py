@@ -15,6 +15,9 @@ from typing import Any, Protocol
 import aiohttp
 
 NEW_TOKEN_SUBSCRIPTION: dict[str, Any] = {"method": "subscribeNewToken"}
+# Free like the create feed (not metered): curve-to-PumpSwap migrations.
+MIGRATION_SUBSCRIPTION: dict[str, Any] = {"method": "subscribeMigration"}
+MIGRATION_TX_TYPES = frozenset({"migrate", "migration"})
 MAX_RECONNECT_BACKOFF_SECONDS = 30.0
 
 
