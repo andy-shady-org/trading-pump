@@ -109,7 +109,7 @@ pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum \
   --split-at mid --keep 'top_buyer_share<0.3'
 ```
 
-`cuts` compares the net of the closed positions a rule keeps with the same share of all positions' net, in each half of the run. A rule shows an edge only when it beats that random cut in both halves. See [CLI-COMMANDS.md](CLI-COMMANDS.md) (Recipe 5b).
+`cuts` compares the net of the closed positions a rule keeps with the same share of all positions' net, in each half of the run. A rule shows an edge only when it beats that random cut in both halves. For a trail written before v0.3.0-rc.2, add `--capture capture/replay_capture.jsonl` to rebuild the FEAT-55/56/57 metrics (`top_buyer_share`, `wallet_diversity`, `round_trip_share`, `quick_flips`, `early_sol`, `creator_prior_loss`, …) from the trades recorded before each buy. See [CLI-COMMANDS.md](CLI-COMMANDS.md) (Recipe 5b).
 
 ## Example workflow
 

@@ -101,7 +101,7 @@ def closed_positions(trades: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 
     Each carries ``entry_ts``, ``mint``, ``strategy``, the buy's
     ``entry_metrics`` / ``market_regime``, ``net`` (buy and sells, net of all
-    costs) and ``exit_reason`` (the first exit).
+    costs), ``exit_reason`` (the first exit) and ``exit_ts`` (the closing sell).
     """
     open_: dict[str, dict[str, Any]] = {}
     closed: list[dict[str, Any]] = []
@@ -130,6 +130,7 @@ def closed_positions(trades: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             position["exit_reason"] = reason.split(" ")[0].split("(")[0] or "unknown"
         position["net"] += trade_net_pnl(trade)
         if closes_position(trade):
+            position["exit_ts"] = _float(trade.get("timestamp"))
             closed.append(open_.pop(key))
     closed.sort(key=lambda p: p["entry_ts"])
     return closed

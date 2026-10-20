@@ -138,6 +138,14 @@ class TradingBotConfig:
     # Refuse a buy whose modelled fixed round-trip costs (network fees, tip,
     # unrefunded rent) exceed this share of the position (0 = off).
     max_entry_cost_share_pct: float = 0.10
+    # Stop-loss redesign (rc.3 sweep; all 0 = the plain stop, as before): the
+    # stop is not armed until the position is ``stop_loss_arm_seconds`` old, and
+    # waits while a buy of at least ``stagnant_min_buy_sol`` from another wallet
+    # came within ``stop_loss_demand_hold_seconds``. While it waits, a position at
+    # or below ``stop_loss_hard_floor`` (0 = none) still exits.
+    stop_loss_arm_seconds: float = 0.0
+    stop_loss_demand_hold_seconds: float = 0.0
+    stop_loss_hard_floor: float = 0.0
     # Entry drift guard (momentum lane): skip the buy when the curve market cap
     # at the fill is more than this share above the signal's (0 = off). Live it
     # also caps the buy slippage at the remaining headroom.
@@ -334,6 +342,9 @@ class TradingBotConfig:
             "breakeven_ratchet_activation_pct": self.breakeven_ratchet_activation_pct,
             "breakeven_buffer_pct": self.breakeven_buffer_pct,
             "max_entry_cost_share_pct": self.max_entry_cost_share_pct,
+            "stop_loss_arm_seconds": self.stop_loss_arm_seconds,
+            "stop_loss_demand_hold_seconds": self.stop_loss_demand_hold_seconds,
+            "stop_loss_hard_floor": self.stop_loss_hard_floor,
             "momentum_max_entry_drift_pct": self.momentum_max_entry_drift_pct,
             "enable_pumpswap_exit": self.enable_pumpswap_exit,
             "graduation_backfill_seconds": self.graduation_backfill_seconds,

@@ -302,8 +302,18 @@ def evaluate_exit_strategy(
 
     perf = state.performance
 
-    # 1. Hard Stop-Loss Check
-    if perf <= config.stop_loss:
+    # 1. Hard Stop-Loss Check (armed after a grace period / while demand lasts)
+    stop_wait = _stop_loss_wait_reason(config, state, current_time)
+    floor = float(getattr(config, "stop_loss_hard_floor", 0.0) or 0.0)
+    if stop_wait is not None and floor > 0 and perf <= floor:
+        return ExitDecision(
+            action=ExitAction.FULL_EXIT,
+            sell_fraction=1.0,
+            sell_tokens=effective_balance,
+            reason=f"stop_loss_floor ({perf:.2%} <= {floor:.2%} while {stop_wait})",
+            exit_type="stop_loss",
+        )
+    if stop_wait is None and perf <= config.stop_loss:
         return ExitDecision(
             action=ExitAction.FULL_EXIT,
             sell_fraction=1.0,
@@ -512,6 +522,27 @@ def evaluate_exit_strategy(
         )
 
     return ExitDecision(action=ExitAction.HOLD, reason="holding", exit_type="none")
+
+
+def _stop_loss_wait_reason(
+    config: TradingBotConfig, state: PositionExitState, now: float
+) -> str | None:
+    """Why the stop-loss is not armed yet, or ``None`` when it is.
+
+    ``stop_loss_arm_seconds`` holds it for the first seconds after entry (the
+    paper fill penalty and the first curve read often sit below the stop);
+    ``stop_loss_demand_hold_seconds`` holds it while buys of at least
+    ``stagnant_min_buy_sol`` from other wallets keep arriving (an order-flow
+    stop). Both default to 0, the plain stop.
+    """
+    arm = float(getattr(config, "stop_loss_arm_seconds", 0.0) or 0.0)
+    if arm > 0 and state.entry_time > 0 and now - state.entry_time < arm:
+        return "arming"
+    hold = float(getattr(config, "stop_loss_demand_hold_seconds", 0.0) or 0.0)
+    last_buy = state.last_qualifying_buy_at
+    if hold > 0 and last_buy is not None and now - last_buy < hold:
+        return "demand"
+    return None
 
 
 def _momentum_entry_exit(

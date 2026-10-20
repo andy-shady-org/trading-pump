@@ -42,11 +42,14 @@ from pumpfun_trading.bot.factory import (
 )
 from pumpfun_trading.bot.enrichment import (
     TokenEnricher,
-    mayhem_mode_reason,
-    non_pump_launch_reason,
     screening_snapshot,
 )
 from pumpfun_trading.bot.event_router import EventRouter
+from pumpfun_trading.bot.handlers import curve as curve_handlers
+from pumpfun_trading.bot.handlers import new_token as new_token_handlers
+from pumpfun_trading.bot.handlers import raydium as raydium_handlers
+from pumpfun_trading.bot.handlers import trade as trade_handlers
+from pumpfun_trading.bot.handlers import watch as watch_handlers
 from pumpfun_trading.bot.health import (
     health_ok_for_trading,
     mark_health_check,
@@ -140,22 +143,14 @@ from pumpfun_trading.ops.redact import redact_text
 from pumpfun_trading.sdk.costs import (
     BASE_FEE_LAMPORTS_PER_SIGNATURE,
     COST_SOURCE_TRANSACTION_META,
-    LAMPORTS_PER_SOL,
     TransactionCosts,
-    model_transaction_costs,
 )
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
-from pumpfun_trading.strategies.graduation import (
-    GRADUATION_REAL_SOL,
-    PRE_GRADUATION_MIN_POLLED_SAMPLES,
-)
-from pumpfun_trading.strategies.momentum import near_graduation_expiry
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
 from pumpfun_trading.strategies.shadow import (
     ShadowSignal,
     ShadowVariantBook,
     parse_shadow_variants,
-    shadow_fill_record,
 )
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
@@ -173,33 +168,9 @@ from pumpfun_trading.streams.websocket import (
 )
 from pumpfun_trading.ui.dashboard import build_dashboard
 
-# Upper bound on the post-landing ``getTransaction`` cost lookup of an arbitrage
-# bundle (BUG-99); on timeout the modelled costs are booked instead.
-ARBITRAGE_COST_LOOKUP_TIMEOUT_SECONDS = 8.0
-# Raw base-unit virtual token reserves are ~1.07e15; UI units are ~1.07e9 (BUG-75).
-RAW_TOKEN_UNITS_THRESHOLD = 1_000_000_000_000
 # Mints bought before; persisted in the status file and capped so the snapshot
 # stays small (~2k new buys a day in the Stage 0 paper run) (BUG-109).
 TRADED_MINTS_LIMIT = 10_000
-# A near-graduation entry this close (curve share) below the pre-graduation
-# entry band is polled at the normal watch interval again.
-NEAR_GRADUATION_FAST_POLL_MARGIN = 0.10
-# Shadow fills waiting for their delayed curve read; more are counted and
-# skipped so a burst of signals can't pile up RPC reads (FEAT-58).
-MAX_PENDING_SHADOW_FILLS = 50
-
-
-def _curve_market_cap(curve: Any) -> float | None:
-    """Market cap (SOL) of a decoded curve, or ``None`` when it has no price."""
-    if not isinstance(curve, dict) or curve.get("complete") is True:
-        return None
-    mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
-    if mc <= 0.0:
-        vt = int(curve.get("virtual_token_reserves", 0) or 0)
-        vs = int(curve.get("virtual_sol_reserves", 0) or 0)
-        if vt > 0 and vs > 0:
-            mc = (vs / 1_000_000_000.0) * (1_000_000_000.0 / (vt / 1_000_000.0))
-    return mc if mc > 0.0 else None
 
 
 class TradingBot:
@@ -208,6 +179,8 @@ class TradingBot:
     _VALID_STATE_TRANSITIONS: dict[TradingBotState, set[TradingBotState]] = (
         VALID_STATE_TRANSITIONS
     )
+    # Created lazily by the first shadow fill (bot/handlers/trade.py).
+    _shadow_fill_tasks: set[asyncio.Task[None]]
 
     def __init__(
         self,
@@ -2697,546 +2670,28 @@ class TradingBot:
     async def _maybe_buy_pre_graduation(
         self, mint: str, market_cap_sol: float, *, now: float, min_samples: int = 0
     ) -> bool:
-        """Pre-graduation harvesting entry (FEAT-25, FEAT-53).
-
-        Runs from the Geyser curve handler and from the watch-list poller.
-        Returns ``True`` when the candidate was handled (bought, refused or
-        already seen), so the caller must not fall through to a launch buy.
-        """
-        if (
-            not self.config.enable_pre_graduation_harvesting
-            or mint in self.active_positions
-            or self._is_recently_seen(mint)
-        ):
-            return False
-        min_p = (
-            self.config.pre_graduation_entry_progress_pct * 100.0
-            if self.config.pre_graduation_entry_progress_pct <= 1.0
-            else self.config.pre_graduation_entry_progress_pct
+        return await curve_handlers.maybe_buy_pre_graduation(
+            self, mint, market_cap_sol, now=now, min_samples=min_samples
         )
-        max_p = (
-            self.config.pre_graduation_max_entry_progress_pct * 100.0
-            if self.config.pre_graduation_max_entry_progress_pct <= 1.0
-            else self.config.pre_graduation_max_entry_progress_pct
-        )
-        grad_sig = self.graduation_engine.evaluate_pre_graduation_harvesting_entry(
-            mint=mint,
-            min_progress_pct=min_p,
-            max_progress_pct=max_p,
-            min_acceleration=self.config.pre_graduation_min_acceleration,
-            current_time=now,
-            min_samples=min_samples,
-        )
-        if not grad_sig.triggered:
-            return False
-        async with self._trade_lock:
-            if mint in self.active_positions or self._is_recently_seen(mint):
-                return True
-            screening_verdict = await self._enrich_and_screen_token(mint)
-            if not screening_verdict.passed:
-                return True
-            if not self._should_buy(
-                mint, market_cap_sol, screening_verdict=screening_verdict
-            ):
-                if getattr(self.config, "enable_capital_rotation", True):
-                    await self._evaluate_and_trigger_displacement(
-                        candidate_mint=mint,
-                        market_cap_sol=market_cap_sol,
-                        conviction_percentile=0.98,
-                        screening_verdict=screening_verdict,
-                    )
-                return True
-            self._log(
-                f"Pre-graduation harvesting entry triggered for {mint}: {grad_sig.reason}"
-            )
-            self._last_event = f"pre-grad entry {mint[:8]}"
-            bought = await self._buy_token(
-                mint,
-                market_cap_sol,
-                None,
-                screening_verdict=screening_verdict,
-                reason="pre_graduation_harvesting_entry",
-                strategy="pre_graduation",
-                entry_metrics={
-                    "curve_progress_pct": (
-                        grad_sig.trajectory.progress_pct
-                        if grad_sig.trajectory
-                        else None
-                    ),
-                    "acceleration_sol_per_sec2": (
-                        round(grad_sig.trajectory.acceleration_sol_per_sec2, 6)
-                        if grad_sig.trajectory
-                        else None
-                    ),
-                    "real_sol_reserves": round(grad_sig.real_sol_reserves, 4),
-                    "market_cap_sol": round(market_cap_sol, 4),
-                },
-            )
-            if bought:
-                self._record_event(f"bought pre-graduation {mint[:8]}")
-                watched = self.order_flow_engine.unwatch(mint)
-                if watched is None or not watched.subscribed:
-                    await self._subscribe_to_token_trades(None, mint)
-                return True
-        return False
 
     async def _handle_bonding_curve_state_update(
         self, update: BondingCurveStateUpdate
     ) -> None:
-        if self._stop_requested:
-            return
-
-        self._last_message_at = time.monotonic()
-        self._last_status = "processing geyser stream"
-        latency_ms = max(0.0, (time.time() - update.timestamp) * 1000.0)
-        self._record_metric("latency_ms", latency_ms)
-
-        mint = update.mint
-        self._observed_tokens_count += 1
-        self._last_new_token = mint
-        self._last_new_token_name = f"{mint[:8]}..."
-        current_market_cap = update.market_cap_sol
-
-        real_sol = update.real_sol_reserves / 1_000_000_000.0
-        virt_sol = update.virtual_sol_reserves / 1_000_000_000.0
-        self.graduation_engine.update_bonding_curve(
-            mint=mint,
-            bonding_curve=update.bonding_curve_pubkey,
-            real_sol_reserves=real_sol,
-            virtual_sol_reserves=virt_sol,
-            market_cap_sol=current_market_cap,
-            complete=update.complete,
-            timestamp=update.timestamp,
-        )
-
-        if self.config.enable_cross_venue_arbitrage:
-            await self._evaluate_and_execute_arbitrage(
-                mint=mint,
-                virtual_sol=update.virtual_sol_reserves,
-                virtual_token=update.virtual_token_reserves,
-            )
-
-        if self.replay_recorder is not None:
-            price = (
-                current_market_cap / 1_000_000_000.0 if current_market_cap > 0 else 0.0
-            )
-            self.replay_recorder.record_snapshot(
-                {
-                    "timestamp": update.timestamp,
-                    "mint": mint,
-                    "name": self.active_positions.get(mint, {}).get("name")
-                    or f"{mint[:8]}...",
-                    "price": price,
-                    "market_cap_sol": current_market_cap,
-                    "volume": real_sol,
-                }
-            )
-
-        if mint in self.active_positions:
-            await self._evaluate_and_execute_exit(mint, current_market_cap)
-            await self._check_and_enforce_circuit_breaker()
-            return
-
-        if not update.complete and current_market_cap > 0:
-            if (
-                self.daily_equity_tracker.circuit_breaker_engaged
-                or await self._check_and_enforce_circuit_breaker()
-            ):
-                self._last_event = "circuit_breaker_active"
-                return
-
-            # Pre-graduation acceleration harvesting evaluation (FEAT-25)
-            if await self._maybe_buy_pre_graduation(
-                mint, current_market_cap, now=update.timestamp
-            ):
-                return
-
-            async with self._trade_lock:
-                if self._is_recently_seen(mint):
-                    return
-
-                screening_verdict = await self._enrich_and_screen_token(mint)
-                if not screening_verdict.passed:
-                    self._log(
-                        f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
-                    )
-                    reasons_str = (
-                        "; ".join(screening_verdict.reasons)
-                        if screening_verdict.reasons
-                        else "anti-rug"
-                    )
-                    self._record_event(
-                        f"screen_rejected {mint[:8]}: {reasons_str}",
-                        alert=False,
-                    )
-                    return
-
-                if not self._should_buy(
-                    mint, current_market_cap, screening_verdict=screening_verdict
-                ):
-                    self._log(f"Skipping new token {mint}: not eligible for buy")
-                    self._last_event = f"skipped {mint}"
-                    return
-
-                self._log(
-                    f"New token detected via Geyser: {mint} | launch market cap: {current_market_cap:.2f} SOL"
-                )
-                self._last_event = f"new token {mint}"
-                self._last_new_token = mint
-                self._last_new_token_name = mint[:8]
-                bought = await self._buy_token(
-                    mint,
-                    current_market_cap,
-                    None,
-                    screening_verdict=screening_verdict,
-                )
-
-            if bought:
-                self._record_event(
-                    f"bought {self.active_positions.get(mint, {}).get('name', mint)}"
-                )
+        await curve_handlers.handle_bonding_curve_state_update(self, update)
 
     async def _handle_trade_event_update(self, update: TradeEventUpdate) -> None:
-        if self._stop_requested:
-            return
-
-        self._last_message_at = time.monotonic()
-        latency_ms = max(0.0, (time.time() - update.received_at) * 1000.0)
-        self._record_metric("latency_ms", latency_ms)
-
-        mint = update.mint
-        self._observed_tokens_count += 1
-        ts = float(update.timestamp if update.timestamp > 0 else update.received_at)
-        self.order_flow_engine.record_trade(
-            mint=mint,
-            is_buy=update.is_buy,
-            sol_amount=update.sol_amount,
-            user=update.user,
-            timestamp=ts,
-        )
-
-        if self.config.enable_cross_venue_arbitrage and update.virtual_sol_reserves > 0:
-            await self._evaluate_and_execute_arbitrage(
-                mint=mint,
-                virtual_sol=update.virtual_sol_reserves,
-                virtual_token=update.virtual_token_reserves,
-                trade_sol=update.sol_amount,
-                is_buy=update.is_buy,
-            )
-
-        if update.virtual_token_reserves > 0:
-            current_market_cap = (update.virtual_sol_reserves / 1_000_000_000.0) * (
-                1_000_000_000.0 / (update.virtual_token_reserves / 1_000_000.0)
-            )
-        else:
-            current_market_cap = 0.0
-
-        if self.replay_recorder is not None:
-            self.replay_recorder.record_snapshot(
-                {
-                    "timestamp": ts,
-                    "mint": mint,
-                    "name": self.active_positions.get(mint, {}).get("name")
-                    or f"{mint[:8]}...",
-                    "price": (
-                        current_market_cap / 1_000_000_000.0
-                        if current_market_cap > 0
-                        else 0.0
-                    ),
-                    "market_cap_sol": current_market_cap,
-                    "is_buy": update.is_buy,
-                    "sol_amount": update.sol_amount,
-                    "token_amount": float(update.token_amount),
-                    "user": update.user,
-                    "signal": "buy" if update.is_buy else "sell",
-                }
-            )
-
-        if mint in self.active_positions:
-            if current_market_cap <= 0:
-                return
-
-            if (
-                not update.is_buy
-                and self.config.enable_copy_trading
-                and self.config.copy_trading_mirror_sells
-                and self.copy_trade_engine.is_tracked_wallet(update.user)
-            ):
-                wallet_obj = self.copy_trade_engine.registry.get_wallet(update.user)
-                wallet_label = (
-                    wallet_obj.label
-                    if wallet_obj and wallet_obj.label
-                    else update.user[:8]
-                )
-                self._log(
-                    f"Smart money sell detected on held token {mint} by {wallet_label}... executing mirrored exit."
-                )
-                self._last_event = f"copy-trade exit {mint[:8]}"
-                await self._sell_token(
-                    mint, reason=f"copy_trade_mirror_exit_{wallet_label}"
-                )
-                return
-
-            await self._evaluate_and_execute_exit(mint, current_market_cap)
-            await self._check_and_enforce_circuit_breaker()
-            return
-
-        if current_market_cap <= 0:
-            return
-
-        # Smart Money Copy-Trading Entry Evaluation
-        if (
-            update.is_buy
-            and self.config.enable_copy_trading
-            and self.copy_trade_engine.is_tracked_wallet(update.user)
-            and mint not in self.active_positions
-            and not self._is_recently_seen(mint)
-        ):
-            signal = self.copy_trade_engine.record_and_evaluate(
-                user=update.user,
-                mint=mint,
-                sol_amount=update.sol_amount,
-                is_buy=True,
-                timestamp=ts,
-            )
-            if signal.triggered and signal.is_buy and signal.computed_copy_size_sol > 0:
-                async with self._trade_lock:
-                    if mint in self.active_positions or self._is_recently_seen(mint):
-                        return
-
-                    wallet_obj = self.copy_trade_engine.registry.get_wallet(update.user)
-                    wallet_label = (
-                        wallet_obj.label
-                        if wallet_obj and wallet_obj.label
-                        else update.user[:8]
-                    )
-                    reason_label = f"copy_trade_{wallet_label}"
-
-                    screening_verdict = None
-                    if self.config.copy_trading_require_anti_rug_screen:
-                        screening_verdict = await self._enrich_and_screen_token(mint)
-                        if not screening_verdict.passed:
-                            self._log(
-                                f"Copy-trade buy rejected for {mint} by {wallet_label}: failed anti-rug screening (score={screening_verdict.risk_score:.1f})"
-                            )
-                            return
-
-                    if not self._should_buy(
-                        mint,
-                        current_market_cap,
-                        screening_verdict=screening_verdict,
-                        proposed_entry_sol=signal.computed_copy_size_sol,
-                    ):
-                        return
-
-                    self._log(
-                        f"Executing copy-trade buy for {mint} mirroring wallet {wallet_label} ({signal.reason}) with {signal.computed_copy_size_sol:.3f} SOL"
-                    )
-                    self._last_event = f"copy-trade buy {mint[:8]}"
-                    bought = await self._buy_token(
-                        mint,
-                        current_market_cap,
-                        None,
-                        screening_verdict=screening_verdict,
-                        reason=reason_label,
-                        buy_amount_sol=signal.computed_copy_size_sol,
-                    )
-                    if bought:
-                        self._record_event(f"bought copy-trade {mint[:8]}")
-                        return
-
-        # Momentum Spikes Evaluation
-        if (
-            self.config.enable_momentum_signals
-            and mint not in self.active_positions
-            and not self._is_recently_seen(mint)
-        ):
-            mom_signal = self.order_flow_engine.evaluate_momentum_signal(
-                mint,
-                window_seconds=self.config.momentum_window_seconds,
-                min_buy_ratio=self.config.momentum_min_buy_ratio,
-                min_z_score=self.config.momentum_min_z_score,
-                min_unique_buyers=self.config.momentum_min_unique_buyers,
-                min_net_inflow_sol=self.config.momentum_min_net_inflow_sol,
-                baseline_window_seconds=self.config.momentum_baseline_window_seconds,
-                max_token_age_seconds=self.config.momentum_max_token_age_seconds,
-            )
-
-            if mom_signal.triggered:
-                async with self._trade_lock:
-                    if mint in self.active_positions or self._is_recently_seen(mint):
-                        return
-
-                    screening_verdict = await self._enrich_and_screen_token(mint)
-                    if not screening_verdict.passed:
-                        self._log(
-                            f"Momentum buy skipped for {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f})"
-                        )
-                        self._last_event = f"screen_rejected {mint[:8]}"
-                        return
-
-                    if not self._should_buy(
-                        mint, current_market_cap, screening_verdict=screening_verdict
-                    ):
-                        if getattr(self.config, "enable_capital_rotation", True):
-                            displaced = await self._evaluate_and_trigger_displacement(
-                                candidate_mint=mint,
-                                market_cap_sol=current_market_cap,
-                                candidate_signal=mom_signal,
-                                conviction_percentile=0.95,
-                                screening_verdict=screening_verdict,
-                            )
-                            if displaced:
-                                self._record_event(f"displaced for momentum {mint[:8]}")
-                        return
-
-                    self._log(
-                        f"Momentum breakout detected for {mint}: {mom_signal.reason} (Z={mom_signal.z_score:.2f}, BuyRatio={mom_signal.buy_sell_ratio:.1f}x, Inflow={mom_signal.net_sol_inflow:.2f} SOL)"
-                    )
-                    self._last_event = f"momentum breakout {mint[:8]}"
-                    bought = await self._buy_token(
-                        mint,
-                        current_market_cap,
-                        None,
-                        screening_verdict=screening_verdict,
-                        reason="momentum_spike",
-                    )
-                    if bought:
-                        self._record_event(f"bought momentum {mint[:8]}")
+        await trade_handlers.handle_trade_event_update(self, update)
 
     async def _handle_complete_event_update(self, update: CompleteEventUpdate) -> None:
-        if self._stop_requested:
-            return
-
-        mint = update.mint
-        curve_key = getattr(update, "bonding_curve", None) or getattr(
-            update, "bonding_curve_pubkey", ""
-        )
-        self._log(
-            f"Bonding curve completed / graduated for {mint}! Bonding curve: {curve_key}"
-        )
-        self._last_event = f"graduated {mint[:8]}"
-        self._market_regime().record_graduation(mint)
-        self.graduation_engine.record_graduation(
-            mint=mint,
-            bonding_curve=str(curve_key),
-            timestamp=update.timestamp,
-        )
-
-        if mint in self.active_positions:
-            # A completed curve rejects trades: exit on the AMM instead (BUG-44).
-            self._migrating_mints.add(mint)
-            self._exit_retry_queue.pop(mint, None)
-            candidate = self.graduation_engine.get_candidate(mint)
-            pool = getattr(candidate, "pool_keys", None) if candidate else None
-            if isinstance(pool, RaydiumPoolKeys):
-                self._raydium_exit_pools[mint] = pool
-                await self._sell_token(mint, reason="bonding_curve_graduated")
-            elif not await self._sell_token(mint, reason="bonding_curve_graduated"):
-                self._log(
-                    f"Position held for graduating token {mint}; waiting for the AMM pool to exit."
-                )
+        await curve_handlers.handle_complete_event_update(self, update)
 
     async def _handle_raydium_pool_update(self, pool_keys: RaydiumPoolKeys) -> None:
-        """Handle Raydium AMM pool creation and dispatch graduation breakout buys."""
-        if self._stop_requested:
-            return
-
-        mint = pool_keys.coin_mint
-        self._log(f"Raydium AMM pool initialized for {mint}: amm_id={pool_keys.amm_id}")
-        self._last_event = f"raydium pool {mint[:8]}"
-        self.graduation_engine.record_raydium_pool(mint=mint, pool_keys=pool_keys)
-
-        if mint in self.active_positions:
-            # Attach the pool to the held position and exit through the AMM (BUG-44).
-            self._raydium_exit_pools[mint] = pool_keys
-            if mint in self._migrating_mints:
-                await self._sell_token(mint, reason="bonding_curve_graduated")
-            return
-
-        if not self.config.enable_raydium_migration_sniping:
-            return
-
-        signal = self.graduation_engine.evaluate_graduation_signal(
-            mint=mint,
-        )
-
-        if signal.triggered and signal.stage == "raydium_pool_ready":
-            async with self._trade_lock:
-                if mint in self.active_positions or self._is_recently_seen(mint):
-                    return
-
-                screening_verdict = await self._enrich_and_screen_token(mint)
-                if not screening_verdict.passed:
-                    self._log(
-                        f"Raydium migration snipe skipped for {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f})"
-                    )
-                    self._last_event = f"screen_rejected {mint[:8]}"
-                    return
-
-                buy_amount = self.config.raydium_buy_amount_sol
-                if not self._should_buy(
-                    mint,
-                    market_cap_sol=69.0,
-                    screening_verdict=screening_verdict,
-                    proposed_entry_sol=buy_amount,
-                ):
-                    return
-
-                self._log(
-                    f"Executing Raydium graduation snipe for {mint} with {buy_amount:.3f} SOL"
-                )
-                self._last_event = f"sniping raydium {mint[:8]}"
-                bought = await self._buy_raydium_token(
-                    mint,
-                    pool_keys=pool_keys,
-                    screening_verdict=screening_verdict,
-                    reason="raydium_graduation_snipe",
-                )
-                if bought:
-                    self._record_event(f"bought raydium {mint[:8]}")
-
-        # Check for immediate cross-venue arbitrage on newly listed Raydium pool
-        if self.config.enable_cross_venue_arbitrage:
-            cand = self.graduation_engine.get_candidate(mint)
-            if cand:
-                virt_sol = int(round((cand.real_sol_reserves + 30.0) * 1_000_000_000))
-                virt_tok = int(200_000_000_000_000)
-                await self._evaluate_and_execute_arbitrage(
-                    mint=mint,
-                    virtual_sol=virt_sol,
-                    virtual_token=virt_tok,
-                )
+        await raydium_handlers.handle_raydium_pool_update(self, pool_keys)
 
     async def _arbitrage_costs(
         self, opp: ArbitrageOpportunity, signature: str | None
     ) -> TransactionCosts:
-        """Fee, priority fee and tip of a landed arbitrage bundle (BUG-99)."""
-        getter = getattr(self.execution, "get_transaction_costs", None)
-        if signature and not (self.dry_run or self.paper_trade) and callable(getter):
-            try:
-                costs = await asyncio.wait_for(
-                    getter(signature, opp.mint, is_buy=True),
-                    timeout=ARBITRAGE_COST_LOOKUP_TIMEOUT_SECONDS,
-                )
-                if isinstance(costs, TransactionCosts):
-                    return costs
-            except Exception as exc:
-                self._log(
-                    f"[ARBITRAGE] could not read costs of {signature}: {exc}; "
-                    "booking modelled costs",
-                    level=logging.WARNING,
-                )
-        gas_lamports = int(round(float(opp.estimated_fees_sol) * LAMPORTS_PER_SOL))
-        return model_transaction_costs(
-            priority_fee_lamports=max(
-                0, gas_lamports - BASE_FEE_LAMPORTS_PER_SIGNATURE
-            ),
-            tip_lamports=int(
-                round(float(opp.estimated_jito_tip_sol) * LAMPORTS_PER_SOL)
-            ),
-            signature=signature,
-        )
+        return await raydium_handlers.arbitrage_costs(self, opp, signature)
 
     async def _evaluate_and_execute_arbitrage(
         self,
@@ -3246,490 +2701,19 @@ class TradingBot:
         trade_sol: float = 0.0,
         is_buy: bool = True,
     ) -> None:
-        """Evaluate cross-venue disparity and execute atomic Jito arbitrage bundle."""
-        if not self.config.enable_cross_venue_arbitrage or self._stop_requested:
-            return
-
-        candidate = self.graduation_engine.get_candidate(mint)
-        if not candidate or not candidate.pool_keys:
-            return
-
-        pool_keys = candidate.pool_keys
-        # Derive Raydium pool reserves from candidate real reserves
-        ray_sol = int(round((candidate.real_sol_reserves or 80.0) * 1_000_000_000))
-        ray_tokens = int(200_000_000_000_000)
-
-        opp: Optional[ArbitrageOpportunity] = None
-        if self.config.enable_mempool_backrunning and trade_sol >= 1.0:
-            opp = self.backrun_engine.evaluate_whale_transaction(
-                mint=mint,
-                is_buy=is_buy,
-                trade_sol=trade_sol,
-                pump_virtual_sol=virtual_sol,
-                pump_virtual_token=virtual_token,
-                raydium_sol_reserve=ray_sol,
-                raydium_token_reserve=ray_tokens,
-                raydium_keys=pool_keys,
-            )
-
-        if opp is None:
-            opp = self.arb_monitor.evaluate_spread(
-                mint=mint,
-                pump_virtual_sol=virtual_sol,
-                pump_virtual_token=virtual_token,
-                raydium_sol_reserve=ray_sol,
-                raydium_token_reserve=ray_tokens,
-                raydium_keys=pool_keys,
-            )
-
-        if opp is not None and opp.is_profitable:
-            self._log(
-                f"[ARBITRAGE] Found {opp.direction} spread {opp.spread_pct * 100:.2f}% on {mint[:8]}! "
-                f"Optimal size: {opp.optimal_input_sol:.4f} SOL -> Est Profit: {opp.net_profit_sol:.4f} SOL"
-            )
-            if hasattr(self, "event_logger") and self.event_logger:
-                self.event_logger.emit(
-                    category=EventCategory.ARBITRAGE,
-                    event_name="arbitrage_opportunity_detected",
-                    mint=mint,
-                    data=opp.to_dict(),
-                )
-
-            if not opp.reserves_verified:
-                # Reserves above are placeholders (curve SOL + a constant token
-                # lot), so the spread is not real: never execute or bank it, in
-                # live or dry-run (BUG-59).
-                self._log(
-                    f"[ARBITRAGE] {mint[:8]} not executed: reserves are estimates, "
-                    "not on-chain reads",
-                    level=logging.WARNING,
-                )
-                return
-            res = await self.arb_executor.execute_arbitrage(opp)
-            if res.get("success"):
-                # Book net of the bundle's network fee, priority fee and Jito tip
-                # (BUG-99): read from the landed transaction, modelled otherwise.
-                signature = res.get("signature")
-                arb_costs = await self._arbitrage_costs(
-                    opp, signature if isinstance(signature, str) else None
-                )
-                gross_profit = float(opp.expected_output_sol) - float(
-                    opp.optimal_input_sol
-                )
-                self._record_trade(
-                    mint=mint,
-                    action="ARBITRAGE",
-                    entry=opp.optimal_input_sol,
-                    exit_value=opp.expected_output_sol,
-                    entry_price=opp.pump_spot_price,
-                    exit_price=opp.raydium_spot_price,
-                    reason="cross_venue_arbitrage",
-                    signature=signature if isinstance(signature, str) else None,
-                    costs=arb_costs,
-                )
-                if self.dry_run or self.paper_trade:
-                    self.wallet_balance_sol += gross_profit
-                self._book_trade_costs(
-                    gross_profit - arb_costs.total_cost_sol, arb_costs.total_cost_sol
-                )
-                if hasattr(self, "event_logger") and self.event_logger:
-                    self.event_logger.emit(
-                        category=EventCategory.ARBITRAGE,
-                        event_name="arbitrage_bundle_landed",
-                        mint=mint,
-                        data=res,
-                    )
-            else:
-                if hasattr(self, "event_logger") and self.event_logger:
-                    self.event_logger.emit(
-                        category=EventCategory.ARBITRAGE,
-                        event_name="arbitrage_bundle_reverted",
-                        mint=mint,
-                        data=res,
-                    )
+        await raydium_handlers.evaluate_and_execute_arbitrage(
+            self, mint, virtual_sol, virtual_token, trade_sol, is_buy
+        )
 
     async def _handle_new_token_event(
         self, data: dict[str, Any], websocket: Any = None
     ) -> None:
-        if self._stop_requested:
-            return
-
-        self._last_message_at = time.monotonic()
-        mint = data.get("mint")
-        if not mint:
-            return
-
-        self._observed_tokens_count += 1
-        self._market_regime().record_launch()
-        current_market_cap = float(
-            data.get("market_cap", 0.0)
-            or data.get("marketCapSol", 0.0)
-            or data.get("market_cap_sol", 0.0)
-            or data.get("marketCap", 0.0)
-            or 0.0
-        )
-        if current_market_cap <= 0.0:
-            v_sol = float(
-                data.get("vSolInBondingCurve", 0.0)
-                or data.get("v_sol_in_bonding_curve", 0.0)
-                or data.get("virtual_sol_reserves", 0.0)
-                or 0.0
-            )
-            v_tokens = float(
-                data.get("vTokensInBondingCurve", 0.0)
-                or data.get("v_tokens_in_bonding_curve", 0.0)
-                or data.get("virtual_token_reserves", 0.0)
-                or 0.0
-            )
-            if v_sol > 0 and v_tokens > 0:
-                sol_val = v_sol / 1_000_000_000.0 if v_sol > 1_000_000 else v_sol
-                token_val = (
-                    v_tokens / 1_000_000.0
-                    if v_tokens > RAW_TOKEN_UNITS_THRESHOLD
-                    else v_tokens
-                )
-                if token_val > 0:
-                    current_market_cap = sol_val * (1_000_000_000.0 / token_val)
-        token_name = data.get("name") or mint
-        self._last_new_token = mint
-        self._last_new_token_name = (
-            f"{token_name} ({mint[:6]}...)" if len(mint) > 6 else token_name
-        )
-
-        if hasattr(self, "event_logger") and self.event_logger is not None:
-            self.event_logger.emit(
-                category=EventCategory.STREAM,
-                severity=EventSeverity.DEBUG,
-                event_name="new_token_event",
-                mint=mint,
-                mint_name=token_name,
-                data={"market_cap_sol": current_market_cap},
-            )
-
-        if self.replay_recorder is not None:
-            price = (
-                current_market_cap / 1_000_000_000.0 if current_market_cap > 0 else 0.0
-            )
-            self.replay_recorder.record_snapshot(
-                {
-                    "timestamp": time.time(),
-                    "mint": mint,
-                    "name": token_name,
-                    "price": price,
-                    "market_cap_sol": current_market_cap,
-                    "is_buy": True,
-                    "signal": "buy",
-                }
-            )
-
-        not_pump = non_pump_launch_reason(
-            mint,
-            data,
-            require_suffix=bool(getattr(self.config, "require_pump_mint_suffix", True)),
-        )
-        if not_pump is not None:
-            # Never screen or buy another launchpad's token (BUG-108).
-            key = not_pump.split(",")[0]
-            self._non_pump_rejections[key] = self._non_pump_rejections.get(key, 0) + 1
-            self._mark_seen(mint)
-            self._last_event = f"not_pump_fun {mint[:8]}"
-            if hasattr(self, "event_logger") and self.event_logger is not None:
-                self.event_logger.emit(
-                    category=EventCategory.SCREENING,
-                    severity=EventSeverity.DEBUG,
-                    event_name="token_rejected_not_pump_fun",
-                    mint=mint,
-                    mint_name=token_name,
-                    data={"reason": not_pump, "pool": data.get("pool")},
-                )
-            return
-
-        mayhem = (
-            mayhem_mode_reason(data)
-            if bool(getattr(self.config, "skip_mayhem_mode", True))
-            else None
-        )
-        if mayhem is not None:
-            # Mayhem curves drift off the standard reserves; never screen them.
-            self._mayhem_rejections = getattr(self, "_mayhem_rejections", 0) + 1
-            self._mark_seen(mint)
-            self._last_event = f"mayhem_mode {mint[:8]}"
-            if hasattr(self, "event_logger") and self.event_logger is not None:
-                self.event_logger.emit(
-                    category=EventCategory.SCREENING,
-                    severity=EventSeverity.DEBUG,
-                    event_name="token_rejected_mayhem_mode",
-                    mint=mint,
-                    mint_name=token_name,
-                    data={"reason": mayhem},
-                )
-            return
-
-        confirmed = self._entry_mode() == "confirmed"
-        async with self._trade_lock:
-            if mint in self.active_positions or self._is_recently_seen(mint):
-                return
-
-            if confirmed:
-                # Watch instead of buy: entry gates run again at confirmation.
-                if not self._may_watch(mint):
-                    return
-            elif not self._should_buy(mint, current_market_cap):
-                return
-
-            screening_verdict = await self._enrich_and_screen_token(
-                mint,
-                token_data=data,
-                token_name=token_name,
-                market_cap_sol=current_market_cap,
-            )
-            if not screening_verdict.passed:
-                self._log(
-                    f"Skipping new token {mint}: failed anti-rug screening (score={screening_verdict.risk_score:.1f}, reasons={screening_verdict.reasons})"
-                )
-                reasons_str = (
-                    "; ".join(screening_verdict.reasons)
-                    if screening_verdict.reasons
-                    else "anti-rug"
-                )
-                self._last_event = f"screen_rejected {mint[:8]}"
-                self._record_event(
-                    f"screen_rejected {mint[:8]}: {reasons_str}",
-                    alert=False,
-                )
-                return
-
-            if confirmed:
-                self._watch_token(mint, data, current_market_cap, screening_verdict)
-                return
-
-            bought = await self._buy_token(
-                mint,
-                current_market_cap,
-                token_name=token_name,
-                screening_verdict=screening_verdict,
-            )
-            if bought and websocket:
-                await self._subscribe_to_token_trades(websocket, mint)
+        await new_token_handlers.handle_new_token_event(self, data, websocket)
 
     async def _handle_trade_update(
         self, data: dict[str, Any], websocket: Any = None
     ) -> None:
-        if self._stop_requested:
-            return
-
-        self._last_message_at = time.monotonic()
-        mint = data.get("mint")
-        if not mint:
-            return
-
-        self._observed_tokens_count += 1
-        token_name = data.get("name")
-        if token_name:
-            self._last_new_token = mint
-            self._last_new_token_name = (
-                f"{token_name} ({mint[:6]}...)" if len(mint) > 6 else token_name
-            )
-
-        is_buy = bool(
-            data.get("is_buy")
-            or data.get("type") == "buy"
-            or data.get("txType") == "buy"
-            or data.get("side") == "buy"
-        )
-        sol_amount = float(
-            data.get("sol_amount", 0.0)
-            or data.get("solAmount", 0.0)
-            or (float(data.get("sol_amount_lamports", 0)) / 1_000_000_000.0)
-            or (float(data.get("solAmountLamports", 0)) / 1_000_000_000.0)
-        )
-        user = str(
-            data.get("user") or data.get("traderPublicKey") or data.get("owner") or ""
-        )
-        ts = float(data.get("timestamp") or data.get("time") or time.time())
-        self.order_flow_engine.record_trade(
-            mint=mint,
-            is_buy=is_buy,
-            sol_amount=sol_amount,
-            user=user,
-            timestamp=ts,
-        )
-
-        current_market_cap = float(
-            data.get("market_cap", 0.0)
-            or data.get("marketCapSol", 0.0)
-            or data.get("market_cap_sol", 0.0)
-            or data.get("marketCap", 0.0)
-            or 0.0
-        )
-        if current_market_cap <= 0.0:
-            v_sol = float(
-                data.get("vSolInBondingCurve", 0.0)
-                or data.get("v_sol_in_bonding_curve", 0.0)
-                or data.get("virtual_sol_reserves", 0.0)
-                or 0.0
-            )
-            v_tokens = float(
-                data.get("vTokensInBondingCurve", 0.0)
-                or data.get("v_tokens_in_bonding_curve", 0.0)
-                or data.get("virtual_token_reserves", 0.0)
-                or 0.0
-            )
-            if v_sol > 0 and v_tokens > 0:
-                sol_val = v_sol / 1_000_000_000.0 if v_sol > 1_000_000 else v_sol
-                token_val = (
-                    v_tokens / 1_000_000.0
-                    if v_tokens > RAW_TOKEN_UNITS_THRESHOLD
-                    else v_tokens
-                )
-                if token_val > 0:
-                    current_market_cap = sol_val * (1_000_000_000.0 / token_val)
-
-        if self.replay_recorder is not None:
-            self.replay_recorder.record_snapshot(
-                {
-                    "timestamp": ts,
-                    "mint": mint,
-                    "name": (
-                        token_name
-                        or self.active_positions.get(mint, {}).get("name")
-                        or f"{mint[:8]}..."
-                    ),
-                    "price": (
-                        current_market_cap / 1_000_000_000.0
-                        if current_market_cap > 0
-                        else 0.0
-                    ),
-                    "market_cap_sol": current_market_cap,
-                    "is_buy": is_buy,
-                    "sol_amount": sol_amount,
-                    "token_amount": float(
-                        data.get("token_amount", 0.0)
-                        or data.get("tokenAmount", 0.0)
-                        or 0.0
-                    ),
-                    "user": user,
-                    "signal": "buy" if is_buy else "sell",
-                }
-            )
-
-        self._evaluate_shadow_variants(mint, current_market_cap, now=ts)
-        if mint in self.active_positions:
-            self._note_follow_on_buy(mint, is_buy, sol_amount, user, ts)
-        elif self._entry_mode() == "confirmed":
-            entry = self.order_flow_engine.get_watch(mint)
-            if entry is not None and entry.subscribed:
-                await self._maybe_buy_confirmed_momentum(
-                    mint, current_market_cap, token_name, now=ts
-                )
-                return
-
-        if mint in self.active_positions:
-            if not self.dry_run or current_market_cap <= 0.0:
-                try:
-                    curve = await self.execution.get_bonding_curve_state(mint)
-                    if isinstance(curve, dict) and "market_cap_sol" in curve:
-                        current_market_cap = float(curve["market_cap_sol"])
-                    elif (
-                        isinstance(curve, dict)
-                        and "virtual_token_reserves" in curve
-                        and "virtual_sol_reserves" in curve
-                    ):
-                        vt = int(curve.get("virtual_token_reserves", 0))
-                        vs = int(curve.get("virtual_sol_reserves", 0))
-                        if vt > 0 and vs > 0:
-                            current_market_cap = (vs / 1_000_000_000.0) * (
-                                1_000_000_000.0 / (vt / 1_000_000.0)
-                            )
-                except Exception:
-                    pass
-
-            if (
-                not is_buy
-                and self.config.enable_copy_trading
-                and self.config.copy_trading_mirror_sells
-                and self.copy_trade_engine.is_tracked_wallet(user)
-            ):
-                wallet_obj = self.copy_trade_engine.registry.get_wallet(user)
-                wallet_label = (
-                    wallet_obj.label if wallet_obj and wallet_obj.label else user[:8]
-                )
-                self._log(
-                    f"Smart money sell detected on held token {mint} by {wallet_label}... executing mirrored exit."
-                )
-                self._last_event = f"copy-trade exit {mint[:8]}"
-                await self._sell_token(
-                    mint, reason=f"copy_trade_mirror_exit_{wallet_label}"
-                )
-                return
-
-            await self._evaluate_and_execute_exit(
-                mint, current_market_cap, websocket=websocket
-            )
-            return
-
-        # Smart Money Copy-Trading Entry Evaluation via WS
-        if (
-            is_buy
-            and self.config.enable_copy_trading
-            and self.copy_trade_engine.is_tracked_wallet(user)
-            and mint not in self.active_positions
-            and not self._is_recently_seen(mint)
-        ):
-            signal = self.copy_trade_engine.record_and_evaluate(
-                user=user,
-                mint=mint,
-                sol_amount=sol_amount,
-                is_buy=True,
-                timestamp=ts,
-            )
-            if signal.triggered and signal.is_buy and signal.computed_copy_size_sol > 0:
-                async with self._trade_lock:
-                    if mint in self.active_positions or self._is_recently_seen(mint):
-                        return
-
-                    wallet_obj = self.copy_trade_engine.registry.get_wallet(user)
-                    wallet_label = (
-                        wallet_obj.label
-                        if wallet_obj and wallet_obj.label
-                        else user[:8]
-                    )
-                    reason_label = f"copy_trade_{wallet_label}"
-
-                    screening_verdict = None
-                    if self.config.copy_trading_require_anti_rug_screen:
-                        screening_verdict = await self._enrich_and_screen_token(
-                            mint, token_data=data
-                        )
-                        if not screening_verdict.passed:
-                            self._log(
-                                f"Copy-trade buy rejected for {mint} by {wallet_label}: failed anti-rug screening (score={screening_verdict.risk_score:.1f})"
-                            )
-                            return
-
-                    if not self._should_buy(
-                        mint,
-                        current_market_cap,
-                        screening_verdict=screening_verdict,
-                        proposed_entry_sol=signal.computed_copy_size_sol,
-                    ):
-                        return
-
-                    self._log(
-                        f"Executing copy-trade buy for {mint} mirroring wallet {wallet_label} ({signal.reason}) with {signal.computed_copy_size_sol:.3f} SOL"
-                    )
-                    self._last_event = f"copy-trade buy {mint[:8]}"
-                    bought = await self._buy_token(
-                        mint,
-                        current_market_cap,
-                        data.get("name") or mint,
-                        screening_verdict=screening_verdict,
-                        reason=reason_label,
-                        buy_amount_sol=signal.computed_copy_size_sol,
-                    )
-                    if bought and websocket:
-                        await self._subscribe_to_token_trades(websocket, mint)
-                    return
+        await trade_handlers.handle_trade_update(self, data, websocket)
 
     def _handle_server_message(self, text: str) -> None:
         """Logs, counts and (for subscription refusals) alerts a stream notice.
@@ -3884,25 +2868,7 @@ class TradingBot:
         market_cap_sol: float,
         verdict: TokenScreeningVerdict,
     ) -> None:
-        """Put a screened launch on the watch list instead of buying it."""
-        v_sol = float(data.get("vSolInBondingCurve", 0.0) or 0.0)
-        if v_sol > 1_000_000:
-            v_sol /= 1_000_000_000.0
-        now = time.time()
-        created_at = float(data.get("timestamp") or now)
-        if created_at > 1e12:  # milliseconds
-            created_at /= 1000.0
-        self.order_flow_engine.watch(
-            mint,
-            created_at=created_at,
-            creator=str(data.get("traderPublicKey") or "") or None,
-            verdict=verdict,
-            now=now,
-            real_sol=max(0.0, v_sol - 30.0) if v_sol > 0 else None,
-            market_cap_sol=market_cap_sol,
-        )
-        self._count_watch("watched")
-        self._last_event = f"watching {mint[:8]}"
+        new_token_handlers.watch_token(self, mint, data, market_cap_sol, verdict)
 
     def _entry_lanes(self) -> dict[str, str]:
         lanes: dict[str, str] | None = getattr(self, "_entry_lane_by_mint", None)
@@ -3919,15 +2885,7 @@ class TradingBot:
     def _note_follow_on_buy(
         self, mint: str, is_buy: bool, sol_amount: float, user: str, ts: float
     ) -> None:
-        """Remember the last buy by another wallet big enough to count as demand
-        for the buy-flow stagnation exit (FEAT-52)."""
-        if not is_buy or sol_amount < float(self.config.stagnant_min_buy_sol):
-            return
-        if user and user == self._own_wallet():
-            return
-        position = self.active_positions.get(mint)
-        if position is not None:
-            position["last_qualifying_buy_at"] = float(ts)
+        trade_handlers.note_follow_on_buy(self, mint, is_buy, sol_amount, user, ts)
 
     async def _maybe_buy_confirmed_momentum(
         self,
@@ -3937,85 +2895,9 @@ class TradingBot:
         *,
         now: float,
     ) -> bool:
-        """Buy a promoted watched mint once its order flow confirms demand."""
-        engine = self.order_flow_engine
-        entry = engine.get_watch(mint)
-        if entry is None:
-            return False
-        if market_cap_sol <= 0.0:
-            market_cap_sol = entry.market_cap_sol
-        exclude = frozenset(u for u in (entry.creator, self._own_wallet()) if u)
-        signal = self.strategy.evaluate_momentum(
-            engine,
-            mint,
-            token_creation_timestamp=entry.created_at,
-            current_time=now,
-            exclude_users=exclude,
+        return await trade_handlers.maybe_buy_confirmed_momentum(
+            self, mint, market_cap_sol, token_name, now=now
         )
-        age = max(0.0, now - entry.created_at)
-        if not self.strategy.should_buy_momentum(
-            momentum_signal=signal,
-            active_positions=len(self.active_positions),
-            buy_attempts=self._buy_attempts.get(mint, 0),
-            token_age_seconds=age,
-            market_cap_sol=market_cap_sol,
-        ):
-            return False
-        metrics = {
-            "unique_buyers": signal.unique_buyers,
-            "net_inflow_sol": signal.net_sol_inflow,
-            "buy_sell_ratio": signal.buy_sell_ratio,
-            "z_score": signal.z_score,
-            "token_age_seconds": round(age, 1),
-            "market_cap_sol": round(market_cap_sol, 4),
-            "sol_growth": round(entry.sol_growth, 6),
-        }
-        # Recorded for offline tests of the FEAT-56 filters; they gate nothing.
-        flow = engine.buy_flow_concentration(
-            mint, exclude_users=exclude, current_time=now
-        )
-        metrics["top_buyer_share"] = flow["top_buyer_share"]
-        metrics["wallet_diversity"] = flow["wallet_diversity"]
-        # FEAT-57 wash-trade inputs, recorded only until they beat a random cut.
-        metrics.update(
-            engine.round_trip_flow(mint, exclude_users=exclude, current_time=now)
-        )
-        if entry.first_polled_real_sol is not None and entry.start_real_sol is not None:
-            # SOL added between the create and the first curve poll (a few
-            # seconds): a proxy for sniper volume, since no capture sees the
-            # first slots' trades.
-            metrics["first_poll_sol_growth"] = round(
-                entry.first_polled_real_sol - entry.start_real_sol, 6
-            )
-            metrics["first_poll_age_seconds"] = round(
-                max(0.0, entry.first_polled_at - entry.created_at), 1
-            )
-        async with self._trade_lock:
-            if mint in self.active_positions or not engine.is_watched(mint):
-                return False
-            self._count_watch("confirmed")
-            bought = await self._buy_token(
-                mint,
-                market_cap_sol,
-                token_name=token_name,
-                screening_verdict=entry.screening_verdict,
-                reason="momentum_confirmed",
-                strategy="momentum",
-                entry_metrics=metrics,
-            )
-            if bought:
-                # Keep the trade subscription: the position needs it now.
-                engine.unwatch(mint)
-                self._count_watch("bought")
-            elif str(getattr(self, "_last_buy_error", "") or "").startswith(
-                "entry_drift"
-            ):
-                # The move already happened: stop watching (replay does the same).
-                self._count_watch("drift_refused")
-                engine.unwatch(mint)
-                if entry.subscribed:
-                    await self._unsubscribe_from_token_trades(None, mint)
-            return bought
 
     # -- Shadow variants: momentum rules logged on paper, never traded (FEAT-58) --
 
@@ -4031,78 +2913,13 @@ class TradingBot:
     def _evaluate_shadow_variants(
         self, mint: str, market_cap_sol: float, *, now: float
     ) -> None:
-        """Evaluate the shadow variants on a trade of a subscribed watched mint,
-        or of a mint seen that way before (bought since, or still trading)."""
-        if self.replay_recorder is None or self._entry_mode() != "confirmed":
-            return  # the result only exists in the capture
-        book = self._shadow_book()
-        if book is None:
-            return
-        entry = self.order_flow_engine.get_watch(mint)
-        if entry is not None and entry.subscribed:
-            book.remember(mint, created_at=entry.created_at, creator=entry.creator)
-        elif not book.knows(mint):
-            return
-        own = self._own_wallet()
-        for shadow in book.evaluate(
-            self.order_flow_engine,
-            mint,
-            now=now,
-            market_cap_sol=market_cap_sol,
-            exclude_users=frozenset({own}) if own else frozenset(),
-        ):
-            self._schedule_shadow_fill(shadow)
+        trade_handlers.evaluate_shadow_variants(self, mint, market_cap_sol, now=now)
 
     def _schedule_shadow_fill(self, shadow: ShadowSignal) -> None:
-        tasks: set[asyncio.Task[None]] | None = getattr(
-            self, "_shadow_fill_tasks", None
-        )
-        if tasks is None:
-            tasks = set()
-            self._shadow_fill_tasks: set[asyncio.Task[None]] = tasks
-        if len(tasks) >= MAX_PENDING_SHADOW_FILLS:
-            self._count_watch("shadow_skipped")
-            return
-        self._count_watch("shadow_signals")
-        task = asyncio.get_running_loop().create_task(self._record_shadow_fill(shadow))
-        tasks.add(task)
-        task.add_done_callback(tasks.discard)
+        trade_handlers.schedule_shadow_fill(self, shadow)
 
     async def _record_shadow_fill(self, shadow: ShadowSignal) -> None:
-        """Read the curve when a paper buy would land and record the shadow fill."""
-        delay = float(getattr(self.config, "paper_entry_delay_seconds", 0.0) or 0.0)
-        if delay > 0:
-            await asyncio.sleep(delay)
-        market_cap: float | None = None
-        error: str | None = None
-        curve: Any = None
-        try:
-            curve = await asyncio.wait_for(
-                self.execution.get_bonding_curve_state(shadow.mint), timeout=5.0
-            )
-            market_cap = _curve_market_cap(curve)
-        except Exception as exc:
-            error = f"curve_error: {type(exc).__name__}"
-        fill_time = time.time()
-        if self.replay_recorder is None:
-            return
-        if market_cap:
-            self._record_curve_poll(
-                shadow.mint,
-                market_cap,
-                ts=fill_time,
-                source="shadow_fill",
-                real_sol=int(curve.get("real_sol_reserves", 0) or 0) / 1e9,
-                virtual_sol=int(curve.get("virtual_sol_reserves", 0) or 0) / 1e9,
-            )
-        self.replay_recorder.record_snapshot(
-            shadow_fill_record(
-                shadow,
-                fill_market_cap_sol=market_cap,
-                fill_time=fill_time,
-                error=error,
-            )
-        )
+        await trade_handlers.record_shadow_fill(self, shadow)
 
     async def _cancel_shadow_fills(self) -> None:
         tasks = list(getattr(self, "_shadow_fill_tasks", None) or ())
@@ -4112,49 +2929,13 @@ class TradingBot:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def watch_list_status(self) -> dict[str, Any]:
-        """Watch list size, subscriptions and counters for status and dashboard."""
-        engine = self.order_flow_engine
-        return {
-            "entry_mode": self._entry_mode(),
-            "watched": engine.watch_count,
-            "subscribed": engine.watch_subscribed_count,
-            "near_graduation": engine.near_graduation_count,
-            "max_mints": int(getattr(self.config, "watch_max_mints", 300)),
-            "subscription_budget": int(
-                getattr(self.config, "watch_max_trade_subscriptions", 20)
-            ),
-            "stats": dict(getattr(self, "_watch_stats", {}) or {}),
-        }
+        return watch_handlers.watch_list_status(self)
 
     async def _run_watch_poll_loop(self) -> None:
-        """Batch-polls watched curves in its own task (confirmed mode only)."""
-        if self._entry_mode() != "confirmed":
-            return
-        interval = max(0.1, float(self.config.watch_poll_interval_seconds))
-        while not self._stop_requested:
-            try:
-                await asyncio.sleep(interval)
-                await self._poll_watch_list()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                self._log(f"Watch poll exception: {exc}", level=logging.DEBUG)
+        await watch_handlers.run_watch_poll_loop(self)
 
     def _watch_poll_due(self, mint: str, now: float) -> bool:
-        """Near-graduation entries are polled slowly until they get close to the
-        pre-graduation entry band, where acceleration needs every reading."""
-        entry = self.order_flow_engine.get_watch(mint)
-        if entry is None or not entry.near_graduation:
-            return True
-        progress = (entry.last_real_sol or 0.0) / GRADUATION_REAL_SOL
-        entry_pct = float(self.config.pre_graduation_entry_progress_pct)
-        entry_pct = entry_pct / 100.0 if entry_pct > 1.0 else entry_pct
-        if progress >= entry_pct - NEAR_GRADUATION_FAST_POLL_MARGIN:
-            return True
-        interval = float(
-            getattr(self.config, "near_graduation_poll_interval_seconds", 6.0)
-        )
-        return now - entry.last_polled_at >= interval
+        return watch_handlers.watch_poll_due(self, mint, now)
 
     def _record_curve_poll(
         self,
@@ -4166,131 +2947,21 @@ class TradingBot:
         real_sol: float | None = None,
         virtual_sol: float | None = None,
     ) -> None:
-        """Write one polled curve to the capture, so replay can rebuild the curve
-        history the bot saw (fills, drift guard, pre-graduation lane)."""
-        if (
-            self.replay_recorder is None
-            or market_cap_sol <= 0.0
-            or not getattr(self.config, "capture_curve_polls", True)
-        ):
-            return
-        row: dict[str, Any] = {
-            "timestamp": ts,
-            "mint": mint,
-            "event": "curve_poll",
-            "source": source,
-            "price": market_cap_sol / 1_000_000_000.0,
-            "market_cap_sol": round(market_cap_sol, 6),
-        }
-        if real_sol is not None:
-            row["real_sol_reserves"] = round(real_sol, 9)
-        if virtual_sol is not None:
-            row["virtual_sol_reserves"] = round(virtual_sol, 9)
-        self.replay_recorder.record_snapshot(row)
+        watch_handlers.record_curve_poll(
+            self,
+            mint,
+            market_cap_sol,
+            ts=ts,
+            source=source,
+            real_sol=real_sol,
+            virtual_sol=virtual_sol,
+        )
 
     async def _poll_watch_list(self) -> None:
-        """One poll: expire, read curves, feed the engines, drop bad curves, promote."""
-        engine = self.order_flow_engine
-        now = time.time()
-        engine.expire_watch(
-            ttl=float(self.config.watch_ttl_seconds),
-            now=now,
-            **near_graduation_expiry(self.config),
-        )
-        for moved, was_subscribed in engine.drain_near_graduation():
-            # Past the TTL the momentum lane is done with it: free the billed
-            # trade slot, keep polling the curve for the pre-graduation lane.
-            self._count_watch("near_graduation")
-            if was_subscribed and moved.mint not in self.active_positions:
-                await self._unsubscribe_from_token_trades(None, moved.mint)
-        mints = [m for m in engine.watched_mints() if self._watch_poll_due(m, now)]
-        rejected: dict[str, str] = {}
-        if mints:
-            try:
-                states = await asyncio.wait_for(
-                    self.execution.get_bonding_curve_states(mints, rejected=rejected),
-                    timeout=10.0,
-                )
-            except Exception as exc:
-                # Keep polling; the RPC degradation alert covers long outages.
-                self._count_watch("poll_errors")
-                if getattr(self, "event_logger", None) is not None:
-                    self.event_logger.emit(
-                        category=EventCategory.STRATEGY,
-                        severity=EventSeverity.WARNING,
-                        event_name="watch_poll_failed",
-                        data={"mints": len(mints), "error": str(exc)[:200]},
-                    )
-                states = {}
-                rejected = {}
-            skip_mayhem = bool(getattr(self.config, "skip_mayhem_mode", True))
-            for mint, state in states.items():
-                if skip_mayhem and state.get("is_mayhem_mode"):
-                    rejected[mint] = "mayhem"
-                    continue
-                if state.get("complete"):
-                    self._market_regime().record_graduation(mint)
-                    rejected[mint] = "complete"
-                    continue
-                v_sol = int(state.get("virtual_sol_reserves", 0) or 0) / 1e9
-                v_tok = int(state.get("virtual_token_reserves", 0) or 0) / 1e6
-                real_sol = int(state.get("real_sol_reserves", 0) or 0) / 1e9
-                market_cap = v_sol * (1_000_000_000.0 / v_tok) if v_tok > 0 else 0.0
-                self._record_curve_poll(
-                    mint,
-                    market_cap,
-                    ts=now,
-                    source="watch",
-                    real_sol=real_sol,
-                    virtual_sol=v_sol,
-                )
-                self.graduation_engine.update_bonding_curve(
-                    mint=mint,
-                    bonding_curve="",
-                    real_sol_reserves=real_sol,
-                    virtual_sol_reserves=v_sol,
-                    market_cap_sol=market_cap,
-                    timestamp=now,
-                )
-                engine.update_watch_curve(
-                    mint, real_sol=real_sol, market_cap_sol=market_cap, now=now
-                )
-                if self.config.enable_pre_graduation_harvesting:
-                    # Pre-graduation lane on polled curves (FEAT-53): needs a
-                    # few readings before acceleration means anything.
-                    await self._maybe_buy_pre_graduation(
-                        mint,
-                        market_cap,
-                        now=now,
-                        min_samples=PRE_GRADUATION_MIN_POLLED_SAMPLES,
-                    )
-            grace = max(10.0, 3 * float(self.config.watch_poll_interval_seconds))
-            for mint, reason in rejected.items():
-                entry = engine.get_watch(mint)
-                if reason == "missing" and entry and now - entry.watched_at < grace:
-                    continue  # load-balanced RPCs lag on brand-new accounts
-                self._count_watch(f"dropped_{reason}")
-                engine.unwatch(mint)
-                if entry is not None and entry.subscribed:
-                    await self._unsubscribe_from_token_trades(None, mint)
-        for evicted in engine.drain_watch_evictions():
-            self._count_watch("expired")
-            if evicted.subscribed and evicted.mint not in self.active_positions:
-                await self._unsubscribe_from_token_trades(None, evicted.mint)
-        await self._promote_watched_mints()
+        await watch_handlers.poll_watch_list(self)
 
     async def _promote_watched_mints(self) -> None:
-        """Subscribe growing watched mints to the billed trade feed, within budget."""
-        if self._active_ws is None or not self.trade_feed_available():
-            return  # breaker open: keep polling, promote once trades flow again
-        engine = self.order_flow_engine
-        for mint in engine.promotable(
-            min_sol_growth=float(self.config.watch_promote_min_sol_growth),
-            budget=int(self.config.watch_max_trade_subscriptions),
-        ):
-            await self._subscribe_to_token_trades(None, mint)
-            engine.mark_watch_subscribed(mint)
-            self._count_watch("promoted")
+        await watch_handlers.promote_watched_mints(self)
 
     async def _subscribe_to_token_trades(
         self, websocket: Any = None, mint: str = ""
@@ -4402,9 +3073,15 @@ class TradingBot:
             f"WebSocket stream error: {exc}. Reconnecting in {backoff:.1f}s (attempt {self._stream_consecutive_failures})...",
             level=logging.WARNING,
         )
+        # One disconnect reaches exactly one of this hook and on_stream_ended
+        # (an ERROR frame goes through on_stream_error, then ends): BUG-122.
+        if not self._stop_requested:
+            self._record_connection_loss()
         self._trip_stream_breaker_if_failing()
 
     def on_stream_ended(self) -> None:
+        if not self._stop_requested:
+            self._record_connection_loss()
         self._trip_stream_breaker_if_failing()
 
     def on_stream_closed(self) -> None:
@@ -4417,180 +3094,22 @@ class TradingBot:
             self._last_status = "degraded: stream circuit breaker active"
 
     async def _refresh_active_positions_market_caps(self) -> None:
-        """Periodically refresh active position market caps from on-chain bonding curve states."""
-        if not self.active_positions:
-            return
-        for mint in list(self.active_positions.keys()):
-            try:
-                if mint in self._migrating_mints:
-                    await self._exit_graduated_position(mint)
-                    continue
-                curve = await self.execution.get_bonding_curve_state(mint)
-                if isinstance(curve, dict) and curve.get("complete") is True:
-                    # Graduated while held: the curve has no reserves left to
-                    # price or sell against (BUG-123).
-                    await self._exit_graduated_position(mint)
-                    continue
-                mc = 0.0
-                if isinstance(curve, dict):
-                    mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
-                    if mc <= 0.0:
-                        vt = int(curve.get("virtual_token_reserves", 0))
-                        vs = int(curve.get("virtual_sol_reserves", 0))
-                        if vt > 0 and vs > 0:
-                            mc = (vs / 1_000_000_000.0) * (
-                                1_000_000_000.0 / (vt / 1_000_000.0)
-                            )
-                    # Paper exits price from this read: record it so replay
-                    # exits see the same curve.
-                    self._record_curve_poll(
-                        mint,
-                        mc,
-                        ts=time.time(),
-                        source="position",
-                        real_sol=int(curve.get("real_sol_reserves", 0) or 0) / 1e9,
-                        virtual_sol=int(curve.get("virtual_sol_reserves", 0) or 0)
-                        / 1e9,
-                    )
-                    if self._entry_mode() == "confirmed" and mc > 0.0:
-                        # Keep curve progress fresh for held mints so the
-                        # pre-graduation tranches sell before migration (FEAT-53).
-                        self.graduation_engine.update_bonding_curve(
-                            mint=mint,
-                            bonding_curve="",
-                            real_sol_reserves=int(
-                                curve.get("real_sol_reserves", 0) or 0
-                            )
-                            / 1_000_000_000.0,
-                            virtual_sol_reserves=int(
-                                curve.get("virtual_sol_reserves", 0) or 0
-                            )
-                            / 1_000_000_000.0,
-                            market_cap_sol=mc,
-                            complete=bool(curve.get("complete", False)),
-                        )
-                if mc > 0.0:
-                    await self._evaluate_and_execute_exit(mint, mc)
-                else:
-                    pos = self.active_positions.get(mint, {})
-                    curr_mc = float(
-                        pos.get("current_market_cap", 0.0)
-                        or pos.get("entry_market_cap", 0.0)
-                        or 0.0
-                    )
-                    if curr_mc > 0.0:
-                        await self._evaluate_and_execute_exit(mint, curr_mc)
-            except Exception:
-                try:
-                    pos = self.active_positions.get(mint, {})
-                    curr_mc = float(
-                        pos.get("current_market_cap", 0.0)
-                        or pos.get("entry_market_cap", 0.0)
-                        or 0.0
-                    )
-                    if curr_mc > 0.0:
-                        await self._evaluate_and_execute_exit(mint, curr_mc)
-                except Exception:
-                    pass
+        await curve_handlers.refresh_active_positions_market_caps(self)
 
     async def _pumpswap_exit_market_cap(self, mint: str) -> float | None:
-        """Market cap of a migrated coin's PumpSwap pool; ``None`` while it is missing."""
-        getter = getattr(self.execution, "get_pumpswap_market_state", None)
-        if getter is None:
-            return None
-        try:
-            state = await asyncio.wait_for(getter(mint), timeout=5.0)
-            mc = float(state.get("market_cap_sol", 0.0) or 0.0)
-        except Exception as exc:
-            self._log(
-                f"PumpSwap pool for {mint[:8]} not ready: {exc}", level=logging.DEBUG
-            )
-            return None
-        return mc if mc > 0.0 else None
+        return await raydium_handlers.pumpswap_exit_market_cap(self, mint)
 
     async def _exit_graduated_position(self, mint: str) -> bool:
-        """A held curve completed: mark it migrating and sell the rest (BUG-123).
-
-        Called from every curve refresh, so a pool that is not there yet is
-        retried on the next pass.
-        """
-        if mint not in self.active_positions:
-            return False
-        if mint not in self._migrating_mints:
-            self._migrating_mints.add(mint)
-            self._exit_retry_queue.pop(mint, None)
-            self._market_regime().record_graduation(mint)
-            self.graduation_engine.record_graduation(
-                mint=mint, bonding_curve="", timestamp=time.time()
-            )
-            self._record_event(f"graduated while held {mint[:8]}", alert=False)
-        return await self._sell_token(mint, reason="bonding_curve_graduated")
+        return await raydium_handlers.exit_graduated_position(self, mint)
 
     async def _handle_ws_migration(self, mint: str) -> None:
-        """PumpPortal migration event: count it, drop a watched mint, exit a held one."""
-        if self._market_regime().record_graduation(mint) and (
-            self.replay_recorder is not None
-        ):
-            # No price field: replay skips it; regime analysis counts it.
-            self.replay_recorder.record_snapshot(
-                {"timestamp": time.time(), "mint": mint, "event": "migration"}
-            )
-        if self._stop_requested:
-            return
-        engine = self.order_flow_engine
-        entry = engine.get_watch(mint) if engine.is_watched(mint) else None
-        if entry is not None:
-            self._count_watch("dropped_complete")
-            engine.unwatch(mint)
-            if entry.subscribed and mint not in self.active_positions:
-                await self._unsubscribe_from_token_trades(None, mint)
-        if mint in self.active_positions:
-            await self._exit_graduated_position(mint)
+        await raydium_handlers.handle_ws_migration(self, mint)
 
     async def _graduation_backfill_pass(self) -> int:
-        """Third graduation source: ask the Pump.fun API about each held mint.
-
-        Catches a migration the curve refresh and ``subscribeMigration`` both
-        missed (reconnect, restart). Bounded per mint; a failed lookup just
-        waits for the next pass. Returns the number of graduations found.
-        """
-        found = 0
-        for mint in list(self.active_positions):
-            if mint in self._migrating_mints or self._stop_requested:
-                continue
-            try:
-                coin = await asyncio.wait_for(self.api.get_coin(mint), timeout=5.0)
-            except Exception as exc:
-                self._log(
-                    f"Graduation backfill lookup failed for {mint[:8]}: {exc}",
-                    level=logging.DEBUG,
-                )
-                continue
-            if not isinstance(coin, dict) or not (
-                coin.get("complete") is True or coin.get("pump_swap_pool")
-            ):
-                continue
-            found += 1
-            self._count_watch("graduation_backfill")
-            self._record_event(
-                f"graduation backfill: {mint[:8]} completed (missed by stream)",
-                alert=False,
-            )
-            await self._exit_graduated_position(mint)
-        return found
+        return await raydium_handlers.graduation_backfill_pass(self)
 
     async def _run_graduation_backfill_loop(self) -> None:
-        interval = float(getattr(self.config, "graduation_backfill_seconds", 0) or 0)
-        if interval <= 0:
-            return
-        while not self._stop_requested:
-            try:
-                await asyncio.sleep(interval)
-                await self._graduation_backfill_pass()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                self._log(f"Graduation backfill exception: {exc}", level=logging.DEBUG)
+        await raydium_handlers.run_graduation_backfill_loop(self)
 
     def _market_regime(self) -> MarketRegimeTracker:
         tracker = getattr(self, "market_regime", None)

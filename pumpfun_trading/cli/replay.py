@@ -127,7 +127,10 @@ def build_parser(
         "--split-at",
         default=None,
         metavar="mid|TIMESTAMP",
-        help="--shadow-report: also report halves A/B split at this time ('mid' = middle)",
+        help=(
+            "--shadow-report / --sweep / --keep: also report halves A/B split at "
+            "this time ('mid' = middle; --sweep defaults to mid)"
+        ),
     )
     parser.add_argument(
         "--shadow-baseline",
@@ -137,7 +140,68 @@ def build_parser(
     parser.add_argument(
         "--json",
         action="store_true",
-        help="--shadow-report: print the report as JSON",
+        help="--shadow-report / --sweep / --keep / --wallet-scores: print JSON",
+    )
+    parser.add_argument(
+        "--sweep",
+        action="append",
+        default=None,
+        metavar="KEY=V1,V2,...",
+        help=(
+            "Replay the config with each value (repeat for a grid), per half A/B, "
+            "against the base config, e.g. 'stop_loss=0.85,0.9' or "
+            "'stop_loss_arm_seconds=0,5,10'; needs --config or --preset"
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="append",
+        default=None,
+        metavar="METRIC<OP>VALUE",
+        help=(
+            "Test entry rules on the replayed positions against a random cut, "
+            "with FEAT-55/56/57 features rebuilt from the capture (e.g. "
+            "'top_buyer_share<0.5', 'creator_prior_loss<1'); needs --config"
+        ),
+    )
+    parser.add_argument(
+        "--wallet-scores",
+        action="store_true",
+        help=(
+            "FEAT-54: score every wallet in the capture by what copying it would "
+            "have netted us (our size, delay, penalty and costs)"
+        ),
+    )
+    parser.add_argument(
+        "--validate-path",
+        default=None,
+        metavar="CAPTURE",
+        help="--wallet-scores: check the top wallets on this second capture",
+    )
+    parser.add_argument(
+        "--copy-delay",
+        type=float,
+        default=None,
+        help="--wallet-scores: copy delay in seconds (default: the config's "
+        "paper_entry_delay_seconds, else 1.5)",
+    )
+    parser.add_argument(
+        "--min-copies",
+        type=int,
+        default=3,
+        help="--wallet-scores: closed copies a wallet needs to be ranked",
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=20,
+        help="--wallet-scores: wallets to show and to validate",
+    )
+    parser.add_argument(
+        "--wallet",
+        action="append",
+        default=None,
+        help="--wallet-scores: always show this wallet (repeatable)",
     )
     return parser
 
@@ -170,6 +234,15 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
 
     if getattr(args, "shadow_report", False):
         _run_shadow_report(target_path, config, args)
+        return
+    if getattr(args, "wallet_scores", False):
+        _run_wallet_scores(target_path, config, args)
+        return
+    if getattr(args, "sweep", None):
+        _run_sweep(target_path, config, args)
+        return
+    if getattr(args, "keep", None):
+        _run_replay_cuts(target_path, config, args)
         return
 
     initial_cash_val = getattr(args, "initial_cash", None)
@@ -228,6 +301,144 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
         render_replay_trades(summary.get("trades", []), console)
         return
     render_replay_dashboard(summary, console)
+
+
+def _cost_model(config: Any, args: argparse.Namespace) -> Any:
+    if getattr(args, "no_costs", False):
+        return None
+    from pumpfun_trading.engines.costs import ReplayCostModel
+
+    return ReplayCostModel.from_env(
+        close_token_account_on_full_exit=(
+            config.close_token_account_on_full_exit if config is not None else True
+        ),
+        priority_fee_lamports=getattr(args, "priority_fee_lamports", 0),
+        tip_lamports=getattr(args, "tip_lamports", None),
+    )
+
+
+def _needs_config(config: Any, flag: str) -> None:
+    if config is None:
+        raise SystemExit(f"{flag} needs --config (the capture's config) or --preset")
+
+
+def _run_sweep(target_path: str, config: Any, args: argparse.Namespace) -> None:
+    """Replay a grid of config overrides per half against the base config."""
+    import json
+
+    from pumpfun_trading.engines.replay import PaperTradingEngine
+    from pumpfun_trading.engines.sweep import (
+        parse_sweep_spec,
+        render_sweep,
+        run_split_sweep,
+    )
+
+    _needs_config(config, "--sweep")
+    try:
+        specs = [parse_sweep_spec(text) for text in args.sweep]
+        report = run_split_sweep(
+            PaperTradingEngine.load_history(target_path),
+            config,
+            specs,
+            cost_model=_cost_model(config, args),
+            split_at=getattr(args, "split_at", None) or "mid",
+            initial_cash=float(getattr(args, "initial_cash", None) or 100.0),
+        )
+    except ValueError as exc:
+        raise SystemExit(f"--sweep: {exc}") from exc
+    if getattr(args, "json", False):
+        console.print_json(json.dumps(report, default=str))
+        return
+    render_sweep(report, console)
+
+
+def _run_replay_cuts(target_path: str, config: Any, args: argparse.Namespace) -> None:
+    """Entry rules on the replayed positions against a random cut."""
+    import json
+
+    from pumpfun_trading.bot.selection import KeepRule, selection_report
+    from pumpfun_trading.cli.audit import render_selection_report
+    from pumpfun_trading.engines.cuts import CaptureIndex, enrich_positions
+    from pumpfun_trading.engines.replay import PaperTradingEngine
+    from pumpfun_trading.engines.sweep import replay_config, replay_positions
+
+    _needs_config(config, "--keep")
+    try:
+        rules = [KeepRule.parse(text) for text in args.keep]
+    except ValueError as exc:
+        raise SystemExit(f"--keep: {exc}") from exc
+    records = PaperTradingEngine.load_history(target_path)
+    summary = replay_config(
+        records,
+        config,
+        cost_model=_cost_model(config, args),
+        initial_cash=float(getattr(args, "initial_cash", None) or 100.0),
+    )
+    positions = [p for p in replay_positions(summary) if p["closed"]]
+    positions = enrich_positions(positions, CaptureIndex.from_records(records))
+    report = selection_report(
+        positions, rules, split_at=getattr(args, "split_at", None)
+    )
+    if getattr(args, "json", False):
+        console.print_json(json.dumps(report, default=str))
+        return
+    render_selection_report(report, console)
+
+
+def _run_wallet_scores(target_path: str, config: Any, args: argparse.Namespace) -> None:
+    """FEAT-54 phase 1: copy-simulation wallet scores, optionally validated."""
+    import json
+
+    from pumpfun_trading.engines.replay import PaperTradingEngine
+    from pumpfun_trading.engines.wallets import (
+        DEFAULT_COPY_DELAY_SECONDS,
+        render_wallet_scores,
+        score_wallets,
+        validate_wallets,
+    )
+
+    delay = getattr(args, "copy_delay", None)
+    if delay is None:
+        configured = (
+            float(config.paper_entry_delay_seconds) if config is not None else 0.0
+        )
+        delay = configured if configured > 0 else DEFAULT_COPY_DELAY_SECONDS
+    options = {
+        "buy_amount_sol": float(config.buy_amount_sol) if config is not None else 0.02,
+        "delay_seconds": float(delay),
+        "penalty_bps": (
+            int(config.paper_entry_slippage_bps) if config is not None else 0
+        ),
+        "cost_model": _cost_model(config, args),
+        "min_copies": max(1, int(getattr(args, "min_copies", 3) or 1)),
+    }
+    scores = score_wallets(PaperTradingEngine.load_history(target_path), **options)
+    top = max(1, int(getattr(args, "top", 20) or 20))
+    validation = None
+    validate_path = getattr(args, "validate_path", None)
+    if validate_path:
+        selected = [w["wallet"] for w in scores["wallets"] if w["copy_net_sol"] > 0][
+            :top
+        ]
+        other = score_wallets(
+            PaperTradingEngine.load_history(validate_path),
+            **{**options, "min_copies": 1},
+        )
+        validation = validate_wallets(selected, other)
+    if getattr(args, "json", False):
+        payload = {**scores, "wallets": scores["wallets"][:top]}
+        payload.pop("creators", None)
+        console.print_json(
+            json.dumps({"scores": payload, "validation": validation}, default=str)
+        )
+        return
+    render_wallet_scores(
+        scores,
+        console,
+        top=top,
+        validation=validation,
+        focus=tuple(getattr(args, "wallet", None) or ()),
+    )
 
 
 def _run_shadow_report(target_path: str, config: Any, args: argparse.Namespace) -> None:

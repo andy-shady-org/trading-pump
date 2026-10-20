@@ -71,6 +71,8 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[EXECUTION] Graduated Coins Trade On PumpSwap:** the bot waited for a Raydium pool after graduation, but Pump.fun migrates into PumpSwap, and the WebSocket deployment never saw the completion at all (BUG-123). Every held mint needs a completion signal on every transport (curve refresh `complete`, `subscribeMigration`) and an exit on the venue the program actually migrates to; pin new program layouts to real mainnet account bytes in tests.
 - **[ANALYSIS] Beat A Random Cut:** every filter on a losing lane "improves" net PnL because it trades less. Compare a filter's kept net with the same share of the total (random cut), on at least two captures, before calling it an edge.
 - **[CONFIG] A New Field Needs The Resolver:** `resolve_strategy_config` lists every `TradingBotConfig` field by hand, so a field added only to `base.py` is silently ignored in config files (BUG-125: the profit sweep, FEAT-50 alerts and `enable_pumpswap_exit`). Add every new field to the resolver too; `test_every_config_field_survives_a_config_file` fails otherwise. `make_config` / `replace` bypass the resolver, so they can't catch this.
+- **[ANALYSIS] Score The Copy, Not The Wallet:** the operator's "successful" wallet `29yFzeBZ…` turned out to be a serial creator (100 screened launches, no recorded trades), and copying every captured wallet at our 1.5 s delay and costs lost ~0.0013 SOL per copy. Rank wallets only on our simulated copy net on closed copies (`pumpfun-replay --wallet-scores`), check a second capture, and check whether a wallet is a creator before calling it a trader.
+- **[TOOLS] No Stash In A Shared Tree:** a subagent's `git stash` / `pop` briefly took another agent's uncommitted work with it. Never stash, checkout or reset in a working tree other agents are editing; run read-only git commands only, and verify with `git status` after any slip.
 
 ## Project Overview
 
@@ -87,6 +89,7 @@ pumpfun-trading/
 ├── pumpfun_trading/
 │   ├── api/          # Public Pump.fun REST and coin discovery API client
 │   ├── bot/          # Runtime orchestration, lifecycle state machine, risk controls, and audit trails
+│   │   └── handlers/ # Stream handlers (curve, trade, raydium, new_token, watch); TradingBot keeps one-line delegates (Sprint 28b)
 │   ├── cli/          # Dedicated CLI entry points (pumpbot, pumpfun-replay, pumpfun-audit, pumpfun-cli)
 │   ├── config/       # Environment loading, configuration resolution, and settings validation
 │   ├── engines/      # Historical market replay and paper-trading simulation engine

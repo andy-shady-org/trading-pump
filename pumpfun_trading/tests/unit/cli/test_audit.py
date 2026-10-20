@@ -496,3 +496,63 @@ def test_audit_cli_price_filters(tmp_path):
         data = json.loads(printed_arg)
         assert len(data) == 1
         assert data[0]["payload"]["mint"] == "MintB"
+
+
+def test_cuts_command_rebuilds_entry_features_from_a_capture(
+    tmp_path: Path, output: Console
+) -> None:
+    """A pre-rc.2 trail has no FEAT-56 metrics; --capture rebuilds them."""
+    trades: list[dict[str, Any]] = []
+    capture: list[dict[str, Any]] = []
+    for index, (ts, whale, net) in enumerate(
+        [(100.0, True, -0.004), (110.0, False, 0.004)]
+    ):
+        mint = f"M{index}"
+        trades += [
+            {"action": "buy", "position_id": mint, "mint": mint, "timestamp": ts},
+            {
+                "action": "sell",
+                "position_id": mint,
+                "mint": mint,
+                "timestamp": ts + 30,
+                "net_pnl_sol": net,
+                "reason": "stop_loss",
+            },
+        ]
+        buys = [("W", 2.0), ("V", 0.1)] if whale else [("W", 0.5), ("V", 0.5)]
+        capture += [
+            {
+                "timestamp": ts - 5 + i,
+                "mint": mint,
+                "price": 3e-8,
+                "is_buy": True,
+                "sol_amount": sol,
+                "user": user,
+            }
+            for i, (user, sol) in enumerate(buys)
+        ]
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text(
+        "\n".join(json.dumps({"type": "trade", "payload": t}) for t in trades),
+        encoding="utf-8",
+    )
+    capture_path = tmp_path / "capture.jsonl"
+    capture_path.write_text("\n".join(json.dumps(r) for r in capture), encoding="utf-8")
+
+    audit_cli.run_audit_cli(
+        _args(
+            "cuts",
+            "--path",
+            str(audit),
+            "--capture",
+            str(capture_path),
+            "--keep",
+            "top_buyer_share<0.8",
+            "--json",
+        )
+    )
+
+    rule = json.loads(output.export_text())["rules"][0]
+    assert rule["segments"]["all"]["kept"] == 1
+    assert rule["segments"]["all"]["missing"] == 0
+    assert rule["beats_random_cut"] is True

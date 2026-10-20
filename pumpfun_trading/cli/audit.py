@@ -142,6 +142,15 @@ def build_parser(
         help="cuts: also report halves A/B split at this entry time ('mid' = middle)",
     )
     parser.add_argument(
+        "--capture",
+        default=None,
+        metavar="CAPTURE",
+        help=(
+            "cuts: rebuild FEAT-55/56/57 entry features from this --record-replay "
+            "capture for buys that did not record them (pre-rc.2 trails)"
+        ),
+    )
+    parser.add_argument(
         "--wallet", default=None, help="reconcile: wallet public key to check"
     )
     parser.add_argument(
@@ -258,10 +267,11 @@ def render_pnl_summary(summary: dict[str, Any]) -> None:
         console.print(breakdown)
 
 
-def render_selection_report(report: dict[str, Any]) -> None:
+def render_selection_report(report: dict[str, Any], out: Any = None) -> None:
     """Prints each rule's kept net against a random cut, per segment."""
+    out = out or console
     segments = report["segments"]
-    console.print(
+    out.print(
         "Closed positions: "
         + ", ".join(
             f"{name} {row['positions']} ({_fmt_sol(row['net_sol'])} SOL)"
@@ -291,8 +301,8 @@ def render_selection_report(report: dict[str, Any]) -> None:
                 _fmt_sol(row["edge_sol"]),
                 verdict if index == 0 else "",
             )
-    console.print(table)
-    console.print(
+    out.print(table)
+    out.print(
         "A rule has an edge only when it beats the random cut in both halves; "
         "confirm it on a second capture before gating on it."
     )
@@ -476,6 +486,13 @@ def _run_cuts(args: argparse.Namespace, trades: list[dict[str, Any]]) -> None:
         strategy = getattr(args, "strategy", None)
         if strategy:
             positions = [p for p in positions if p.get("strategy") == strategy]
+        capture = getattr(args, "capture", None)
+        if capture:
+            from pumpfun_trading.engines.cuts import CaptureIndex, enrich_positions
+            from pumpfun_trading.engines.replay import PaperTradingEngine
+
+            index = CaptureIndex.from_records(PaperTradingEngine.load_history(capture))
+            positions = enrich_positions(positions, index)
         report = selection_report(
             positions, rules, split_at=getattr(args, "split_at", None)
         )

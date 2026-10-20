@@ -248,6 +248,10 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
    pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
      --keep 'top_buyer_share<0.3' --keep 'wallet_diversity>=0.3' \
      --keep 'round_trip_share<0.2' --keep 'quick_flips<1'               # FEAT-56/57 inputs
+   pumpfun-replay --path capture/replay_capture.jsonl --config configs/canary.json \
+     --sweep stop_loss=0.85,0.9,0.92,0.95                              # stop-loss check (§6.8)
+   pumpfun-replay --path capture/replay_capture.jsonl --config configs/canary.json \
+     --wallet-scores --validate-path archive/stage0-v0.3.0rc1/replay_capture.jsonl  # FEAT-54
    ```
    A variant or rule counts only if it beats the random cut in both halves; set the tip variables as for the capture, and record every result in `STRATEGY-PIVOT.md` §6.
 3. **Stage 0 (72 h, paper)** with `configs/canary.json --paper-trade` and `--record-replay`, per §6 and `RELEASE-GATE.md` §3.1. Judge it with `pumpfun-audit pnl --group-by strategy` (`momentum` row) and per position, never per sell.
