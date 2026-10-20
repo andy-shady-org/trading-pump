@@ -248,9 +248,17 @@ pumpfun replay --path <DATASET_PATH> [OPTIONS]
 | `--parity-tolerance-sol` | — | Float | `0.002` | Absolute net PnL tolerance for `--compare-audit`. |
 | `--parity-tolerance-pct` | — | Float | `0.10` | Relative tolerance (fraction of live net PnL) for `--compare-audit`. |
 | `--shadow-report` | — | Flag | off | Shadow-variant read-out of a paper capture (FEAT-58): signals, fill drift, refusals and modelled net PnL per variant against a random cut of the baseline variant. Needs `--config` (the capture's config) or `--preset`. See [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#shadow-variant-read-out---shadow-report-feat-58). |
-| `--split-at` | — | `mid` / Timestamp | `None` | `--shadow-report`: also report halves A and B, split at the middle of the capture or at this Unix time. |
+| `--split-at` | — | `mid` / Timestamp | `None` | `--shadow-report` / `--sweep` / `--keep`: also report halves A and B, split at the middle of the capture or at this Unix time (`--sweep` defaults to `mid`). |
 | `--shadow-baseline` | — | String | `baseline` | `--shadow-report`: the variant the random cut is taken from. |
-| `--json` | — | Flag | off | `--shadow-report`: print the report as JSON. |
+| `--json` | — | Flag | off | `--shadow-report` / `--sweep` / `--keep` / `--wallet-scores`: print the report as JSON. |
+| `--sweep` | — | `KEY=V1,V2,...` (repeatable) | — | Replay the config with each value (repeat for a grid) and report net per half against the base config. Needs `--config` or `--preset`. See [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#config-sweep-per-half---sweep). |
+| `--keep` | — | `METRIC<OP>VALUE` (repeatable) | — | Test entry rules on the replayed positions against a random cut, with FEAT-55/56/57 features rebuilt from the capture. Needs `--config` or `--preset`. See [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#entry-rules-on-replayed-positions---keep). |
+| `--wallet-scores` | — | Flag | off | FEAT-54: rank every wallet by our simulated copy net. See [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#wallet-scores---wallet-scores-feat-54-phase-1). |
+| `--validate-path` | — | Path | `None` | `--wallet-scores`: check the top wallets on this second capture. |
+| `--copy-delay` | — | Float | config's `paper_entry_delay_seconds`, else `1.5` | `--wallet-scores`: copy delay in seconds. |
+| `--min-copies` | — | Integer | `3` | `--wallet-scores`: closed copies a wallet needs to be ranked. |
+| `--top` | — | Integer | `20` | `--wallet-scores`: wallets shown and validated. |
+| `--wallet` | — | Address (repeatable) | — | `--wallet-scores`: always show this wallet. |
 | `--mint` | — | Base58 | `None` | Filters replay execution to a single token mint address. |
 | `--mint-name` | `--token-name` | String | `None` | Filters replay execution by token symbol or display name. |
 
@@ -389,7 +397,7 @@ Any filter on a losing lane looks better because it trades less. `cuts` compares
 pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
   --keep 'top_buyer_share<0.3' --keep 'wallet_diversity>=0.3'
 ```
-Confirm a rule on a second capture before gating on it.
+Confirm a rule on a second capture before gating on it. Trails written before v0.3.0-rc.2 have no FEAT-56/57 metrics: add `--capture <replay_capture.jsonl>` and `cuts` rebuilds them from the trades recorded before each buy (recorded metrics win). To test rules on replayed rather than paper positions, use `pumpfun-replay --keep` ([`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#entry-rules-on-replayed-positions---keep)).
 
 #### Recipe 6: Reconcile the Wallet Against the Audit Trail
 Compares every live trade signature's on-chain SOL change with the recorded `cash_flow_sol`, lists closed positions that still hold tokens and open positions that hold none, and (with `--start-balance`) the whole-wallet change. Live profit sweeps (audit `sweep` records, FEAT-42) count in the whole-wallet check and are printed as `profit sweeps`. Exits with code 1 when a gap exceeds max(0.002 SOL, 5%). The result is also stored in `reconcile_status.json` next to the audit trail, which the running bot's dashboard shows as `Reconciliation` and alerts on when it is a new `GAP`. `deploy/systemd/pumpfun-reconcile.timer` runs it daily under systemd:

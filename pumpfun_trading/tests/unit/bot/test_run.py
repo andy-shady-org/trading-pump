@@ -27,11 +27,7 @@ from pumpfun_trading.bot.enrichment import TokenScreeningVerdict
 from pumpfun_trading.bot.event_router import EventRouter
 from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.position_manager import PositionManager
-from pumpfun_trading.bot.run import (
-    PRE_GRADUATION_MIN_POLLED_SAMPLES,
-    TradingBot,
-    _curve_market_cap,
-)
+from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.ops.retention import RetentionPolicy, RotatedFileSink
@@ -49,6 +45,7 @@ from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.storage.status import build_status_snapshot
 from pumpfun_trading.strategies.copy_trading import TrackedWallet
 from pumpfun_trading.strategies.exits import ExitAction
+from pumpfun_trading.strategies.graduation import PRE_GRADUATION_MIN_POLLED_SAMPLES
 from pumpfun_trading.strategies.momentum import MomentumSignal
 from pumpfun_trading.strategies.shadow import ShadowSignal, ShadowVariant
 from pumpfun_trading.streams.geyser import (
@@ -693,6 +690,64 @@ async def test_websocket_stream_connect_error_trips_breaker_then_cancel_stops(
     assert bot._circuit_breaker_tripped is True
     assert bot._last_status == "degraded: stream circuit breaker active"
     await bot.close()
+
+
+class _SessionSequence:
+    """``aiohttp.ClientSession`` factory: one scripted outcome per connect."""
+
+    def __init__(self, *outcomes: _SendStrWs | Exception) -> None:
+        self._outcomes = list(outcomes)
+
+    def __call__(self, *_args: Any, **_kwargs: Any) -> _FakeSession:
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeSession(outcome)
+
+
+@pytest.mark.regression("BUG-122")
+async def test_websocket_disconnects_count_one_connection_loss_each(
+    tmp_path: Path,
+) -> None:
+    bot = _live_bot(tmp_path)
+    bot.stream_url = "wss://stream.test"
+    bot._max_stream_consecutive_failures = 99
+
+    async def _handle(data: Any, websocket: Any = None) -> None:
+        if data.get("stop"):
+            bot._stop_requested = True
+
+    bot._handle_message = _handle  # type: ignore[method-assign]
+    sessions = _SessionSequence(
+        # An ERROR frame reports through on_stream_error, then ends: one loss.
+        _SendStrWs([_ws_msg(aiohttp.WSMsgType.ERROR)]),
+        # A remote close: one loss.
+        _SendStrWs([_ws_msg(aiohttp.WSMsgType.CLOSED)]),
+        # A failed connect: one loss.
+        aiohttp.ClientError("refused"),
+        # A clean shutdown is not a connection loss.
+        _SendStrWs([_ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"stop": True}))]),
+    )
+    with (
+        patch("pumpfun_trading.streams.websocket.aiohttp.ClientSession", sessions),
+        patch("pumpfun_trading.streams.websocket.asyncio.sleep", AsyncMock()),
+    ):
+        await bot._run_websocket_stream()
+    assert bot._metrics["connection_loss"] == 3
+    losses = [e for e in bot._recent_events if "stream connection loss" in e]
+    assert len(losses) == 3
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-122")
+def test_stream_hooks_skip_connection_loss_once_shutdown_requested(
+    tmp_path: Path,
+) -> None:
+    bot = _live_bot(tmp_path)
+    bot._stop_requested = True
+    bot.on_stream_exception(RuntimeError("closing"), 1.0)
+    bot.on_stream_ended()
+    assert bot._metrics["connection_loss"] == 0
 
 
 class _ListenGeyser:
@@ -6861,7 +6916,7 @@ async def test_shadow_fills_are_bounded_record_curve_errors_and_cancel(
         signal_market_cap_sol=30.0,
         entry_metrics={},
     )
-    with patch("pumpfun_trading.bot.run.MAX_PENDING_SHADOW_FILLS", 1):
+    with patch("pumpfun_trading.bot.handlers.trade.MAX_PENDING_SHADOW_FILLS", 1):
         bot._schedule_shadow_fill(signal)
         bot._schedule_shadow_fill(signal)
     assert bot.watch_list_status()["stats"]["shadow_skipped"] == 1
@@ -6879,15 +6934,6 @@ async def test_shadow_fills_are_bounded_record_curve_errors_and_cancel(
 
     bot.replay_recorder = None  # recorder closed meanwhile: nothing to write
     await bot._record_shadow_fill(signal)
-
-
-def test_curve_market_cap_handles_complete_and_raw_curves() -> None:
-    assert _curve_market_cap(None) is None
-    assert _curve_market_cap({"complete": True, "market_cap_sol": 5.0}) is None
-    assert _curve_market_cap({"market_cap_sol": 42.0}) == 42.0
-    # 30 SOL / 1.073e9 tokens at launch: ~28 SOL market cap.
-    assert _curve_market_cap(_polled_curve(0.0)) == pytest.approx(27.96, rel=0.01)
-    assert _curve_market_cap({"virtual_sol_reserves": 0}) is None
 
 
 # --- BUG-123: exit a coin held through graduation on PumpSwap ----------------------

@@ -616,6 +616,11 @@ def resolve_strategy_config(
         momentum_max_entry_drift_pct=max(
             0.0, float(base.get("momentum_max_entry_drift_pct", 0.0))
         ),
+        stop_loss_arm_seconds=max(0.0, float(base.get("stop_loss_arm_seconds", 0.0))),
+        stop_loss_demand_hold_seconds=max(
+            0.0, float(base.get("stop_loss_demand_hold_seconds", 0.0))
+        ),
+        stop_loss_hard_floor=max(0.0, float(base.get("stop_loss_hard_floor", 0.0))),
         enable_pumpswap_exit=bool(base.get("enable_pumpswap_exit", True)),
         graduation_backfill_seconds=max(
             0.0, float(base.get("graduation_backfill_seconds", 30.0))
@@ -788,6 +793,8 @@ def resolve_strategy_config(
         )
     if config.max_active_positions < 1:
         raise ValueError("max_active_positions must be at least 1.")
+    if config.stop_loss_hard_floor and config.stop_loss_hard_floor >= config.stop_loss:
+        raise ValueError("stop_loss_hard_floor must be below stop_loss (0 = none).")
     if config.stagnant_timeout_seconds <= 0:
         raise ValueError("stagnant_timeout_seconds must be greater than zero.")
     if config.max_hold_time_seconds <= 0:

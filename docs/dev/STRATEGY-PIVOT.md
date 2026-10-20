@@ -160,6 +160,10 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-20 | same, audit trail, drift guard applied after the fact | momentum | + `momentum_max_entry_drift_pct` 0.08 | 101 | −0.046 | — | helps in both halves (A −0.075, B +0.029), still negative |
 | 2026-10-20 | rc.1 replay, FEAT-56 filters (top buyer < 50%, diversity ≥ 0.3, early inflow < 5 SOL) | momentum | `configs/canary.json`, tip 0 | 47 | −0.004 | — | beats a random cut on 3 sets; recorded in rc.2, not gated (§6.5) |
 | 2026-10-20 | v0.2.3 / rc.1 replay + rc.1 paper, FEAT-57 wash inputs (skip `round_trip_share` > 0.2) | momentum | `configs/canary.json`, tip 0 | 85 / 77 / 85 | +0.094 / −0.059 / −0.091 | — | beats a random cut on v0.2.3 only; recorded in rc.2, not gated (§6.6) |
+| 2026-10-20 | v0.2.3 / rc.1 replay, stop-loss sweep: `stop_loss` 0.92 (base 0.85) | momentum | `configs/canary.json`, tip 0 | 117 / 105 | +0.075 / −0.049 | — | better than the base in all four halves, by noise-sized amounts; not adopted (§6.8) |
+| 2026-10-20 | same, stop armed after 5–30 s or held while buys continue | momentum | `configs/canary.json`, tip 0 | 117 / 105 | worse in every half (arming after 5 s: flat on rc.1 B, +0.0003) | — | rejected (§6.8) |
+| 2026-10-20 | v0.2.3 / rc.1 replay, FEAT-56 + FEAT-57 + creator book together (rebuilt from the capture) | momentum | `configs/canary.json`, tip 0 | 64 / 39 | +0.097 / +0.004 | — | beats a random cut in all four halves; rc.1 only breaks even (§6.8) |
+| 2026-10-20 | FEAT-54 copy simulation, top v0.2.3 wallets copied on rc.1 | copy (sim) | 0.02 SOL, 1.5 s, 100 bps, tip 0 | 92 copies | −0.125 | — | **no edge**: every wallet set loses at our delay and costs (§6.8) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -290,3 +294,30 @@ Three gaps kept the rc.1 capture from answering the open questions; rc.2 closes 
 - **Near-graduation set (FEAT-53).** The pre-graduation lane only saw coins younger than the 10 min watch TTL. With `near_graduation_max_mints` > 0 a coin past the TTL that is ≥ 50% up its curve and still growing stays polled (slowly, without a trade subscription) for up to 1 h. Replay runs the lane on the recorded polls, so the pilot capture can be replayed. `configs/pregrad_pilot.json` is the 72 h paper pilot (lane on, no momentum buys).
 - **Shadow variants (FEAT-58).** `capture.json` logs nine momentum rules on real paper fill prices without trading them: baseline, 6 and 8 buyers, 5% and 10% drift guard, FEAT-56 top buyer < 50% and diversity ≥ 0.3, FEAT-57 round-trip share ≤ 0.4 and no quick flips. Judge each one per position against a random cut of the same size, on the rc.2 capture only (it is unseen for all of them).
 - **Verdict:** no new buy rule ships in rc.2. The rc.2 capture is the last test of the momentum lane; if neither the bot's rule nor a shadow variant is clearly net positive on it, stop tuning this lane.
+
+### 6.8 Stop-loss sweep, wallet scores and the capture rule tool (2026-10-20)
+Offline work on the v0.2.3 and rc.1 captures (both in `runtime/archive/`) while the rc.2 runs go. Replay with the frozen `configs/canary.json`, tip 0, each capture split at its midpoint (A / B). The rc.1 audit trail in `archive/stage0-v0.3.0rc1/` is still 0 bytes, so rc.1 is replay only.
+
+**Stop-loss redesign** (`pumpfun-replay --sweep`, new keys `stop_loss_arm_seconds`, `stop_loss_demand_hold_seconds`, `stop_loss_hard_floor`; all 0 = the plain stop, so nothing changes until a config sets them):
+
+| Change (Δ net SOL against the base, A / B) | v0.2.3 | rc.1 |
+|---|---|---|
+| `stop_loss` 0.80 | −0.010 / −0.007 | −0.015 / −0.007 |
+| `stop_loss` 0.90 | +0.012 / +0.001 | +0.006 / +0.011 |
+| `stop_loss` 0.92 | +0.012 / +0.006 | +0.015 / +0.015 |
+| `stop_loss` 0.95 | +0.020 / +0.003 | +0.007 / +0.012 |
+| stop armed after 10 s | −0.003 / −0.014 | −0.004 / −0.010 |
+| stop held 10 s after a qualifying buy | −0.008 / −0.027 | −0.018 / −0.017 |
+
+- Waiting longer never helped: arming the stop late (5–30 s) or holding it while buys come in (5–30 s) lost in every half, with or without a 0.6 / 0.7 hard floor; the only exception is arming after 5 s on rc.1 B, flat at +0.0003 SOL. The longer the wait, the bigger the loss. The stop-loss positions are mostly coins that keep falling.
+- A **tighter** stop (0.90–0.95) beat the base in all four halves. The gains are 0.001–0.020 SOL per half, inside the ~0.02 SOL replay noise, and rc.1 stays negative (−0.049 at 0.92). Tighter stops also depend most on fill prices, which replay gets wrong (§6.4), so this is a candidate for the rc.2 capture (re-run the sweep there after `--compare-audit`), not a change to `canary.json`.
+
+**Entry rules rebuilt from the capture** (`pumpfun-replay --keep`, `engines/cuts.py`; replaces the `data/analysis-2026-10-20/` scripts): FEAT-56 top buyer < 50% and diversity ≥ 0.3 beat a random cut in all four halves; FEAT-57 round-trip share ≤ 0.2 on v0.2.3 only; the creator book (block a creator after one of its coins closed at a loss) has no edge. All four together keep 64 / 39 positions, +0.097 / +0.004 SOL: the same picture as §6.5, a better-than-random cut that still only breaks even on rc.1.
+
+**FEAT-54 wallet scores** (`pumpfun-replay --wallet-scores`, `engines/wallets.py`): every wallet in a capture is scored by what copying it would have netted **us** (0.02 SOL, 1.5 s delay, 100 bps penalty, fees, closed copies only).
+- Copying every wallet loses: −4.67 SOL over 4,003 copies (v0.2.3), −2.01 over 1,286 (rc.1), about −0.0013 SOL per copy, mostly fees and the delay.
+- The best v0.2.3 wallets (≥ 3 / 5 / 8 copies, top 20) lost on rc.1 (−0.08 / −0.12 / −0.10 SOL). With ≥ 5 copies they did better than the same share of all rc.1 copies, but worse than 97% of random sets of as many wallets. The reverse direction (rc.1 → v0.2.3) is no better. No wallet goes on a list.
+- Wallet `29yFzeBZ…kbw8` never traded a recorded coin: it is a **creator**, with 47 (v0.2.3) and 53 (rc.1) launches screened, every one rejected as a serial launcher (20 launches in 24 h, 9.8% initial holding). Its income is launching coins, which is not a strategy this bot should copy.
+- Limit: captures only hold trades of mints the bot subscribed to, so each wallet has at most ~15 closed copies. A copy lane needs a capture that records wallets' own trades (`subscribeAccountTrade`) before it can be judged.
+
+**Verdict:** nothing changes in `canary.json`. On the rc.2 capture, re-run the stop-loss sweep (0.90 / 0.92 / 0.95), the `--keep` rules and the wallet scores; adopt only what holds there.

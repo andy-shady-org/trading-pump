@@ -109,6 +109,36 @@ Reads the `shadow_entry` rows of a paper capture and reports, per variant (in th
 
 Each variant is judged on its own: sizing caps are lifted, so no variant loses a fill to another one's open positions (the live shadow book also evaluates with empty capacity). Every variant is compared with a random cut of the baseline variant of the same size (`baseline × variant positions / baseline positions`); `--split-at mid` (or a timestamp) also reports halves A and B, and a variant only `beats a random cut` when its edge is positive in both. Exits only see what the capture holds for each mint: trades while the mint was subscribed and the watch, position and fill curve reads, so a mint that went quiet exits at its last recorded price. `--no-costs`, `--tip-lamports` and `--priority-fee-lamports` work as for a normal replay.
 
+### Config sweep per half (`--sweep`)
+
+```bash
+pumpfun-replay --path capture/replay_capture.jsonl --config configs/canary.json \
+  --tip-lamports 0 --sweep stop_loss=0.85,0.9,0.92 \
+  [--sweep stop_loss_arm_seconds=0,10] [--split-at mid|TIMESTAMP] [--json]
+```
+
+Replays the config once as the base and once per grid point (every combination of the `--sweep KEY=V1,V2` values; keys are any config field, values are coerced to the field's type). Each position is booked to half A or B by its entry time (`--split-at`, default `mid`), so open positions and limits carry over the split as they did live. The table shows net per half and the change against the base; a grid point counts (`Both halves: yes`) only when it beats the base in both halves. Tune on one capture and confirm on another before changing a config. The stop-loss redesign keys (`stop_loss_arm_seconds`, `stop_loss_demand_hold_seconds`, `stop_loss_hard_floor`, all 0 = the plain stop) are meant for this ([`STRATEGY-PIVOT.md` §6.8](dev/STRATEGY-PIVOT.md#68-stop-loss-sweep-wallet-scores-and-the-capture-rule-tool-2026-10-20)).
+
+### Entry rules on replayed positions (`--keep`)
+
+```bash
+pumpfun-replay --path capture/replay_capture.jsonl --config configs/canary.json \
+  --tip-lamports 0 --split-at mid --keep 'top_buyer_share<0.5' \
+  --keep 'wallet_diversity>=0.3' --keep 'round_trip_share<=0.2' --keep 'creator_prior_loss<1'
+```
+
+Replays the capture, then tests each rule (and all of them together) on the closed replayed positions against a random cut, per half, as `pumpfun-audit cuts` does. The features are rebuilt from the capture (`engines/cuts.py`) from the trades recorded **before** each entry, with the creator left out, using the same `OrderFlowEngine` methods the bot records with: `pre_entry_buys`, `unique_buyers`, `top_buyer_share`, `wallet_diversity` (FEAT-56), `round_trip_wallets`, `round_trip_share`, `quick_flips` (FEAT-57), `early_sol` and `first_trade_gap_seconds` (SOL in the curve before the first recorded trade), and `creator_prior_loss` (1 when one of the creator's earlier positions had already closed at a loss: the FEAT-55 book, walk-forward). Metrics a buy recorded win over the rebuilt ones. This replaces the hand-run scripts in `data/analysis-2026-10-20/`.
+
+### Wallet scores (`--wallet-scores`, FEAT-54 phase 1)
+
+```bash
+pumpfun-replay --path archive/stage0-v0.2.3/replay_capture.jsonl --config configs/canary.json \
+  --tip-lamports 0 --wallet-scores --min-copies 5 --top 20 \
+  --validate-path archive/stage0-v0.3.0rc1/replay_capture.jsonl [--wallet ADDRESS] [--json]
+```
+
+Scores every wallet in the capture by what copying it would have netted **us**: each first buy of a wallet on a mint (never the creator's) is copied with `buy_amount_sol` at the first recorded price `--copy-delay` seconds later (default: the config's `paper_entry_delay_seconds`, else 1.5 s), cut by `paper_entry_slippage_bps`, and sold at the first recorded price that long after the wallet's first sell; both sides pay the Pump.fun fee and the modelled costs. Copies whose sell the capture never saw are marked at the mint's last price but not ranked, since captures stop recording a mint once the bot unsubscribes. Wallets are ranked on closed-copy net (win rate is shown, never ranked on); `--min-copies` sets the minimum. `--validate-path` takes the top wallets with a positive net (up to `--top`) and reports their copy net on a second capture against a random cut of all its copies and against 200 seeded random sets of as many wallets. `--wallet` always shows a wallet, and says when it only launched coins in the capture. Captures only hold trades of the mints the bot subscribed to, so scores cover those mints only.
+
 ### Replay-vs-live parity (`--compare-audit`)
 
 ```bash

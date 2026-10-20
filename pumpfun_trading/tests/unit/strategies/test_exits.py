@@ -834,3 +834,68 @@ def test_last_pre_graduation_tranche_sells_everything_in_confirmed_mode(
         assert decision.action == ExitAction.PARTIAL_EXIT
         assert decision.sell_tokens == 300_000
     assert decision.target_tier == "pre_grad_2"
+
+
+# --- rc.3 stop-loss redesign (arming delay, order-flow hold, hard floor) --------
+
+
+def test_plain_stop_loss_is_unchanged_by_default() -> None:
+    config = _momentum_config()
+    decision = evaluate_exit_strategy(config, _momentum_state(), 33.0, now=1_001.0)
+    assert decision.exit_type == "stop_loss"
+    assert decision.reason.startswith("stop_loss_hit")
+
+
+def test_stop_loss_arms_only_after_the_grace_period() -> None:
+    config = _momentum_config(stop_loss_arm_seconds=10.0)
+    state = _momentum_state()
+
+    held = evaluate_exit_strategy(config, state, 33.0, now=1_005.0)
+    assert held.action == ExitAction.HOLD
+
+    decision = evaluate_exit_strategy(config, state, 33.0, now=1_010.0)
+    assert decision.action == ExitAction.FULL_EXIT
+    assert decision.reason.startswith("stop_loss_hit")
+
+
+def test_stop_loss_waits_while_buy_flow_continues() -> None:
+    config = _momentum_config(stop_loss_demand_hold_seconds=5.0)
+    state = _momentum_state()
+    state.last_qualifying_buy_at = 1_010.0
+
+    held = evaluate_exit_strategy(config, state, 33.0, now=1_012.0)
+    assert held.action == ExitAction.HOLD
+
+    decision = evaluate_exit_strategy(config, state, 33.0, now=1_016.0)
+    assert decision.exit_type == "stop_loss"
+
+
+def test_hard_floor_exits_while_the_stop_waits() -> None:
+    config = _momentum_config(stop_loss_arm_seconds=30.0, stop_loss_hard_floor=0.6)
+    state = _momentum_state()
+
+    assert evaluate_exit_strategy(config, state, 30.0, now=1_002.0).action == (
+        ExitAction.HOLD
+    )
+    decision = evaluate_exit_strategy(config, state, 20.0, now=1_003.0)
+    assert decision.action == ExitAction.FULL_EXIT
+    assert decision.exit_type == "stop_loss"
+    assert "stop_loss_floor" in decision.reason and "arming" in decision.reason
+
+
+def test_stop_loss_redesign_keys_survive_a_config_file() -> None:
+    config = resolve_strategy_config(
+        overrides={
+            "stop_loss_arm_seconds": 5,
+            "stop_loss_demand_hold_seconds": -1,
+            "stop_loss_hard_floor": 0.5,
+        }
+    )
+    assert config.stop_loss_arm_seconds == 5.0
+    assert config.stop_loss_demand_hold_seconds == 0.0
+    assert config.stop_loss_hard_floor == 0.5
+    assert config.to_dict()["stop_loss_arm_seconds"] == 5.0
+    with pytest.raises(ValueError, match="stop_loss_hard_floor"):
+        resolve_strategy_config(
+            overrides={"stop_loss": 0.8, "stop_loss_hard_floor": 0.8}
+        )

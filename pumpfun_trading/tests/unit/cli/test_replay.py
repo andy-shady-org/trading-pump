@@ -219,3 +219,193 @@ def test_shadow_report_needs_a_config_and_a_valid_split(tmp_path):
                 ]
             )
         )
+
+
+def _fills_capture(tmp_path):
+    """Two recorded bot fills (one per half) and the market trades after them."""
+    rows: list[dict] = []
+    for mint, start in (("A", 100.0), ("B", 1_000.0)):
+        rows.append(
+            {
+                "timestamp": start - 1.0,
+                "mint": mint,
+                "event": "screening",
+                "screening": {"creator": "Dev"},
+            }
+        )
+        rows.append(
+            {
+                "timestamp": start - 0.5,
+                "mint": mint,
+                "price": 4e-8,
+                "is_buy": True,
+                "sol_amount": 0.4,
+                "user": "Early",
+            }
+        )
+        rows.append(
+            {
+                "timestamp": start,
+                "mint": mint,
+                "price": 4e-8,
+                "signal": "buy",
+                "reason": "momentum_confirmed",
+            }
+        )
+        rows += [
+            {
+                "timestamp": start + dt,
+                "mint": mint,
+                "price": p,
+                "is_buy": False,
+                "sol_amount": 0.5,
+                "user": "Early",
+            }
+            for dt, p in ((5.0, 3.52e-8), (20.0, 2e-8))
+        ]
+    capture = tmp_path / "replay_capture.jsonl"
+    capture.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    config = tmp_path / "cfg.json"
+    config.write_text(
+        json.dumps(
+            {
+                "buy_amount_sol": 0.02,
+                "stop_loss": 0.85,
+                "max_token_concentration_pct": 1.0,
+                "max_total_exposure_sol": 1.0,
+                "reserve_balance_sol": 0.0,
+                "paper_entry_delay_seconds": 2.0,
+                "paper_entry_slippage_bps": 50,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return capture, config
+
+
+@pytest.fixture
+def recorded(monkeypatch):
+    output = Console(record=True, width=220, file=io.StringIO())
+    monkeypatch.setattr(cli_replay, "console", output)
+    return output
+
+
+def _run(*argv: str) -> None:
+    run_replay_cli(build_replay_parser().parse_args(list(argv)))
+
+
+def test_sweep_flag_replays_each_value_per_half(tmp_path, recorded):
+    capture, config = _fills_capture(tmp_path)
+    _run(
+        "--path",
+        str(capture),
+        "--config",
+        str(config),
+        "--tip-lamports",
+        "0",
+        "--sweep",
+        "stop_loss=0.9",
+        "--json",
+    )
+    report = json.loads(recorded.export_text())
+    assert [r["label"] for r in report["results"]] == ["base", "stop_loss=0.9"]
+    assert set(report["results"][0]["segments"]) == {"all", "A", "B"}
+
+    recorded.export_text(clear=True)
+    _run(
+        "--path",
+        str(capture),
+        "--preset",
+        "momentum",
+        "--no-costs",
+        "--sweep",
+        "stop_loss_arm_seconds=0,5",
+        "--split-at",
+        "",
+    )
+    assert "Config sweep" in recorded.export_text()
+
+
+def test_sweep_and_keep_need_a_config_and_valid_specs(tmp_path, recorded):
+    capture, config = _fills_capture(tmp_path)
+    with pytest.raises(SystemExit, match="--sweep needs --config"):
+        _run("--path", str(capture), "--sweep", "stop_loss=0.9")
+    with pytest.raises(SystemExit, match="--sweep: Bad sweep"):
+        _run("--path", str(capture), "--config", str(config), "--sweep", "nope=1")
+    with pytest.raises(SystemExit, match="--keep needs --config"):
+        _run("--path", str(capture), "--keep", "quick_flips<1")
+    with pytest.raises(SystemExit, match="--keep: Bad rule"):
+        _run("--path", str(capture), "--config", str(config), "--keep", "x")
+
+
+def test_keep_flag_tests_rules_on_replayed_positions(tmp_path, recorded):
+    capture, config = _fills_capture(tmp_path)
+    _run(
+        "--path",
+        str(capture),
+        "--config",
+        str(config),
+        "--tip-lamports",
+        "0",
+        "--keep",
+        "unique_buyers>=1",
+        "--keep",
+        "creator_prior_loss<1",
+        "--split-at",
+        "mid",
+        "--json",
+    )
+    report = json.loads(recorded.export_text())
+    assert report["positions"] == 2
+    assert report["rules"][0]["segments"]["all"]["kept"] == 2
+    assert report["rules"][1]["segments"]["all"]["missing"] == 0
+    # B's creator lost on A, which closed before B was bought.
+    assert report["rules"][1]["segments"]["all"]["kept"] == 1
+
+    recorded.export_text(clear=True)
+    _run("--path", str(capture), "--config", str(config), "--keep", "quick_flips<1")
+    assert "Entry rules against a random cut" in recorded.export_text()
+
+
+def test_wallet_scores_flag_scores_and_validates(tmp_path, recorded):
+    capture, config = _fills_capture(tmp_path)
+    _run(
+        "--path",
+        str(capture),
+        "--config",
+        str(config),
+        "--tip-lamports",
+        "0",
+        "--wallet-scores",
+        "--min-copies",
+        "1",
+        "--validate-path",
+        str(capture),
+        "--json",
+    )
+    payload = json.loads(recorded.export_text())
+    assert payload["scores"]["delay_seconds"] == 2.0
+    assert payload["scores"]["penalty_bps"] == 50
+    assert "creators" not in payload["scores"]
+    assert payload["validation"]["selected"] == 0  # Early's copies lost
+
+    recorded.export_text(clear=True)
+    _run(
+        "--path",
+        str(capture),
+        "--wallet-scores",
+        "--copy-delay",
+        "0.5",
+        "--wallet",
+        "Dev",
+        "--no-costs",
+    )
+    text = recorded.export_text()
+    assert "0.5 s delay" in text and "0.02 SOL" in text
+    assert "Dev: no closed copy on this capture (launched 2 screened mints)" in text
+
+    zero_delay = tmp_path / "zero.json"
+    zero_delay.write_text(json.dumps({"buy_amount_sol": 0.01}), encoding="utf-8")
+    recorded.export_text(clear=True)
+    _run("--path", str(capture), "--config", str(zero_delay), "--wallet-scores")
+    assert "1.5 s delay" in recorded.export_text()

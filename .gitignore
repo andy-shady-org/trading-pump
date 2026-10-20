@@ -165,3 +165,4 @@ cov.json
 /test-data/
 # Local per-operator configs and secrets
 .envrc
+.junie/*
