@@ -386,6 +386,9 @@ DEFAULT_PRESETS["momentum"] = {
     "breakeven_ratchet_activation_pct": 0.25,
     "breakeven_buffer_pct": 0.05,
     "max_entry_cost_share_pct": 0.10,
+    # Skip a buy whose curve ran > 8% above the signal before the fill (rc.1
+    # 24 h capture, STRATEGY-PIVOT.md 6.4).
+    "momentum_max_entry_drift_pct": 0.08,
     "stop_loss": 0.85,
     "take_profit": 3.0,
     "tier_1_take_profit": 1.5,
@@ -594,6 +597,9 @@ def resolve_strategy_config(
         breakeven_buffer_pct=float(base.get("breakeven_buffer_pct", 0.05)),
         max_entry_cost_share_pct=max(
             0.0, float(base.get("max_entry_cost_share_pct", 0.10))
+        ),
+        momentum_max_entry_drift_pct=max(
+            0.0, float(base.get("momentum_max_entry_drift_pct", 0.0))
         ),
         enable_raydium_migration_sniping=bool(
             base.get("enable_raydium_migration_sniping", True)

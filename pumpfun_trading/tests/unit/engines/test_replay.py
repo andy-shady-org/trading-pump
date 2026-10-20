@@ -1233,7 +1233,12 @@ def test_confirmed_entry_mode_requires_live_fidelity() -> None:
 
 @pytest.mark.regression("BUG-121")
 def test_confirmed_replay_fills_after_the_paper_entry_delay() -> None:
-    cfg = _confirmed_config(paper_entry_delay_seconds=1.5, paper_entry_slippage_bps=100)
+    # The drift guard is off here: this test is about how the fill is priced.
+    cfg = _confirmed_config(
+        paper_entry_delay_seconds=1.5,
+        paper_entry_slippage_bps=100,
+        momentum_max_entry_drift_pct=0.0,
+    )
     snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)]
     snaps += _confirming_flow(MINT_A, 30.0)
     # The signal fires at t=34 (mc 45); the curve dips and then runs while the
@@ -1282,3 +1287,56 @@ def test_no_paper_entry_model_keeps_signal_price_fills() -> None:
     buy = _confirmed_engine(cfg).run(snaps)["trades"][0]
     assert buy["entry_price"] == 45.0
     assert "fill_drift_pct" not in buy["entry_metrics"]
+
+
+def test_confirmed_replay_drift_guard_skips_a_runaway_fill_and_refunds() -> None:
+    cfg = _confirmed_config(
+        paper_entry_delay_seconds=1.5,
+        paper_entry_slippage_bps=100,
+        momentum_max_entry_drift_pct=0.10,
+    )
+    snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)]
+    snaps += _confirming_flow(MINT_A, 30.0)
+    # Signal at t=34 (mc 45); the curve runs to 60 before the buy lands.
+    snaps += [_market_trade(MINT_A, 35.2, 60.0, "Chaser")]
+    snaps += [_create(MINT_B, 36.0)] + _confirming_flow(MINT_B, 70.0)
+    snaps.sort(key=lambda s: float(s["timestamp"]))
+    engine = _confirmed_engine(cfg)
+    summary = engine.run(snaps)
+
+    buys = [t for t in summary["trades"] if t["action"] == "buy"]
+    # MINT_A never filled; MINT_B (no drift) did, and the ledger is renumbered.
+    assert [t["mint"] for t in buys] == [MINT_B]
+    assert [t["index"] for t in summary["trades"]] == list(
+        range(len(summary["trades"]))
+    )
+    assert not any(t.get("drift_refused") for t in summary["trades"])
+    assert summary["entry_rejections"]["entry_drift"] == 1
+    assert summary["watch_stats"]["drift_refused"] == 1
+
+
+def test_confirmed_replay_drift_guard_refund_and_limits() -> None:
+    snaps = [_create(MINT_A, 0.0), _screen(MINT_A, 0.5)]
+    snaps += _confirming_flow(MINT_A, 30.0)
+    snaps += [_market_trade(MINT_A, 34.5, 60.0, "Chaser")]
+
+    # The data ends before the buy lands: refused at the last price, and the
+    # spend and its modelled costs come back.
+    cfg = _confirmed_config(
+        paper_entry_delay_seconds=5.0, momentum_max_entry_drift_pct=0.10
+    )
+    summary = _confirmed_engine(cfg, cost_model=ReplayCostModel(tip_lamports=0)).run(
+        snaps
+    )
+    assert summary["buy_count"] == 0
+    assert summary["final_cash"] == pytest.approx(summary["initial_cash"])
+    assert summary["entry_rejections"]["entry_drift"] == 1
+
+    # A wider limit lets the same fill through; no limit is the old behaviour.
+    for limit in (0.5, 0.0):
+        cfg = _confirmed_config(
+            paper_entry_delay_seconds=5.0, momentum_max_entry_drift_pct=limit
+        )
+        summary = _confirmed_engine(cfg).run(snaps)
+        assert summary["buy_count"] == 1
+        assert "entry_drift" not in summary["entry_rejections"]

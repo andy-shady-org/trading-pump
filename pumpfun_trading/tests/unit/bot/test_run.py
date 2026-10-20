@@ -6550,3 +6550,76 @@ async def test_held_confirmed_positions_keep_curve_progress_fresh(
     assert candidate is not None
     assert candidate.progress_pct == pytest.approx(80.0 / 85.0 * 100.0, abs=0.01)
     bot._evaluate_and_execute_exit.assert_awaited_once()
+
+
+def _buy_ready_bot(tmp_path: Path, **config: Any) -> TradingBot:
+    bot = make_bot(tmp_path, entry_mode="confirmed", **config)
+    bot._should_buy = lambda *a, **k: True  # type: ignore[method-assign]
+    bot._check_account_equity_guard = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot._validate_balance = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot._resolve_token_name = AsyncMock(return_value="Tok")  # type: ignore[method-assign]
+    return bot
+
+
+async def test_momentum_buys_pass_the_drift_guard_to_the_executor(
+    tmp_path: Path,
+) -> None:
+    bot = _buy_ready_bot(tmp_path, momentum_max_entry_drift_pct=0.08)
+    bot.executor.execute_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            signature="Sig",
+            mint=SAMPLE_PUMP_MINT,
+            is_buy=True,
+            amount_sol=0.02,
+            token_amount=1_000,
+            metadata={"fill_drift_pct": 0.031, "entry_market_cap_sol": 46.4},
+        )
+    )
+    bot._record_trade = MagicMock()  # type: ignore[method-assign]
+
+    assert await bot._buy_token(
+        SAMPLE_PUMP_MINT,
+        45.0,
+        strategy="momentum",
+        entry_metrics={"unique_buyers": 4},
+    )
+    call = bot.executor.execute_buy.await_args
+    assert call is not None
+    kwargs = call.kwargs
+    assert kwargs["signal_market_cap_sol"] == 45.0
+    assert kwargs["max_entry_drift_pct"] == 0.08
+    assert bot._record_trade.call_args.kwargs["entry_metrics"] == {
+        "unique_buyers": 4,
+        "fill_drift_pct": 0.031,
+    }
+
+    # Other lanes never get the guard.
+    bot.executor.execute_buy.reset_mock()
+    assert await bot._buy_token("OtherMint", 45.0, strategy="pre_graduation")
+    call = bot.executor.execute_buy.await_args
+    assert call is not None
+    assert "max_entry_drift_pct" not in call.kwargs
+
+
+async def test_drift_refused_momentum_buy_stops_watching_the_mint(
+    tmp_path: Path,
+) -> None:
+    bot = _buy_ready_bot(tmp_path, momentum_max_entry_drift_pct=0.08)
+    bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=time.time() - 120)
+    bot.order_flow_engine.mark_watch_subscribed(SAMPLE_PUMP_MINT)
+    bot.strategy.should_buy_momentum = MagicMock(return_value=True)  # type: ignore[method-assign]
+    bot._unsubscribe_from_token_trades = AsyncMock()  # type: ignore[method-assign]
+    bot.executor.execute_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=False, error="entry_drift: +0.2000 > 0.0800"
+        )
+    )
+
+    assert not await bot._maybe_buy_confirmed_momentum(
+        SAMPLE_PUMP_MINT, 45.0, "Tok", now=time.time()
+    )
+
+    assert not bot.order_flow_engine.is_watched(SAMPLE_PUMP_MINT)
+    bot._unsubscribe_from_token_trades.assert_awaited_once_with(None, SAMPLE_PUMP_MINT)
+    assert bot.watch_list_status()["stats"]["drift_refused"] == 1

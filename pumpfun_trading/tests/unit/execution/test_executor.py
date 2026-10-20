@@ -768,6 +768,95 @@ async def test_execute_buy_dry_run_without_curve_skips_the_delay() -> None:
     sleep.assert_not_awaited()
 
 
+# --- Momentum entry drift guard ---------------------------------------------------
+
+
+async def test_dry_run_buy_is_skipped_when_curve_ran_past_the_drift_limit() -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=[
+                {
+                    "virtual_token_reserves": 1_000_000_000_000_000,
+                    "virtual_sol_reserves": 30_000_000_000,
+                },
+                {
+                    "virtual_token_reserves": 500_000_000_000_000,
+                    "virtual_sol_reserves": 60_000_000_000,
+                },
+            ]
+        )
+    )
+    executor = _executor(client, paper_entry_delay_seconds=1.5)
+
+    with patch("pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()):
+        result = await executor.execute_buy(
+            MINT,
+            0.02,
+            dry_run=True,
+            signal_market_cap_sol=30.0,
+            max_entry_drift_pct=0.08,
+        )
+
+    assert not result.success
+    assert result.error is not None and result.error.startswith("entry_drift")
+    # 120 SOL market cap at the fill against 30 SOL at the signal.
+    assert result.metadata["fill_drift_pct"] == pytest.approx(3.0)
+    assert result.costs is None
+
+
+async def test_dry_run_buy_within_the_drift_limit_records_the_drift() -> None:
+    guarded = await _executor(_client()).execute_buy(
+        MINT, 0.02, dry_run=True, signal_market_cap_sol=29.0, max_entry_drift_pct=0.08
+    )
+    plain = await _executor(_client()).execute_buy(
+        MINT, 0.02, dry_run=True, signal_market_cap_sol=20.0
+    )
+
+    assert guarded.success
+    assert guarded.metadata["fill_drift_pct"] == pytest.approx(30.0 / 29.0 - 1.0, 1e-3)
+    # Without a limit the guard is off, however far the price moved.
+    assert plain.success
+    assert "fill_drift_pct" not in plain.metadata
+
+
+async def test_live_buy_is_refused_before_sending_when_drift_is_too_high() -> None:
+    client = _client()
+    result = await _executor(client).execute_buy(
+        MINT, 0.02, dry_run=False, signal_market_cap_sol=25.0, max_entry_drift_pct=0.08
+    )
+
+    assert not result.success
+    assert result.error is not None and result.error.startswith("entry_drift")
+    assert result.dry_run is False
+    client.buy.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "requested, signal, expected",
+    [
+        (2_000, 29.4, int((1.08 / (30.0 / 29.4) - 1.0) * 10_000)),
+        (300, 29.4, 300),  # already tighter than the headroom
+        (2_000, 27.8, int((1.08 / (30.0 / 27.8) - 1.0) * 10_000)),  # nearly used up
+        (2_000, None, 2_000),  # no signal price: guard off
+    ],
+)
+async def test_live_buy_slippage_is_capped_at_the_drift_headroom(
+    requested: int, signal: float | None, expected: int
+) -> None:
+    client = _client()
+    result = await _executor(client).execute_buy(
+        MINT,
+        0.02,
+        slippage_bps=requested,
+        dry_run=False,
+        signal_market_cap_sol=signal,
+        max_entry_drift_pct=0.08,
+    )
+
+    assert result.success
+    assert client.buy.await_args.kwargs["slippage_bps"] == expected
+
+
 @pytest.mark.parametrize("configured, applied", [(-5, 0), (9_999, 5_000), (250, 250)])
 def test_paper_entry_slippage_bps_is_clamped(configured: int, applied: int) -> None:
     executor = _executor(_client())

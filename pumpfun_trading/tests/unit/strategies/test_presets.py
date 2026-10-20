@@ -429,6 +429,16 @@ def test_momentum_preset_uses_confirmed_entries_at_canary_size() -> None:
     assert config.enable_cross_venue_arbitrage is False
 
 
+def test_entry_drift_guard_is_off_by_default_and_never_negative() -> None:
+    assert resolve_strategy_config("balanced").momentum_max_entry_drift_pct == 0.0
+    assert resolve_strategy_config("momentum").momentum_max_entry_drift_pct == 0.08
+
+    config = TradingBotConfig.from_dict({"momentum_max_entry_drift_pct": -0.5})
+    assert config.momentum_max_entry_drift_pct == 0.0
+    loaded = TradingBotConfig.from_dict({"momentum_max_entry_drift_pct": 0.1})
+    assert loaded.to_dict()["momentum_max_entry_drift_pct"] == 0.1
+
+
 def test_momentum_preset_matches_the_tuned_canary_config() -> None:
     canary = json.loads(
         (Path(__file__).parents[4] / "configs" / "canary.json").read_text()
@@ -444,6 +454,7 @@ def test_momentum_preset_matches_the_tuned_canary_config() -> None:
         "min_market_cap_sol",
         "momentum_max_market_cap_sol",
         "max_token_concentration_pct",
+        "momentum_max_entry_drift_pct",
     ):
         assert getattr(preset, key) == canary[key], key
     assert canary["enable_pre_graduation_harvesting"] is False

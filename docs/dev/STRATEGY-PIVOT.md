@@ -154,6 +154,10 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-19 | same, replay (rc.1 engine) | momentum | `configs/canary.json`, tip 0 | 62 | −0.084 | — | **replay NO-GO**; parity GAP +0.016 (allowed ±0.010) |
 | 2026-10-19 | same, 13.1 h, replay (BUG-121 fix) | momentum | `configs/canary.json`, tip 0 | 63 | −0.090 | — | NO-GO; parity gap +0.023 → +0.014 (still GAP) |
 | 2026-10-19 | v0.2.3 24 h, replay (BUG-121 fix) | momentum | `configs/canary.json`, tip 0 | 132 | +0.062 | — | was +0.139: half of the old edge was replay optimism |
+| 2026-10-20 | v0.3.0-rc.1 capture, full 24.2 h (paper) | momentum | `configs/capture.json` | 118 | −0.099 | 29.7% | **paper FAIL** |
+| 2026-10-20 | same, last 11.5 h only (unseen by the sweeps) | momentum | `configs/capture.json` | 53 | +0.001 | 39.6% | break-even |
+| 2026-10-20 | same, 24.2 h, replay | momentum | `configs/canary.json`, tip 0 | 112 | −0.077 | — | NO-GO; parity gap +0.022 (allowed ±0.010) |
+| 2026-10-20 | same, audit trail, drift guard applied after the fact | momentum | + `momentum_max_entry_drift_pct` 0.08 | 101 | −0.046 | — | helps in both halves (A −0.075, B +0.029), still negative |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -197,3 +201,43 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 
   With the rc.1 engine, 8 buyers looked positive in every period (+0.021 SOL on the new capture). With entry latency modelled, **no buyer threshold is net positive on the new capture**. Stop-loss 0.75/0.65, a 20 s stagnation timeout, a shorter age window and a higher inflow threshold did not help either (rc.1 engine).
 - **Verdict:** no Stage 0 with the current lane. Changing `momentum_min_unique_buyers` alone is not enough. Next candidates, each to be judged on hours the sweep has not seen: a cap on the buy/sell ratio, skipping the buy when the curve moved more than X% between signal and fill, and a shorter signal-to-fill latency. If none is positive on unseen data, the momentum lane has no edge at this latency and the pre-graduation paper pilot or a faster data source comes next (§4).
+
+### 6.4 v0.3.0-rc.1 capture, full 24 h: still NO-GO; drift guard added (2026-10-20)
+- **Data:** the same run as §6.3, now 2026-10-18 20:36 → 2026-10-19 20:50 (24.2 h; archive it as `runtime/archive/capture-v0.3.0rc1/` before the next run). Half **A** is the first 12.7 h (the hours the §6.3 sweep was picked on); half **B** is the last 11.5 h, which no sweep had seen.
+- **Paper result:** −0.099 SOL net over 118 momentum positions, 29.7% profitable; the paper wallet went from 2.000 to 1.901 SOL, matching the audit trail. Costs were 0.0025 SOL, tips 0, every rent refunded.
+
+| Period | Positions | Net SOL | Profitable |
+|---|---|---|---|
+| A: first 12.7 h | 65 | −0.100 | 22% |
+| B: last 11.5 h (unseen) | 53 | +0.001 | 40% |
+
+- **Stop losses make the whole loss:** 55 positions, −0.229 SOL. Every other exit together made +0.130 SOL. The median stop sold at −19% against a −15% stop, and 15 of them sold within 1 s of the buy.
+- **Earlier ideas, checked on B (fixed replay, frozen `canary.json`, net SOL / buys):**
+
+| `momentum_min_unique_buyers` | A | B (unseen) |
+|---|---|---|
+| 3 (canary) | −0.093 / 62 | +0.016 / 50 |
+| 6 | −0.019 / 38 | −0.014 / 43 |
+| 8 | −0.003 / 31 | −0.024 / 40 |
+| 10 | −0.004 / 25 | −0.030 / 31 |
+
+  The 8-buyer setting from §6.3 **failed out of sample**. Among the bot's own buys the ones that already had ≥ 8 buyers were positive in both halves, but a rule that *waits* for 8 buyers enters later and higher, and that removes the gain. A buy/sell-ratio cap (A −0.026, B −0.028 on the bot's own buys) and a 60 s maximum token age were worse in both halves; both are dropped.
+- **The one idea that helped in both halves: skip the buy when the price ran away between signal and fill** (audit trail, the curve at the fill against the signal's market cap, net SOL / positions kept):
+
+| Skip when the curve moved more than | A | B | 24 h |
+|---|---|---|---|
+| no guard | −0.100 / 65 | +0.001 / 53 | −0.099 / 118 |
+| 10% | −0.077 / 61 | +0.028 / 43 | −0.049 / 104 |
+| **8% (chosen)** | **−0.075 / 59** | **+0.029 / 42** | **−0.046 / 101** |
+| 5% | −0.066 / 54 | +0.028 / 39 | −0.038 / 93 |
+
+  The move here is taken from the paper fill price less the ~2.25% Pump.fun fee and paper penalty, so it is approximate. 8% keeps about as much of the gain as 5% while skipping fewer buys. The guard reduces the loss; it does not create a profit on its own.
+- **Drift guard (rc.2): `momentum_max_entry_drift_pct`** (default 0 = off; 0.08 in the `momentum` preset, `configs/canary.json` and `configs/capture.json`). Momentum-lane buys only:
+  - **Paper:** after `paper_entry_delay_seconds` the executor re-reads the curve and skips the buy when its market cap is more than the limit above the signal's (`entry_drift` error, no costs). The fill's drift is recorded as `entry_metrics.fill_drift_pct`.
+  - **Live:** the buy is refused before sending if the curve is already past the limit, and otherwise its slippage is capped at the headroom left, so the fill cannot land above signal × (1 + limit).
+  - **Replay:** a delayed confirmed entry whose fill price is past the limit is dropped, its cash and modelled costs refunded (`entry_rejections.entry_drift`, `watch_stats.drift_refused`).
+  - A refused mint is dropped from the watch list and unsubscribed in both the bot and replay: the move has already happened.
+- **Replay cannot judge the guard.** In replay the median fill drift is 0 and only 5 of 112 fills moved > 10%, against 14 of 118 in paper: most of the runaway fills came from curve reads that see trades the capture's trade stream misses (the remaining parity gap, +0.022 SOL on 24 h). Replayed with the guard at 0.08 the result barely changes (A −0.096, B +0.017 against −0.093 / +0.016 without it; 24 h −0.080). **The next paper capture is the only test of the guard.**
+- **Operations: healthy.** 1,568 watched, 251 promoted, 118 bought, 13 dropped as non-standard curves; ≤ 20 subscriptions; 7,689 trade messages with no refusals or breaker trips; 0 ERROR lines; RPC p95 117 ms. The stream connected 7 times but `connection_loss` stayed 0 (telemetry gap, BUG-122).
+- **Possible time-of-day effect.** A ran overnight in Europe, B in EU/US daytime, and B did better under every setting. One day cannot separate the hour from the settings; every buy carries its timestamp, so net PnL per hour can be compared on the next capture.
+- **Verdict:** no Stage 0, no change to `momentum_min_unique_buyers`. rc.2 ships the drift guard (plus BUG-121 and Sprint 28a). **The next 24 h capture with `configs/capture.json` is the last test of the momentum lane:** if it is not clearly net positive with the guard on, stop tuning it. In parallel and at no risk to capital: the 72 h pre-graduation paper pilot (FEAT-53, second runtime folder, `enable_pre_graduation_harvesting: true`) and the FEAT-54 offline wallet scorer on the two captures.

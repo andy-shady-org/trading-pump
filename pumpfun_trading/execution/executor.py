@@ -177,6 +177,45 @@ class OrderExecutor:
         return max(0, min(5_000, value))
 
     @staticmethod
+    def _entry_drift(
+        reserves: tuple[int, int] | None, signal_market_cap_sol: float | None
+    ) -> float | None:
+        """Curve market cap now against the signal's, as a share (``0.08`` = +8%)."""
+        if reserves is None or not signal_market_cap_sol or signal_market_cap_sol <= 0:
+            return None
+        current = calculate_market_cap_sol(reserves[0], reserves[1])
+        if current <= 0:
+            return None
+        return float(current) / float(signal_market_cap_sol) - 1.0
+
+    @staticmethod
+    def _drift_refused_buy(
+        mint: str,
+        amount_sol: float,
+        reason: str,
+        drift: float,
+        limit: float,
+        dry_run: bool,
+    ) -> ExecutionResult:
+        """A momentum buy skipped because the price ran away from the signal."""
+        logger.info(
+            "Skipping buy of %s: curve moved %+.1f%% since the signal (limit %.1f%%)",
+            mint,
+            drift * 100.0,
+            limit * 100.0,
+        )
+        return ExecutionResult(
+            success=False,
+            mint=mint,
+            is_buy=True,
+            amount_sol=amount_sol,
+            reason=reason,
+            error=f"entry_drift: {drift:+.4f} > {limit:.4f}",
+            dry_run=dry_run,
+            metadata={"fill_drift_pct": round(drift, 4)},
+        )
+
+    @staticmethod
     def _refused_buy(
         mint: str, amount_sol: float, reason: str, exc: Exception, dry_run: bool
     ) -> ExecutionResult:
@@ -329,8 +368,19 @@ class OrderExecutor:
         reason: str = "entry",
         token_name: str | None = None,
         dry_run: bool | None = None,
+        signal_market_cap_sol: float | None = None,
+        max_entry_drift_pct: float = 0.0,
     ) -> ExecutionResult:
+        """Buy ``amount_sol`` of ``mint`` (paper or live).
+
+        With ``max_entry_drift_pct`` > 0 and a ``signal_market_cap_sol`` the buy
+        is skipped when the curve at the fill is more than that share above the
+        signal; live, the slippage is also capped at the remaining headroom.
+        """
         is_dry_run = self.dry_run if dry_run is None else dry_run
+        drift_limit = max(0.0, float(max_entry_drift_pct or 0.0))
+        if not signal_market_cap_sol or signal_market_cap_sol <= 0:
+            drift_limit = 0.0
 
         try:
             reserves = await self._fetch_curve_reserves(mint, reject_non_standard=True)
@@ -370,6 +420,11 @@ class OrderExecutor:
                     )
                 except (NonStandardCurveError, NotPumpFunCurveError) as exc:
                     return self._refused_buy(mint, amount_sol, reason, exc, True)
+            drift = self._entry_drift(reserves, signal_market_cap_sol)
+            if drift_limit > 0 and drift is not None and drift > drift_limit:
+                return self._drift_refused_buy(
+                    mint, amount_sol, reason, drift, drift_limit, True
+                )
             penalty_bps = self._paper_entry_slippage_bps()
             simulated_token_amount = self._estimate_buy_tokens(amount_sol, reserves)
             if simulated_token_amount <= 0:
@@ -391,6 +446,8 @@ class OrderExecutor:
             if penalty_bps or delay > 0:
                 metadata["paper_entry_slippage_bps"] = penalty_bps
                 metadata["paper_entry_delay_seconds"] = delay
+            if drift_limit > 0 and drift is not None:
+                metadata["fill_drift_pct"] = round(drift, 4)
             return ExecutionResult(
                 success=True,
                 signature=dry_signature,
@@ -407,6 +464,22 @@ class OrderExecutor:
                     signature=dry_signature,
                 ),
             )
+
+        if drift_limit > 0:
+            drift = self._entry_drift(reserves, signal_market_cap_sol)
+            if drift is not None:
+                if drift > drift_limit:
+                    return self._drift_refused_buy(
+                        mint, amount_sol, reason, drift, drift_limit, False
+                    )
+                # The fill may not land above signal * (1 + limit).
+                headroom_bps = int(((1.0 + drift_limit) / (1.0 + drift) - 1.0) * 10_000)
+                headroom_bps = max(1, headroom_bps)
+                resolved_slippage = (
+                    headroom_bps
+                    if resolved_slippage is None
+                    else min(int(resolved_slippage), headroom_bps)
+                )
 
         async with self.get_lock(mint):
             try:
