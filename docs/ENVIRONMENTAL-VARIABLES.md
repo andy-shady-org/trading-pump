@@ -44,6 +44,7 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_GEYSER_ENDPOINT`](#pumpfun_geyser_endpoint) | — | String (URL) | **Required\*** | `None` | Streaming |
 | [`PUMPFUN_GEYSER_X_TOKEN`](#pumpfun_geyser_x_token) | `PUMPFUN_GEYSER_TOKEN` | String | Optional | `None` | Streaming |
 | [`PUMPFUN_STREAM_MAX_RETRIES`](#pumpfun_stream_max_retries) | `PUMPFUN_WS_MAX_RETRIES` | Integer | Optional | `5` | Streaming |
+| [`PUMPFUN_JUPITER_API_KEY`](#pumpfun_jupiter_api_key) | — | String (secret) | Optional | `None` (keyless) | Slow-lane recorder (FEAT-65) |
 | [`PUMPFUN_USE_JITO`](#pumpfun_use_jito) | — | Boolean | Optional | `true` | Execution / Anti-MEV |
 | [`PUMPFUN_JITO_BLOCK_ENGINE_URL`](#pumpfun_jito_block_engine_url) | — | String (URL) | Optional | `https://mainnet.block-engine.jito.wtf` | Execution / Anti-MEV |
 | [`PUMPFUN_JITO_TIP_LAMPORTS`](#pumpfun_jito_tip_lamports) | — | Integer | Optional | `100000` (0.0001 SOL) | Execution / Anti-MEV |
@@ -174,6 +175,13 @@ The table below summarizes every supported environment variable, its recognized 
 * **Default:** `5`
 * **Description:** Maximum consecutive streaming connection failures permitted before triggering the streaming circuit breaker, halting trade entries, and firing critical alerts.
 * **Example:** `PUMPFUN_STREAM_MAX_RETRIES=10`
+
+#### `PUMPFUN_JUPITER_API_KEY`
+* **Type:** String (secret)
+* **Required:** Optional; only read by `pumpfun-recorder --jupiter-quotes` (FEAT-65 phase 0)
+* **Default:** `None`: quotes and prices use Jupiter's keyless `https://lite-api.jup.ag` (about 5 requests per 10 s when checked on 2026-10-21)
+* **Description:** A Jupiter Portal API key. When set, the recorder uses `https://api.jup.ag` and sends the key as an `x-api-key` header, never in a URL, so it never reaches a log, status file or row (BUG-118). Raise the request rate (`--request-gap`) only within the key's plan. `pumpbot` does not read it.
+* **Example:** `export PUMPFUN_JUPITER_API_KEY="<jupiter-api-key>"`
 
 ---
 

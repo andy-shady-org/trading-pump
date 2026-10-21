@@ -74,6 +74,9 @@ class TradingBotConfig:
     # re-read the curve, then worsen the fill by this many bps.
     paper_entry_delay_seconds: float = 0.0
     paper_entry_slippage_bps: int = 0
+    # Paper sells take this many bps off their proceeds: the price impact and
+    # latency a live sell pays. Replay applies the same haircut (BUG-126).
+    paper_exit_slippage_bps: int = 0
     # Simulated wallet for paper/dry-run; 0 means reserve + 10 buys.
     paper_starting_balance_sol: float = 0.0
     # Re-price held positions from the curve this often, in their own task;
@@ -113,6 +116,25 @@ class TradingBotConfig:
     # capture as ``event: "curve_poll"`` rows, so replay can rebuild curve
     # history for fills, the drift guard and the pre-graduation lane.
     capture_curve_polls: bool = True
+    # Record-only curve observations (rc.3; strategies/observation.py). Never
+    # promoted, shadow-evaluated or bought; replay skips their rows.
+    # Share (0-1) of screen-rejected launches polled as ``reject_sample``
+    # (0 = off), with the screen's reasons on every row.
+    screen_reject_sample_pct: float = 0.0
+    screen_reject_sample_max_mints: int = 100
+    screen_reject_sample_ttl_seconds: float = 1800.0
+    # Pump.fun API scan for curves past ``graduation_discovery_min_real_sol``,
+    # regardless of screening or the watch TTL, polled as ``discovery``
+    # (0 s = off).
+    graduation_discovery_scan_seconds: float = 0.0
+    graduation_discovery_min_real_sol: float = 40.0
+    graduation_discovery_max_mints: int = 100
+    graduation_discovery_ttl_seconds: float = 7200.0
+    observation_poll_interval_seconds: float = 5.0
+    # Record where a held position's price first crossed ``stop_loss`` on the
+    # trade feed and on the curve refresh, next to the price the exit sold
+    # at (``exit_metrics`` on the sell record). Changes no exit.
+    record_stop_crossings: bool = False
     # Momentum rules logged on paper but never traded (FEAT-58): each entry is
     # ``{"name": ..., <momentum_* overrides>, "max_entry_drift_pct": ...,
     # <FEAT-56/57 flow filters>}``; see strategies/shadow.py.
@@ -309,6 +331,7 @@ class TradingBotConfig:
             "allow_mint_reentry": self.allow_mint_reentry,
             "paper_entry_delay_seconds": self.paper_entry_delay_seconds,
             "paper_entry_slippage_bps": self.paper_entry_slippage_bps,
+            "paper_exit_slippage_bps": self.paper_exit_slippage_bps,
             "paper_starting_balance_sol": self.paper_starting_balance_sol,
             "position_refresh_seconds": self.position_refresh_seconds,
             "require_trade_feed": self.require_trade_feed,
@@ -327,6 +350,15 @@ class TradingBotConfig:
             "near_graduation_ttl_seconds": self.near_graduation_ttl_seconds,
             "near_graduation_poll_interval_seconds": self.near_graduation_poll_interval_seconds,
             "capture_curve_polls": self.capture_curve_polls,
+            "screen_reject_sample_pct": self.screen_reject_sample_pct,
+            "screen_reject_sample_max_mints": self.screen_reject_sample_max_mints,
+            "screen_reject_sample_ttl_seconds": self.screen_reject_sample_ttl_seconds,
+            "graduation_discovery_scan_seconds": self.graduation_discovery_scan_seconds,
+            "graduation_discovery_min_real_sol": self.graduation_discovery_min_real_sol,
+            "graduation_discovery_max_mints": self.graduation_discovery_max_mints,
+            "graduation_discovery_ttl_seconds": self.graduation_discovery_ttl_seconds,
+            "observation_poll_interval_seconds": self.observation_poll_interval_seconds,
+            "record_stop_crossings": self.record_stop_crossings,
             "shadow_variants": [dict(v) for v in self.shadow_variants],
             "enable_momentum_signals": self.enable_momentum_signals,
             "momentum_window_seconds": self.momentum_window_seconds,

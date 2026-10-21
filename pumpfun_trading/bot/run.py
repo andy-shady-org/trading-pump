@@ -122,6 +122,7 @@ from pumpfun_trading.execution.sell_pipeline import (
     position_token_amounts,
     sell_replay_snapshot,
     sold_fraction,
+    stop_exit_metrics,
 )
 from pumpfun_trading.infra.rpc_pool import RpcConnectionPool
 from pumpfun_trading.engines.costs import ReplayCostModel
@@ -146,6 +147,7 @@ from pumpfun_trading.sdk.costs import (
     TransactionCosts,
 )
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
+from pumpfun_trading.strategies.observation import CurveObservationList
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
 from pumpfun_trading.strategies.shadow import (
     ShadowSignal,
@@ -181,6 +183,10 @@ class TradingBot:
     )
     # Created lazily by the first shadow fill (bot/handlers/trade.py).
     _shadow_fill_tasks: set[asyncio.Task[None]]
+    # rc.3 record-only observations, created lazily (bot/handlers/observe.py).
+    _reject_sample_list: CurveObservationList
+    _discovery_list: CurveObservationList
+    _discovery_scanned_at: float
 
     def __init__(
         self,
@@ -1043,6 +1049,13 @@ class TradingBot:
             fee_bps = PUMP_DEFAULT_FEE_BPS
         return (1.0 - fee_bps / 10_000.0) ** 2
 
+    def _paper_exit_factor(self) -> float:
+        """Round-trip fee factor times the paper exit haircut (BUG-126)."""
+        bps = getattr(self.config, "paper_exit_slippage_bps", 0)
+        bps = bps if isinstance(bps, int) and not isinstance(bps, bool) else 0
+        keep = (10_000 - max(0, min(5_000, bps))) / 10_000.0
+        return self._paper_round_trip_fee_factor() * keep
+
     def _book_trade_costs(self, net_pnl_sol: float, costs_sol: float) -> None:
         """Feeds net realized PnL to the daily breaker; paper wallets pay costs too."""
         tracker = getattr(self, "daily_equity_tracker", None)
@@ -1074,6 +1087,7 @@ class TradingBot:
         costs: TransactionCosts | None = None,
         strategy: str | None = None,
         entry_metrics: dict[str, Any] | None = None,
+        exit_metrics: dict[str, Any] | None = None,
     ) -> None:
         trade_id = trade_id or self._next_trade_id()
         position_id = position_id or trade_id
@@ -1160,6 +1174,8 @@ class TradingBot:
         }
         if entry_metrics:
             record["entry_metrics"] = dict(entry_metrics)
+        if exit_metrics:
+            record["exit_metrics"] = dict(exit_metrics)
         if "buy" in action:
             record["market_regime"] = self._market_regime().snapshot()
         # Net of network fee, priority fee, Jito tip and token-account rent (FEAT-49).
@@ -2533,10 +2549,21 @@ class TradingBot:
             entry_market_cap=entry_mc,
             current_market_cap=curr_mc,
             # Pump.fun charges its fee on the buy and on the sell; live swap
-            # amounts include it, so paper proceeds must too (FEAT-49).
-            paper_fee_factor=(
-                self._paper_round_trip_fee_factor() if self.dry_run else 1.0
-            ),
+            # amounts include it, so paper proceeds must too (FEAT-49), plus
+            # the exit haircut replay charges (BUG-126).
+            paper_fee_factor=(self._paper_exit_factor() if self.dry_run else 1.0),
+        )
+        # rc.3: where the stop was first crossed vs. what this exit sold at.
+        exit_metrics = (
+            stop_exit_metrics(
+                position,
+                stop_loss=float(self.config.stop_loss),
+                sold_at=time.time(),
+                proceeds_sol=sell_p,
+                cost_sol=pos_entry * frac,
+            )
+            if not is_partial and getattr(self.config, "record_stop_crossings", False)
+            else None
         )
 
         self.position_manager.record_sell(
@@ -2590,6 +2617,7 @@ class TradingBot:
             reason=reason,
             signature=exec_res.signature,
             costs=sell_costs,
+            exit_metrics=exit_metrics,
         )
         if self.replay_recorder is not None:
             self.replay_recorder.record_snapshot(
@@ -2601,6 +2629,7 @@ class TradingBot:
                     tokens_sold=tokens_to_sell,
                     reason=reason,
                     default_reason="partial_exit" if is_partial else "exit",
+                    exit_metrics=exit_metrics,
                 )
             )
         if is_partial:

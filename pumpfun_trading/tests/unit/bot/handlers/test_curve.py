@@ -86,6 +86,33 @@ async def test_refresh_exits_a_held_curve_that_completed(tmp_path: Path) -> None
     bot._exit_graduated_position.assert_awaited_once_with(SAMPLE_MINT)
 
 
+async def test_refresh_notes_the_first_stop_crossing_only_when_asked(
+    tmp_path: Path,
+) -> None:
+    for record in (False, True):
+        bot = make_bot(tmp_path, stop_loss=0.95, record_stop_crossings=record)
+        make_position(bot, SAMPLE_MINT, entry_market_cap=30.0)
+        bot.active_positions = bot.position_manager.get_all_positions()
+        bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+            return_value=_launch_curve()  # ~27.96 SOL: 93% of entry
+        )
+        bot._evaluate_and_execute_exit = AsyncMock()  # type: ignore[method-assign]
+        await curve.refresh_active_positions_market_caps(bot)
+        bot._evaluate_and_execute_exit.assert_awaited_once()
+        crossings = bot.active_positions[SAMPLE_MINT].get("stop_crossings")
+        if record:
+            assert crossings is not None
+            assert crossings["refresh"]["ratio"] == pytest.approx(0.932, rel=0.01)
+        else:
+            assert crossings is None
+
+
+def test_note_stop_crossing_ignores_mints_not_held(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, record_stop_crossings=True)
+    curve.note_stop_crossing(bot, SAMPLE_MINT, 1.0, source="trade_feed")
+    assert SAMPLE_MINT not in bot.active_positions
+
+
 @pytest.mark.parametrize(
     ("method", "function", "args", "kwargs"),
     [

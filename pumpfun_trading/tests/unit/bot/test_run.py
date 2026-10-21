@@ -1145,6 +1145,27 @@ async def test_bot_sell_populates_audit_record_and_ledger(tmp_path):
     assert full_trade["rent_sol"] < 0
 
 
+@pytest.mark.regression("BUG-126")
+@pytest.mark.parametrize(("bps", "keep"), [(0, 1.0), (100, 0.99), (9_000, 0.5)])
+async def test_paper_sell_pays_the_exit_haircut(
+    tmp_path: Path, bps: int, keep: float
+) -> None:
+    # make_config bypasses the resolver, so 9_000 reaches the bot unclamped.
+    bot = make_bot(tmp_path, paper_exit_slippage_bps=bps)
+    mint = "MintExitHaircut1111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint, token_amount=1_000_000, cost_sol=0.02, entry_market_cap=30.0
+    )
+    bot.position_manager.update_price(mint, 45.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    assert await bot._sell_token(mint, reason="trailing_stop_hit")
+
+    expected = 0.02 * 1.5 * bot._paper_round_trip_fee_factor() * keep
+    assert bot._trade_ledger[-1]["exit"] == pytest.approx(expected)
+    await bot.close()
+
+
 @pytest.mark.regression("BUG-24", "BUG-25", "BUG-26", "BUG-27", "BUG-28")
 async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
     """

@@ -33,6 +33,8 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-61 | Create-slot bundle proxy | Income | P3 | inputs recorded in rc.3; gate not built |
 | FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled |
 | FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P3 | not scheduled |
+| FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
+| FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | P3 | phase 0 data recorder in rc.3; the lane only if rc.3 is NO-GO |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |
@@ -177,6 +179,32 @@ This document lists candidate features and architectural enhancements for `pumpf
 * **Evidence:** `bot/enrichment.py` only builds the funding graph when the Pump.fun API record carries `funding_links` (or a ready `cluster_analysis`); the API never sends either, so the analyser has never run outside tests.
 * **Design:** find each top holder's first funder (`getSignaturesForAddress` + `getTransaction`, bounded, through `rpc_pool`) and pass the edges as `funding_links`. Too slow for the 1.5 s momentum entry path, so run it on the slower lanes (pre-graduation, or momentum after promotion) or offline on captures first; record the result and gate only if it beats a random cut on two captures.
 * **Dependencies:** FEAT-61 (holder snapshot); FEAT-39 would make it cheaper. **Impact:** the BubbleMaps-style bundle check that FEAT-57 and FEAT-61 cannot do.
+
+### FEAT-64: Post-Graduation PumpSwap Long-Tail Recorder, Capture First
+* **Class / Priority:** Income · P3 (proposed 2026-10-21; not scheduled; no code)
+* **Goal:** Test the "less-watched venue" idea cheaply: do coins that graduated to PumpSwap at least a day ago (long-tail pools the big searchers ignore) give a momentum or pullback edge after our 1.5 s delay and costs?
+* **What exists:** the PumpSwap pool decoder and sell path (`sdk/pumpswap_execution.py`, BUG-123), used only to exit held coins after migration. Buying on PumpSwap is not built.
+* **Design, in three gated phases** (each starts only if the previous one passes):
+  1. **Read-only recorder (no capital, no buy code).** Collect mints that graduated ≥ 24 h ago (from `subscribeMigration` / curve `complete` events in our captures, or the Pump.fun API), poll their PumpSwap pool reserves in batches over `rpc_pool` (as the watch poller does), and write `pool_poll` records tagged `venue: "pumpswap"` in the existing capture format. Reuse the pool decoder and its sanity checks, pinned to real mainnet account bytes in tests. Trade flow, if needed, from pool polls or a billed trade subscription for a small budget of pools only.
+  2. **Offline evaluation.** A 24–48 h capture, then replay / `--shadow-scan` of the momentum and `pullback_curve` rules on pool prices, with PumpSwap fees and the round-trip rent and network fee in the cost model. Pass: a rule beats a random cut of the baseline in both halves (`--split-at mid`), net of costs, and trades often enough to matter (report trades per day next to net).
+  3. **Execution (only after phase 2 passes).** A PumpSwap buy builder checked against real mainnet transactions, `strategy: "pumpswap"` on records and in `pnl --group-by strategy`, a 72 h paper pilot and the Stage 0 gate (`RELEASE-GATE.md` §3.1).
+* **Risks:** long-tail pools are thin, so 0.02 SOL plus about 0.002 SOL fixed cost per round trip is a large share; "stable fundamentals" are rare among graduated meme coins, and many of these pools are slowly bleeding out or abandoned; order splitting does not help at our size (each split pays the network fee again).
+* **Dependencies:** none for phase 1; FEAT-58 / FEAT-59 shadow tooling for phase 2. Do not start before the rc.3 capture is read out. **Impact:** an evidence-based answer on a second, less-contested market on the same chain, reusing the PumpSwap code we already have.
+
+### FEAT-65: Slow Lane, Daily-Bar Trend On Liquid Solana Tokens Via Jupiter
+* **Class / Priority:** Income · P3 (proposed 2026-10-21; a deliberate change of direction, considered only if the rc.3 Pump.fun lanes are also NO-GO). Phase 0 data recorder shipped in rc.3 ([`FEATURES.md` §37](../FEATURES.md)); design steps 2–5 below are not built
+* **Goal:** A strategy where the edge is analysis and discipline rather than speed: hours-to-days holds on liquid Solana tokens (SOL, JUP and similar), where our 1.5 s latency and per-trade fixed costs barely matter.
+* **Why it is separate:** everything in the bot today is built for minutes-old bonding curves (curve math, order flow, watch TTL, 1 s refresh, exits in seconds). This lane needs its own data, backtester and position logic.
+* **Phase 0, data (shipped in rc.3, record-only):** `pumpfun-recorder --jupiter-quotes` samples Jupiter round-trip quotes (buy SOL → token, then sell those tokens back) at 0.02 / 0.1 / 0.5 SOL every 5 min for `configs/slow_lane_tokens.json`, with route, pools, price impact, round-trip cost, Jupiter price / liquidity and priority-fee samples for the quoted pools; `--backfill-bars` downloads GeckoTerminal daily / hourly bars. Both keyless (`lite-api.jup.ag`, GeckoTerminal public API), in their own process and files (RUNBOOK §6.4). A quote is valid only when taken, so these series cannot be fetched later; bar history can. Limits found on 2026-10-21: the keyless Jupiter API allowed 5 requests per ~10 s, and GeckoTerminal's public history ends after about 6 months (a multi-year backtest needs another bar source, e.g. a free CoinGecko demo key, or monthly re-runs to extend the series).
+* **Design:**
+  1. **Data.** OHLCV history and live bars for a fixed, reviewed token list (Jupiter or Birdeye price APIs, keys in their own env variable and never in URLs; `ops/redact.py` for anything persisted). Phase 0 above covers the quote / cost side and 6 months of bars.
+  2. **Backtester.** A bar-based engine (not `engines/replay.py`, which replays stream events) with fees, swap price impact and slippage from Jupiter quotes, walk-forward splits and a random-entry baseline.
+  3. **Strategy.** A simple trend / regime rule (e.g. moving-average or breakout with a volatility-scaled stop and size), long-only, one position per token, in a new `strategies/` module behind the existing risk pipeline (daily breaker, exposure caps).
+  4. **Execution.** A Jupiter swap client in `sdk/` (quote → swap transaction, priority fee, no Jito needed at these holds), position records with `strategy: "slow"`, reconciliation and net PnL as for the other lanes.
+  5. **Gate.** Walk-forward backtest net positive on at least two unseen periods and better than the random-entry baseline, then a paper run of several weeks (trade count is low), then the normal Stage 0 / Stage 1 gates.
+* **What carries over:** wallet and keys, `infra/rpc_pool`, the cost model, audit trail, `pumpfun-audit pnl` and reconciliation, risk breakers, alerts and the terminal dashboard.
+* **Risks:** edges in liquid assets are small and regime-dependent (expect low single-digit returns, not doubling); few trades make evidence slow to collect; overfitting a backtest is easy (same rule as the AGENTS learning "Beat a random cut"). Roughly Phase 5-sized work.
+* **Dependencies:** the rc.3 verdict (`STRATEGY-PIVOT.md` §6); a Jupiter swap client; ideally Sprint 28 (`bot/run.py` decomposition) so the lane does not grow `run.py`. **Impact:** a lane that does not depend on winning latency races against searchers.
 
 ---
 
@@ -339,3 +367,4 @@ The order follows funding first, then dependencies; it matches the sprints in [`
 7. **Sprint 35 — FEAT-37 embed, analytics, terminal-UI deprecation gate.**
 8. **P2 follow-ups:** FEAT-38, FEAT-40, FEAT-41, FEAT-43.
 9. **P3 backlog:** FEAT-44, FEAT-45, FEAT-47, FEAT-48.
+10. **Venue and direction experiments (after the rc.3 read-out):** FEAT-64 (post-graduation PumpSwap recorder) and FEAT-62 (Moonshot), both capture first; FEAT-65 (slow lane) only if the Pump.fun lanes stay NO-GO after rc.3.

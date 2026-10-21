@@ -32,6 +32,11 @@
   "near_graduation_ttl_seconds": 3600.0,
   "near_graduation_poll_interval_seconds": 6.0,
   "capture_curve_polls": true,
+  "graduation_discovery_scan_seconds": 30.0,
+  "graduation_discovery_min_real_sol": 40.0,
+  "graduation_discovery_max_mints": 100,
+  "graduation_discovery_ttl_seconds": 7200.0,
+  "observation_poll_interval_seconds": 10.0,
 
   "enable_pre_graduation_harvesting": true,
   "pre_graduation_entry_progress_pct": 0.75,
@@ -73,14 +78,10 @@
   "require_holder_data": true,
   "paper_entry_delay_seconds": 1.5,
   "paper_entry_slippage_bps": 100,
+  "paper_exit_slippage_bps": 100,
+  "stop_loss": 0.85,
+  "record_stop_crossings": true,
   "position_refresh_seconds": 1.0,
   "require_trade_feed": true,
-  "trade_feed_probe_seconds": 300.0,
-
-  "shadow_variants": [
-    {"name": "pullback_curve", "kind": "pullback_curve"},
-    {"name": "pullback_curve_dd20", "kind": "pullback_curve", "pullback_min_drawdown_pct": 0.2},
-    {"name": "pullback_curve_dd40", "kind": "pullback_curve", "pullback_min_drawdown_pct": 0.4},
-    {"name": "pullback_curve_base30", "kind": "pullback_curve", "pullback_min_base_seconds": 30}
-  ]
+  "trade_feed_probe_seconds": 300.0
 }

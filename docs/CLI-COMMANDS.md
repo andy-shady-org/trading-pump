@@ -79,7 +79,7 @@ pumpfun record [OPTIONS]
 
 | Flag | Short | Type | Default | Description |
 | :--- | :---: | :---: | :---: | :--- |
-| `--output` | `-o` | String | `market_replay.jsonl` | Destination file path for the recorded `.jsonl` replay dataset. |
+| `--output` | `-o` | String | `market_replay.jsonl` | Destination file path for the recorded `.jsonl` replay dataset (`slow_lane/jupiter_quotes.jsonl` with `--jupiter-quotes`, `slow_lane/bars.jsonl` with `--backfill-bars`). |
 | `--duration` | `-d` | Float | `None` (Infinite) | Maximum recording duration in seconds before automatically stopping. |
 | `--limit` | `-l` | Integer | `None` (Infinite) | Maximum number of market snapshot records to capture before stopping. |
 | `--geyser-endpoint` | — | URL | `None` (Env) | Yellowstone Geyser gRPC streaming endpoint (overrides `PUMPFUN_GEYSER_ENDPOINT`). |
@@ -88,6 +88,15 @@ pumpfun record [OPTIONS]
 | `--synthetic` | — | Choice | `None` | Generates synthetic market scenario. Choices: `pump_and_dump`, `stagnant_curve`, `multi_tier_take_profit`, `gradual_grind`, `flash_rug`. |
 | `--synthetic-steps`| — | Integer | `60` | Number of price update steps generated in synthetic scenarios. |
 | `--from-mint` | — | Base58 | `None` | Exports historical trades for a specific token mint via Pump.fun REST API. |
+| `--jupiter-quotes` | — | Flag | `false` | FEAT-65 phase 0 (record-only): samples Jupiter buy / sell quotes, prices and priority fees for a token list until `--duration` or SIGINT / SIGTERM. Keyless (`lite-api.jup.ag`); `PUMPFUN_JUPITER_API_KEY` switches to `api.jup.ag`. |
+| `--backfill-bars` | — | Flag | `false` | FEAT-65 phase 0: downloads daily / hourly OHLCV bars from GeckoTerminal's public API for the token list, then exits. |
+| `--tokens` | — | File Path | built-in list | Token list JSON `{"tokens": [{"symbol", "mint"}]}`; the built-in list is `configs/slow_lane_tokens.json`. SOL is the quote currency, so it gets bars but no quotes. |
+| `--quote-interval` | — | Float | `300` | Seconds between quote cycles. |
+| `--quote-sizes` | — | String | `0.02,0.1,0.5` | Quote sizes in SOL; each size is quoted as a buy and as a sell of the bought tokens (a round trip). |
+| `--request-gap` | — | Float | `2` (quotes), `6` (bars) | Minimum seconds between API requests (keyless rate limits). |
+| `--no-fee-samples` | — | Flag | `false` | Skip `getRecentPrioritizationFees` samples (taken by default when `PUMPFUN_RPC_URL` / `PUMPFUN_RPC_URLS` is set). |
+| `--bar-timeframes` | — | String | `day,hour` | Bar timeframes: `day`, `hour`, `minute`. |
+| `--bar-max-pages` | — | Integer | `6` | Pages of 1,000 bars per token and timeframe (paging also stops at the public history limit). |
 
 ### Execution Examples & Recipes
 
@@ -134,6 +143,13 @@ pumpfun record \
   --from-mint 7EYnhcWvdqPB2DdJ6DXZsMvT8GqgE4F8V9m1pump \
   --output runtime/token_history.jsonl \
   --limit 250
+```
+
+#### Recipe 6: Slow-Lane Quotes and Bars (FEAT-65 phase 0, record-only)
+Sample Jupiter round-trip quotes, prices and priority fees every 5 minutes, and download the bar history once ([`dev/RUNBOOK.md` §6.4](dev/RUNBOOK.md)). Rows carry `event` (`quote`, `quote_error`, `price`, `fee_sample`, `bar`) and `venue`, and stay out of the Pump.fun captures:
+```bash
+pumpfun-recorder --jupiter-quotes --tokens configs/slow_lane_tokens.json -o runtime/slow_lane/jupiter_quotes.jsonl
+pumpfun-recorder --backfill-bars --tokens configs/slow_lane_tokens.json -o runtime/slow_lane/bars.jsonl
 ```
 
 ---

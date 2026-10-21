@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from pumpfun_trading.bot.strategy import RaydiumPoolKeys
+from pumpfun_trading.execution.sell_pipeline import mark_stop_crossing
 from pumpfun_trading.streams.geyser import BondingCurveStateUpdate, CompleteEventUpdate
 
 if TYPE_CHECKING:
@@ -33,6 +34,25 @@ def curve_market_cap(curve: Any) -> float | None:
         if vt > 0 and vs > 0:
             mc = (vs / 1_000_000_000.0) * (1_000_000_000.0 / (vt / 1_000_000.0))
     return mc if mc > 0.0 else None
+
+
+def note_stop_crossing(
+    bot: TradingBot, mint: str, market_cap_sol: float, *, source: str
+) -> None:
+    """Remember the first ``source`` price of a held mint at or below the stop
+    (``record_stop_crossings``, rc.3); measures only, decides nothing."""
+    if not getattr(bot.config, "record_stop_crossings", False):
+        return
+    position = bot.active_positions.get(mint)
+    if position is None:
+        return
+    mark_stop_crossing(
+        position,
+        market_cap=market_cap_sol,
+        stop_loss=float(bot.config.stop_loss),
+        source=source,
+        ts=time.time(),
+    )
 
 
 async def handle_bonding_curve_state_update(
@@ -327,6 +347,7 @@ async def refresh_active_positions_market_caps(bot: TradingBot) -> None:
                         complete=bool(curve.get("complete", False)),
                     )
             if mc > 0.0:
+                note_stop_crossing(bot, mint, mc, source="refresh")
                 await bot._evaluate_and_execute_exit(mint, mc)
             else:
                 pos = bot.active_positions.get(mint, {})

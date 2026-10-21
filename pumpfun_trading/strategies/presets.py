@@ -389,7 +389,11 @@ DEFAULT_PRESETS["momentum"] = {
     # Skip a buy whose curve ran > 8% above the signal before the fill (rc.1
     # 24 h capture, STRATEGY-PIVOT.md 6.4).
     "momentum_max_entry_drift_pct": 0.08,
-    "stop_loss": 0.85,
+    # Paper sells pay what replay charges a sell, so the two agree (BUG-126).
+    "paper_exit_slippage_bps": 100,
+    # 0.92 beat 0.85 in both halves of the v0.2.3, rc.1 and rc.2 captures
+    # (STRATEGY-PIVOT.md 6.10).
+    "stop_loss": 0.92,
     "take_profit": 3.0,
     "tier_1_take_profit": 1.5,
     "tier_1_sell_fraction": 0.50,
@@ -550,6 +554,9 @@ def resolve_strategy_config(
         paper_entry_slippage_bps=max(
             0, min(5_000, int(base.get("paper_entry_slippage_bps", 0)))
         ),
+        paper_exit_slippage_bps=max(
+            0, min(5_000, int(base.get("paper_exit_slippage_bps", 0)))
+        ),
         paper_starting_balance_sol=max(
             0.0, float(base.get("paper_starting_balance_sol", 0.0))
         ),
@@ -586,6 +593,29 @@ def resolve_strategy_config(
             base.get("near_graduation_poll_interval_seconds", 6.0)
         ),
         capture_curve_polls=bool(base.get("capture_curve_polls", True)),
+        screen_reject_sample_pct=float(base.get("screen_reject_sample_pct", 0.0)),
+        screen_reject_sample_max_mints=int(
+            base.get("screen_reject_sample_max_mints", 100)
+        ),
+        screen_reject_sample_ttl_seconds=float(
+            base.get("screen_reject_sample_ttl_seconds", 1800.0)
+        ),
+        graduation_discovery_scan_seconds=float(
+            base.get("graduation_discovery_scan_seconds", 0.0)
+        ),
+        graduation_discovery_min_real_sol=float(
+            base.get("graduation_discovery_min_real_sol", 40.0)
+        ),
+        graduation_discovery_max_mints=int(
+            base.get("graduation_discovery_max_mints", 100)
+        ),
+        graduation_discovery_ttl_seconds=float(
+            base.get("graduation_discovery_ttl_seconds", 7200.0)
+        ),
+        observation_poll_interval_seconds=float(
+            base.get("observation_poll_interval_seconds", 5.0)
+        ),
+        record_stop_crossings=bool(base.get("record_stop_crossings", False)),
         shadow_variants=tuple(base.get("shadow_variants") or ()),
         enable_momentum_signals=bool(base.get("enable_momentum_signals", True)),
         momentum_window_seconds=int(base.get("momentum_window_seconds", 30)),
@@ -863,6 +893,7 @@ def _validate_entry_pipeline(config: TradingBotConfig) -> None:
         raise ValueError("near_graduation_ttl_seconds must be >= watch_ttl_seconds.")
     if config.near_graduation_poll_interval_seconds < 0.1:
         raise ValueError("near_graduation_poll_interval_seconds must be at least 0.1.")
+    _validate_observations(config)
     from pumpfun_trading.strategies.shadow import parse_shadow_variants
 
     parse_shadow_variants(config.shadow_variants)
@@ -885,6 +916,38 @@ def _validate_entry_pipeline(config: TradingBotConfig) -> None:
         raise ValueError(
             "breakeven_buffer_pct must be below breakeven_ratchet_activation_pct."
         )
+
+
+def _validate_observations(config: TradingBotConfig) -> None:
+    """Record-only observation lists (rc.3) must stay bounded."""
+    from pumpfun_trading.strategies.graduation import GRADUATION_REAL_SOL
+
+    if not 0.0 <= config.screen_reject_sample_pct <= 1.0:
+        raise ValueError("screen_reject_sample_pct must be between 0 and 1.")
+    if config.screen_reject_sample_max_mints < 0:
+        raise ValueError("screen_reject_sample_max_mints must not be negative.")
+    if config.screen_reject_sample_ttl_seconds <= 0:
+        raise ValueError("screen_reject_sample_ttl_seconds must be greater than zero.")
+    if config.graduation_discovery_scan_seconds < 0:
+        raise ValueError("graduation_discovery_scan_seconds must not be negative.")
+    if (
+        0 < config.graduation_discovery_scan_seconds
+        and config.graduation_discovery_scan_seconds < 10.0
+    ):
+        raise ValueError(
+            "graduation_discovery_scan_seconds must be 0 (off) or at least 10."
+        )
+    if not 0.0 < config.graduation_discovery_min_real_sol < GRADUATION_REAL_SOL:
+        raise ValueError(
+            "graduation_discovery_min_real_sol must be between 0 and the "
+            f"graduation reserve ({GRADUATION_REAL_SOL:g} SOL)."
+        )
+    if config.graduation_discovery_max_mints < 0:
+        raise ValueError("graduation_discovery_max_mints must not be negative.")
+    if config.graduation_discovery_ttl_seconds <= 0:
+        raise ValueError("graduation_discovery_ttl_seconds must be greater than zero.")
+    if config.observation_poll_interval_seconds < 1.0:
+        raise ValueError("observation_poll_interval_seconds must be at least 1.")
 
 
 __all__ = [

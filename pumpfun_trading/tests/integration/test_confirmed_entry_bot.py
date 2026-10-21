@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from pumpfun_trading.bot.enrichment import TokenScreeningVerdict
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.tests.support.constants import SAMPLE_PUMP_MINT
@@ -36,9 +38,10 @@ def _market_cap(real_sol: float) -> float:
     return float(v_sol * 1e9 / v_tok)
 
 
-def _confirmed_bot(tmp_path: Path) -> TradingBot:
+def _confirmed_bot(tmp_path: Path, **overrides: Any) -> TradingBot:
     bot = make_bot(
         tmp_path,
+        **overrides,
         entry_mode="confirmed",
         buy_amount_sol=0.02,
         max_active_positions=2,
@@ -154,6 +157,39 @@ async def test_confirmed_entry_watches_promotes_confirms_and_buys_once(
     # A follow-on buyer of size keeps the buy-flow stagnation clock fresh.
     await _trade(bot, user="LateBuyer", sol=0.4, ts=now + 1, mc=mc * 1.02)
     assert bot.active_positions[SAMPLE_PUMP_MINT]["last_qualifying_buy_at"] == (now + 1)
+    await bot.close()
+
+
+async def test_stop_exit_records_where_each_price_source_crossed_the_stop(
+    tmp_path: Path,
+) -> None:
+    bot = _confirmed_bot(tmp_path, stop_loss=0.92, record_stop_crossings=True)
+    now = time.time()
+    bot.order_flow_engine.watch(
+        SAMPLE_PUMP_MINT, created_at=now - 120.0, creator=CREATOR, real_sol=0.0
+    )
+    bot.order_flow_engine.mark_watch_subscribed(SAMPLE_PUMP_MINT)
+    mc = 50.0
+    for i in range(1, 6):
+        await _trade(bot, user=f"Buyer{i}", sol=0.5, ts=now - 10 + i, mc=mc)
+    assert SAMPLE_PUMP_MINT in bot.active_positions
+    entry_mc = float(bot.active_positions[SAMPLE_PUMP_MINT]["entry_market_cap"])
+
+    # A sell on the trade feed gaps through the stop; paper exits on it.
+    await _trade(bot, user="Dumper", sol=2.0, ts=now + 1, mc=entry_mc * 0.85, buy=False)
+    assert SAMPLE_PUMP_MINT not in bot.active_positions
+    sells = [
+        json.loads(line)["payload"]
+        for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+        if '"type": "trade"' in line and '"action": "sell"' in line
+    ]
+    assert len(sells) == 1
+    metrics = sells[0]["exit_metrics"]
+    assert metrics["stop_level"] == 0.92
+    assert metrics["trade_feed_cross_ratio"] == pytest.approx(0.85)
+    assert metrics["trigger_ratio"] == pytest.approx(0.85)
+    assert metrics["fill_ratio"] < 0.85  # fees and the exit haircut
+    assert "refresh_cross_ratio" not in metrics
     await bot.close()
 
 

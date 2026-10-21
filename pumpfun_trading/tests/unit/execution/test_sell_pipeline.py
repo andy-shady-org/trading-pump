@@ -10,12 +10,14 @@ import pytest
 from pumpfun_trading.execution.sell_pipeline import (
     DRY_RUN_PLACEHOLDER_TOKENS,
     estimate_sell_proceeds,
+    mark_stop_crossing,
     plan_sell_size,
     position_entry_sol,
     position_id,
     position_token_amounts,
     sell_replay_snapshot,
     sold_fraction,
+    stop_exit_metrics,
 )
 
 
@@ -194,3 +196,90 @@ def test_sell_replay_snapshot() -> None:
     )
     assert snap["price"] == 0.0 and snap["reason"] == "stop_loss"
     assert snap["timestamp"] > 0
+    assert "exit_metrics" not in snap
+    snap = sell_replay_snapshot(
+        mint="M",
+        name="Tok",
+        position={},
+        proceeds_sol=0.0,
+        tokens_sold=1,
+        reason="stop_loss",
+        default_reason="exit",
+        exit_metrics={"stop_level": 0.92},
+    )
+    assert snap["exit_metrics"] == {"stop_level": 0.92}
+
+
+def test_stop_crossing_keeps_the_first_price_per_source() -> None:
+    position: dict[str, Any] = {"entry_market_cap": 50.0}
+    kwargs: dict[str, Any] = {"stop_loss": 0.92}
+    # Above the stop, or no price / no entry: nothing recorded.
+    assert not mark_stop_crossing(
+        position, market_cap=47.0, source="trade_feed", ts=1.0, **kwargs
+    )
+    assert not mark_stop_crossing(
+        position, market_cap=0.0, source="trade_feed", ts=1.0, **kwargs
+    )
+    assert not mark_stop_crossing(
+        {}, market_cap=10.0, source="trade_feed", ts=1.0, **kwargs
+    )
+    assert "stop_crossings" not in position
+    assert mark_stop_crossing(
+        position, market_cap=45.0, source="trade_feed", ts=2.0, **kwargs
+    )
+    assert not mark_stop_crossing(
+        position, market_cap=40.0, source="trade_feed", ts=3.0, **kwargs
+    )
+    assert mark_stop_crossing(
+        position, market_cap=41.0, source="refresh", ts=2.5, **kwargs
+    )
+    assert position["stop_crossings"] == {
+        "trade_feed": {"at": 2.0, "ratio": 0.9},
+        "refresh": {"at": 2.5, "ratio": 0.82},
+    }
+
+
+def test_stop_exit_metrics_compare_crossings_with_the_fill() -> None:
+    assert (
+        stop_exit_metrics(
+            {"entry_market_cap": 50.0},
+            stop_loss=0.92,
+            sold_at=5.0,
+            proceeds_sol=0.016,
+            cost_sol=0.02,
+        )
+        is None
+    )
+    position = {
+        "entry_market_cap": 50.0,
+        "current_market_cap": 41.0,
+        "stop_crossings": {
+            "trade_feed": {"at": 2.0, "ratio": 0.9},
+            "refresh": {"at": 2.5, "ratio": 0.82},
+            "junk": "x",
+        },
+    }
+    metrics = stop_exit_metrics(
+        position, stop_loss=0.92, sold_at=3.0, proceeds_sol=0.016, cost_sol=0.02
+    )
+    assert metrics == {
+        "stop_level": 0.92,
+        "trigger_ratio": 0.82,
+        "fill_ratio": 0.8,
+        "refresh_cross_ratio": 0.82,
+        "refresh_cross_at": 2.5,
+        "refresh_lead_seconds": 0.5,
+        "trade_feed_cross_ratio": 0.9,
+        "trade_feed_cross_at": 2.0,
+        "trade_feed_lead_seconds": 1.0,
+    }
+    bare = stop_exit_metrics(
+        {"stop_crossings": {"refresh": {"at": 1.0, "ratio": 0.5}}},
+        stop_loss=0.92,
+        sold_at=0.5,
+        proceeds_sol=0.0,
+        cost_sol=0.0,
+    )
+    assert bare is not None
+    assert bare["trigger_ratio"] is None and bare["fill_ratio"] is None
+    assert bare["refresh_lead_seconds"] == 0.0

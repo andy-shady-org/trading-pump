@@ -510,7 +510,7 @@ Shipped in v0.3.0-rc.1 (Sprint 24H); near-graduation set and PumpSwap exit in rc
 
 ## 36. Shadow Variants & Capture Read-Out Tooling (FEAT-58)
 
-Shipped in v0.3.0-rc.2; read-out tooling and rc.3 additions in Unreleased. Shadow variants never trade.
+Shipped in v0.3.0-rc.2; read-out tooling and rc.3 additions in v0.3.0-rc.3. Shadow variants never trade.
 
 - **Shadow Variants** (`strategies/shadow.py`, `shadow_variants`): momentum rules logged on paper with their own thresholds, drift guard and flow filters; when one fires, the bot reads the curve after the paper delay and writes an `event: "shadow_entry"` row (fill, drift, refusal). Kinds `pullback` / `pullback_curve` (FEAT-59) were added for rc.3.
 - **`pumpfun-replay --shadow-report`** (`engines/shadow_report.py`): per variant signals, refusals, fill drift and a modelled net PnL against a random cut of the baseline, per half with `--split-at`; `--shadow-scan` (`engines/shadow_scan.py`) rebuilds the rows from an older capture.
@@ -519,7 +519,7 @@ Shipped in v0.3.0-rc.2; read-out tooling and rc.3 additions in Unreleased. Shado
 
 ---
 
-## 37. Recorded Entry Research Inputs (FEAT-54 Phase 1, FEAT-56, FEAT-57, FEAT-60, FEAT-61)
+## 37. Recorded Entry Research Inputs (FEAT-54 Phase 1, FEAT-56, FEAT-57, FEAT-60, FEAT-61, FEAT-65 Phase 0)
 
 Measurement only: these inputs are recorded and can be used as shadow filters and `--keep` rules, but **no buy is gated on them**. The gating rules and later phases stay in [`PROPOSED-FEATURES.md`](dev/PROPOSED-FEATURES.md).
 
@@ -529,3 +529,6 @@ Measurement only: these inputs are recorded and can be used as shadow filters an
 - **Buy Timing (FEAT-60)**: `timing_buys`, `buy_gap_median_seconds`, `buy_gap_cv`, `burst_share`, `buy_size_cv`, `small_buy_share` (`OrderFlowEngine.buy_timing`).
 - **Bundle Proxy (FEAT-61)**: `early_holders`, `early_holder_pct` (`HolderDistribution.early_holder_cluster`) in screening capture records.
 - **Market Regime**: `market_regime` (UTC hour and weekday, launch and graduation rates) on buys, screening records and the status file (`strategies/regime.py`).
+- **Record-Only Curve Observations (rc.3)** (`strategies/observation.py`, `bot/handlers/observe.py`): a deterministic sample of screen-rejected launches (`screen_reject_sample_pct`, rows tagged `reject_sample` with the screen's `reject_reasons`) and curves past `graduation_discovery_min_real_sol` found by a bounded Pump.fun API scan (`graduation_discovery_scan_seconds`, rows tagged `discovery`), polled in their own task as `curve_poll` rows with `observation_start` / `observation_end` records. Never watched, promoted or bought; replay and the shadow tools skip the rows. **Not built**: any rule that relaxes the screen or lets the pre-graduation lane buy discovered curves ([`TODO.md`](dev/TODO.md) Sprints 24G / 24H).
+- **Stop Crossings (rc.3)** (`record_stop_crossings`, `execution/sell_pipeline.py`): the first trade-feed and curve-refresh price at or below `stop_loss` per position, and `exit_metrics` (trigger, fill and crossing ratios, lead seconds) on full-exit sell records. **Not built**: a stop triggered on trade-feed prices.
+- **Slow-Lane Data (FEAT-65 phase 0, rc.3)** (`services/slow_lane.py`, `pumpfun-recorder --jupiter-quotes` / `--backfill-bars`): a separate, keyless recorder for liquid Solana tokens (`configs/slow_lane_tokens.json`): Jupiter round-trip quotes at 0.02 / 0.1 / 0.5 SOL with route, pools, price impact and round-trip cost, Jupiter prices and liquidity, priority-fee samples for the quoted pools, and GeckoTerminal daily / hourly OHLCV bars. No wallet, no transactions; rows stay out of the Pump.fun captures ([`RUNBOOK.md` §6.4](dev/RUNBOOK.md)). **Not built**: the bar backtester, the strategy, the Jupiter swap client and everything else in [FEAT-65](dev/PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter).

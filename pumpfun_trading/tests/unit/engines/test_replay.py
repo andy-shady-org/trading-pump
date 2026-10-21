@@ -1226,6 +1226,28 @@ def test_confirmed_replay_exits_on_buy_flow_stagnation() -> None:
     assert sells[0]["timestamp"] == 70.0
 
 
+@pytest.mark.regression("BUG-126")
+def test_confirmed_replay_sells_pay_the_paper_exit_haircut() -> None:
+    snaps = [_create(MINT_A, 0.0)] + _confirming_flow(MINT_A, 30.0)
+    snaps += [
+        _market_trade(MINT_A, 40.0 + i * 5, 45.0 + i, "Dust", sol=0.01)
+        for i in range(8)
+    ]
+
+    def sell(**overrides: Any) -> dict[str, Any]:
+        cfg = _confirmed_config(stagnant_timeout_seconds=35.0, **overrides)
+        engine = _confirmed_engine(cfg)
+        trades = engine.run(snaps)["trades"]
+        return next(t for t in trades if t["action"] == "sell")
+
+    plain = sell(paper_exit_slippage_bps=0)
+    haircut = sell(paper_exit_slippage_bps=300)
+
+    # Without the key (0) the engine's own 100 bps applies as before.
+    assert haircut["exit_price"] == plain["exit_price"]
+    assert haircut["proceeds"] == pytest.approx(plain["proceeds"] * 0.97 / 0.99)
+
+
 def test_confirmed_entry_mode_requires_live_fidelity() -> None:
     with pytest.raises(ValueError, match="live_fidelity"):
         PaperTradingEngine(entry_mode="confirmed")
@@ -1435,6 +1457,21 @@ def test_shadow_entry_rows_are_never_market_data() -> None:
         sorted(snaps + [shadow], key=lambda s: float(s["timestamp"]))
     )
     assert with_shadow["trades"] == plain["trades"]
+
+
+@pytest.mark.parametrize("source", ["reject_sample", "discovery"])
+def test_record_only_observation_polls_are_never_market_data(source: str) -> None:
+    """rc.3 observation rows are analysis data: a poll of the mint right after
+    the fill is due must not price the fill (the bot never reads it)."""
+    cfg = _confirmed_config(
+        paper_entry_delay_seconds=1.5,
+        paper_entry_slippage_bps=100,
+        momentum_max_entry_drift_pct=0.0,
+    )
+    observed = _curve_poll(MINT_A, 35.7, 50.0, real_sol=8.0, source=source)
+    start = {"timestamp": 35.65, "mint": MINT_A, "event": "observation_start"}
+    buy = _confirmed_engine(cfg).run(_delayed_fill_snaps(start, observed))["trades"][0]
+    assert buy["entry_price"] == pytest.approx(60.0 / 0.99)
 
 
 def test_confirmed_replay_promotes_on_polled_curves_like_the_live_poller() -> None:

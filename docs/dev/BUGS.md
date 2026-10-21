@@ -133,6 +133,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-123** | High | Execution / Graduation | **RESOLVED** | A position held through graduation could not exit: Pump.fun migrates completed curves into PumpSwap, not Raydium, the bot waited for a `RaydiumPoolKeys` pool that never comes, and the WebSocket deployment never even noticed the completion. Now detected from the curve refresh and the free `subscribeMigration` feed and sold into the canonical PumpSwap pool (`sdk/pumpswap.py`) |
 | **BUG-124** | Medium | SDK / Curve Decoding | **RESOLVED** | The bonding-curve decoder ignored the new `quote_mint` field, so a USDC-quoted curve would have been priced as if its reserves were lamports; such curves are now refused as non-standard |
 | **BUG-125** | Medium | Config | **RESOLVED** | `resolve_strategy_config` dropped 11 fields, so `enable_pumpswap_exit`, `replay_log_path`, the FEAT-50 alert keys and every FEAT-42 `profit_sweep_*` key were ignored in a config file without a warning |
+| **BUG-126** | Medium | Replay / Parity | **RESOLVED** | Paper sells took no slippage while replay took 100 bps, so replay ran 0.028 SOL below paper on the rc.2 capture; new `paper_exit_slippage_bps` (100 in the momentum configs) is applied by both |
 
 ---
 
@@ -1113,3 +1114,14 @@ Found while adding `graduation_backfill_seconds`: `TradingBotConfig.from_dict({"
 * **Impact:** medium: the profit sweep could not be turned on from a config file, the daily summary hour and degradation alert delay could not be changed, and `enable_pumpswap_exit: false` would not have switched the PumpSwap exit off. No shipped or runtime config sets any of these keys, so no run so far behaved differently from its config.
 * **Resolution:** the resolver reads all eleven. A guard test sets every scalar field to a non-default value through `resolve_strategy_config` and fails on any field that comes back unchanged (fields the resolver normalises on purpose are listed in the test).
 * **Verification:** `regression("BUG-125")` test in `unit/strategies/test_presets.py`; it fails with 11 dropped fields on the old resolver.
+
+## 23. Paper Exits Skip The Sell Slippage Replay Charges (2026-10-21)
+
+Found reading out the rc.2 momentum capture: `pumpfun-replay --compare-audit` put replay 0.028 SOL below paper (tip 0, allowed ±0.002) on the same 105 positions, with 102 of them closing on the same exit.
+
+### BUG-126: Paper Sells Take No Slippage, Replay Takes 100 bps [RESOLVED]
+* **Location:** `pumpfun_trading/bot/run.py` (`_sell_token_locked` → `execution/sell_pipeline.py::estimate_sell_proceeds`), `pumpfun_trading/engines/replay.py` (`_sell_value`)
+* **Description:** a paper sell is priced as the sold share of the cost basis times the market-cap move times the round-trip Pump.fun fee, with no price impact or latency. Replay prices the same sell at the recorded price less the engine's `slippage_bps` (100) and the fee. On the rc.2 capture every replayed sell came out about 1% below the paper one (e.g. 0.01636 against 0.01650 SOL on the same stop-loss). BUG-121 gave entries a shared model (`paper_entry_delay_seconds` / `paper_entry_slippage_bps`); exits never got one.
+* **Impact:** medium: paper results were about 1% per exit too optimistic against a live sell, and paper and replay could not be compared. On rc.2 that is about 0.021 SOL of the 0.028 gap and turns the paper result of +0.014 SOL into roughly −0.007 SOL. With the exit haircut matched, the same-exit positions agree to −0.002 SOL (median per position +0.00001); the rest is one position where replay hit the stop and paper the trailing stop (−0.006), from prices the capture did not record.
+* **Resolution:** new config key `paper_exit_slippage_bps` (default `0`, clamped to 0–5,000; `100` in the `momentum` preset, `configs/canary.json`, `configs/capture.json` and `configs/pregrad_pilot.json`). Paper sells take it off their proceeds (`TradingBot._paper_exit_factor`), and live-fidelity replay uses it instead of the engine's `slippage_bps` when it is set. Configs without the key behave as before, so old captures replay unchanged and the golden replay is unchanged.
+* **Verification:** `regression("BUG-126")` tests in `unit/bot/test_run.py` (paper sell at 0 / 100 / 9,000 bps), `unit/engines/test_replay.py` (replay sell proceeds follow the key) and `unit/strategies/test_presets.py` (defaults, clamp, momentum preset).
