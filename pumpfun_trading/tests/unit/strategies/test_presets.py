@@ -390,6 +390,19 @@ def test_entry_hardening_keys_default_and_override_from_json() -> None:
     assert config.to_dict()["paper_entry_slippage_bps"] == 5_000
 
 
+@pytest.mark.regression("BUG-126")
+def test_paper_exit_slippage_defaults_off_clamps_and_is_set_for_momentum() -> None:
+    assert resolve_strategy_config("conservative").paper_exit_slippage_bps == 0
+    assert resolve_strategy_config("momentum").paper_exit_slippage_bps == 100
+
+    high = TradingBotConfig.from_dict({"paper_exit_slippage_bps": 9_000})
+    low = TradingBotConfig.from_dict({"paper_exit_slippage_bps": -5})
+
+    assert high.paper_exit_slippage_bps == 5_000
+    assert high.to_dict()["paper_exit_slippage_bps"] == 5_000
+    assert low.paper_exit_slippage_bps == 0
+
+
 def test_capture_keys_default_and_override_from_json() -> None:
     default = resolve_strategy_config("conservative")
     assert default.skip_mayhem_mode is True
@@ -465,6 +478,15 @@ def test_entry_mode_defaults_to_launch_and_loads_watch_keys() -> None:
         ({"near_graduation_ttl_seconds": 60.0}, "near_graduation_ttl_seconds"),
         ({"near_graduation_poll_interval_seconds": 0}, "near_graduation_poll"),
         ({"shadow_variants": [{"name": "x", "stop_loss": 0.5}]}, "unknown key"),
+        ({"screen_reject_sample_pct": 1.5}, "screen_reject_sample_pct"),
+        ({"screen_reject_sample_max_mints": -1}, "screen_reject_sample_max"),
+        ({"screen_reject_sample_ttl_seconds": 0}, "screen_reject_sample_ttl"),
+        ({"graduation_discovery_scan_seconds": -1}, "must not be negative"),
+        ({"graduation_discovery_scan_seconds": 5}, "0 \\(off\\) or at least 10"),
+        ({"graduation_discovery_min_real_sol": 90.0}, "graduation reserve"),
+        ({"graduation_discovery_max_mints": -1}, "graduation_discovery_max"),
+        ({"graduation_discovery_ttl_seconds": 0}, "graduation_discovery_ttl"),
+        ({"observation_poll_interval_seconds": 0.5}, "observation_poll"),
     ],
 )
 def test_invalid_watch_settings_fail_fast(
@@ -507,10 +529,32 @@ def test_capture_config_records_curves_near_graduation_and_shadow_variants() -> 
     assert config.near_graduation_max_mints > 0
     names = [variant["name"] for variant in config.shadow_variants]
     assert "baseline" in names and len(names) == len(set(names))
-    # rc.3: pullback rules (FEAT-59) and the FEAT-60/61 filters are logged too.
+    # rc.3: only the rules that beat a random cut on rc.2, the FEAT-61 filters
+    # (no data before rc.3) and the trade-feed pullback; the curve pullbacks and
+    # the FEAT-57/60 filters were dropped (STRATEGY-PIVOT.md 6.10).
     kinds = {variant.kind for variant in parse_shadow_variants(config.shadow_variants)}
-    assert kinds == {"momentum", "pullback", "pullback_curve"}
-    assert {"feat60_burst", "feat61_bundle_pct", "pullback_curve"} <= set(names)
+    assert kinds == {"momentum", "pullback"}
+    assert {"buyers6", "drift5", "feat56_diversity", "feat61_bundle_pct"} <= set(names)
+    assert not {"buyers8", "feat57_round_trip", "feat60_burst"} & set(names)
+    # Paper exits pay what replay charges (BUG-126).
+    assert config.paper_exit_slippage_bps == 100
+    assert config.stop_loss == 0.92
+    # rc.3 record-only inputs: a sample of screen rejects and the stop overshoot.
+    assert config.screen_reject_sample_pct == 0.2
+    assert config.record_stop_crossings is True
+    assert config.graduation_discovery_scan_seconds == 0.0
+
+
+def test_record_only_observations_are_off_by_default() -> None:
+    config = resolve_strategy_config("balanced")
+    assert config.screen_reject_sample_pct == 0.0
+    assert config.graduation_discovery_scan_seconds == 0.0
+    assert config.record_stop_crossings is False
+    data = TradingBotConfig.from_dict(
+        {"screen_reject_sample_pct": 0.3, "record_stop_crossings": True}
+    ).to_dict()
+    assert data["screen_reject_sample_pct"] == 0.3
+    assert data["record_stop_crossings"] is True
 
 
 def test_pre_graduation_pilot_config_isolates_the_lane() -> None:
@@ -527,9 +571,16 @@ def test_pre_graduation_pilot_config_isolates_the_lane() -> None:
     assert config.pre_graduation_entry_progress_pct < (
         config.pre_graduation_max_entry_progress_pct
     )
-    # Only curve-fed shadow variants: the pilot has no trade subscriptions.
-    variants = parse_shadow_variants(config.shadow_variants)
-    assert variants and {v.kind for v in variants} == {"pullback_curve"}
+    # Every curve pullback lost on the rc.2 pilot, so none is logged for rc.3.
+    assert config.shadow_variants == ()
+    # The lane keeps its wider stop; the momentum 0.92 was not tested on it.
+    assert config.stop_loss == 0.85
+    assert config.paper_exit_slippage_bps == 100
+    # rc.3: discovered curves past 40 SOL are recorded, never bought.
+    assert config.graduation_discovery_scan_seconds == 30.0
+    assert config.graduation_discovery_min_real_sol == 40.0
+    assert config.screen_reject_sample_pct == 0.0
+    assert config.record_stop_crossings is True
 
 
 def test_momentum_preset_uses_confirmed_entries_at_canary_size() -> None:
@@ -577,6 +628,8 @@ def test_momentum_preset_matches_the_tuned_canary_config() -> None:
         "momentum_max_market_cap_sol",
         "max_token_concentration_pct",
         "momentum_max_entry_drift_pct",
+        "paper_exit_slippage_bps",
+        "stop_loss",
     ):
         assert getattr(preset, key) == canary[key], key
     assert canary["enable_pre_graduation_harvesting"] is False

@@ -782,3 +782,129 @@ def test_ws_message_snapshot_has_no_fabricated_signal():
     assert sell is not None and sell["is_buy"] is False
     assert ws_message_to_snapshot({"txType": "buy"}, 5.0) is None
     assert ws_message_to_snapshot("bad", 5.0) is None
+
+
+class _SlowLaneHttp:
+    """Offline stand-in for ``slow_lane.AiohttpJson`` (FEAT-65 recorder)."""
+
+    instances: list[_SlowLaneHttp] = []
+
+    def __init__(self, *_: Any, **__: Any) -> None:
+        self.closed = False
+        self.urls: list[str] = []
+        _SlowLaneHttp.instances.append(self)
+
+    async def get_json(
+        self, url: str, *, params: Any = None, headers: Any = None
+    ) -> Any:
+        self.urls.append(url)
+        if "/price/v3" in url:
+            return {"JUPmint": {"usdPrice": 0.3, "liquidity": 1e6, "decimals": 6}}
+        if "/swap/v1/quote" in url:
+            return {"inAmount": "1", "outAmount": "5000000", "routePlan": []}
+        if "/tokens/" in url:
+            if "Gone" in url:
+                return {"data": []}
+            return {"data": [{"attributes": {"address": "PoolX", "name": "JUP / SOL"}}]}
+        if "/ohlcv/day" in url:
+            return {
+                "data": {"attributes": {"ohlcv_list": [[86400, 1, 2, 0.5, 1.5, 9]]}}
+            }
+        raise RuntimeError("hour bars down")
+
+    async def post_json(self, url: str, payload: Any, *, headers: Any = None) -> Any:
+        self.urls.append(url)
+        return {"result": [{"slot": 1, "prioritizationFee": 10}]}
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _token_file(tmp_path: Path) -> str:
+    path = tmp_path / "tokens.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tokens": [
+                    {"symbol": "JUP", "mint": "JUPmint"},
+                    {"symbol": "GONE", "mint": "Gone"},
+                ]
+            }
+        )
+    )
+    return str(path)
+
+
+def test_record_cli_jupiter_quotes_writes_its_own_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    _SlowLaneHttp.instances.clear()
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    monkeypatch.setenv("PUMPFUN_RPC_URL", "https://rpc.example/?api-key=secret123")
+    monkeypatch.chdir(tmp_path)
+    args = build_record_parser().parse_args(
+        [
+            "--jupiter-quotes",
+            "--tokens",
+            _token_file(tmp_path),
+            "--quote-sizes",
+            "0.02",
+            "--request-gap",
+            "0",
+            "--duration",
+            "0.01",
+            "--flush-interval",
+            "0.01",
+        ]
+    )
+    run_record_cli(args)
+
+    path = tmp_path / record_cli.DEFAULT_QUOTES_OUTPUT
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert {r["event"] for r in rows} == {"price", "quote", "fee_sample"}
+    assert {r["venue"] for r in rows} == {"jupiter", "solana"}
+    assert not (tmp_path / "market_replay.jsonl").exists()
+    assert _SlowLaneHttp.instances[0].closed
+    text = output.export_text()
+    assert "keyless" in text and "Fee samples: on" in text
+    assert "secret123" not in text and "Quote Recorder Summary" in text
+
+
+def test_record_cli_jupiter_quotes_without_fee_samples_stops_on_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    monkeypatch.setenv("PUMPFUN_RPC_URL", "https://rpc.example")
+
+    async def interrupted(*_: Any, **__: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(record_cli.slow_lane.QuoteRecorder, "run", interrupted)
+    args = build_record_parser().parse_args(
+        ["--jupiter-quotes", "--no-fee-samples", "-o", str(tmp_path / "q.jsonl")]
+    )
+    run_record_cli(args)
+    assert "Fee samples: off" in output.export_text()
+
+
+def test_record_cli_backfill_bars_reports_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    monkeypatch.chdir(tmp_path)
+    args = build_record_parser().parse_args(
+        ["--backfill-bars", "--tokens", _token_file(tmp_path), "--request-gap", "0"]
+    )
+    run_record_cli(args)
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / record_cli.DEFAULT_BARS_OUTPUT).read_text().splitlines()
+    ]
+    assert [(r["symbol"], r["timeframe"], r["pool"]) for r in rows] == [
+        ("JUP", "day", "PoolX")
+    ]
+    text = output.export_text()
+    assert "Bar Backfill Summary" in text
+    assert "JUP hour: hour bars down" in text
+    assert "Pools missing" in text

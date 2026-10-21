@@ -300,6 +300,23 @@ class PumpFunApiClient:
         params = {"limit": limit, "offset": offset, **kwargs}
         return await self.get("/coins", params=params)
 
+    async def scan_active_coins(self, *, limit: int = 50, offset: int = 0) -> Any:
+        """Recently traded coins still on their curve (record-only discovery).
+
+        A single attempt outside the retry loop and circuit breaker, like
+        :meth:`fetch_token_metadata`: a failing scan must never disable the API
+        for screening.
+        """
+        params = {
+            "limit": int(limit),
+            "offset": int(offset),
+            "sort": "last_trade_timestamp",
+            "order": "DESC",
+            "includeNsfw": "true",
+            "complete": "false",
+        }
+        return await self._request_once("GET", "/coins", params=params)
+
     async def get_advanced_coins_list(
         self, *, limit: int = 20, offset: int = 0, **kwargs
     ) -> Any:

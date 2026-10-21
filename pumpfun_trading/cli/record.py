@@ -22,6 +22,8 @@ from pumpfun_trading.engines.generators import (
     SyntheticReplayGenerator,
 )
 from pumpfun_trading.ops.logging import get_configured_console
+from pumpfun_trading.ops.redact import redact_url
+from pumpfun_trading.services import slow_lane
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -31,6 +33,10 @@ from pumpfun_trading.streams.geyser import (
 
 logger = logging.getLogger(__name__)
 console = get_configured_console()
+
+# FEAT-65 rows live in their own directory, never next to a Pump.fun capture.
+DEFAULT_QUOTES_OUTPUT = "slow_lane/jupiter_quotes.jsonl"
+DEFAULT_BARS_OUTPUT = "slow_lane/bars.jsonl"
 
 
 def build_record_parser(
@@ -51,8 +57,12 @@ def build_record_parser(
         "-o",
         "--output",
         type=str,
-        default="market_replay.jsonl",
-        help="Destination path for .jsonl replay dataset (default: market_replay.jsonl)",
+        default=None,
+        help=(
+            "Destination path for the .jsonl dataset (default: market_replay.jsonl; "
+            f"{DEFAULT_QUOTES_OUTPUT} with --jupiter-quotes; "
+            f"{DEFAULT_BARS_OUTPUT} with --backfill-bars)"
+        ),
     )
     parser.add_argument(
         "-d",
@@ -117,6 +127,64 @@ def build_record_parser(
         default=2.0,
         help="Periodic flush interval in seconds (default: 2.0)",
     )
+    slow = parser.add_argument_group(
+        "FEAT-65 slow-lane data (record-only, runs next to pumpbot, never inside it)"
+    )
+    slow.add_argument(
+        "--jupiter-quotes",
+        action="store_true",
+        help="Sample Jupiter buy/sell quotes, prices and priority fees for a token list",
+    )
+    slow.add_argument(
+        "--backfill-bars",
+        action="store_true",
+        help="Download OHLCV bars from GeckoTerminal for the token list, then exit",
+    )
+    slow.add_argument(
+        "--tokens",
+        type=str,
+        default=None,
+        help="Token list JSON ({'tokens': [{'symbol', 'mint'}]}); default: built-in list "
+        "(same as configs/slow_lane_tokens.json)",
+    )
+    slow.add_argument(
+        "--quote-interval",
+        type=float,
+        default=slow_lane.DEFAULT_QUOTE_INTERVAL_SECONDS,
+        help="Seconds between quote cycles (default: %(default)s)",
+    )
+    slow.add_argument(
+        "--quote-sizes",
+        type=str,
+        default=",".join(f"{s:g}" for s in slow_lane.DEFAULT_SIZES_SOL),
+        help="Comma-separated quote sizes in SOL (default: %(default)s)",
+    )
+    slow.add_argument(
+        "--request-gap",
+        type=float,
+        default=None,
+        help="Minimum seconds between API requests (default: "
+        f"{slow_lane.DEFAULT_QUOTE_REQUEST_GAP_SECONDS:g} for quotes, "
+        f"{slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS:g} for bars)",
+    )
+    slow.add_argument(
+        "--no-fee-samples",
+        action="store_true",
+        help="Skip getRecentPrioritizationFees samples (otherwise taken when "
+        "PUMPFUN_RPC_URL / PUMPFUN_RPC_URLS is set)",
+    )
+    slow.add_argument(
+        "--bar-timeframes",
+        type=str,
+        default="day,hour",
+        help="Comma-separated bar timeframes: day, hour, minute (default: %(default)s)",
+    )
+    slow.add_argument(
+        "--bar-max-pages",
+        type=int,
+        default=6,
+        help="Pages of 1,000 bars per token and timeframe (default: %(default)s)",
+    )
     return parser
 
 
@@ -152,9 +220,152 @@ def ws_message_to_snapshot(payload: Any, now: float) -> dict[str, Any] | None:
     return snapshot
 
 
+def _summary(title: str, rows: list[tuple[str, str]]) -> None:
+    table = Table(title=title, show_lines=False)
+    table.add_column("Metric", style="bold cyan")
+    table.add_column("Value", style="green")
+    for name, value in rows:
+        table.add_row(name, value)
+    console.print(table)
+
+
+async def run_jupiter_quotes(args: argparse.Namespace, output_path: Path) -> None:
+    """FEAT-65 phase 0: sample quotes until the duration, a signal or Ctrl-C."""
+    tokens = slow_lane.load_token_list(getattr(args, "tokens", None))
+    sizes = slow_lane.parse_sizes(getattr(args, "quote_sizes", None))
+    gap = getattr(args, "request_gap", None)
+    http = slow_lane.AiohttpJson()
+    rpc_url = (
+        None if getattr(args, "no_fee_samples", False) else slow_lane.rpc_url_from_env()
+    )
+    jupiter = slow_lane.JupiterClient.from_env(http)
+    recorder = ReplayRecorder(
+        output_path=output_path,
+        batch_size=args.batch_size,
+        flush_interval_seconds=args.flush_interval,
+    )
+    quotes = slow_lane.QuoteRecorder(
+        jupiter,
+        recorder,
+        tokens=tokens,
+        sizes_sol=sizes,
+        request_gap_seconds=(
+            slow_lane.DEFAULT_QUOTE_REQUEST_GAP_SECONDS if gap is None else gap
+        ),
+        rpc_http=http if rpc_url else None,
+        rpc_url=rpc_url,
+    )
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+    console.print(
+        Panel(
+            f"[bold cyan]Jupiter Quote Recorder (FEAT-65, record-only)[/bold cyan]\n"
+            f"Host: [green]{redact_url(jupiter.base_url)}[/green]"
+            f" ({'keyed' if jupiter.keyed else 'keyless'})\n"
+            f"Tokens: [yellow]{len(quotes.quote_tokens)}[/yellow] | "
+            f"Sizes: [yellow]{', '.join(f'{s:g}' for s in sizes)} SOL[/yellow] | "
+            f"Requests/cycle: [yellow]{quotes.requests_per_cycle}[/yellow] | "
+            f"Interval: [yellow]{args.quote_interval:g}s[/yellow]\n"
+            f"Fee samples: [green]{'on' if rpc_url else 'off'}[/green]\n"
+            f"Output: [magenta]{output_path}[/magenta]",
+            title="Slow-lane data",
+        )
+    )
+    await recorder.start()
+    try:
+        stats = await quotes.run(
+            interval_seconds=args.quote_interval,
+            stop=stop,
+            duration_seconds=args.duration,
+        )
+    finally:
+        await recorder.close()
+        await http.close()
+    _summary(
+        "Quote Recorder Summary",
+        [
+            ("Cycles", str(stats.cycles)),
+            ("Quotes", str(stats.quotes)),
+            ("Quote errors", str(stats.quote_errors)),
+            ("Rate limited", str(stats.rate_limited)),
+            ("Price rows", str(stats.price_rows)),
+            ("Fee samples", str(stats.fee_samples)),
+            ("Rows written", str(recorder.records_written)),
+            ("Output File", str(output_path.resolve())),
+        ],
+    )
+
+
+async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None:
+    """FEAT-65 phase 0: one-off OHLCV download for the token list."""
+    tokens = slow_lane.load_token_list(getattr(args, "tokens", None))
+    timeframes = [t.strip() for t in str(args.bar_timeframes).split(",") if t.strip()]
+    gap = getattr(args, "request_gap", None)
+    http = slow_lane.AiohttpJson()
+    recorder = ReplayRecorder(
+        output_path=output_path,
+        batch_size=max(args.batch_size, 500),
+        flush_interval_seconds=args.flush_interval,
+    )
+    console.print(
+        Panel(
+            f"[bold cyan]GeckoTerminal Bar Backfill (FEAT-65)[/bold cyan]\n"
+            f"Tokens: [yellow]{len(tokens)}[/yellow] | "
+            f"Timeframes: [yellow]{', '.join(timeframes)}[/yellow] | "
+            f"Max pages: [yellow]{args.bar_max_pages}[/yellow]\n"
+            f"Output: [magenta]{output_path}[/magenta]",
+            title="Slow-lane data",
+        )
+    )
+    await recorder.start()
+    try:
+        stats = await slow_lane.backfill_bars(
+            slow_lane.GeckoTerminalClient(http),
+            recorder,
+            tokens=tokens,
+            timeframes=timeframes,
+            max_pages=args.bar_max_pages,
+            request_gap_seconds=(
+                slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS if gap is None else gap
+            ),
+        )
+    finally:
+        await recorder.close()
+        await http.close()
+    _summary(
+        "Bar Backfill Summary",
+        [
+            ("Tokens", str(stats.tokens)),
+            ("Pools missing", str(stats.pools_missing)),
+            ("Bars", str(stats.bars)),
+            ("Requests", str(stats.requests)),
+            ("History limit reached", str(stats.history_limited)),
+            ("Errors", str(stats.errors)),
+            *(("Failed", failure) for failure in stats.failures),
+            ("Output File", str(output_path.resolve())),
+        ],
+    )
+
+
 def run_record_cli(args: argparse.Namespace) -> None:
     """Execute the record CLI handler."""
-    output_path = Path(args.output)
+    output = getattr(args, "output", None)
+    if getattr(args, "jupiter_quotes", False):
+        path = Path(output or DEFAULT_QUOTES_OUTPUT)
+        try:
+            asyncio.run(run_jupiter_quotes(args, path))
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        return
+    if getattr(args, "backfill_bars", False):
+        asyncio.run(run_backfill_bars(args, Path(output or DEFAULT_BARS_OUTPUT)))
+        return
+    output_path = Path(output or "market_replay.jsonl")
 
     # 1. Synthetic Scenario Generation
     if args.synthetic:

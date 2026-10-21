@@ -28,6 +28,7 @@ from pumpfun_trading.strategies.graduation import (
     GraduationEngine,
 )
 from pumpfun_trading.strategies.momentum import OrderFlowEngine, near_graduation_expiry
+from pumpfun_trading.strategies.observation import is_record_only_row
 
 # Abstract token units per replay position. The live exit stack works in raw
 # token amounts; replay only needs the fraction sold, so each position starts
@@ -769,9 +770,21 @@ class PaperTradingEngine:
             return
         position["exit_state"].last_qualifying_buy_at = ts
 
+    def _exit_slippage_bps(self) -> int:
+        """Haircut on a sell: the config's ``paper_exit_slippage_bps`` when set.
+
+        Mirrors the paper bot (BUG-126); without it the engine's
+        ``slippage_bps`` applies as before.
+        """
+        if self.live_fidelity:
+            value = getattr(self.strategy_config, "paper_exit_slippage_bps", 0)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return min(5_000, value)
+        return self.slippage_bps
+
     def _sell_value(self, quantity: float, price: float) -> float:
         """SOL received for selling ``quantity`` at ``price`` after slippage and fee."""
-        exec_sell_price = price * (1.0 - self.slippage_bps / 10_000.0)
+        exec_sell_price = price * (1.0 - self._exit_slippage_bps() / 10_000.0)
         return quantity * exec_sell_price * (1.0 - self.fee_bps / 10_000.0)
 
     def _live_exit_pass(
@@ -927,8 +940,11 @@ class PaperTradingEngine:
         refused_buys = 0
 
         for index, snapshot in enumerate(snapshots):
-            if snapshot.get("event") in NON_MARKET_EVENTS:
-                # Screener inputs and shadow fills: analysis data, not market data.
+            if snapshot.get("event") in NON_MARKET_EVENTS or is_record_only_row(
+                snapshot
+            ):
+                # Screener inputs, shadow fills and the rc.3 record-only
+                # observations: analysis data, not market data.
                 continue
             mint = self._snapshot_mint(snapshot)
             name = self._snapshot_name(snapshot)

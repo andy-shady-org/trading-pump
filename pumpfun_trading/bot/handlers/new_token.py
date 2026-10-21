@@ -12,6 +12,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from pumpfun_trading.bot.enrichment import mayhem_mode_reason, non_pump_launch_reason
+from pumpfun_trading.bot.handlers import observe
 from pumpfun_trading.bot.handlers.curve import RAW_TOKEN_UNITS_THRESHOLD
 from pumpfun_trading.bot.strategy import TokenScreeningVerdict
 from pumpfun_trading.ops.events import EventCategory, EventSeverity
@@ -167,6 +168,9 @@ async def handle_new_token_event(
                 f"screen_rejected {mint[:8]}: {reasons_str}",
                 alert=False,
             )
+            if confirmed:
+                # rc.3: poll a sample of rejects for the capture only.
+                observe.maybe_sample_rejected(bot, mint, data, screening_verdict)
             return
 
         if confirmed:

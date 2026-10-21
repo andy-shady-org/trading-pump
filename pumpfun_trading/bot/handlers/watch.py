@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
+from pumpfun_trading.bot.handlers import observe
 from pumpfun_trading.bot.handlers.trade import evaluate_shadow_curve
 from pumpfun_trading.ops.events import EventCategory, EventSeverity
 from pumpfun_trading.strategies.graduation import (
@@ -42,6 +43,7 @@ def watch_list_status(bot: TradingBot) -> dict[str, Any]:
             getattr(bot.config, "watch_max_trade_subscriptions", 20)
         ),
         "stats": dict(getattr(bot, "_watch_stats", {}) or {}),
+        **observe.observation_status(bot),
     }
 
 
@@ -50,14 +52,26 @@ async def run_watch_poll_loop(bot: TradingBot) -> None:
     if bot._entry_mode() != "confirmed":
         return
     interval = max(0.1, float(bot.config.watch_poll_interval_seconds))
-    while not bot._stop_requested:
-        try:
-            await asyncio.sleep(interval)
-            await bot._poll_watch_list()
-        except asyncio.CancelledError:
-            break
-        except Exception as exc:
-            bot._log(f"Watch poll exception: {exc}", level=logging.DEBUG)
+    # Record-only observations poll in their own task, so a slow API scan or
+    # RPC read there never delays the watch list (rc.3).
+    observer = (
+        asyncio.create_task(observe.run_observation_loop(bot))
+        if observe.observations_enabled(bot)
+        else None
+    )
+    try:
+        while not bot._stop_requested:
+            try:
+                await asyncio.sleep(interval)
+                await bot._poll_watch_list()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                bot._log(f"Watch poll exception: {exc}", level=logging.DEBUG)
+    finally:
+        if observer is not None:
+            observer.cancel()
+            await asyncio.gather(observer, return_exceptions=True)
 
 
 def watch_poll_due(bot: TradingBot, mint: str, now: float) -> bool:
@@ -84,9 +98,11 @@ def record_curve_poll(
     source: str,
     real_sol: float | None = None,
     virtual_sol: float | None = None,
+    extra: Mapping[str, Any] | None = None,
 ) -> None:
     """Write one polled curve to the capture, so replay can rebuild the curve
-    history the bot saw (fills, drift guard, pre-graduation lane)."""
+    history the bot saw (fills, drift guard, pre-graduation lane). ``extra``
+    adds analysis fields (the reject sample's screen reasons)."""
     if (
         bot.replay_recorder is None
         or market_cap_sol <= 0.0
@@ -105,6 +121,8 @@ def record_curve_poll(
         row["real_sol_reserves"] = round(real_sol, 9)
     if virtual_sol is not None:
         row["virtual_sol_reserves"] = round(virtual_sol, 9)
+    if extra:
+        row.update(extra)
     bot.replay_recorder.record_snapshot(row)
 
 

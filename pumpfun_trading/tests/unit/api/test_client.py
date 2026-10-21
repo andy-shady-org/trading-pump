@@ -36,6 +36,33 @@ async def test_fetch_token_metadata_non_dict_payload_returns_empty() -> None:
         assert await client.fetch_token_metadata("https://cdn.example/meta") == {}
 
 
+async def test_scan_active_coins_is_one_attempt_outside_the_breaker() -> None:
+    client = PumpFunApiClient(circuit_breaker_threshold=1)
+    request = AsyncMock(return_value=[{"mint": "M"}])
+    with patch.object(client, "_request_once", request):
+        assert await client.scan_active_coins(limit=50) == [{"mint": "M"}]
+    request.assert_awaited_once_with(
+        "GET",
+        "/coins",
+        params={
+            "limit": 50,
+            "offset": 0,
+            "sort": "last_trade_timestamp",
+            "order": "DESC",
+            "includeNsfw": "true",
+            "complete": "false",
+        },
+    )
+
+    failing = AsyncMock(side_effect=RuntimeError("HTTP 429"))
+    with patch.object(client, "_request_once", failing):
+        with pytest.raises(RuntimeError):
+            await client.scan_active_coins()
+    # A failed scan never opens the breaker screening depends on.
+    assert failing.await_count == 1
+    assert client._circuit_failures == 0
+
+
 async def test_fetch_token_metadata_bypasses_circuit_breaker() -> None:
     client = PumpFunApiClient(circuit_breaker_threshold=1)
     request = AsyncMock(side_effect=RuntimeError("HTTP 504"))

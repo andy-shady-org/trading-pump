@@ -30,6 +30,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from pumpfun_trading.engines.cuts import CaptureIndex
 from pumpfun_trading.strategies.base import TradingBotConfig
 from pumpfun_trading.strategies.momentum import OrderFlowEngine
+from pumpfun_trading.strategies.observation import is_record_only_row
 from pumpfun_trading.strategies.shadow import (
     ShadowVariantBook,
     parse_shadow_variants,
@@ -58,6 +59,8 @@ def _price_rows(
         event = record.get("event")
         if not mint or (event and event != "curve_poll") or "reason" in record:
             continue
+        if is_record_only_row(record):
+            continue  # rc.3 observation polls: the live shadow fill never sees them
         market_cap = _float(record.get("market_cap_sol"))
         if market_cap <= 0:
             continue

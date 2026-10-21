@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from pumpfun_trading.bot.handlers.curve import (
     RAW_TOKEN_UNITS_THRESHOLD,
     curve_market_cap,
+    note_stop_crossing,
 )
 from pumpfun_trading.strategies.filters import bundle_metrics
 from pumpfun_trading.strategies.shadow import ShadowSignal, shadow_fill_record
@@ -87,6 +88,7 @@ async def handle_trade_event_update(bot: TradingBot, update: TradeEventUpdate) -
     if mint in bot.active_positions:
         if current_market_cap <= 0:
             return
+        note_stop_crossing(bot, mint, current_market_cap, source="trade_feed")
 
         if (
             not update.is_buy
@@ -335,6 +337,8 @@ async def handle_trade_update(
     bot._evaluate_shadow_variants(mint, current_market_cap, now=ts)
     if mint in bot.active_positions:
         bot._note_follow_on_buy(mint, is_buy, sol_amount, user, ts)
+        # The trade message's own price, before any curve re-read (rc.3).
+        note_stop_crossing(bot, mint, current_market_cap, source="trade_feed")
     elif bot._entry_mode() == "confirmed":
         entry = bot.order_flow_engine.get_watch(mint)
         if entry is not None and entry.subscribed:

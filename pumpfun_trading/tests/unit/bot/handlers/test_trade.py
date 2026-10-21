@@ -11,8 +11,36 @@ import pytest
 
 from pumpfun_trading.bot.handlers import trade
 from pumpfun_trading.strategies.shadow import ShadowSignal, ShadowVariant
+from pumpfun_trading.streams.geyser import TradeEventUpdate
 from pumpfun_trading.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
 from pumpfun_trading.tests.support.factories import make_bot, make_position
+
+
+async def test_geyser_trade_on_a_held_mint_notes_the_stop_crossing(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, stop_loss=0.95, record_stop_crossings=True)
+    make_position(bot, SAMPLE_MINT, entry_market_cap=30.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    bot._evaluate_and_execute_exit = AsyncMock()  # type: ignore[method-assign]
+    bot._check_and_enforce_circuit_breaker = AsyncMock()  # type: ignore[method-assign]
+    v_sol = 30_000_000_000  # ~27.96 SOL market cap: 93% of entry
+    update = TradeEventUpdate(
+        mint=SAMPLE_MINT,
+        sol_amount_lamports=100_000_000,
+        token_amount=1,
+        is_buy=False,
+        user="seller",
+        timestamp=0,
+        virtual_sol_reserves=v_sol,
+        virtual_token_reserves=int(32_190_000_000 * 1e15 / v_sol),
+        real_sol_reserves=0,
+        real_token_reserves=0,
+    )
+    await trade.handle_trade_event_update(bot, update)
+    crossing = bot.active_positions[SAMPLE_MINT]["stop_crossings"]["trade_feed"]
+    assert crossing["ratio"] == pytest.approx(0.932, rel=0.01)
+    bot._evaluate_and_execute_exit.assert_awaited_once()
 
 
 def test_note_follow_on_buy_counts_other_wallets_above_the_floor(

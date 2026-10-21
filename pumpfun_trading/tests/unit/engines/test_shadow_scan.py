@@ -105,6 +105,15 @@ def test_scan_writes_the_rows_the_bot_would_have_written() -> None:
     assert metrics["token_age_seconds"] == 13.0  # age from the create row
 
 
+def test_scan_never_fills_from_record_only_observation_polls() -> None:
+    capture = _capture()
+    # An rc.3 observation poll right after the due time: the live shadow fill
+    # never sees it, so the fill is still the 14.6 watch poll.
+    capture.insert(5, _poll(14.55, 99.0, 9.0, source="discovery"))
+    (row,) = scan_shadow_entries(capture, _config())
+    assert row["timestamp"] == 14.6 and row["fill_market_cap_sol"] == 35.0
+
+
 def test_scan_refuses_a_fill_with_no_recorded_price_in_time() -> None:
     capture = [r for r in _capture() if r.get("event") != "curve_poll"]
     capture.append(_trade(14.5 + FILL_WINDOW_SECONDS + 1.0, "D", 40.0))

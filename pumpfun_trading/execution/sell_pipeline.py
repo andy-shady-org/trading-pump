@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, MutableMapping
 
 # Paper sells of a position with no recorded token amount assume this many.
 DRY_RUN_PLACEHOLDER_TOKENS = 100_000_000
@@ -133,6 +133,66 @@ def position_id(position: Mapping[str, Any]) -> Any:
     return position.get("position_id") or position.get("id") or position.get("trade_id")
 
 
+def mark_stop_crossing(
+    position: MutableMapping[str, Any],
+    *,
+    market_cap: float,
+    stop_loss: float,
+    source: str,
+    ts: float,
+) -> bool:
+    """Remember the first price from ``source`` at or below the stop level
+    (rc.3, ``record_stop_crossings``); True when this call recorded it."""
+    entry_mc = float(position.get("entry_market_cap", 0.0) or 0.0)
+    if entry_mc <= 0 or market_cap <= 0 or stop_loss <= 0:
+        return False
+    ratio = float(market_cap) / entry_mc
+    if ratio > stop_loss:
+        return False
+    crossings = position.get("stop_crossings")
+    if not isinstance(crossings, dict):
+        crossings = position["stop_crossings"] = {}
+    if source in crossings:
+        return False
+    crossings[source] = {"at": round(float(ts), 3), "ratio": round(ratio, 6)}
+    return True
+
+
+def stop_exit_metrics(
+    position: Mapping[str, Any],
+    *,
+    stop_loss: float,
+    sold_at: float,
+    proceeds_sol: float,
+    cost_sol: float,
+) -> dict[str, Any] | None:
+    """How far a full exit sold below the first stop crossing of each price
+    source, or ``None`` when no source crossed the stop. Measures only."""
+    crossings = position.get("stop_crossings")
+    if not isinstance(crossings, Mapping) or not crossings:
+        return None
+    entry_mc = float(position.get("entry_market_cap", 0.0) or 0.0)
+    current_mc = float(position.get("current_market_cap", 0.0) or 0.0)
+    metrics: dict[str, Any] = {
+        "stop_level": float(stop_loss),
+        # The price the exit fired at, and what the sell returned per SOL paid
+        # (fees and the paper exit haircut included).
+        "trigger_ratio": (
+            round(current_mc / entry_mc, 6) if entry_mc > 0 and current_mc > 0 else None
+        ),
+        "fill_ratio": round(proceeds_sol / cost_sol, 6) if cost_sol > 0 else None,
+    }
+    for source in sorted(crossings):
+        crossing = crossings[source]
+        if not isinstance(crossing, Mapping):
+            continue
+        at = float(crossing.get("at", 0.0) or 0.0)
+        metrics[f"{source}_cross_ratio"] = crossing.get("ratio")
+        metrics[f"{source}_cross_at"] = at
+        metrics[f"{source}_lead_seconds"] = round(max(0.0, sold_at - at), 3)
+    return metrics
+
+
 def sell_replay_snapshot(
     *,
     mint: str,
@@ -143,6 +203,7 @@ def sell_replay_snapshot(
     reason: str,
     default_reason: str,
     timestamp: float | None = None,
+    exit_metrics: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Replay-capture record of one of the bot's own sells (FEAT-21)."""
     current_mc = float(
@@ -150,7 +211,7 @@ def sell_replay_snapshot(
         or position.get("entry_market_cap", 0.0)
         or 0.0
     )
-    return {
+    row: dict[str, Any] = {
         "timestamp": time.time() if timestamp is None else timestamp,
         "mint": mint,
         "name": name,
@@ -162,3 +223,6 @@ def sell_replay_snapshot(
         "signal": "sell",
         "reason": reason or default_reason,
     }
+    if exit_metrics:
+        row["exit_metrics"] = dict(exit_metrics)
+    return row

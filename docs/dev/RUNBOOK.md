@@ -224,12 +224,13 @@ In the first minutes check that `capture/bot.log` has "Successfully subscribed t
 
 From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json` with `entry_mode: "confirmed"` ([`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)). Copy both into the runtime `configs/` (keep the v0.2.x files as `*.v0.2.json` for rollback, §5.4). Each step starts only if the one before passed; record every result in `STRATEGY-PIVOT.md` §6.
 
-1. **Capture (24 h, paper).** Run `configs/capture.json` as in §6.2. Checks while it runs:
+0. **Before a new run.** Archive the previous run folders (`runtime/archive/paper-<tag>/capture/` and `.../pilot/`; `run-paper.sh` refuses a non-empty folder), pin `runtime/pumpfun-trading` to the new tag and reinstall it into the runtime venv, and copy `configs/capture.json`, `configs/canary.json` and `configs/pregrad_pilot.json` into the runtime `configs/`.
+1. **Capture (48 h from rc.3, paper).** Run `configs/capture.json` as in §6.2. One day was too few trades to tell a 0.0001 SOL-per-position edge from noise or to test the time-of-day effect ([`STRATEGY-PIVOT.md` §6.10](STRATEGY-PIVOT.md#610-v030-rc2-capture-and-pilot-momentum-no-go-stop-092-adopted-2026-10-21)). Checks while it runs:
    - dashboard `Watch list: N watched, S/20 subscribed`: N stays ≤ `watch_max_mints` (300) and S ≤ `watch_max_trade_subscriptions`;
    - `watch_list.stats` in `capture/bot_status.json`: `watched` and `promoted` grow, `poll_errors` stays near 0, `dropped_not_pump_fun` / `dropped_non_standard` are counted, not bought;
    - no `watch_poll_failed` events for more than a few minutes (`pumpfun-events --path capture/events.jsonl --tail`), no loop stalls (`Last status` keeps changing);
    - PumpPortal message count well below the v0.2.3 capture (only promoted and held mints are subscribed);
-   - from rc.2: `capture/replay_capture.jsonl` holds `event: "curve_poll"` rows (`source` `watch`, `position`, `entry_fill`, `shadow_fill`; about 1 KB/s) and `event: "shadow_entry"` rows for the nine `shadow_variants`; `watch_list.near_graduation` stays ≤ `near_graduation_max_mints` (50) and `watch_list.stats.shadow_skipped` near 0 (FEAT-58).
+   - from rc.2: `capture/replay_capture.jsonl` holds `event: "curve_poll"` rows (`source` `watch`, `position`, `entry_fill`, `shadow_fill`; about 1 KB/s) and `event: "shadow_entry"` rows for the config's `shadow_variants` (eight in rc.3); `watch_list.near_graduation` stays ≤ `near_graduation_max_mints` (50) and `watch_list.stats.shadow_skipped` near 0 (FEAT-58).
 2. **Replay gate.** Replay the new capture with `configs/canary.json` **unchanged**:
    ```bash
    PUMPFUN_JITO_TIP_LAMPORTS=25000 pumpfun-replay --path capture/replay_capture.jsonl \
@@ -237,28 +238,37 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
    ```
    Go only if `net_pnl_sol` > 0 and `entries_from` is `confirmed`. If not, do not start Stage 0: re-tune on this capture, then wait for a third one to confirm.
 
-   **Read-out (rc.2 captures on).** Run these on the finished capture, before any re-tuning:
+   **Read-out (rc.2 captures on).** The recorder rotates the capture (`replay_capture.jsonl.1.gz` is the newest archived part), so first join the parts, oldest first, into one file and read that:
    ```bash
-   pumpfun-replay --path capture/replay_capture.jsonl --config configs/capture.json \
-     --compare-audit capture/audit_trail.jsonl --mode summary        # parity first
-   pumpfun-replay --path capture/replay_capture.jsonl --config configs/capture.json \
-     --shadow-report --split-at mid                                   # FEAT-58/59 variants
-   pumpfun-replay --path pilot/replay_capture.jsonl --config configs/pregrad_pilot.json \
-     --shadow-report --split-at mid --shadow-baseline pullback_curve # pilot pullbacks
-   pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
-     --keep 'burst_share<=0.5' --keep 'buy_gap_cv>=0.5' \
-     --keep 'early_holder_pct<=0.25'                                  # FEAT-60/61 inputs (rc.3)
+   (for f in $(ls -r capture/replay_capture.jsonl.*.gz); do gzcat "$f"; done
+    cat capture/replay_capture.jsonl) > capture/full_capture.jsonl
+   C=capture/full_capture.jsonl
+   pumpfun-replay --path $C --config configs/capture.json --tip-lamports 0 \
+     --compare-audit capture/audit_trail.jsonl --mode summary       # parity first
+   pumpfun-replay --path $C --config configs/capture.json \
+     --shadow-report --split-at mid                                  # shadow variants
    pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by strategy
-   pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by hour    # time of day
+   pumpfun-audit pnl --path capture/audit_trail.jsonl --group-by hour   # time of day
    pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-at mid \
      --keep 'top_buyer_share<0.3' --keep 'wallet_diversity>=0.3' \
-     --keep 'round_trip_share<0.2' --keep 'quick_flips<1'               # FEAT-56/57 inputs
-   pumpfun-replay --path capture/replay_capture.jsonl --config configs/canary.json \
-     --sweep stop_loss=0.85,0.9,0.92,0.95                              # stop-loss check (§6.8)
-   pumpfun-replay --path capture/replay_capture.jsonl --config configs/canary.json \
-     --wallet-scores --validate-path archive/stage0-v0.3.0rc1/replay_capture.jsonl  # FEAT-54
+     --keep 'early_holder_pct<=0.25' --keep 'early_holders<=8'      # FEAT-56 / FEAT-61 inputs
+   pumpfun-replay --path $C --config configs/canary.json \
+     --sweep stop_loss=0.85,0.9,0.92,0.95                             # stop-loss check (§6.8)
+   pumpfun-replay --path $C --config configs/canary.json \
+     --wallet-scores --validate-path archive/paper-v0.3.0rc2/capture/full_capture.jsonl  # FEAT-54
+   pumpfun-audit pnl --path pilot/audit_trail.jsonl --group-by strategy  # pre-graduation pilot
+   # rc.3 record-only inputs (no CLI yet; jq over the joined captures and trails):
+   jq -c 'select(.event=="observation_end" and .source=="reject_sample")
+          | {mint, cause, peak_real_sol}' $C                          # screen-rejected sample
+   jq -c 'select(.event=="observation_start" and .source=="reject_sample")
+          | {mint, reject_reasons}' $C                                # ... and why each was rejected
+   jq -c 'select(.event=="observation_end" and .source=="discovery")
+          | {mint, cause, first_real_sol, peak_real_sol}' pilot/full_capture.jsonl  # discovered curves (join pilot/ as above)
+   jq -c 'select(.type=="trade") | .payload | select(.exit_metrics)
+          | {mint, reason, exit_metrics}' capture/audit_trail.jsonl   # stop crossings vs fills
    ```
-   A variant or rule counts only if it beats the random cut in both halves; set the tip variables as for the capture, and record every result in `STRATEGY-PIVOT.md` §6.
+   Compare the sample's `peak_real_sol` and `cause: "complete"` share per rejection reason with the watched mints' (`curve_poll` rows with `source: "watch"`); a cap is worth relaxing only if its rejects do better on this capture **and** the next. For the stops, compare `trade_feed_cross_ratio`, `refresh_cross_ratio` and `fill_ratio` on `stop_loss` exits: a trade-feed trigger is worth building only if the feed crosses first and materially above the fill. While the runs are up, `watch_list.reject_sample`, `watch_list.discovery` and the `discovery_scan_errors` / `observation_poll_errors` counters in `bot_status.json` should look sane (lists below their caps, errors near 0); a rising `discovery_scan_errors` means the Pump.fun API query changed.
+   A variant or rule counts only if it beats the random cut in both halves, on this capture **and** the one before; set the tip variables as for the capture, and record every result in `STRATEGY-PIVOT.md` §6. `--compare-audit` agrees only when the config sets `paper_exit_slippage_bps` (BUG-126): on trails written before rc.3 paper sells took no slippage, so replay comes out about 1% per exit below paper.
 3. **Stage 0 (72 h, paper)** with `configs/canary.json --paper-trade` and `--record-replay`, per §6 and `RELEASE-GATE.md` §3.1. Judge it with `pumpfun-audit pnl --group-by strategy` (`momentum` row) and per position, never per sell.
 4. **Stage 1 (live canary)** with `configs/canary.json` on the dedicated hot wallet: 0.02 SOL buys, ≤ 2 positions, 0.05 SOL exposure (`RELEASE-GATE.md` §3.3). Exit criteria: ≥ 100 trades, net > 0, daily reconciliation clean (§5.3).
 
@@ -269,6 +279,31 @@ Entries and exits can be tested apart. `PUMPFUN_JITO_ENTRY_TIP_LAMPORTS` and `PU
 **Pre-graduation lane (FEAT-53).** It runs from the same poller on watched and held curves, but stays `enable_pre_graduation_harvesting: false` in `canary.json`. To test it, run `configs/pregrad_pilot.json` as a separate 72 h paper instance (own runtime folder and paths as in §6.2, e.g. `pilot/`, with `--record-replay pilot/replay_capture.jsonl`) and judge the `pre_graduation` row of `pumpfun-audit pnl --group-by strategy`. The pilot turns the lane on, sets `watch_max_trade_subscriptions: 0` (no momentum buys, no billed trade feed for watched mints) and keeps up to 100 coins past the 10 min watch TTL in the near-graduation set (`near_graduation_*`: ≥ 50% of the curve and still growing, polled every 6 s until they near the 75% entry band, dropped after 5 min without growth or 1 h in total). Its capture can be replayed with the same config, since the lane now runs on the recorded `curve_poll` rows. Enable it in the canary only after that pilot is net positive (`RELEASE-GATE.md` §3.5). Confirmed-mode exits apply to these positions too, so check how many `stagnant_buy_flow` exits fire before the tranches.
 
 **Graduated positions (BUG-123).** A held coin whose curve completes is sold into its PumpSwap pool (`enable_pumpswap_exit`, on by default). Look for `graduated while held` in the events and `bonding_curve_graduated` sells in the audit trail; `awaiting pool <mint>` on the dashboard means the pool was not readable yet and the next position refresh retries. Paper prices these exits from the pool. Before any lane that can reach graduation runs with real capital, send one live PumpSwap sell at the smallest size and reconcile it. A third source checks held mints against the Pump.fun API every `graduation_backfill_seconds` (30 s); a hit shows as `graduation backfill: <mint> completed (missed by stream)` in the events and `watch_list.stats.graduation_backfill` in `bot_status.json`. Regular hits mean the stream is missing migrations: check reconnects and `subscribeMigration`.
+
+### 6.4 Slow-lane data recorder (FEAT-65 phase 0, from rc.3)
+
+Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)), in case the rc.3 Pump.fun lanes are NO-GO too. It is a separate process: no wallet, no transactions, nothing shared with `pumpbot`, so it cannot change the rc.3 runs. Both APIs are used keyless (no Jupiter API key needed).
+
+1. Start the quote recorder with the rc.3 runs, in its own folder, and leave it running until the rc.3 verdict (weeks of samples are worth more than 48 h):
+   ```bash
+   cd runtime && mkdir -p slow_lane
+   pumpfun-recorder --jupiter-quotes --tokens configs/slow_lane_tokens.json \
+     -o slow_lane/jupiter_quotes.jsonl          # every 300 s; Ctrl-C / SIGTERM stops it cleanly
+   ```
+   With `PUMPFUN_RPC_URL` (or `PUMPFUN_RPC_URLS`) in the environment it also samples priority fees (about 13 RPC calls per 5 min); add `--no-fee-samples` to skip them. Under a supervisor, run it as a second unit next to `pumpbot` (§8), with the same `.envrc`.
+2. Download the bar history once (about 15 min for the default list):
+   ```bash
+   pumpfun-recorder --backfill-bars --tokens configs/slow_lane_tokens.json -o slow_lane/bars.jsonl
+   ```
+   The public API serves about 6 months; re-run it monthly into a new file to extend the series and de-duplicate on `mint`, `timeframe`, `timestamp` when reading.
+3. Health checks while it runs: rows keep arriving, and errors stay rare.
+   ```bash
+   tail -n 1 slow_lane/jupiter_quotes.jsonl | jq '{timestamp, event, symbol}'
+   jq -c 'select(.event=="quote_error") | {symbol, side, size_sol, status}' slow_lane/jupiter_quotes.jsonl | tail
+   jq -c 'select(.event=="quote" and .side=="sell") | {symbol, size_sol, round_trip_cost_bps}' \
+     slow_lane/jupiter_quotes.jsonl | tail -n 30            # round-trip cost per token and size
+   ```
+   Many `status: 429` rows mean the keyless limit changed: raise `--request-gap` or `--quote-interval`. Edit the token list only between runs, and keep the edited file with the data.
 
 ## 7. Incident drills
 
@@ -333,6 +368,7 @@ Hardening checklist:
 | Diagnostic events | `pumpfun-events --path data/events.jsonl --tail` |
 | Replay a capture | `pumpfun-replay --path data/replay_capture.jsonl` |
 | Record market data | `pumpfun-recorder --help` |
+| Slow-lane quotes / bars (FEAT-65) | `pumpfun-recorder --jupiter-quotes`, `pumpfun-recorder --backfill-bars` (§6.4) |
 
 Full flag reference: [`../CLI-COMMANDS.md`](../CLI-COMMANDS.md).
 
