@@ -475,9 +475,12 @@ class BondingCurveVolatilityEstimator:
         vol = self.calculate_volatility(window_seconds=30.0)
         vol_bps = vol * 10_000.0 * self.alpha_volatility
 
+        # The slippage a fill pays is the gap between its average price and
+        # the pre-trade spot (dx/x on a buy), not the post-trade spot move,
+        # which is about twice that (BUG-134).
         if is_buy:
-            impact = calculate_buy_price_impact(
-                trade_amount_sol, virtual_sol_reserves, virtual_token_reserves
+            impact = calculate_buy_execution_slippage(
+                trade_amount_sol, virtual_sol_reserves
             )
         else:
             token_est = 0.0
@@ -487,9 +490,7 @@ class BondingCurveVolatilityEstimator:
                 )
                 token_est = (trade_amount_sol / spot) if spot > 0 else 0.0
             impact = abs(
-                calculate_sell_price_impact(
-                    token_est, virtual_sol_reserves, virtual_token_reserves
-                )
+                calculate_sell_execution_slippage(token_est, virtual_token_reserves)
             )
 
         impact_bps = impact * 10_000.0 * self.beta_impact

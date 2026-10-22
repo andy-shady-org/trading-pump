@@ -6868,6 +6868,18 @@ async def test_unknown_entry_market_cap_is_the_launch_market_cap(
     await bot.close()
 
 
+@pytest.mark.regression("BUG-134")
+async def test_curve_reads_feed_the_slippage_estimator(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    policy = bot.executor.execution_policy
+    bot._feed_slippage_estimator(SAMPLE_PUMP_MINT, 30_000_000_000, 1_073 * 10**12)
+    bot._feed_slippage_estimator(SAMPLE_PUMP_MINT, 0, 1_073 * 10**12)  # ignored
+    observations = policy.get_estimator(SAMPLE_PUMP_MINT).get_observations()
+    assert len(observations) == 1
+    assert observations[0].virtual_sol_reserves == pytest.approx(30.0)
+    await bot.close()
+
+
 async def test_momentum_buys_pass_the_drift_guard_to_the_executor(
     tmp_path: Path,
 ) -> None:

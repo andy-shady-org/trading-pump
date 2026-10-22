@@ -243,3 +243,50 @@ def test_presets_validation_dynamic_slippage():
         resolve_strategy_config(
             "balanced", overrides={"min_slippage_bps": 600, "max_slippage_bps": 300}
         )
+
+
+@pytest.mark.regression("BUG-134")
+def test_slippage_impact_term_is_the_execution_slippage_not_the_spot_move():
+    estimator = BondingCurveVolatilityEstimator(
+        default_slippage_bps=100, min_slippage_bps=0, max_slippage_bps=10_000
+    )
+    # 3 SOL into a 30 SOL curve: the fill pays dx/x = 10%, while the spot
+    # moves (1.1^2 - 1) = 21% after it.
+    bps = estimator.estimate_dynamic_slippage(3.0, 30.0, 1_000_000_000.0, is_buy=True)
+    assert bps == 100 + 1_000
+    sell_bps = estimator.estimate_dynamic_slippage(
+        3.0, 30.0, 1_000_000_000.0, is_buy=False
+    )
+    spot = calculate_spot_price(30.0, 1_000_000_000.0)
+    tokens = 3.0 / spot
+    assert sell_bps == 100 + round(tokens / (1_000_000_000.0 + tokens) * 10_000)
+
+
+@pytest.mark.regression("BUG-134")
+def test_slippage_volatility_term_responds_to_fed_curve_reads():
+    policy = AdaptiveExecutionPolicy(make_config(max_slippage_bps=5_000))
+    calm = policy.resolve_parameters("Mint111", 0.02, virtual_sol_reserves=30.0)
+    for v_sol in (30.0, 31.5, 29.0, 32.0, 30.5):
+        policy.record_curve_update("Mint111", v_sol, 1_000_000_000.0, timestamp=None)
+    fed = policy.resolve_parameters("Mint111", 0.02, virtual_sol_reserves=30.5)
+    assert calm.volatility_metric == 0.0
+    assert fed.volatility_metric > 0.0
+    assert fed.slippage_bps > calm.slippage_bps
+
+
+@pytest.mark.regression("BUG-134")
+def test_slippage_estimators_are_bounded():
+    from pumpfun_trading.execution.policy import MAX_TRACKED_ESTIMATORS
+
+    policy = AdaptiveExecutionPolicy(make_config())
+    first = policy.get_estimator("mint-0")
+    for i in range(1, MAX_TRACKED_ESTIMATORS + 1):
+        policy.get_estimator(f"mint-{i}")
+    assert len(policy._estimators) == MAX_TRACKED_ESTIMATORS
+    assert "mint-0" not in policy._estimators
+    # Using an estimator keeps it.
+    policy.get_estimator("mint-1")
+    policy.get_estimator("new")
+    assert "mint-1" in policy._estimators
+    assert "mint-2" not in policy._estimators
+    assert first is not policy.get_estimator("mint-0")

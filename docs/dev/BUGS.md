@@ -1193,12 +1193,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Suggested fix:** compute the baseline from slices 1..N−1 only, and from slices after the token's creation; require a minimum number of baseline slices.
 * **Verification to add:** a property test that z is unbounded above for a quiet baseline followed by a burst, and that pre-creation time is ignored.
 
-### BUG-134: Dynamic Slippage Volatility Term Is Dead, Impact Double Counted [OPEN]
+### BUG-134: Dynamic Slippage Volatility Term Is Dead, Impact Double Counted [RESOLVED]
 * **Location:** `pumpfun_trading/execution/policy.py` (`record_curve_update`, `resolve_parameters`), `pumpfun_trading/execution/executor.py` (`_resolve_dynamic_slippage` ~L253–279), `pumpfun_trading/sdk/curve.py` (`estimate_dynamic_slippage` ~L421–479)
 * **Description:** the per-mint volatility estimator is only fed from `_resolve_dynamic_slippage`, once per execution, so its 30 s window rarely holds two observations and `calculate_volatility` returns 0. The impact term uses `calculate_buy_price_impact` (post-trade spot change, about 2·Δx/x) rather than the execution slippage (Δx/x).
 * **Impact:** medium: slippage tolerances are base + roughly twice the real impact, with no response to volatility, so entries in fast markets fail more often and calm ones are looser than needed.
-* **Suggested fix:** feed the estimator from the trade stream (or drop the term), and use `calculate_buy_execution_slippage` / `calculate_sell_execution_slippage` for the impact component.
-* **Verification to add:** after a burst of recorded trades the resolved slippage includes a non-zero volatility component.
+* **Resolution:** `TradingBot._feed_slippage_estimator` records every curve read the bot already makes into the execution policy's per-mint estimator: the watch poller (`handlers/watch.py`), the held-position refresh and Geyser bonding-curve updates (`handlers/curve.py`). The estimator cache is now bounded to the 512 most recently used mints (`MAX_TRACKED_ESTIMATORS`, LRU). `estimate_dynamic_slippage` uses the execution slippage (`calculate_buy_execution_slippage`, Δx/x; `calculate_sell_execution_slippage` for sells) for its impact term, matching STRATEGY.md §12; `price_impact_pct` in the result still reports the post-trade spot move. Slippage tolerances therefore tighten on calm curves (about half the old impact term) and widen with real volatility.
+* **Verification:** `regression("BUG-134")` tests in `unit/execution/test_policy.py` (3 SOL into a 30 SOL curve adds 1,000 bps, not ~2,100; fed curve reads make the volatility term non-zero and widen the slippage; the cache keeps 512 estimators, most recently used first) and `unit/bot/test_run.py` (a curve read reaches the estimator in SOL; empty reserves are ignored).
 
 ### BUG-135: Optimizer Fitness Statistics [OPEN]
 * **Location:** `pumpfun_trading/engines/optimizer.py` (`calculate_sharpe_ratio` / `calculate_sortino_ratio` ~L495–531, `calculate_calmar_ratio` ~L533–542, `evaluate_fitness` ~L544–600, `WalkForwardValidator.split_snapshots` ~L709–723)
