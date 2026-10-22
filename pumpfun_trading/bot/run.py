@@ -1056,6 +1056,15 @@ class TradingBot:
         keep = (10_000 - max(0, min(5_000, bps))) / 10_000.0
         return self._paper_round_trip_fee_factor() * keep
 
+    def _open_positions_exit_value(self) -> float:
+        """Open positions at what selling them would return, for the breaker.
+
+        Spot value times the same fee and exit haircut a sell pays, so equity
+        is not overstated and drawdown checks fire on time (BUG-136).
+        """
+        spot = float(self.position_manager.calculate_total_open_value() or 0.0)
+        return spot * self._paper_exit_factor()
+
     def _book_trade_costs(self, net_pnl_sol: float, costs_sol: float) -> None:
         """Feeds net realized PnL to the daily breaker; paper wallets pay costs too."""
         tracker = getattr(self, "daily_equity_tracker", None)
@@ -1304,7 +1313,7 @@ class TradingBot:
         try:
             balance_sol = await self.execution.get_balance_sol()
             self.wallet_balance_sol = balance_sol
-            open_val_sol = self.position_manager.calculate_total_open_value()
+            open_val_sol = self._open_positions_exit_value()
             self.daily_equity_tracker.update_valuation(balance_sol, open_val_sol)
 
             if balance_sol - required_sol < self.config.reserve_balance_sol:
@@ -1344,7 +1353,7 @@ class TradingBot:
             if not self.dry_run:
                 balance_sol = await self.execution.get_balance_sol()
                 self.wallet_balance_sol = balance_sol
-            open_val_sol = self.position_manager.calculate_total_open_value()
+            open_val_sol = self._open_positions_exit_value()
             self.daily_equity_tracker.update_valuation(
                 self.wallet_balance_sol, open_val_sol
             )
@@ -1425,7 +1434,7 @@ class TradingBot:
 
     def get_status_snapshot(self) -> dict[str, Any]:
         """Returns a comprehensive structured snapshot of runtime status."""
-        open_val = self.position_manager.calculate_total_open_value()
+        open_val = self._open_positions_exit_value()
         drawdown = self.daily_equity_tracker.calculate_drawdown(
             self.wallet_balance_sol, open_val
         )
@@ -3221,7 +3230,7 @@ class TradingBot:
 
     def _daily_summary_text(self, now: float) -> str:
         tracker = self.daily_equity_tracker
-        open_val = self.position_manager.calculate_total_open_value()
+        open_val = self._open_positions_exit_value()
         breaker = "LOCKED" if tracker.circuit_breaker_engaged else "clear"
         if tracker.circuit_breaker_engaged and tracker.lock_reason:
             breaker = f"LOCKED ({tracker.lock_reason[:80]})"

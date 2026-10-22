@@ -1166,6 +1166,40 @@ async def test_paper_sell_pays_the_exit_haircut(
     await bot.close()
 
 
+@pytest.mark.regression("BUG-136")
+async def test_breaker_values_open_positions_at_what_a_sell_returns(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        paper_exit_slippage_bps=100,
+        max_daily_drawdown_pct=0.15,
+        auto_liquidate_on_circuit_breaker=False,
+    )
+    mint = "MintExitValue11111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint, token_amount=1_000_000, cost_sol=0.50, entry_market_cap=30.0
+    )
+    bot.active_positions = bot.position_manager.get_all_positions()
+    spot = bot.position_manager.calculate_total_open_value()
+    assert spot == pytest.approx(0.50)
+    exit_value = bot._open_positions_exit_value()
+    assert exit_value == pytest.approx(0.50 * bot._paper_round_trip_fee_factor() * 0.99)
+    assert exit_value < spot
+
+    # 0.36 SOL cash + 0.50 SOL at spot is 14% below 1.0 SOL, inside the 15%
+    # limit, but selling the position returns about 0.483 SOL: 15.7% down.
+    tracker = bot.daily_equity_tracker
+    tracker.starting_equity_sol = 1.0
+    tracker.peak_daily_equity_sol = 1.0
+    tracker.last_reset_date_utc = tracker.get_current_utc_date()
+    bot.wallet_balance_sol = 0.36
+    assert await bot._check_and_enforce_circuit_breaker() is True
+    assert "portfolio drawdown" in tracker.lock_reason
+    assert bot.get_status_snapshot()["circuit_breaker_engaged"] is True
+    await bot.close()
+
+
 @pytest.mark.regression("BUG-24", "BUG-25", "BUG-26", "BUG-27", "BUG-28")
 async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
     """
