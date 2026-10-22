@@ -134,6 +134,20 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-124** | Medium | SDK / Curve Decoding | **RESOLVED** | The bonding-curve decoder ignored the new `quote_mint` field, so a USDC-quoted curve would have been priced as if its reserves were lamports; such curves are now refused as non-standard |
 | **BUG-125** | Medium | Config | **RESOLVED** | `resolve_strategy_config` dropped 11 fields, so `enable_pumpswap_exit`, `replay_log_path`, the FEAT-50 alert keys and every FEAT-42 `profit_sweep_*` key were ignored in a config file without a warning |
 | **BUG-126** | Medium | Replay / Parity | **RESOLVED** | Paper sells took no slippage while replay took 100 bps, so replay ran 0.028 SOL below paper on the rc.2 capture; new `paper_exit_slippage_bps` (100 in the momentum configs) is applied by both |
+| **BUG-127** | High | Risk / Circuit breaker | **OPEN** | The adaptive ratchet never protects profit: `effective_baseline_sol` is only displayed, and the profit-run halt compares drawdown against 35% of total equity, so it fires only after equity is already below the start and the principal rule has taken over |
+| **BUG-128** | High | Risk / Circuit breaker | **OPEN** | The daily loss limit is not a hard cap: a lock ends at the next 00:00 UTC (not after 24 h), an auto-unlock resets the baseline to post-loss equity, and nothing caps the loss across days |
+| **BUG-129** | High | Execution / Parity | **OPEN** | Live entries record the stream's signal market cap as `entry_market_cap` instead of the fill, so stops fire late and take-profits early by the entry drift; only paper fills set `entry_market_cap_sol` |
+| **BUG-130** | High | Risk / Startup | **OPEN** | The day's starting equity can be taken from the simulated balance (reserve + 10 buys) when the first live balance read fails, giving a spurious emergency liquidation or a looser limit for the whole UTC day |
+| **BUG-131** | Medium | Bot / Raydium lane | **OPEN** | Raydium migration buys hard-code `entry_market_cap=69.0` (likely the USD "$69k" graduation figure read as SOL), so every stop and take-profit on those positions is meaningless; the lane is on by default in conservative / balanced / aggressive |
+| **BUG-132** | Medium | Streams / Entry | **OPEN** | The legacy `momentum_spike` entry in the Geyser trade handler is not gated by `entry_mode`, so with a Geyser stream in confirmed mode it can buy without the age window, market-cap band or FEAT-56/57/60 screens |
+| **BUG-133** | Medium | Strategy / Maths | **OPEN** | The velocity z-score includes the current slice in its own baseline, capping z at sqrt(N-1) = 3.0 for 30/300 s, and empty pre-creation slices inflate it for young tokens; the conservative threshold of 3.0 passes only after 270 s with no trades |
+| **BUG-134** | Medium | Execution / Slippage | **OPEN** | The dynamic-slippage volatility term is effectively always 0 (the estimator is only fed at execution time), and the impact term uses post-trade spot impact (about 2x the execution slippage) |
+| **BUG-135** | Medium | Optimizer / Statistics | **OPEN** | Optimizer "Sharpe" is scaled by sqrt(n) (a t-statistic), which biases the 70/30 overfit delta; returns are per sell and skip `partial_sell` (BUG-105 was fixed in `pnl.py` only); Calmar with no drawdown returns 10x the return |
+| **BUG-136** | Low | Risk / Valuation | **OPEN** | Open positions are valued at cost times the market-cap ratio, ignoring the sell fee and exit impact, so equity is overstated and the breaker triggers late |
+| **BUG-137** | Low | SDK / Units | **OPEN** | `calculate_market_cap_sol` guesses lamports when the reserve is at least 1,000,000, and the `or 30.0` entry fallback is the virtual SOL reserve, not a market cap (about 27.96 SOL) |
+| **BUG-138** | Low | Costs / Fees | **OPEN** | `PUMP_DEFAULT_FEE_BPS` is a fixed 125 bps; to be checked against Pump.fun's current fee schedule, which may vary by market cap (not verified) |
+| **BUG-139** | Low | Slow lane / Data | **OPEN** | The FEAT-65 sell quote is taken about 2 s after the buy quote, so `round_trip_cost_bps` includes price drift; bars are USD from each token's top pool as of today |
+| **BUG-140** | Low | Exits / Concurrency | **OPEN** | Not verified: the exit-pending TTL is 60 s, so a sell that runs through Jito timeout, RPC fallback and retries for longer may let the same take-profit tier fire again |
 
 ---
 
@@ -1125,3 +1139,101 @@ Found reading out the rc.2 momentum capture: `pumpfun-replay --compare-audit` pu
 * **Impact:** medium: paper results were about 1% per exit too optimistic against a live sell, and paper and replay could not be compared. On rc.2 that is about 0.021 SOL of the 0.028 gap and turns the paper result of +0.014 SOL into roughly −0.007 SOL. With the exit haircut matched, the same-exit positions agree to −0.002 SOL (median per position +0.00001); the rest is one position where replay hit the stop and paper the trailing stop (−0.006), from prices the capture did not record.
 * **Resolution:** new config key `paper_exit_slippage_bps` (default `0`, clamped to 0–5,000; `100` in the `momentum` preset, `configs/canary.json`, `configs/capture.json` and `configs/pregrad_pilot.json`). Paper sells take it off their proceeds (`TradingBot._paper_exit_factor`), and live-fidelity replay uses it instead of the engine's `slippage_bps` when it is set. Configs without the key behave as before, so old captures replay unchanged and the golden replay is unchanged.
 * **Verification:** `regression("BUG-126")` tests in `unit/bot/test_run.py` (paper sell at 0 / 100 / 9,000 bps), `unit/engines/test_replay.py` (replay sell proceeds follow the key) and `unit/strategies/test_presets.py` (defaults, clamp, momentum preset).
+
+## 24. Code Review: Risk, Execution And Maths (2026-10-22)
+
+Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or reproduced, and no code was changed. Line numbers are from the working copy on 2026-10-22 and may drift. BUG-127 to BUG-130 should be fixed before any live capital.
+
+### BUG-127: Adaptive Ratchet Never Protects Profit [OPEN]
+* **Location:** `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.effective_baseline_sol` ~L48–61, `evaluate_circuit_breaker` profit-run zone ~L311–324)
+* **Description:** `effective_baseline_sol` (start + `profit_ratchet_ratio` × realized gain) is only written to status snapshots and the lock reason; no decision uses it. The profit-run zone halts buys when `peak_drawdown_pct` exceeds `profit_drawdown_tolerance_pct` (0.35), but `peak_drawdown_pct` is the drop as a share of **total** peak equity, not of the profit. Starting at 1.0 SOL with a peak of 1.1 SOL, the halt needs equity at 0.715 SOL, which is already below the start, so the principal zone (15%) is evaluated instead and the profit-run halt never fires.
+* **Impact:** high: RISK.md §3 promises that half of the day's realized profit is ratcheted into a floor; in practice a winning day can be given back in full before any protection applies.
+* **Suggested fix:** in the profit-run zone, halt new buys when current equity falls below `effective_baseline_sol`, and/or measure the retracement against `peak − start` (the profit) rather than the peak. Decide whether the ratchet uses daily or cumulative realized PnL and make RISK.md match.
+* **Verification to add:** a test where equity runs 1.0 → 1.2 → 1.08 with realized +0.2 must halt buys (floor 1.1 at ratio 0.5).
+
+### BUG-128: Daily Loss Lock Ends At UTC Midnight And Has No Cumulative Cap [OPEN]
+* **Location:** `pumpfun_trading/bot/risk.py` (`initialize_or_rollover` ~L91–102, `lockout_until` ~L105–123, auto-unlock in `evaluate_circuit_breaker` ~L222–241)
+* **Description:** the rollover at 00:00 UTC clears any lock and resets starting and peak equity to the current (post-loss) value; `lockout_until` returns the earlier of next midnight and the hard-lock end. A lock at 23:55 UTC therefore lifts five minutes later. The hard-lock auto-unlock also resets the baseline to post-loss equity. No limit spans days.
+* **Impact:** high: RISK.md describes a 24-hour lockout. In practice the bot can lose up to `max_daily_drawdown_pct` every UTC day (or every lock period), compounding, with no overall stop.
+* **Suggested fix:** make the lock last its full duration across the rollover (do not clear `circuit_breaker_engaged` in the rollover while the hard lock is running), and add a cumulative cap (for example a max loss from the all-time or session starting equity, persisted across restarts) that needs a manual reset.
+* **Verification to add:** a lock at 23:55 UTC stays engaged at 00:05 UTC; two losing days in a row trip the cumulative cap.
+
+### BUG-129: Live Entries Use The Signal Market Cap As Entry Price [OPEN]
+* **Location:** `pumpfun_trading/execution/executor.py` (paper path sets `entry_market_cap_sol` ~L466–472; live path does not), `pumpfun_trading/bot/run.py` (`_buy_token` ~L1930–1956)
+* **Description:** `_buy_token` overrides the stream market cap with `exec_metadata["entry_market_cap_sol"]` only when it is present, and only the paper path sets it (BUG-104 / BUG-121 fixed paper). A live buy records the market cap of the signal, before screening, confirmation and the bot's own price impact. Exits measure `performance` against that value.
+* **Impact:** high once live: with an entry drift of a few percent, the stop-loss fires that much further below the real fill and take-profits fire early. Paper and replay results do not carry over to live.
+* **Suggested fix:** derive the live entry market cap from the fill (swap SOL from transaction meta and tokens received, or the curve read just after confirmation), and record both values so the drift is visible.
+* **Verification to add:** a live-mode executor test where the fill price differs from the signal; the position's `entry_market_cap` must follow the fill.
+
+### BUG-130: Day Baseline Can Come From The Simulated Balance [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (`self.wallet_balance_sol = self._initial_simulated_balance()` ~L322, `_check_and_enforce_circuit_breaker` ~L1341–1357), `pumpfun_trading/bot/risk.py` (`initialize_or_rollover`)
+* **Description:** the bot starts every run with the simulated balance (reserve + 10 × buy size, or `paper_starting_balance_sol`) and does not fetch the real balance before the first breaker check. If that first `get_balance_sol` raises, the exception is logged at DEBUG and `evaluate_portfolio_circuit_breaker` still runs with the simulated figure, which sets `starting_equity_sol` for the whole UTC day.
+* **Impact:** high in live mode: a simulated figure above the real balance (for example 0.3 against 0.2 SOL) looks like a 33% loss on the next check and triggers `EMERGENCY_LIQUIDATE`; one below it loosens the limit all day.
+* **Suggested fix:** in live mode, fetch the balance at startup and refuse to trade (and skip breaker initialisation) until a real read succeeds; never initialise the baseline from a simulated or stale value.
+* **Verification to add:** a live-mode test where the first balance read fails must leave `starting_equity_sol` unset and buys blocked.
+
+### BUG-131: Raydium Migration Buys Use A Hard-Coded Entry Market Cap [OPEN]
+* **Location:** `pumpfun_trading/bot/run.py` (Raydium buy, `entry_market_cap=69.0` ~L2092)
+* **Description:** every Raydium migration position records an entry market cap of 69.0 SOL, which looks like Pump.fun's "$69k" graduation market cap in USD read as SOL. Exits compute `current / entry` against it.
+* **Impact:** medium: stops and take-profits on these positions are meaningless (a real post-graduation market cap of several hundred SOL reads as a multi-x gain). `enable_raydium_migration_sniping` is true in the conservative, balanced and aggressive presets and in the resolver default, false in momentum and canary. Pump.fun migrates to PumpSwap (BUG-123), so the lane may never fire.
+* **Suggested fix:** take the entry market cap from the fill or pool state, or remove the Raydium sniping lane and default the flag to false.
+* **Verification to add:** a Raydium buy records the market cap derived from its fill.
+
+### BUG-132: Legacy Momentum Entry On The Geyser Path Ignores Entry Mode [OPEN]
+* **Location:** `pumpfun_trading/bot/handlers/trade.py` (`handle_trade_event_update`, "Momentum Spikes Evaluation" ~L177–232)
+* **Description:** the Geyser trade handler buys on `evaluate_momentum_signal` (`reason="momentum_spike"`) whenever `enable_momentum_signals` is true, without checking `entry_mode`. The momentum preset inherits `enable_momentum_signals: true` from conservative. The PumpPortal handler routes confirmed mode to `maybe_buy_confirmed_momentum`, but the Geyser one does not, and its call passes no `token_creation_timestamp`, so the age gate is skipped too.
+* **Impact:** medium, latent: no `momentum_spike` buy appears in the current captures (PumpPortal stream). Switching to Geyser in confirmed mode would open positions that bypass the age window, market-cap band and the FEAT-56/57/60 flow screens.
+* **Suggested fix:** in confirmed mode, route the Geyser path through `maybe_buy_confirmed_momentum` (or skip the legacy block), and pass the creation time.
+* **Verification to add:** a Geyser trade event in confirmed mode never produces a `momentum_spike` buy.
+
+### BUG-133: Velocity Z-Score Is Capped And Biased For Young Tokens [OPEN]
+* **Location:** `pumpfun_trading/strategies/momentum.py` (`TokenOrderFlowTracker.get_velocity_z_score` ~L258–309)
+* **Description:** slice 0 (the current window) is part of the baseline mean and standard deviation. With N slices the largest possible z is sqrt(N − 1): 3.0 for 30 s windows over 300 s. Slices before the token existed count as zero velocity, which inflates z for any young token with rising activity.
+* **Impact:** medium, latent: the conservative preset's `momentum_min_z_score` of 3.0 passes only when the previous 270 s had no trades at all, and balanced's 2.5 is close to the cap. The momentum preset and canary set it to 0.0, so rc.3 is not affected.
+* **Suggested fix:** compute the baseline from slices 1..N−1 only, and from slices after the token's creation; require a minimum number of baseline slices.
+* **Verification to add:** a property test that z is unbounded above for a quiet baseline followed by a burst, and that pre-creation time is ignored.
+
+### BUG-134: Dynamic Slippage Volatility Term Is Dead, Impact Double Counted [OPEN]
+* **Location:** `pumpfun_trading/execution/policy.py` (`record_curve_update`, `resolve_parameters`), `pumpfun_trading/execution/executor.py` (`_resolve_dynamic_slippage` ~L253–279), `pumpfun_trading/sdk/curve.py` (`estimate_dynamic_slippage` ~L421–479)
+* **Description:** the per-mint volatility estimator is only fed from `_resolve_dynamic_slippage`, once per execution, so its 30 s window rarely holds two observations and `calculate_volatility` returns 0. The impact term uses `calculate_buy_price_impact` (post-trade spot change, about 2·Δx/x) rather than the execution slippage (Δx/x).
+* **Impact:** medium: slippage tolerances are base + roughly twice the real impact, with no response to volatility, so entries in fast markets fail more often and calm ones are looser than needed.
+* **Suggested fix:** feed the estimator from the trade stream (or drop the term), and use `calculate_buy_execution_slippage` / `calculate_sell_execution_slippage` for the impact component.
+* **Verification to add:** after a burst of recorded trades the resolved slippage includes a non-zero volatility component.
+
+### BUG-135: Optimizer Fitness Statistics [OPEN]
+* **Location:** `pumpfun_trading/engines/optimizer.py` (`calculate_sharpe_ratio` / `calculate_sortino_ratio` ~L495–531, `calculate_calmar_ratio` ~L533–542, `evaluate_fitness` ~L544–600, `WalkForwardValidator.split_snapshots` ~L709–723)
+* **Description:** the "Sharpe" and "Sortino" are multiplied by sqrt(n), which makes them t-statistics; scoring a 70% train split against a 30% test split shrinks the test value by about 0.65 for the same edge, which biases `overfit_delta` and `validation_score`. Returns come from records with `action == "sell"` only, so `partial_sell` exits are skipped and each sell is scored on its own (the problem BUG-105 fixed in `bot/pnl.py`). Calmar with zero drawdown returns 10× the return, which favours configs with very few trades.
+* **Impact:** medium: optimizer rankings and the overfit check are distorted, and heavy-tailed results (a few runners) are scored poorly by mean/std.
+* **Suggested fix:** use per-position net returns (buy plus all sells), drop the sqrt(n) scaling or compare train and test on the same scale, require a minimum trade count instead of the zero-drawdown bonus, and report a bootstrap interval alongside the score.
+* **Verification to add:** identical per-trade return distributions on 70% and 30% splits give equal scores.
+
+### BUG-136: Open Positions Marked At Spot [OPEN]
+* **Location:** `pumpfun_trading/bot/position_manager.py` (`calculate_total_open_value` ~L505–527), `pumpfun_trading/bot/risk.py` (`evaluate_portfolio_circuit_breaker` fallback ~L415–439)
+* **Description:** open value is cost × fraction × current/entry market cap, with no sell fee (1.25%), exit price impact or exit slippage.
+* **Impact:** low: equity is slightly overstated, so drawdown checks trigger a little late.
+* **Suggested fix:** value open positions at their estimated liquidation proceeds (`estimate_sell_proceeds` with the paper exit haircut).
+
+### BUG-137: Fragile Market-Cap Units And Fallback [OPEN]
+* **Location:** `pumpfun_trading/sdk/curve.py` (`calculate_market_cap_sol` ~L86–108), `pumpfun_trading/bot/run.py` (`entry_market_cap=float(market_cap_sol or 30.0)` ~L1956)
+* **Description:** `calculate_market_cap_sol` treats any reserve of at least 1,000,000 as lamports, while `total_supply` defaults to raw units, so a caller passing token reserves in whole tokens would be off by 10^6. The `or 30.0` fallback is the virtual SOL reserve, not a market cap (about 27.96 SOL at launch).
+* **Impact:** low: current callers pass consistent units.
+* **Suggested fix:** take explicit units (lamports and raw token units only) and use the launch market cap constant for the fallback, or refuse to open a position with no market cap.
+
+### BUG-138: Fixed Pump.fun Fee Not Checked Against The Current Schedule [OPEN]
+* **Location:** `pumpfun_trading/sdk/execution_types.py` (`PUMP_DEFAULT_FEE_BPS = 125`)
+* **Description:** every modelled fee (paper, replay, cost guard) uses a flat 125 bps per side. Pump.fun's fees may now vary with market cap; this has not been verified.
+* **Impact:** low to medium depending on the real schedule: paper and replay costs would be off by the difference on every trade.
+* **Suggested fix:** confirm the current fee from the program's global/fee config accounts or a few confirmed transactions, and read it at runtime if it varies.
+
+### BUG-139: FEAT-65 Round-Trip Quotes Include Price Drift [OPEN]
+* **Location:** `pumpfun_trading/services/slow_lane.py` (`QuoteRecorder.sample_quotes`, `quote_row`, `backfill_bars`)
+* **Description:** the sell quote is requested about `DEFAULT_QUOTE_REQUEST_GAP_SECONDS` (2 s) after the buy quote, so `round_trip_cost_bps` includes the price move in between. Bars are USD prices from each token's top pool as chosen today.
+* **Impact:** low: the cost estimate is unbiased but noisy (more so for BONK and WIF); SOL-denominated results need SOL's own USD bars, and the token list carries survivorship bias.
+* **Suggested fix:** analyse round-trip cost as a median over many samples per token and size; convert bars to SOL terms; note the pool choice in the analysis.
+
+### BUG-140: Possible Repeat Take-Profit After A Slow Sell (Unverified) [OPEN]
+* **Location:** `pumpfun_trading/strategies/exits.py` (`PENDING_EXIT_TTL_SECONDS = 60.0`, `is_exit_pending` / `mark_exit_pending`), exit retry queue in `pumpfun_trading/bot/run.py`
+* **Description:** a tier is marked pending for 60 s. A sell that runs through the Jito confirmation timeout (12 s), the RPC fallback and the retry queue's escalating attempts could take longer, after which the same tier can be emitted again while the first sell is still in flight.
+* **Impact:** low if the retry queue or the trade lock already prevents it; not verified.
+* **Suggested fix:** check whether an in-flight or queued sell blocks a repeat of its tier; if not, clear the pending mark only when the sell completes or is abandoned.
+* **Verification to add:** a test where the first tier-1 sell takes longer than 60 s must not produce a second tier-1 sell.
