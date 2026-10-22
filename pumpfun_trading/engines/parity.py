@@ -27,6 +27,9 @@ _LIVE_REASON_TO_EXIT_TYPE = {
     "moonbag_floor_hit": "moonbag_floor",
     "trailing_stop_hit": "trailing_stop",
     "take_profit_hit": "take_profit",
+    # Emergency liquidation: the bot writes "circuit_breaker: <lock reason>".
+    "circuit_breaker:": "circuit_breaker_liquidation",
+    "emergency_circuit_breaker_liquidation": "circuit_breaker_liquidation",
 }
 
 

@@ -183,7 +183,7 @@ Run these on a **copy** of the capture, from a second runtime directory, never a
    pumpfun-replay --path data/replay_capture.jsonl --config configs/canary.json \
      --compare-audit data/audit_trail.jsonl --mode summary
    ```
-   Exit code 0 means the replay's net PnL is within tolerance of the audit trail. Explain every "exit differs", "live only" and "replay only" row in the release record before trusting replay for tuning. Live fills at executed prices and real (dynamic) tips, so small gaps are expected.
+   Exit code 0 means the replay's net PnL is within tolerance of the audit trail. Explain every "exit differs", "live only" and "replay only" row in the release record before trusting replay for tuning. Live fills at executed prices and real (dynamic) tips, so small gaps are expected. From rc.4 the replay models the circuit breaker and starts from the paper wallet (FEAT-66): a halted paper day halts in replay too, and the replay summary's `circuit_breaker.locks` should match the paper run's `circuit_breaker` events. Compare a pre-rc.4 result only with `--no-circuit-breaker --initial-cash 100`.
 2. **Exit attribution:** `pumpfun-audit pnl --group-by reason` (live) and the replay `--mode trades` ledger (`reason`, `hold_seconds`) show which exits earn and which give money back. The replay summary's `entry_rejections` shows which risk limit blocked entries.
 3. **Tune** only once parity passes, on at least two days of capture, with the split on a day boundary:
    ```bash
@@ -240,7 +240,7 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
    PUMPFUN_JITO_TIP_LAMPORTS=25000 pumpfun-replay --path capture/replay_capture.jsonl \
      --config configs/canary.json --initial-cash 2.0 --mode summary
    ```
-   Go only if `net_pnl_sol` > 0 and `entries_from` is `confirmed`. If not, do not start Stage 0: re-tune on this capture, then wait for a third one to confirm.
+   Go only if `net_pnl_sol` > 0 and `entries_from` is `confirmed`. From rc.4 this replay also runs canary's circuit breaker (10% daily limit, ratchet floor, 30% cumulative cap; FEAT-66), as Stage 1 would: read `circuit_breaker` in the summary, and treat a cumulative-cap trip as NO-GO. If not, do not start Stage 0: re-tune on this capture, then wait for a third one to confirm.
 
    **Read-out (rc.2 captures on).** The recorder rotates the capture (`replay_capture.jsonl.1.gz` is the newest archived part), so first join the parts, oldest first, into one file and read that:
    ```bash

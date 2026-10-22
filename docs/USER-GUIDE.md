@@ -192,7 +192,12 @@ pumpfun-replay --path runtime/replay_market_data.jsonl --mode summary
 
 # Granular trade execution ledger filtered by token name
 pumpfun-replay --path runtime/replay_market_data.jsonl --mode trades --mint-name SolCat
+
+# Replay with the bot's sizing, exits, costs and circuit breaker, from the paper wallet
+pumpfun-replay --path runtime/replay_market_data.jsonl --config configs/canary.json --mode summary
 ```
+
+With `--config` or `--preset` the replay behaves like the paper bot: same sizing, exits and modelled costs, and the same circuit breaker (daily loss limit, profit ratchet floor, cumulative cap), starting from the paper wallet. The summary shows how often the breaker tripped and how many buys it refused. Add `--no-circuit-breaker` to see the strategy without it ([`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#live-fidelity-replay-sprint-24c-bug-61)).
 
 ### Workflow 4: Forensic Audit & Accounting via `pumpfun-audit`
 Inspect historical execution records, state transitions, slippage, and on-chain reconciliation events:

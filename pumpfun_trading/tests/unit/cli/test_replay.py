@@ -445,3 +445,67 @@ def test_wallet_scores_flag_scores_and_validates(tmp_path, recorded):
     recorded.export_text(clear=True)
     _run("--path", str(capture), "--config", str(zero_delay), "--wallet-scores")
     assert "1.5 s delay" in recorded.export_text()
+
+
+# --- Circuit breaker and paper-wallet cash (FEAT-66) -------------------------
+
+
+def _captured_engine(tmp_path, *argv: str):
+    """Run ``pumpfun-replay`` on an empty capture; return the engine it built."""
+    capture = tmp_path / "capture.jsonl"
+    capture.write_text("", encoding="utf-8")
+    seen: dict = {}
+
+    def fake_run_replay(path, *, engine, **_):
+        seen["engine"] = engine
+        return {}
+
+    parser = build_replay_parser()
+    args = parser.parse_args(["--path", str(capture), "--mode", "summary", *argv])
+    with (
+        patch.object(cli_replay, "run_replay", side_effect=fake_run_replay),
+        patch.object(cli_replay, "render_replay_summary"),
+    ):
+        run_replay_cli(args)
+    return seen["engine"]
+
+
+def test_config_replay_models_the_breaker_from_the_paper_wallet(tmp_path):
+    config = tmp_path / "paper.json"
+    config.write_text(
+        json.dumps({"buy_amount_sol": 0.02, "reserve_balance_sol": 0.1}),
+        encoding="utf-8",
+    )
+    engine = _captured_engine(tmp_path, "--config", str(config))
+    assert engine.circuit_breaker is True
+    # reserve + 10 buys, the wallet a paper bot starts with.
+    assert engine.initial_cash == pytest.approx(0.3)
+
+    config.write_text(
+        json.dumps({"buy_amount_sol": 0.02, "paper_starting_balance_sol": 1.5}),
+        encoding="utf-8",
+    )
+    assert _captured_engine(tmp_path, "--config", str(config)).initial_cash == 1.5
+
+
+def test_no_circuit_breaker_and_initial_cash_flags(tmp_path):
+    engine = _captured_engine(
+        tmp_path,
+        "--preset",
+        "conservative",
+        "--no-circuit-breaker",
+        "--initial-cash",
+        "100",
+    )
+    assert engine.circuit_breaker is False
+    assert engine.initial_cash == 100.0
+
+
+def test_simple_exit_replay_keeps_the_legacy_bankroll(tmp_path):
+    engine = _captured_engine(tmp_path, "--preset", "conservative", "--simple-exits")
+    assert engine.live_fidelity is False
+    assert engine.circuit_breaker is False
+    assert engine.initial_cash == 100.0
+    # --initial-cash alone (no config) keeps the legacy engine.
+    plain = _captured_engine(tmp_path, "--initial-cash", "7")
+    assert plain.circuit_breaker is False and plain.initial_cash == 7.0

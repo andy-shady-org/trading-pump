@@ -255,7 +255,8 @@ pumpfun replay --path <DATASET_PATH> [OPTIONS]
 | `--mode` | `--replay-mode` | Choice | `dashboard` | Output presentation mode: `dashboard`, `summary`, or `trades`. |
 | `--preset` | — | Choice | `None` | Overrides strategy preset (`conservative`, `balanced`, `aggressive`). |
 | `--config` | — | File Path | `None` | Path to custom strategy JSON configuration file. |
-| `--initial-cash` | — | Float | `100.0` | Initial starting capital in SOL for the backtest. |
+| `--initial-cash` | — | Float | paper wallet / `100.0` | Starting cash in SOL. Default with `--config` / `--preset`: the wallet a paper bot starts with (`paper_starting_balance_sol`, else `reserve_balance_sol` + 10 × `buy_amount_sol`); with `--simple-exits`, without a config, and for `--sweep` / `--keep`: `100.0`. |
+| `--no-circuit-breaker` | — | Flag | off | Live-fidelity replay without the bot's circuit breaker (daily limit, profit ratchet floor, cumulative cap, emergency liquidation; FEAT-66). With `--initial-cash 100` it reproduces a replay from before rc.4. |
 | `--simple-exits` | — | Flag | off | With `--config`/`--preset`, use the legacy fraction-of-cash sizing and flat take-profit/stop-loss instead of the live sizing and exit stack. |
 | `--no-costs` | — | Flag | off | Live-fidelity replay without modelled fees, tips and rent (reports gross PnL). |
 | `--tip-lamports` | — | Integer | `PUMPFUN_JITO_TIP_LAMPORTS` | Modelled Jito tip per trade (0 when `PUMPFUN_USE_JITO=false`). |
@@ -607,7 +608,8 @@ The table below summarizes all supported options across the complete CLI command
 | | `--from-mint` | `record` | Exports historical trades for a mint via REST API. |
 | **Replay & Backtest** | `--path`, `--dataset` | `replay`, `audit`, `events`, `optimize` | Input file path for `.jsonl` dataset. |
 | | `--mode` | `replay` | Replay presentation: `dashboard`, `summary`, `trades`. |
-| | `--initial-cash` | `replay` | Starting capital in SOL for backtesting. |
+| | `--initial-cash` | `replay` | Starting capital in SOL for backtesting (default: the paper wallet with a config). |
+| | `--no-circuit-breaker` | `replay` | Do not model the circuit breaker in a live-fidelity replay. |
 | **Optimization** | `--method` | `optimize` | Optimization algorithm (`genetic`, `random`, `grid`). |
 | | `--iterations` / `--generations` | `optimize` | Search budget controls. |
 | | `--population-size` | `optimize` | Genetic algorithm population size. |

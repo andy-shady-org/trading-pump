@@ -154,6 +154,7 @@ from pumpfun_trading.sdk.curve import (
 )
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
 from pumpfun_trading.sdk.fee_config import FeeConfig, bonding_curve_fee_bps
+from pumpfun_trading.strategies.base import simulated_starting_balance_sol
 from pumpfun_trading.strategies.observation import CurveObservationList
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
 from pumpfun_trading.strategies.shadow import (
@@ -1787,10 +1788,7 @@ class TradingBot:
         for long data-capture runs that would otherwise hit the drawdown
         breaker within hours. Live runs overwrite it from the chain.
         """
-        configured = getattr(self.config, "paper_starting_balance_sol", 0.0)
-        if isinstance(configured, (int, float)) and configured > 0:
-            return float(configured)
-        return float(self.config.reserve_balance_sol + self.config.buy_amount_sol * 10)
+        return simulated_starting_balance_sol(self.config)
 
     @contextlib.contextmanager
     def _track_operation(self, kind: str) -> Iterator[None]:
