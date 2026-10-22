@@ -1186,12 +1186,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Suggested fix:** in confirmed mode, route the Geyser path through `maybe_buy_confirmed_momentum` (or skip the legacy block), and pass the creation time.
 * **Verification to add:** a Geyser trade event in confirmed mode never produces a `momentum_spike` buy.
 
-### BUG-133: Velocity Z-Score Is Capped And Biased For Young Tokens [OPEN]
+### BUG-133: Velocity Z-Score Is Capped And Biased For Young Tokens [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/momentum.py` (`TokenOrderFlowTracker.get_velocity_z_score` ~L258–309)
 * **Description:** slice 0 (the current window) is part of the baseline mean and standard deviation. With N slices the largest possible z is sqrt(N − 1): 3.0 for 30 s windows over 300 s. Slices before the token existed count as zero velocity, which inflates z for any young token with rising activity.
 * **Impact:** medium, latent: the conservative preset's `momentum_min_z_score` of 3.0 passes only when the previous 270 s had no trades at all, and balanced's 2.5 is close to the cap. The momentum preset and canary set it to 0.0, so rc.3 is not affected.
-* **Suggested fix:** compute the baseline from slices 1..N−1 only, and from slices after the token's creation; require a minimum number of baseline slices.
-* **Verification to add:** a property test that z is unbounded above for a quiet baseline followed by a burst, and that pre-creation time is ignored.
+* **Resolution:** `get_velocity_z_score` now computes the mean and standard deviation from the earlier slices only (1..N−1), and with `token_creation_timestamp` (now passed through by `evaluate_momentum_signal` and `OrderFlowEngine.get_velocity_z_score`) leaves out slices that start before the token existed. Fewer than `MIN_Z_SCORE_BASELINE_SLICES` (2) give 0.0. The score is no longer capped at sqrt(N − 1), and a young token's steady flow no longer reads as a spike. Behaviour change for the conservative / balanced / aggressive presets (z thresholds 3.0 / 2.5 / 2.0): they now need at least 90 s of trade history after creation before the z-score can pass; the momentum preset and canary (threshold 0) are unaffected. STRATEGY.md §8 describes the baseline.
+* **Verification:** `regression("BUG-133")` tests in `unit/strategies/test_momentum.py`: a burst over an alternating 1/2-trade baseline scores the exact (10 − 13/9)/σ, above the old cap of 3; a 90 s old token with steady flow scores 0 with its creation time (1.9 without), and under two baseline slices gives 0; the signal passes the creation time through.
 
 ### BUG-134: Dynamic Slippage Volatility Term Is Dead, Impact Double Counted [OPEN]
 * **Location:** `pumpfun_trading/execution/policy.py` (`record_curve_update`, `resolve_parameters`), `pumpfun_trading/execution/executor.py` (`_resolve_dynamic_slippage` ~L253–279), `pumpfun_trading/sdk/curve.py` (`estimate_dynamic_slippage` ~L421–479)

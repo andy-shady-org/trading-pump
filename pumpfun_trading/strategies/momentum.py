@@ -15,6 +15,9 @@ from typing import Any, Optional
 
 from pumpfun_trading.strategies.graduation import GRADUATION_REAL_SOL
 
+# Fewest earlier slices a velocity z-score is computed against (BUG-133).
+MIN_Z_SCORE_BASELINE_SLICES = 2
+
 
 def _coefficient_of_variation(values: list[float]) -> float:
     """Population standard deviation over the mean (0 when the mean is 0)."""
@@ -260,8 +263,16 @@ class TokenOrderFlowTracker:
         window_seconds: int = 30,
         baseline_window_seconds: int = 300,
         current_time: Optional[float] = None,
+        token_creation_timestamp: Optional[float] = None,
     ) -> float:
-        """Compute statistical trade velocity Z-score against a longer rolling baseline window."""
+        """Trade velocity of the current window as a Z-score against earlier windows.
+
+        The baseline is the earlier slices only (BUG-133): with the current
+        slice in its own baseline the score could never exceed sqrt(N - 1),
+        3.0 for 30 s over 300 s. With ``token_creation_timestamp`` slices that
+        start before the token existed are left out, since their zero velocity
+        is not a quiet market. Fewer than two baseline slices give 0.0.
+        """
         now = float(
             current_time
             if current_time is not None
@@ -291,10 +302,18 @@ class TokenOrderFlowTracker:
 
         slice_velocities = [count / float(slice_size) for count in slice_counts]
         current_velocity = slice_velocities[0]
+        baseline = [
+            velocity
+            for index, velocity in enumerate(slice_velocities[1:], start=1)
+            if token_creation_timestamp is None
+            or now - (index + 1) * slice_size >= float(token_creation_timestamp)
+        ]
+        if len(baseline) < MIN_Z_SCORE_BASELINE_SLICES:
+            return 0.0
 
-        mean_velocity = sum(slice_velocities) / float(num_slices)
-        variance = sum((v - mean_velocity) ** 2 for v in slice_velocities) / float(
-            num_slices
+        mean_velocity = sum(baseline) / float(len(baseline))
+        variance = sum((v - mean_velocity) ** 2 for v in baseline) / float(
+            len(baseline)
         )
         std_dev = math.sqrt(variance)
 
@@ -337,6 +356,7 @@ class TokenOrderFlowTracker:
             window_seconds=window_seconds,
             baseline_window_seconds=baseline_window_seconds,
             current_time=now,
+            token_creation_timestamp=token_creation_timestamp,
         )
 
         if token_creation_timestamp is not None and max_token_age_seconds is not None:
@@ -635,6 +655,7 @@ class OrderFlowEngine:
         window_seconds: int = 30,
         baseline_window_seconds: int = 300,
         current_time: Optional[float] = None,
+        token_creation_timestamp: Optional[float] = None,
     ) -> float:
         """Compute trade velocity Z-score for a token."""
         tracker = self._trackers.get(mint)
@@ -644,6 +665,7 @@ class OrderFlowEngine:
             window_seconds=window_seconds,
             baseline_window_seconds=baseline_window_seconds,
             current_time=current_time,
+            token_creation_timestamp=token_creation_timestamp,
         )
 
     def evaluate_momentum_signal(

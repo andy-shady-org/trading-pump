@@ -439,6 +439,7 @@ To capture explosive momentum breakouts on active Pump.fun bonding curves before
 2. **Trade Velocity Z-Score**: Evaluates active trade velocity ($v_0$) against rolling baseline mean ($\mu$) and standard deviation ($\sigma$):
    $$Z = \frac{v_0 - \mu}{\sigma}$$
    Flags momentum breakouts when $Z \ge 2.5$.
+   $\mu$ and $\sigma$ come from the earlier 30 s slices only, not the current one, and only from slices that start after the token was created; with fewer than two such slices $Z = 0$ (BUG-133).
 3. **Sybil Resistance**: Enforces minimum unique buyer wallet count ($\ge 3$) and net capital deployment ($\ge 0.5\text{ SOL}$).
 
 ### Configuration Example & Parameter Matrix

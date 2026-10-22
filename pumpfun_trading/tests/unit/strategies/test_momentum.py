@@ -726,3 +726,70 @@ def test_get_metrics_can_leave_out_wallets() -> None:
     )
     assert everyone.buy_volume_sol == pytest.approx(2.5)
     assert others.buy_volume_sol == pytest.approx(0.5) and others.unique_buyers == 1
+
+
+def _trades(tracker: TokenOrderFlowTracker, now: float, counts: list[int]) -> None:
+    """``counts[i]`` trades in slice ``i`` (slice 0 is the current 30 s)."""
+    for index, count in enumerate(counts):
+        for n in range(count):
+            tracker.record_trade(
+                is_buy=True,
+                sol_amount=0.1,
+                user=f"u{index}-{n}",
+                timestamp=now - index * 30 - 1 - n,
+            )
+
+
+@pytest.mark.regression("BUG-133")
+def test_velocity_z_score_is_not_capped_by_its_own_slice() -> None:
+    tracker = TokenOrderFlowTracker(mint="MintBurst", max_retention_seconds=600)
+    now = 1_000.0
+    # Earlier slices alternate 1 and 2 trades; then 10 in the current slice.
+    _trades(tracker, now, [10, 1, 2, 1, 2, 1, 2, 1, 2, 1])
+    z = tracker.get_velocity_z_score(30, 300, current_time=now)
+    # Old code: the burst was in its own baseline, so z <= sqrt(9) = 3.
+    assert z > 3.0
+    # Baseline velocities: four slices of 2 and five of 1 (per 30 s).
+    mean = 13 / 9
+    std = ((4 * (2 - mean) ** 2 + 5 * (1 - mean) ** 2) / 9) ** 0.5
+    assert z == pytest.approx((10 - mean) / std, rel=1e-3)
+
+
+@pytest.mark.regression("BUG-133")
+def test_velocity_z_score_ignores_slices_before_the_token_existed() -> None:
+    now = 1_000.0
+    steady = TokenOrderFlowTracker(mint="MintYoung", max_retention_seconds=600)
+    # A 90 s old token with the same 3 trades in each of its three slices.
+    _trades(steady, now, [3, 3, 3])
+    inflated = steady.get_velocity_z_score(30, 300, current_time=now)
+    assert inflated > 1.5  # the empty pre-creation slices look like a quiet market
+    assert steady.get_velocity_z_score(
+        30, 300, current_time=now, token_creation_timestamp=now - 90
+    ) == pytest.approx(0.0)
+
+    # Under two full baseline slices after creation there is no score.
+    assert (
+        steady.get_velocity_z_score(
+            30, 300, current_time=now, token_creation_timestamp=now - 60
+        )
+        == 0.0
+    )
+
+
+@pytest.mark.regression("BUG-133")
+def test_momentum_signal_passes_the_creation_time_to_the_z_score() -> None:
+    tracker = TokenOrderFlowTracker(mint="MintSignal", max_retention_seconds=600)
+    now = 1_000.0
+    _trades(tracker, now, [3, 3, 3])
+    signal = tracker.evaluate_momentum_signal(
+        window_seconds=30,
+        min_buy_ratio=1.0,
+        min_z_score=1.0,
+        min_unique_buyers=1,
+        min_net_inflow_sol=0.1,
+        token_creation_timestamp=now - 90,
+        max_token_age_seconds=600,
+        current_time=now,
+    )
+    assert signal.z_score == 0.0
+    assert signal.triggered is False
