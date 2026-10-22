@@ -20,6 +20,7 @@
   "min_balance_sol": 0.1,
   "auto_liquidate_on_circuit_breaker": true,
   "profit_drawdown_tolerance_pct": 0.45,
+  "profit_ratchet_ratio": 0.0,
 
   "watch_ttl_seconds": 600.0,
   "watch_max_mints": 300,

@@ -203,6 +203,7 @@ A paper run whose only job is to record trade flow with the funded API key, so t
 | `max_daily_drawdown_pct` | `0.5` | `0.10` | Keep recording all day |
 | `max_active_positions` / `max_total_exposure_sol` | `5` / `0.05` | `2` / `0.03` | More tokens with trade data per hour |
 | `stagnant_timeout_seconds` | `120` | `45` | Trade data past 45 s, so replay can compare both timeouts |
+| `profit_ratchet_ratio` | `0.0` | default (0.50) | The ratchet floor (BUG-127) would halt buys after a small winning stretch; a capture keeps buying |
 
 Run it from the runtime directory into its own folder (the `.envrc` paths point at `data/`):
 
