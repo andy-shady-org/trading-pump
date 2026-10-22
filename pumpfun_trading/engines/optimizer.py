@@ -492,10 +492,48 @@ class FitnessScore:
     net_pnl: float = 0.0
 
 
+# Calmar's drawdown floor: a run with no drawdown is not infinitely good, it
+# usually just traded too little to have one (BUG-135).
+MIN_CALMAR_DRAWDOWN = 0.01
+
+
+def position_returns(trades: Sequence[dict[str, Any]]) -> list[float]:
+    """Net return per closed position: its buy and all its sells (BUG-135).
+
+    Live-fidelity replay records a partial exit as a ``sell`` with
+    ``partial: True`` and its own ``cost`` share; those are summed until the
+    full exit, so a take-profit tier and the rest of the position count once,
+    as ``bot/pnl.py`` scores them (BUG-105). A sell without a ``cost`` closes a
+    whole position and contributes its ``return_pct``.
+    """
+    open_positions: dict[str, list[float]] = {}
+    returns: list[float] = []
+    for trade in trades:
+        if trade.get("action") != "sell":
+            continue
+        cost = trade.get("cost")
+        if cost is None:
+            if "return_pct" in trade:
+                returns.append(float(trade["return_pct"]))
+            continue
+        booked = open_positions.setdefault(str(trade.get("mint") or ""), [0.0, 0.0])
+        booked[0] += float(trade.get("pnl") or 0.0)
+        booked[1] += float(cost or 0.0)
+        if not trade.get("partial"):
+            pnl, basis = open_positions.pop(str(trade.get("mint") or ""))
+            returns.append(pnl / basis if basis > 0 else 0.0)
+    return returns
+
+
 def calculate_sharpe_ratio(
     returns: Sequence[float], risk_free_rate: float = 0.0
 ) -> float:
-    """Calculates annualizable Sharpe Ratio from a sequence of trade percentage returns."""
+    """Per-trade Sharpe ratio: mean excess return over its standard deviation.
+
+    Not scaled by sqrt(n) (BUG-135): that made it a t-statistic, so a 30%
+    test split scored about 0.55x a 70% train split with the same edge and
+    biased the overfit check.
+    """
     if not returns or len(returns) < 2:
         return 0.0
     mean_ret = sum(returns) / len(returns)
@@ -507,8 +545,7 @@ def calculate_sharpe_ratio(
             if mean_ret > risk_free_rate
             else (0.0 if mean_ret == risk_free_rate else -1.0)
         )
-    # Scale by square root of trade count to normalize sample size
-    return ((mean_ret - risk_free_rate) / std_dev) * math.sqrt(len(returns))
+    return (mean_ret - risk_free_rate) / std_dev
 
 
 def calculate_sortino_ratio(
@@ -527,18 +564,16 @@ def calculate_sortino_ratio(
             if mean_ret > risk_free_rate
             else (0.0 if mean_ret == risk_free_rate else -1.0)
         )
-    return ((mean_ret - risk_free_rate) / downside_std) * math.sqrt(len(returns))
+    return (mean_ret - risk_free_rate) / downside_std
 
 
 def calculate_calmar_ratio(total_return: float, max_drawdown: float) -> float:
-    """Calculates Calmar Ratio as return divided by maximum drawdown."""
-    if max_drawdown <= 1e-9:
-        return (
-            total_return * 10.0
-            if total_return > 0
-            else (0.0 if total_return == 0 else -10.0)
-        )
-    return total_return / max_drawdown
+    """Return over maximum drawdown, the drawdown floored at 1% (BUG-135).
+
+    A zero drawdown used to score 10x the return, which rewarded configs that
+    barely traded.
+    """
+    return total_return / max(float(max_drawdown), MIN_CALMAR_DRAWDOWN)
 
 
 def evaluate_fitness(
@@ -550,11 +585,8 @@ def evaluate_fitness(
     """
     Evaluates multi-objective fitness score from replay simulation outputs.
     """
-    sell_returns = [
-        float(t["return_pct"])
-        for t in trades
-        if t.get("action") == "sell" and "return_pct" in t
-    ]
+    # Scored per position, never per sell (BUG-135, as BUG-105 in bot/pnl.py).
+    sell_returns = position_returns(trades)
 
     total_return = float(summary.get("total_return", 0.0))
     max_drawdown = float(summary.get("max_drawdown", 0.0))
