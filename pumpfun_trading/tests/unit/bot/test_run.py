@@ -3196,6 +3196,9 @@ async def test_bot_safe_startup_and_edge_branches(tmp_path):
     bot.alert_discord_webhook_url = "https://discord.com/hook"
     bot._configure_alerting()
     assert bot.alert_enabled is True
+    # The calls below raise alerts; never post them to the real webhook (BUG-143).
+    sent_alerts: list[str] = []
+    bot._send_alert = sent_alerts.append  # type: ignore[method-assign, assignment]
 
     # Validate mint address
     assert TradingBot.validate_mint_address(SAMPLE_MINT) == SAMPLE_MINT

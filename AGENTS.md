@@ -86,6 +86,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[REVIEW] Fix Branches Touch Shared Lines:** fourteen one-bug branches conflicted in `bot/run.py`, `tests/unit/bot/test_run.py` and the BUGS.md status table. Insert new tests at different anchors, update only the bug's own BUGS.md section on its branch, flip status rows on the integration branch, and run the merged suite before calling a set of fixes done.
 - **[RISK] A Ratchet Only Moves Up:** the BUG-127 floor was built from net realized PnL, so a closed loss after a win lowered it and the floor never held (BUG-141). Build a ratchet from a running peak, persist the peak, and test it with the giveback realized by closed trades, not only marked on open ones.
 - **[DOCS] A Documented Variable Must Be Read:** the env manual listed `PUMPFUN_DRY_RUN` and 50 other names no code reads (BUG-142). Never document a variable, alias or default without grepping the code for it; `unit/config/test_env.py` checks the §2 matrix. Don't wire up a long-documented name silently either: warn when it is set, then decide.
+- **[TESTS] Proxies And Threads Bypass The DNS Guard:** a test posted a real Discord alert: `urllib` sent it to the local `HTTPS_PROXY`, and the alert worker thread ran after the per-test guard was undone (BUG-143). Keep every file a bot writes inside `tmp_path`, capture alerts in tests, and never rely on DNS blocking alone for a client that honours proxy variables.
 
 ## Project Overview
 
