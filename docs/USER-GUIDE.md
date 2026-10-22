@@ -211,7 +211,12 @@ pumpfun-audit --path runtime/audit_trail.jsonl --summary
 
 # Filter audit records by specific token or mint
 pumpfun-audit --path runtime/audit_trail.jsonl --mint-name SolCat --limit 20
+
+# Go / no-go on a paper run, with the rule fixed before the run (exit code 0 = GO)
+pumpfun-audit verdict --path runtime/audit_trail.jsonl --rules configs/verdict_rules.json --strategy momentum
 ```
+
+`verdict` only says GO when a paper run's profit survives a margin for live costs, holds in both halves and on most days, does not rest on a few lucky trades, and is statistically above zero. See [`AUDIT-TOOL.md`](AUDIT-TOOL.md#go--no-go-verdict-feat-67).
 
 ### Workflow 5: Market Stream Harvesting & Replay Dataset Generation (FEAT-21)
 Capture live market quotes or generate deterministic synthetic price curves for strategy calibration without financial risk:

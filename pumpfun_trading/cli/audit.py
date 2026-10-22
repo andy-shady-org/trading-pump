@@ -24,6 +24,7 @@ from pumpfun_trading.bot.selection import (
     selection_report,
 )
 from pumpfun_trading.bot.sweep import sweep_payloads
+from pumpfun_trading.bot.verdict import VERDICT_GO, VerdictRules, evaluate_verdict
 from pumpfun_trading.bot.reconcile import (
     DEFAULT_TOLERANCE_ABS_SOL,
     DEFAULT_TOLERANCE_PCT,
@@ -36,7 +37,7 @@ from pumpfun_trading.ops.logging import get_configured_console
 
 console = get_configured_console()
 
-AUDIT_COMMANDS = ("pnl", "reconcile", "cuts")
+AUDIT_COMMANDS = ("pnl", "reconcile", "cuts", "verdict")
 
 
 def build_parser(
@@ -58,7 +59,8 @@ def build_parser(
         help=(
             "pnl: net PnL report (fees, tips, rent); reconcile: compare the audit "
             "trail with the wallet on-chain; cuts: entry rules against a random "
-            "cut. Omit to list records."
+            "cut; verdict: pre-registered go / no-go rule (exit code 1 on NO-GO). "
+            "Omit to list records."
         ),
     )
     parser.add_argument("--path", required=True, help="Path to the JSONL audit file")
@@ -133,14 +135,56 @@ def build_parser(
     parser.add_argument(
         "--strategy",
         default=None,
-        help="cuts: only positions of this lane (momentum, pre_graduation, launch)",
+        help=(
+            "cuts / verdict: only positions of this lane (momentum, "
+            "pre_graduation, launch)"
+        ),
     )
     parser.add_argument(
         "--split-at",
         default=None,
         metavar="mid|TIMESTAMP",
-        help="cuts: also report halves A/B split at this entry time ('mid' = middle)",
+        help=(
+            "cuts: also report halves A/B split at this entry time ('mid' = "
+            "middle); verdict: where the two halves split (rule default: mid)"
+        ),
     )
+    verdict = parser.add_argument_group(
+        "verdict", "Override a rule of the --rules file (FEAT-67)"
+    )
+    verdict.add_argument(
+        "--rules",
+        default=None,
+        metavar="RULES.json",
+        help=(
+            "verdict: the pre-registered rule file (e.g. configs/verdict_rules.json); "
+            "built-in defaults when omitted"
+        ),
+    )
+    verdict.add_argument("--min-positions", type=int, default=None)
+    verdict.add_argument("--min-net-sol", type=float, default=None)
+    verdict.add_argument(
+        "--exit-haircut-bps",
+        type=float,
+        default=None,
+        help="verdict: extra cut on every sell's proceeds, on top of paper's",
+    )
+    verdict.add_argument(
+        "--tip-lamports",
+        type=int,
+        default=None,
+        help="verdict: Jito tip per transaction; smaller recorded tips are topped up",
+    )
+    verdict.add_argument("--min-positive-day-share", type=float, default=None)
+    verdict.add_argument(
+        "--drop-top",
+        type=int,
+        default=None,
+        help="verdict: best positions removed for the robustness check",
+    )
+    verdict.add_argument("--bootstrap-samples", type=int, default=None)
+    verdict.add_argument("--confidence", type=float, default=None)
+    verdict.add_argument("--seed", type=int, default=None)
     parser.add_argument(
         "--capture",
         default=None,
@@ -442,6 +486,9 @@ def _run_audit_command(
     if command == "cuts":
         _run_cuts(args, trades)
         return
+    if command == "verdict":
+        _run_verdict(args, trades)
+        return
     if command == "pnl":
         summary = summarize_pnl(trades, group_by=getattr(args, "group_by", None))
         if args.json:
@@ -505,6 +552,92 @@ def _run_cuts(args: argparse.Namespace, trades: list[dict[str, Any]]) -> None:
         render_selection_report(report)
 
 
+def verdict_rules_from_args(args: argparse.Namespace) -> VerdictRules:
+    """The ``--rules`` file (or the defaults) with any flag overrides."""
+    path = getattr(args, "rules", None)
+    rules = VerdictRules.from_file(path) if path else VerdictRules()
+    return rules.with_overrides(
+        min_positions=getattr(args, "min_positions", None),
+        min_net_sol=getattr(args, "min_net_sol", None),
+        exit_haircut_bps=getattr(args, "exit_haircut_bps", None),
+        tip_lamports=getattr(args, "tip_lamports", None),
+        split_at=getattr(args, "split_at", None),
+        min_positive_day_share=getattr(args, "min_positive_day_share", None),
+        drop_top=getattr(args, "drop_top", None),
+        bootstrap_samples=getattr(args, "bootstrap_samples", None),
+        confidence=getattr(args, "confidence", None),
+        seed=getattr(args, "seed", None),
+        strategy=getattr(args, "strategy", None),
+    )
+
+
+def render_verdict(report: dict[str, Any], out: Any = None) -> None:
+    target = out or console
+    colour = "green" if report["verdict"] == VERDICT_GO else "red"
+    target.print(
+        f"[bold {colour}]Verdict: {report['verdict']}[/bold {colour}]  "
+        f"rules sha256 {report['rules_sha256'][:16]}…"
+    )
+    target.print(
+        f"{report['positions']} closed positions ({report['open_positions']} still "
+        f"open, not judged); net {_fmt_sol(report['net_sol'])} SOL, exit haircut "
+        f"{_fmt_sol(-report['haircut_sol'])}, tip top-up "
+        f"{_fmt_sol(-report['extra_tip_sol'])}, adjusted "
+        f"{_fmt_sol(report['adjusted_net_sol'])} SOL"
+    )
+    table = Table(title="Go / no-go checks", header_style="bold cyan")
+    table.add_column("Check")
+    table.add_column("Result")
+    table.add_column("Value")
+    table.add_column("Needs")
+    table.add_column("Detail")
+    for check in report["checks"]:
+        value = check["value"]
+        if isinstance(value, float):
+            shown = (
+                f"{value:+.6f}" if check["check"] != "positive_days" else f"{value:.0%}"
+            )
+        elif isinstance(value, dict):
+            shown = ", ".join(f"{k} {v:+.6f}" for k, v in value.items())
+        else:
+            shown = str(value)
+        table.add_row(
+            check["check"],
+            "[green]pass[/green]" if check["passed"] else "[red]FAIL[/red]",
+            shown,
+            str(check["threshold"]),
+            check["detail"],
+        )
+    target.print(table)
+    days = Table(title="Per UTC day (entry time)", header_style="bold cyan")
+    days.add_column("Day")
+    days.add_column("Positions", justify="right")
+    days.add_column("Adjusted net SOL", justify="right")
+    for day, row in report["days"].items():
+        days.add_row(day, str(row["positions"]), _fmt_sol(row["adjusted_net_sol"]))
+    target.print(days)
+    target.print(
+        "Without the best N positions: "
+        + ", ".join(f"{n}: {_fmt_sol(v)}" for n, v in report["without_top_sol"].items())
+    )
+
+
+def _run_verdict(args: argparse.Namespace, trades: list[dict[str, Any]]) -> None:
+    try:
+        rules = verdict_rules_from_args(args)
+    except (TypeError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(2) from exc
+    report = evaluate_verdict(trades, rules)
+    if args.json:
+        console.print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        render_verdict(report)
+    if report["verdict"] != VERDICT_GO:
+        # Non-zero exit so a scripted gate stops on NO-GO.
+        raise SystemExit(1)
+
+
 def main() -> None:
     run_audit_cli()
 
@@ -515,5 +648,7 @@ __all__ = [
     "render_pnl_summary",
     "render_reconciliation",
     "render_selection_report",
+    "render_verdict",
     "run_audit_cli",
+    "verdict_rules_from_args",
 ]

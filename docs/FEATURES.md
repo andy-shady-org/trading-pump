@@ -545,3 +545,11 @@ Measurement only: these inputs are recorded and can be used as shadow filters an
 - **Read-Out**: summary block `circuit_breaker` (trips, liquidations, locks with reason, refused buys, state at the end) and a summary-table row; refused buys count as `entry_rejections.circuit_breaker`. On by default for plain replays and `--compare-audit`; `--no-circuit-breaker` turns it off. Sweeps, `--keep`, shadow tools and the optimizer do not model it.
 - **Not modelled**: the operator pause and `SIGUSR1` resume, the profit sweep's withdrawals, and the live balance-read guard (BUG-130); replay has no wallet RPC.
 
+---
+
+## 39. Pre-Registered Paper Verdict (FEAT-67)
+
+- **`pumpfun-audit verdict`** (`bot/verdict.py`, `cli/audit.py`): judges a paper audit trail with a rule fixed before the run (`--rules configs/verdict_rules.json`, single rules overridable by flag), and prints the rule's SHA-256 for the release record. Exit code 0 on GO, 1 on NO-GO, 2 on a bad rule.
+- **Adjusted Net**: each closed position's recorded net, less `exit_haircut_bps` of its sell proceeds and a top-up of every transaction's tip to `tip_lamports`; open positions are counted and left out; `--strategy` judges one lane.
+- **Checks**: minimum positions, net above `min_net_sol`, both halves positive, share of positive UTC days, positive without the `drop_top` best positions, and a seeded bootstrap interval of the mean per position whose lower bound must be above zero. Per-day nets and the net without the best 0–5 positions are reported.
+

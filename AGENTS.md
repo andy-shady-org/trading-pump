@@ -141,7 +141,7 @@ Accessible to end-users, quant traders, and bot operators; planned to be publish
 * [**`docs/RISK.md`**](docs/RISK.md): Multi-tier capital preservation, position concentration caps, daily hard-stop circuit breakers (FEAT-09), startup on-chain reconciliation, and emergency exit queues.
 * [**`docs/TERMINAL-UI.md`**](docs/TERMINAL-UI.md): Rich console dashboard manual, sub-millisecond slot latency telemetry, and multi-channel alerting (Discord, Slack, Telegram) for operator self-funding.
 * [**`docs/WEB-UI.md`**](docs/WEB-UI.md): Architecture specification for the hosted multi-tenant Web Dashboard (FEAT-10): FastAPI control plane, Vue 3 + Vuetify MD3 PWA, container-per-tenant bots, zero-knowledge key ingestion, draft API, and terminal UI deprecation roadmap.
-* [**`docs/FEATURES.md`**](docs/FEATURES.md): Catalog of shipped capabilities only (§1–38); unbuilt parts are marked **Not built** and tracked in `docs/dev/PROPOSED-FEATURES.md`.
+* [**`docs/FEATURES.md`**](docs/FEATURES.md): Catalog of shipped capabilities only (§1–39); unbuilt parts are marked **Not built** and tracked in `docs/dev/PROPOSED-FEATURES.md`.
 * [**`docs/REPLAY-ENGINE.md`**](docs/REPLAY-ENGINE.md): Historical market replay and strategy backtesting simulator (`pumpfun-replay`).
 * [**`docs/AUDIT-TOOL.md`**](docs/AUDIT-TOOL.md): Forensic trade accounting and telemetry inspection CLI (`pumpfun-audit`).
 
@@ -197,7 +197,7 @@ The package exposes dedicated, high-performance CLI entry points:
 * `pumpbot`: Start the live trading bot runtime (with `--preset`, `--headless`, `--dry-run` flags). `SIGUSR1` toggles the operator pause (no new buys, exits continue); exit code 1 means the stream loop ended without a shutdown request.
 * `pumpfun-replay`: Run historical market replays, strategy backtests, and trade simulations from recorded JSONL datasets.
 * `pumpfun-recorder`: Harvest live market streams, generate synthetic scenarios, or export token trades to replay files.
-* `pumpfun-audit`: Query, filter, and inspect structured JSONL audit trails with Rich table rendering.
+* `pumpfun-audit`: Query, filter, and inspect structured JSONL audit trails with Rich table rendering; `pnl`, `reconcile`, `cuts` and `verdict` (pre-registered go / no-go, exit code 1 on NO-GO).
 * `pumpfun-events`: Query, inspect, filter, and tail structured diagnostic runtime event streams.
 * `pumpfun-optimize`: Run genetic, random, and grid hyperparameter backtest optimization over historical replay datasets.
 * `pumpfun-arb`: Monitor cross-venue spot price disparities and simulate/execute atomic Jito arbitrage bundles.
