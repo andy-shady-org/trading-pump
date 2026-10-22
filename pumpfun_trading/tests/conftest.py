@@ -37,22 +37,56 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         item.add_marker(_layer_marker(Path(item.path)))
 
 
-@pytest.fixture(autouse=True)
-def block_external_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fail fast on any DNS lookup of a non-local host.
+# HTTP clients send requests for any host to a configured proxy, which is a
+# local address, so the DNS guard below never sees the real host (BUG-143).
+_PROXY_ENV = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+_SESSION_GETADDRINFO: dict[str, Any] = {}
 
-    Tests that quietly reached mainnet passed locally and failed in CI when the
-    public RPC answered HTTP 429. Mock the client instead of opening a socket.
-    """
-    real_getaddrinfo = socket.getaddrinfo
 
+def _guard_getaddrinfo(real_getaddrinfo: Any) -> Any:
     def guarded_getaddrinfo(host, *args, **kwargs):
         name = host.decode() if isinstance(host, bytes) else str(host or "")
         if name not in _LOCAL_HOSTS:
             raise socket.gaierror(f"external network disabled in tests: {name}")
         return real_getaddrinfo(host, *args, **kwargs)
 
-    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
+    return guarded_getaddrinfo
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Block DNS for the whole session, not only inside a test (BUG-143).
+
+    A background thread that outlives its test (an alert worker) runs after
+    the per-test guard is undone; this one is still in place.
+    """
+    _SESSION_GETADDRINFO["real"] = socket.getaddrinfo
+    socket.getaddrinfo = _guard_getaddrinfo(socket.getaddrinfo)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    real = _SESSION_GETADDRINFO.pop("real", None)
+    if real is not None:
+        socket.getaddrinfo = real
+
+
+@pytest.fixture(autouse=True)
+def block_external_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail fast on any DNS lookup of a non-local host.
+
+    Tests that quietly reached mainnet passed locally and failed in CI when the
+    public RPC answered HTTP 429. Mock the client instead of opening a socket.
+    Proxy variables are removed too, or the request goes through the proxy.
+    """
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(socket, "getaddrinfo", _guard_getaddrinfo(socket.getaddrinfo))
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +107,8 @@ def isolate_test_environment(
     monkeypatch.setenv("PUMPFUN_AUDIT_LOG", isolated_audit_path)
     # Without it every TradingBot appended to ``bot.log`` in the working directory.
     monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", str(tmp_path / "bot.log"))
+    # ... and wrote its diagnostic events to ``events.jsonl`` there (BUG-143).
+    monkeypatch.setenv("PUMPFUN_EVENT_LOG_PATH", str(tmp_path / "events.jsonl"))
 
     from pumpfun_trading.execution.executor import OrderExecutor
 
