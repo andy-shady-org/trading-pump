@@ -620,7 +620,7 @@ class TradingBot:
             # Resuming after the cumulative loss cap is the operator's reset:
             # the cap is measured again from the equity as it is now (BUG-128).
             equity = float(self.wallet_balance_sol) + float(
-                self.position_manager.calculate_total_open_value()
+                self._open_positions_exit_value()
             )
             tracker.reset_circuit_breaker(new_baseline_sol=equity)
             self._risk_killed = False

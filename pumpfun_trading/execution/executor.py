@@ -308,7 +308,7 @@ class OrderExecutor:
         except Exception:
             reserves = None
         if reserves is not None:
-            market_cap = calculate_market_cap_sol(reserves[0], reserves[1])
+            market_cap = market_cap_sol_from_reserves(reserves[0], reserves[1])
             if market_cap > 0:
                 return float(market_cap), "post_fill_curve"
         return None, "signal"
