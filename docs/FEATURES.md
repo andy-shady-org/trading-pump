@@ -209,6 +209,8 @@ Not implemented: the package has no FastAPI service, web dashboard, in-app docs 
 
 ## 16. Raydium Migration Sniping & Graduation Momentum Engine (FEAT-05)
 
+> **Off by default (rc.4, BUG-131):** `enable_raydium_migration_sniping` is `false` in every preset, because Pump.fun migrates into PumpSwap, not Raydium (BUG-123). A Raydium position takes its entry market cap from the live fill (or from the first price it sees), no longer a fixed 69 SOL.
+
 - **Real-Time SOL Reserve & Completion Monitoring**: Sub-millisecond tracking of bonding curve real and virtual SOL reserves (`GraduationEngine`, `GraduationTracker`), automatically staging candidates reaching pre-migration threshold ($\ge 80.0\text{ SOL}$ or $\ge 95\%$ curve progress).
 - **Sub-Slot Raydium AMM v4 Decoding**: Zero-copy binary parser and transaction decoder (`RaydiumPoolKeys`, `parse_raydium_initialize2_accounts`, `parse_raydium_pool_from_tx`) extracting AMM ID, token vaults, LP mint, and OpenBook market state from on-chain `Initialize2` transactions within $<0.2\text{ms}$.
 - **Native Raydium Swap Instruction Serialization**: Constructs byte-exact Solana instructions (`build_raydium_swap_instruction`) for Raydium AMM v4 `SwapBaseIn` (discriminator `9`), handling associated token account creation, compute budget priority fees, and slippage calculations (`calculate_raydium_swap_out`).

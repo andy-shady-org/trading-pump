@@ -33,6 +33,12 @@ INITIAL_VIRTUAL_SOL_LAMPORTS: int = 30_000_000_000
 INITIAL_VIRTUAL_TOKEN_RAW: int = 1_073_000_000_000_000
 TOTAL_TOKEN_SUPPLY_RAW: int = 1_000_000_000_000_000
 CURVE_OFFSET_TOLERANCE: float = 0.01
+# Market cap of a fresh curve: 30 SOL virtual x 1e9 supply / 1.073e9 virtual
+# tokens, about 27.96 SOL. The 30 SOL figure is the virtual reserve, not a
+# market cap (BUG-137).
+LAUNCH_MARKET_CAP_SOL: float = (INITIAL_VIRTUAL_SOL_LAMPORTS / 1_000_000_000.0) * (
+    TOTAL_TOKEN_SUPPLY_RAW / INITIAL_VIRTUAL_TOKEN_RAW
+)
 
 
 def curve_reserve_anomaly(
@@ -90,6 +96,12 @@ def calculate_market_cap_sol(
 ) -> float:
     """Calculate market capitalization in SOL based on current spot price and total token supply.
 
+    The SOL side is *guessed*: a value of at least 1,000,000 is read as lamports.
+    ``virtual_token_reserves`` and ``total_supply`` must be in the same unit
+    (raw by default), or the result is off by 10^6. Code that holds on-chain
+    reserves should call :func:`market_cap_sol_from_reserves`, which takes
+    explicit units (BUG-137).
+
     Args:
         virtual_sol_reserves: Virtual SOL reserves (SOL or Lamports).
         virtual_token_reserves: Virtual token reserves (tokens or raw units).
@@ -106,6 +118,23 @@ def calculate_market_cap_sol(
         sol_amount = sol_amount / 1_000_000_000.0
 
     return sol_amount * (float(total_supply) / float(virtual_token_reserves))
+
+
+def market_cap_sol_from_reserves(
+    virtual_sol_lamports: Number,
+    virtual_token_raw: Number,
+    total_supply_raw: Number = TOTAL_TOKEN_SUPPLY_RAW,
+) -> float:
+    """Market cap in SOL from on-chain reserves with explicit units (BUG-137).
+
+    Lamports and raw token units only, as the bonding-curve account stores
+    them; no unit guessing. Returns 0.0 for empty or invalid reserves.
+    """
+    if virtual_sol_lamports <= 0 or virtual_token_raw <= 0 or total_supply_raw <= 0:
+        return 0.0
+    return (float(virtual_sol_lamports) / 1_000_000_000.0) * (
+        float(total_supply_raw) / float(virtual_token_raw)
+    )
 
 
 def calculate_buy_tokens_out(
@@ -446,9 +475,12 @@ class BondingCurveVolatilityEstimator:
         vol = self.calculate_volatility(window_seconds=30.0)
         vol_bps = vol * 10_000.0 * self.alpha_volatility
 
+        # The slippage a fill pays is the gap between its average price and
+        # the pre-trade spot (dx/x on a buy), not the post-trade spot move,
+        # which is about twice that (BUG-134).
         if is_buy:
-            impact = calculate_buy_price_impact(
-                trade_amount_sol, virtual_sol_reserves, virtual_token_reserves
+            impact = calculate_buy_execution_slippage(
+                trade_amount_sol, virtual_sol_reserves
             )
         else:
             token_est = 0.0
@@ -458,9 +490,7 @@ class BondingCurveVolatilityEstimator:
                 )
                 token_est = (trade_amount_sol / spot) if spot > 0 else 0.0
             impact = abs(
-                calculate_sell_price_impact(
-                    token_est, virtual_sol_reserves, virtual_token_reserves
-                )
+                calculate_sell_execution_slippage(token_est, virtual_token_reserves)
             )
 
         impact_bps = impact * 10_000.0 * self.beta_impact

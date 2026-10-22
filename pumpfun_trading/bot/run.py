@@ -112,7 +112,7 @@ from pumpfun_trading.execution.arbitrage import (
     AtomicArbitrageBuilder,
     AtomicArbitrageExecutor,
 )
-from pumpfun_trading.execution.executor import OrderExecutor
+from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.execution.sell_pipeline import (
     estimate_sell_proceeds,
@@ -146,7 +146,14 @@ from pumpfun_trading.sdk.costs import (
     COST_SOURCE_TRANSACTION_META,
     TransactionCosts,
 )
+from pumpfun_trading.sdk.curve import (
+    INITIAL_VIRTUAL_SOL_LAMPORTS,
+    INITIAL_VIRTUAL_TOKEN_RAW,
+    LAUNCH_MARKET_CAP_SOL,
+    TOTAL_TOKEN_SUPPLY_RAW,
+)
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
+from pumpfun_trading.sdk.fee_config import FeeConfig, bonding_curve_fee_bps
 from pumpfun_trading.strategies.observation import CurveObservationList
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
 from pumpfun_trading.strategies.shadow import (
@@ -320,6 +327,9 @@ class TradingBot:
 
         self.daily_equity_tracker = DailyEquityTracker()
         self.wallet_balance_sol = self._initial_simulated_balance()
+        # Live runs start from the simulated figure above until the first real
+        # balance read; the breaker must not baseline the day on it (BUG-130).
+        self._live_balance_confirmed = False
         self.screening_cache = ScreeningCache(
             default_ttl=float(self.config.screening_cache_ttl_seconds)
         )
@@ -605,6 +615,19 @@ class TradingBot:
         if not self._operator_pause.resume(source=source):
             return False
         self._on_pause_change(f"buying resumed (via {source})")
+        tracker = getattr(self, "daily_equity_tracker", None)
+        if isinstance(tracker, DailyEquityTracker) and tracker.cumulative_cap_hit:
+            # Resuming after the cumulative loss cap is the operator's reset:
+            # the cap is measured again from the equity as it is now (BUG-128).
+            equity = float(self.wallet_balance_sol) + float(
+                self._open_positions_exit_value()
+            )
+            tracker.reset_circuit_breaker(new_baseline_sol=equity)
+            self._risk_killed = False
+            self._record_event(
+                f"cumulative loss cap reset by the operator (reference: {equity:.4f} SOL)",
+                alert=True,
+            )
         return True
 
     def toggle_buying_pause(self, source: str = "SIGUSR1") -> bool:
@@ -1056,6 +1079,15 @@ class TradingBot:
         keep = (10_000 - max(0, min(5_000, bps))) / 10_000.0
         return self._paper_round_trip_fee_factor() * keep
 
+    def _open_positions_exit_value(self) -> float:
+        """Open positions at what selling them would return, for the breaker.
+
+        Spot value times the same fee and exit haircut a sell pays, so equity
+        is not overstated and drawdown checks fire on time (BUG-136).
+        """
+        spot = float(self.position_manager.calculate_total_open_value() or 0.0)
+        return spot * self._paper_exit_factor()
+
     def _book_trade_costs(self, net_pnl_sol: float, costs_sol: float) -> None:
         """Feeds net realized PnL to the daily breaker; paper wallets pay costs too."""
         tracker = getattr(self, "daily_equity_tracker", None)
@@ -1304,7 +1336,8 @@ class TradingBot:
         try:
             balance_sol = await self.execution.get_balance_sol()
             self.wallet_balance_sol = balance_sol
-            open_val_sol = self.position_manager.calculate_total_open_value()
+            self._live_balance_confirmed = True
+            open_val_sol = self._open_positions_exit_value()
             self.daily_equity_tracker.update_valuation(balance_sol, open_val_sol)
 
             if balance_sol - required_sol < self.config.reserve_balance_sol:
@@ -1334,9 +1367,14 @@ class TradingBot:
         try:
             balance = await self.execution.get_balance_sol()
             self.wallet_balance_sol = balance
+            self._live_balance_confirmed = True
             return balance >= self.min_balance_sol
         except Exception:
             return False
+
+    def _equity_known(self) -> bool:
+        """Paper / dry-run equity is simulated; a live run needs one real balance read."""
+        return bool(self.dry_run or getattr(self, "_live_balance_confirmed", False))
 
     async def _check_and_enforce_circuit_breaker(self) -> bool:
         """Evaluates daily drawdown baseline and engages circuit breaker if breached."""
@@ -1344,7 +1382,8 @@ class TradingBot:
             if not self.dry_run:
                 balance_sol = await self.execution.get_balance_sol()
                 self.wallet_balance_sol = balance_sol
-            open_val_sol = self.position_manager.calculate_total_open_value()
+                self._live_balance_confirmed = True
+            open_val_sol = self._open_positions_exit_value()
             self.daily_equity_tracker.update_valuation(
                 self.wallet_balance_sol, open_val_sol
             )
@@ -1353,6 +1392,12 @@ class TradingBot:
                 f"Valuation check error during circuit breaker check: {exc}",
                 level=logging.DEBUG,
             )
+
+        if not self._equity_known():
+            # Never baseline the day on the simulated start balance (BUG-130);
+            # buys stay blocked by the equity guard until a read succeeds.
+            self._last_event = "circuit breaker waiting for the first wallet balance"
+            return False
 
         is_locked, reason = evaluate_portfolio_circuit_breaker(self)
 
@@ -1378,6 +1423,10 @@ class TradingBot:
                     )
 
                 self._risk_killed = True
+                if self.daily_equity_tracker.cumulative_cap_hit:
+                    # The cumulative cap stays until the operator resumes buying;
+                    # the pause survives restarts and lock expiry (BUG-128).
+                    self.pause_buying(reason="cumulative loss cap", source="risk")
                 # Count a trip once per lock, not on every check while locked (BUG-114).
                 locked_at = self.daily_equity_tracker.locked_at_timestamp
                 if locked_at != getattr(self, "_counted_breaker_lock_at", None):
@@ -1425,9 +1474,15 @@ class TradingBot:
 
     def get_status_snapshot(self) -> dict[str, Any]:
         """Returns a comprehensive structured snapshot of runtime status."""
-        open_val = self.position_manager.calculate_total_open_value()
-        drawdown = self.daily_equity_tracker.calculate_drawdown(
-            self.wallet_balance_sol, open_val
+        open_val = self._open_positions_exit_value()
+        # Reading the drawdown initialises the day's baseline, so not before
+        # the live balance is known (BUG-130).
+        drawdown = (
+            self.daily_equity_tracker.calculate_drawdown(
+                self.wallet_balance_sol, open_val
+            )
+            if self._equity_known()
+            else 0.0
         )
         return {
             "state": self.state.value,
@@ -1932,10 +1987,17 @@ class TradingBot:
             if isinstance(exec_metadata, dict)
             else None
         )
+        signal_market_cap_sol = float(market_cap_sol or 0.0)
         if isinstance(curve_entry_mc, (int, float)) and curve_entry_mc > 0:
             # Paper fills are priced from the curve exits read, not the stream
-            # create event (BUG-104).
+            # create event (BUG-104); live fills from their own transaction
+            # (BUG-129), so stops and take-profits measure from the real entry.
             market_cap_sol = float(curve_entry_mc)
+        entry_price_source = (
+            exec_metadata.get("entry_price_source")
+            if isinstance(exec_metadata, dict)
+            else None
+        )
 
         trade_id = self._next_trade_id()
         position_id = trade_id
@@ -1953,7 +2015,7 @@ class TradingBot:
             mint=mint,
             token_amount=exec_res.token_amount or (100_000_000 if self.dry_run else 0),
             cost_sol=cost_basis,
-            entry_market_cap=float(market_cap_sol or 30.0),
+            entry_market_cap=float(market_cap_sol or LAUNCH_MARKET_CAP_SOL),
             name=position_name,
             buy_signature=exec_res.signature,
             reason=reason or "entry",
@@ -1962,6 +2024,14 @@ class TradingBot:
                 "position_id": position_id,
                 "trade_id": trade_id,
                 **({"strategy": strategy} if strategy else {}),
+                **(
+                    {
+                        "entry_price_source": str(entry_price_source),
+                        "signal_market_cap_sol": signal_market_cap_sol,
+                    }
+                    if entry_price_source
+                    else {}
+                ),
             },
         )
         if strategy:
@@ -2006,7 +2076,7 @@ class TradingBot:
                     "mint": mint,
                     "name": position_name,
                     "price": price,
-                    "market_cap_sol": float(market_cap_sol or 30.0),
+                    "market_cap_sol": float(market_cap_sol or LAUNCH_MARKET_CAP_SOL),
                     "is_buy": True,
                     "sol_amount": float(effective_buy_amount),
                     "token_amount": int(exec_res.token_amount or 0),
@@ -2016,6 +2086,32 @@ class TradingBot:
             )
         self._transition_to(TradingBotState.HOLDING, reason=f"buy_confirmed {mint}")
         return True
+
+    def _raydium_fill_market_cap(self, exec_res: ExecutionResult) -> float | None:
+        """Market cap at a live Raydium buy's average fill price (BUG-131).
+
+        SOL spent (the transaction's swap amount when read, else the order
+        size) over the tokens the balance delta shows. ``None`` in paper and
+        dry-run modes, or when the token amount is not a measured delta.
+        """
+        if self.dry_run:
+            return None
+        metadata = exec_res.metadata if isinstance(exec_res.metadata, dict) else {}
+        tokens = int(exec_res.token_amount or 0)
+        if tokens <= 0 or metadata.get("fill_source") != "balance_delta":
+            return None
+        costs = self._execution_costs(exec_res)
+        spent = float(exec_res.amount_sol or 0.0)
+        if (
+            costs is not None
+            and costs.source == COST_SOURCE_TRANSACTION_META
+            and costs.swap_sol
+            and costs.swap_sol > 0
+        ):
+            spent = float(costs.swap_sol)
+        if spent <= 0:
+            return None
+        return spent / tokens * TOTAL_TOKEN_SUPPLY_RAW
 
     async def _buy_raydium_token(
         self,
@@ -2085,11 +2181,15 @@ class TradingBot:
 
         trade_id = self._next_trade_id()
         position_id = trade_id
+        raydium_entry_mc = self._raydium_fill_market_cap(exec_res)
         self.position_manager.record_buy(
             mint=mint,
             token_amount=exec_res.token_amount or (100_000_000 if self.dry_run else 0),
             cost_sol=buy_amount,
-            entry_market_cap=69.0,
+            # From the fill; 0 when it is unknown, so the first price the
+            # position sees becomes its entry (BUG-76) instead of a made-up
+            # 69 SOL, the "$69k" graduation figure read as SOL (BUG-131).
+            entry_market_cap=raydium_entry_mc or 0.0,
             name=position_name,
             buy_signature=exec_res.signature,
             reason=reason or "raydium_graduation_snipe",
@@ -2399,6 +2499,24 @@ class TradingBot:
             await self._unsubscribe_from_token_trades(None, mint)
         return sold
 
+    @staticmethod
+    def _tier_already_executed(
+        position: dict[str, Any], target_tier: int | str | None
+    ) -> bool:
+        """Whether a take-profit tier or pre-graduation tranche was already sold."""
+        if target_tier == 1:
+            return bool(position.get("tier_1_executed"))
+        if target_tier == 2:
+            return bool(position.get("tier_2_executed"))
+        if isinstance(target_tier, str) and target_tier.startswith("pre_grad_"):
+            try:
+                index = int(target_tier.rsplit("_", 1)[1]) - 1
+            except ValueError:
+                return False
+            executed = position.get("executed_pre_grad_tranches") or ()
+            return index in {int(i) for i in executed}
+        return False
+
     async def _sell_token_locked(
         self,
         mint: str,
@@ -2415,6 +2533,14 @@ class TradingBot:
             return False
 
         position = self.active_positions[mint]
+        if self._tier_already_executed(position, target_tier):
+            # A tier decision queued behind a slow sell of the same tier (its
+            # 60 s pending latch had expired) must not sell it again (BUG-140).
+            self._log(
+                f"Skipping repeat {target_tier} exit of {mint}: tier already sold",
+                level=logging.INFO,
+            )
+            return False
         pos_name = position.get("name") or mint
         pool_keys = self._exit_pool_keys(mint, position)
         use_pumpswap = False
@@ -2966,6 +3092,28 @@ class TradingBot:
     def _watch_poll_due(self, mint: str, now: float) -> bool:
         return watch_handlers.watch_poll_due(self, mint, now)
 
+    def _feed_slippage_estimator(
+        self, mint: str, virtual_sol_lamports: float, virtual_token_raw: float
+    ) -> None:
+        """Give the dynamic-slippage estimator a curve read (BUG-134).
+
+        It was only fed at execution time, so its 30 s window rarely held two
+        readings and the volatility term was always 0.
+        """
+        if virtual_sol_lamports <= 0 or virtual_token_raw <= 0:
+            return
+        policy = getattr(getattr(self, "executor", None), "execution_policy", None)
+        if policy is None:
+            return
+        try:
+            policy.record_curve_update(
+                mint, float(virtual_sol_lamports) / 1_000_000_000.0, virtual_token_raw
+            )
+        except Exception as exc:  # never let telemetry break a poll
+            logging.getLogger(__name__).debug(
+                "Could not feed slippage estimator for %s: %s", mint, exc
+            )
+
     def _record_curve_poll(
         self,
         mint: str,
@@ -3221,7 +3369,7 @@ class TradingBot:
 
     def _daily_summary_text(self, now: float) -> str:
         tracker = self.daily_equity_tracker
-        open_val = self.position_manager.calculate_total_open_value()
+        open_val = self._open_positions_exit_value()
         breaker = "LOCKED" if tracker.circuit_breaker_engaged else "clear"
         if tracker.circuit_breaker_engaged and tracker.lock_reason:
             breaker = f"LOCKED ({tracker.lock_reason[:80]})"
@@ -3299,6 +3447,8 @@ class TradingBot:
                     if simulated
                     else float(await self.execution.get_balance_sol())
                 )
+                if not simulated:
+                    self._live_balance_confirmed = True
             except Exception as exc:
                 self._sweep_state.last_error = f"balance unavailable: {exc}"
                 self._log(f"Profit sweep skipped: {exc}", level=logging.WARNING)
@@ -3422,6 +3572,49 @@ class TradingBot:
                 except Exception:
                     pass
 
+    async def _check_pump_fee_schedule(self) -> int | None:
+        """Compare the on-chain fee tiers with the modelled fee (BUG-138).
+
+        Live min-out quotes use the tier of each curve once the fee config is
+        cached; paper, replay and the cost guard model ``PUMP_DEFAULT_FEE_BPS``,
+        so a different launch-tier fee is alerted. Returns that fee, or
+        ``None`` when the fee config cannot be read.
+        """
+        getter = getattr(self.execution, "get_pump_fee_config", None)
+        if not callable(getter):
+            return None
+        try:
+            config = await asyncio.wait_for(getter(), timeout=5.0)
+        except Exception as exc:
+            config = None
+            self._log(f"Pump.fun fee config check failed: {exc}", level=logging.DEBUG)
+        if not isinstance(config, FeeConfig):
+            self._record_event(
+                "Pump.fun fee config unreadable: fees modelled at "
+                f"{PUMP_DEFAULT_FEE_BPS} bps",
+                alert=False,
+            )
+            return None
+        launch_bps = bonding_curve_fee_bps(
+            config,
+            INITIAL_VIRTUAL_SOL_LAMPORTS,
+            INITIAL_VIRTUAL_TOKEN_RAW,
+            TOTAL_TOKEN_SUPPLY_RAW,
+        )
+        tiers = ", ".join(
+            f">= {tier.market_cap_lamports_threshold / 1e9:g} SOL: "
+            f"{tier.fees.bonding_curve_bps} bps"
+            for tier in config.fee_tiers
+        )
+        self._log(f"Pump.fun bonding-curve fee tiers: {tiers}", level=logging.INFO)
+        if launch_bps != PUMP_DEFAULT_FEE_BPS:
+            self._record_event(
+                f"Pump.fun launch-tier fee is {launch_bps} bps, but paper, replay "
+                f"and the cost guard model {PUMP_DEFAULT_FEE_BPS} bps",
+                alert=True,
+            )
+        return launch_bps
+
     async def start(self) -> None:
         """Starts background workers and event stream listeners."""
         self._register_signal_handlers()
@@ -3458,6 +3651,7 @@ class TradingBot:
             )
         self._transition_to(TradingBotState.MONITORING, reason="bot_started")
         await self._reconcile_positions_on_startup()
+        await self._check_pump_fee_schedule()
 
         health_task = asyncio.create_task(self._run_health_loop())
         refresh_task = asyncio.create_task(self._run_position_refresh_loop())

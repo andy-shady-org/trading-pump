@@ -181,14 +181,14 @@ def test_generate_grid_respects_max_combinations() -> None:
 # --- fitness --------------------------------------------------------------------
 
 
+@pytest.mark.regression("BUG-135")
 def test_sortino_ratio_with_downside_returns_scaled_ratio() -> None:
     ratio = calculate_sortino_ratio([0.5, -0.5])
 
     # mean 0, downside std = sqrt(0.25 / 1) = 0.5
     assert ratio == pytest.approx(0.0)
-    assert calculate_sortino_ratio([1.0, -0.5]) == pytest.approx(
-        (0.25 / 0.5) * (2**0.5)
-    )
+    # Per trade, no sqrt(n) factor (BUG-135).
+    assert calculate_sortino_ratio([1.0, -0.5]) == pytest.approx(0.25 / 0.5)
 
 
 SUMMARY: dict[str, Any] = {
@@ -564,8 +564,9 @@ def test_fitness_metrics_calculation():
     # Calmar Ratio
     calmar = calculate_calmar_ratio(0.50, 0.10)
     assert calmar == pytest.approx(5.0)
-    assert calculate_calmar_ratio(0.50, 0.0) == pytest.approx(5.0)
-    assert calculate_calmar_ratio(-0.20, 0.0) == -10.0
+    # No drawdown: floored at 1%, not a flat 10x bonus (BUG-135).
+    assert calculate_calmar_ratio(0.50, 0.0) == pytest.approx(50.0)
+    assert calculate_calmar_ratio(-0.20, 0.0) == pytest.approx(-20.0)
 
 
 def test_evaluate_fitness_function():
@@ -595,7 +596,9 @@ def test_evaluate_fitness_function():
 
     # Test single objectives
     fit_sharpe = evaluate_fitness(summary, trades, objective="sharpe")
-    assert fit_sharpe.objective_value == fit_sharpe.sharpe_ratio
+    assert fit_sharpe.objective_value == pytest.approx(
+        fit_sharpe.sharpe_ratio, abs=1e-4
+    )
 
     fit_pf = evaluate_fitness(summary, trades, objective="profit_factor")
     assert fit_pf.objective_value == fit_pf.profit_factor
@@ -929,3 +932,32 @@ def test_optimizer_algorithms_and_validation(tmp_path: Path):
     out_file = tmp_path / "opt_out.json"
     gen_res.export_config_json(out_file)
     assert out_file.exists()
+
+
+@pytest.mark.regression("BUG-135")
+def test_sharpe_is_per_trade_so_splits_of_any_size_compare() -> None:
+    returns = [0.10, -0.05, 0.20, 0.0, 0.05]
+    # The same distribution, repeated: a bigger sample is not a better edge.
+    assert calculate_sharpe_ratio(returns * 7) == pytest.approx(
+        calculate_sharpe_ratio(returns * 3), rel=0.1
+    )
+
+
+@pytest.mark.regression("BUG-135")
+def test_fitness_scores_positions_not_individual_sells() -> None:
+    # One position: tier 1 sells half at +50%, the rest stops out at -40%.
+    trades: list[dict[str, Any]] = [
+        {"action": "buy", "mint": "A"},
+        {"action": "sell", "mint": "A", "partial": True, "cost": 0.01, "pnl": 0.005},
+        {"action": "sell", "mint": "A", "partial": False, "cost": 0.01, "pnl": -0.004},
+        {"action": "buy", "mint": "B"},
+        {"action": "sell", "mint": "B", "cost": 0.02, "pnl": -0.002},
+        {"action": "sell", "mint": "C", "return_pct": 0.3},  # legacy record
+    ]
+    from pumpfun_trading.engines.optimizer import position_returns
+
+    assert position_returns(trades) == pytest.approx([0.05, -0.1, 0.3])
+    score = evaluate_fitness(SUMMARY, trades, objective="sharpe")
+    assert score.sharpe_ratio == pytest.approx(
+        calculate_sharpe_ratio([0.05, -0.1, 0.3]), abs=1e-4
+    )

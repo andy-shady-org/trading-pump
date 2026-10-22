@@ -74,6 +74,9 @@ async def handle_bonding_curve_state_update(
 
     real_sol = update.real_sol_reserves / 1_000_000_000.0
     virt_sol = update.virtual_sol_reserves / 1_000_000_000.0
+    bot._feed_slippage_estimator(
+        mint, update.virtual_sol_reserves, update.virtual_token_reserves
+    )
     bot.graduation_engine.update_bonding_curve(
         mint=mint,
         bonding_curve=update.bonding_curve_pubkey,
@@ -314,6 +317,11 @@ async def refresh_active_positions_market_caps(bot: TradingBot) -> None:
             mc = 0.0
             if isinstance(curve, dict):
                 mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
+                bot._feed_slippage_estimator(
+                    mint,
+                    int(curve.get("virtual_sol_reserves", 0) or 0),
+                    int(curve.get("virtual_token_reserves", 0) or 0),
+                )
                 if mc <= 0.0:
                     vt = int(curve.get("virtual_token_reserves", 0))
                     vs = int(curve.get("virtual_sol_reserves", 0))

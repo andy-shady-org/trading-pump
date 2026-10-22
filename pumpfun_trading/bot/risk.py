@@ -38,6 +38,13 @@ class DailyEquityTracker:
     total_lock_count: int = 0
     # Fees, tips and net rent paid today; realized PnL above is net of these.
     realized_daily_costs_sol: float = 0.0
+    # Hard-lock length of the last evaluation, so a UTC rollover can tell
+    # whether an emergency lock is still running (BUG-128).
+    emergency_hard_lock_hours: float = 0.0
+    # Equity the cumulative loss cap is measured from: set once, persisted,
+    # lowered by withdrawals and reset only by the operator (BUG-128).
+    reference_equity_sol: float = 0.0
+    cumulative_cap_hit: bool = False
 
     @property
     def realized_daily_gross_pnl_sol(self) -> float:
@@ -72,6 +79,7 @@ class DailyEquityTracker:
         current_wallet_balance_sol: float,
         open_positions_valuation_sol: float = 0.0,
         now_utc: datetime.datetime | None = None,
+        now_timestamp: float | None = None,
     ) -> bool:
         """Initializes or resets baseline equity at 00:00 UTC midnight boundary."""
         today_utc = self.get_current_utc_date(now_utc)
@@ -87,6 +95,8 @@ class DailyEquityTracker:
                 self.peak_daily_equity_sol = max(
                     self.starting_equity_sol, current_equity
                 )
+            if self.reference_equity_sol <= 0.0:
+                self.reference_equity_sol = self.starting_equity_sol
             return True
         elif self.last_reset_date_utc != today_utc:
             self.last_reset_date_utc = today_utc
@@ -94,19 +104,48 @@ class DailyEquityTracker:
             self.peak_daily_equity_sol = current_equity
             self.realized_daily_pnl_sol = 0.0
             self.realized_daily_costs_sol = 0.0
-            # A new UTC trading day also releases any daily lock (BUG-47).
-            self.circuit_breaker_engaged = False
-            self.circuit_breaker_action = CircuitBreakerAction.NONE
-            self.locked_at_timestamp = None
-            self.lock_reason = ""
+            if self.reference_equity_sol <= 0.0:
+                self.reference_equity_sol = current_equity
+            # A new UTC trading day releases a daily lock (BUG-47), but not an
+            # emergency lock whose hard-lock duration is still running: a loss
+            # limit hit at 23:55 UTC must not lift five minutes later (BUG-128).
+            if not self._hard_lock_running(now_utc, now_timestamp):
+                self.circuit_breaker_engaged = False
+                self.circuit_breaker_action = CircuitBreakerAction.NONE
+                self.locked_at_timestamp = None
+                self.lock_reason = ""
             return True
         return False
+
+    def _hard_lock_running(
+        self,
+        now_utc: datetime.datetime | None = None,
+        now_timestamp: float | None = None,
+    ) -> bool:
+        """An emergency lock that must outlast the UTC rollover (BUG-128)."""
+        if (
+            not self.circuit_breaker_engaged
+            or self.circuit_breaker_action != CircuitBreakerAction.EMERGENCY_LIQUIDATE
+            or self.locked_at_timestamp is None
+        ):
+            return False
+        hours = max(0.0, float(self.emergency_hard_lock_hours or 0.0))
+        if hours <= 0:
+            return False
+        if now_timestamp is not None:
+            now = float(now_timestamp)
+        elif now_utc is not None:
+            now = now_utc.timestamp()
+        else:
+            now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        return now < float(self.locked_at_timestamp) + hours * 3600.0
 
     def lockout_until(self, emergency_hard_lock_hours: float = 0.0) -> float | None:
         """Epoch time the active lock is released, ``None`` when unlocked (BUG-114).
 
-        A daily lock ends at the next 00:00 UTC rollover, or earlier when the
-        hard-lock duration elapses first.
+        An emergency lock with a hard-lock duration lasts that long, across the
+        UTC rollover (BUG-128). Any other lock ends at the next 00:00 UTC
+        rollover, or earlier when the hard-lock duration elapses first.
         """
         if not self.circuit_breaker_engaged or self.locked_at_timestamp is None:
             return None
@@ -119,6 +158,8 @@ class DailyEquityTracker:
         ).timestamp()
         hours = max(0.0, float(emergency_hard_lock_hours or 0.0))
         if hours > 0:
+            if self.circuit_breaker_action == CircuitBreakerAction.EMERGENCY_LIQUIDATE:
+                return locked_at + hours * 3600.0
             return min(next_midnight, locked_at + hours * 3600.0)
         return next_midnight
 
@@ -162,6 +203,7 @@ class DailyEquityTracker:
         amount = max(0.0, float(amount_sol))
         self.starting_equity_sol = max(0.0, self.starting_equity_sol - amount)
         self.peak_daily_equity_sol = max(0.0, self.peak_daily_equity_sol - amount)
+        self.reference_equity_sol = max(0.0, self.reference_equity_sol - amount)
 
     def calculate_drawdown(
         self,
@@ -196,14 +238,19 @@ class DailyEquityTracker:
         drawdown_reference_mode: str | None = None,
         profit_ratchet_ratio: float | None = None,
         profit_drawdown_tolerance_pct: float | None = None,
+        max_cumulative_drawdown_pct: float | None = None,
     ) -> tuple[bool, str]:
         """
         Evaluates portfolio drawdown against threshold using dual-zone risk mechanics.
         Returns (is_locked, reason).
         Handles auto-unlock if hard lock duration has elapsed.
+
+        ``max_cumulative_drawdown_pct`` (0 = off) caps the loss from
+        ``reference_equity_sol`` across days and locks (BUG-128).
         """
         if now_timestamp is None:
             now_timestamp = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        self.emergency_hard_lock_hours = max(0.0, float(emergency_hard_lock_hours))
 
         if drawdown_reference_mode is not None:
             self.drawdown_reference_mode = drawdown_reference_mode
@@ -214,7 +261,10 @@ class DailyEquityTracker:
 
         # Roll over on a UTC date change even while latched (BUG-47).
         self.initialize_or_rollover(
-            current_wallet_balance_sol, open_positions_valuation_sol, now_utc
+            current_wallet_balance_sol,
+            open_positions_valuation_sol,
+            now_utc,
+            now_timestamp=now_timestamp,
         )
 
         # Check if currently locked
@@ -246,6 +296,32 @@ class DailyEquityTracker:
         current_equity, peak_drawdown_pct = self.update_valuation(
             current_wallet_balance_sol, open_positions_valuation_sol, now_utc
         )
+
+        # Cumulative loss cap (BUG-128): the daily limit re-baselines every UTC
+        # day and after every lock, so on its own it allows that loss again and
+        # again. This one is measured from a reference only the operator resets.
+        cumulative_cap = max(0.0, float(max_cumulative_drawdown_pct or 0.0))
+        if self.reference_equity_sol <= 0.0 and self.starting_equity_sol > 0.0:
+            # A tracker restored from a pre-BUG-128 status file has no reference.
+            self.reference_equity_sol = self.starting_equity_sol
+        if cumulative_cap > 0 and self.reference_equity_sol > 0:
+            cumulative_loss_pct = (
+                self.reference_equity_sol - current_equity
+            ) / self.reference_equity_sol
+            # A loss of exactly the cap (as floats) is not past it.
+            if cumulative_loss_pct > cumulative_cap + 1e-9:
+                self.circuit_breaker_engaged = True
+                self.circuit_breaker_action = CircuitBreakerAction.EMERGENCY_LIQUIDATE
+                self.locked_at_timestamp = now_timestamp
+                self.total_lock_count += 1
+                self.cumulative_cap_hit = True
+                self.lock_reason = (
+                    f"cumulative loss {cumulative_loss_pct:.2%} exceeded maximum allowed "
+                    f"{cumulative_cap:.2%} (reference: {self.reference_equity_sol:.4f} SOL, "
+                    f"current: {current_equity:.4f} SOL); buying stays paused until "
+                    "the operator resumes it"
+                )
+                return True, self.lock_reason
 
         mode = self.drawdown_reference_mode or "adaptive_ratchet"
 
@@ -323,6 +399,25 @@ class DailyEquityTracker:
             )
             return True, self.lock_reason
 
+        # Realized-profit ratchet (BUG-127): `profit_ratchet_ratio` of today's
+        # realized profit is kept. The retracement check above is measured
+        # against the whole peak equity, so on its own it only fires once the
+        # profit is gone; the floor stops new buys first. Open positions keep
+        # exiting on their own rules (soft halt).
+        ratchet_floor = self.effective_baseline_sol
+        if current_equity < ratchet_floor:
+            self.circuit_breaker_engaged = True
+            self.circuit_breaker_action = CircuitBreakerAction.HALT_NEW_BUYS
+            self.locked_at_timestamp = now_timestamp
+            self.total_lock_count += 1
+            self.lock_reason = (
+                f"profit ratchet floor: equity {current_equity:.4f} SOL fell below "
+                f"{ratchet_floor:.4f} SOL (starting {self.starting_equity_sol:.4f} SOL "
+                f"+ {self.profit_ratchet_ratio:.0%} of realized "
+                f"{self.realized_daily_pnl_sol:+.4f} SOL)"
+            )
+            return True, self.lock_reason
+
         self.circuit_breaker_action = CircuitBreakerAction.NONE
         return False, ""
 
@@ -337,9 +432,11 @@ class DailyEquityTracker:
         self.circuit_breaker_action = CircuitBreakerAction.NONE
         self.locked_at_timestamp = None
         self.lock_reason = ""
+        self.cumulative_cap_hit = False
         if new_baseline_sol is not None and new_baseline_sol > 0:
             self.starting_equity_sol = float(new_baseline_sol)
             self.peak_daily_equity_sol = float(new_baseline_sol)
+            self.reference_equity_sol = float(new_baseline_sol)
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes equity tracker state for durable JSON snapshot storage."""
@@ -363,6 +460,9 @@ class DailyEquityTracker:
             "locked_at_timestamp": self.locked_at_timestamp,
             "lock_reason": self.lock_reason,
             "total_lock_count": self.total_lock_count,
+            "emergency_hard_lock_hours": self.emergency_hard_lock_hours,
+            "reference_equity_sol": self.reference_equity_sol,
+            "cumulative_cap_hit": self.cumulative_cap_hit,
         }
 
     @classmethod
@@ -396,6 +496,11 @@ class DailyEquityTracker:
             realized_daily_costs_sol=float(
                 data.get("realized_daily_costs_sol", 0.0) or 0.0
             ),
+            emergency_hard_lock_hours=float(
+                data.get("emergency_hard_lock_hours", 0.0) or 0.0
+            ),
+            reference_equity_sol=float(data.get("reference_equity_sol", 0.0) or 0.0),
+            cumulative_cap_hit=bool(data.get("cumulative_cap_hit", False)),
         )
 
 
@@ -407,10 +512,20 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
     tracker: DailyEquityTracker | None = getattr(bot, "daily_equity_tracker", None)
     if tracker is None or not isinstance(tracker, DailyEquityTracker):
         return False, ""
+    if not getattr(bot, "dry_run", True) and not getattr(
+        bot, "_live_balance_confirmed", True
+    ):
+        # The wallet figure is still the simulated start balance: block buys,
+        # but never let it set the day's baseline (BUG-130).
+        return True, "waiting for the first live wallet balance read"
 
     wallet_sol = float(getattr(bot, "wallet_balance_sol", 0.0) or 0.0)
     pos_mgr = getattr(bot, "position_manager", None)
-    if pos_mgr is not None and hasattr(pos_mgr, "calculate_total_open_value"):
+    exit_value = getattr(bot, "_open_positions_exit_value", None)
+    if callable(exit_value):
+        # What selling would return, not spot (BUG-136).
+        open_val_sol = float(exit_value() or 0.0)
+    elif pos_mgr is not None and hasattr(pos_mgr, "calculate_total_open_value"):
         open_val_sol = float(pos_mgr.calculate_total_open_value() or 0.0)
     else:
         open_positions = getattr(bot, "active_positions", {}) or {}
@@ -444,6 +559,7 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
     mode = getattr(cfg, "drawdown_reference_mode", None)
     ratchet_ratio = getattr(cfg, "profit_ratchet_ratio", None)
     profit_tolerance = getattr(cfg, "profit_drawdown_tolerance_pct", None)
+    cumulative_cap = float(getattr(cfg, "max_cumulative_drawdown_pct", 0.0) or 0.0)
 
     is_locked, reason = tracker.evaluate_circuit_breaker(
         max_daily_drawdown_pct=max_drawdown,
@@ -453,6 +569,7 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
         drawdown_reference_mode=mode,
         profit_ratchet_ratio=ratchet_ratio,
         profit_drawdown_tolerance_pct=profit_tolerance,
+        max_cumulative_drawdown_pct=cumulative_cap,
     )
     if is_locked and reason:
         bot._last_event = f"circuit breaker: {reason}"

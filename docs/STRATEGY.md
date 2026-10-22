@@ -140,6 +140,10 @@ Where:
            0 SOL                                 ~85 SOL
 ```
 
+### Trading Fees (BUG-138)
+
+Since 2025-09-01 the bonding-curve fee comes from market-cap tiers in the Pump fee program's `fee_config` account (protocol + creator bps of the tier the curve's market cap falls in), not a flat rate. At startup the bot reads that account (`sdk/fee_config.py`), logs the tiers and alerts when the launch-tier fee differs from the 125 bps that paper fills, replay and the cost guard model (`PUMP_DEFAULT_FEE_BPS`). Live buy and sell minimum-output quotes use the tier of each curve once the config is cached, falling back to 125 bps when it cannot be read.
+
 ### Exact Price & Execution Impact Equations
 
 When an order deposits $\Delta x$ SOL into the bonding curve:
@@ -439,6 +443,7 @@ To capture explosive momentum breakouts on active Pump.fun bonding curves before
 2. **Trade Velocity Z-Score**: Evaluates active trade velocity ($v_0$) against rolling baseline mean ($\mu$) and standard deviation ($\sigma$):
    $$Z = \frac{v_0 - \mu}{\sigma}$$
    Flags momentum breakouts when $Z \ge 2.5$.
+   $\mu$ and $\sigma$ come from the earlier 30 s slices only, not the current one, and only from slices that start after the token was created; with fewer than two such slices $Z = 0$ (BUG-133).
 3. **Sybil Resistance**: Enforces minimum unique buyer wallet count ($\ge 3$) and net capital deployment ($\ge 0.5\text{ SOL}$).
 
 ### Configuration Example & Parameter Matrix
@@ -507,7 +512,7 @@ When a token bonding curve achieves full capitalization ($\ge 85\text{ SOL}$ in 
 }
 ```
 
-* **`enable_raydium_migration_sniping`**: Enables automated Raydium AMM v4 pool sniping upon graduation.
+* **`enable_raydium_migration_sniping`**: Enables automated Raydium AMM v4 pool sniping upon graduation. Off by default in every preset since rc.4: Pump.fun migrates into PumpSwap, not Raydium (BUG-123, BUG-131). A position it opens takes its entry market cap from the fill, or from the first price it sees.
 * **`raydium_pre_migration_sol_threshold`**: Real SOL curve reserve threshold to begin staging graduation keys (default `80.0 SOL`).
 * **`raydium_buy_amount_sol`**: Trade allocation dedicated to Raydium post-migration buy.
 * **`raydium_slippage_bps`**: Allowed slippage basis points for the Raydium swap (e.g. `500` = 5.0%).
@@ -703,7 +708,8 @@ Static price slippage bounds and fixed priority fees create two severe vulnerabi
 
 1. **Instantaneous Price Velocity**: $v = \frac{P_{t_1} - P_{t_0}}{\max(10^{-4}, t_1 - t_0)}$
 2. **Rolling Volatility**: $\sigma_{\text{vol}} = \sqrt{\frac{1}{N} \sum_{i=1}^N (r_i - \overline{r})^2}$
-3. **Price Impact**: $\Delta P_{\text{impact}} = \frac{\Delta x}{x_{\text{virtual}}}$
+3. **Price Impact**: $\Delta P_{\text{impact}} = \frac{\Delta x}{x_{\text{virtual}}}$ (the execution slippage of the fill; for a sell $\frac{\Delta y}{y + \Delta y}$).
+   The volatility $\sigma$ is fed from every curve read the bot already makes: the watch poller, the held-position refresh and Geyser curve updates, kept for the 512 most recently read mints (BUG-134).
 4. **Dynamic Slippage**:
    $$S_{\text{dynamic}} = \operatorname{clamp}\left(\left(S_{\text{base}} + \alpha \cdot \sigma_{\text{vol}} \times 10^4 + \beta \cdot \Delta P_{\text{impact}} \times 10^4\right) \times M_{\text{urgency}},\; S_{\text{min}},\; S_{\text{max}}\right)$$
 
@@ -887,6 +893,7 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
    * If total equity drops below $\text{Starting Capital} \times (1 - \text{max\_daily\_drawdown\_pct})$, trigger emergency circuit breaker.
 3. **Profit Run Zone (`Current Equity >= Starting Capital`)**:
    * Applies relaxed trailing drawdown tolerance (`profit_drawdown_tolerance_pct`, default `35% - 40%`) against peak equity.
+   * Halts new buys when equity falls below the ratchet floor (starting equity + `profit_ratchet_ratio` × today's realized profit, BUG-127).
    * Prevents premature session lockouts when volatile moonbags retrace after multi-tier take-profits.
 4. **Tiered Two-Stage Action**:
    * **Stage 1 (`halt_new_buys`)**: Soft halt suppressing new buys while open positions exit orderly via trailing stops.
@@ -906,6 +913,7 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
 
 * **`drawdown_reference_mode`**: Circuit breaker policy mode (`"adaptive_ratchet"`, `"baseline"`, or `"trailing_hwm"`).
 * **`max_daily_drawdown_pct`**: Maximum drawdown from starting capital before engaging Stage 2 protection (e.g. `0.25` = 25%).
+* **`max_cumulative_drawdown_pct`**: Loss cap across days and locks, from a reference equity only the operator resets (default `0.30`; `0` = off). Breaching it liquidates and pauses buying until `SIGUSR1` resumes it (BUG-128).
 * **`profit_drawdown_tolerance_pct`**: Allowed trailing retracement on profits in the Profit Run Zone (e.g. `0.40` = 40%).
 * **`profit_ratchet_ratio`**: Fraction of realized gains permanently banked into guaranteed baseline floor (e.g. `0.50` = 50%).
 * **`auto_liquidate_on_circuit_breaker`**: Determines whether to execute global emergency market sells upon circuit breaker engagement.
@@ -916,6 +924,8 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
 ## 16. Automated Hyperparameter Backtest Optimizer (FEAT-27)
 
 To counteract parameter decay as market volatility regimes shift, `pumpfun-trading` integrates an automated multi-objective hyperparameter optimization engine (`pumpfun_trading/engines/optimizer.py`).
+
+Fitness is scored per **position** (its buy and every partial and full sell), with a per-trade Sharpe / Sortino (no √n factor, so a 70 % train split and a 30 % test split are on the same scale) and a Calmar ratio whose drawdown is floored at 1 % (BUG-135).
 
 ```
  Recorded Historical Market Dataset (.jsonl / .jsonl.gz)

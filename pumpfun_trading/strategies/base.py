@@ -33,6 +33,8 @@ class TradingBotConfig:
     max_token_concentration_pct: float = 0.35
     max_loss_per_trade_sol: float = 0.02
     max_daily_drawdown_pct: float = 0.2
+    # Loss cap across days and locks, from a reference the operator resets (BUG-128).
+    max_cumulative_drawdown_pct: float = 0.30
     reserve_balance_sol: float = 0.1
     health_check_timeout_seconds: int = 60
     emergency_hard_lock_hours: float = 24.0
@@ -179,7 +181,8 @@ class TradingBotConfig:
     # coin completed this often (0 = off), so a migration missed by the curve
     # refresh and ``subscribeMigration`` (reconnect, restart) still exits.
     graduation_backfill_seconds: float = 30.0
-    enable_raydium_migration_sniping: bool = True
+    # Off by default: Pump.fun migrates to PumpSwap, not Raydium (BUG-123 / BUG-131).
+    enable_raydium_migration_sniping: bool = False
     raydium_pre_migration_sol_threshold: float = 80.0
     raydium_buy_amount_sol: float = 0.02
     raydium_slippage_bps: int = 500
@@ -299,6 +302,7 @@ class TradingBotConfig:
             "max_token_concentration_pct": self.max_token_concentration_pct,
             "max_loss_per_trade_sol": self.max_loss_per_trade_sol,
             "max_daily_drawdown_pct": self.max_daily_drawdown_pct,
+            "max_cumulative_drawdown_pct": self.max_cumulative_drawdown_pct,
             "reserve_balance_sol": self.reserve_balance_sol,
             "health_check_timeout_seconds": self.health_check_timeout_seconds,
             "emergency_hard_lock_hours": self.emergency_hard_lock_hours,

@@ -43,6 +43,70 @@ async def test_geyser_trade_on_a_held_mint_notes_the_stop_crossing(
     bot._evaluate_and_execute_exit.assert_awaited_once()
 
 
+def _geyser_buy(mint: str, user: str = "buyer") -> TradeEventUpdate:
+    return TradeEventUpdate(
+        mint=mint,
+        sol_amount_lamports=2_000_000_000,
+        token_amount=1,
+        is_buy=True,
+        user=user,
+        timestamp=0,
+        virtual_sol_reserves=40_000_000_000,
+        virtual_token_reserves=800_000_000_000_000,
+        real_sol_reserves=10_000_000_000,
+        real_token_reserves=0,
+    )
+
+
+@pytest.mark.regression("BUG-132")
+async def test_geyser_trade_in_confirmed_mode_never_takes_the_legacy_spike_entry(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="confirmed", enable_momentum_signals=True)
+    bot._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot._maybe_buy_confirmed_momentum = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    spike = MagicMock(triggered=True, reason="spike", z_score=9.0)
+    with patch.object(
+        bot.order_flow_engine, "evaluate_momentum_signal", return_value=spike
+    ) as legacy:
+        # Not watched: nothing is bought, however strong the flow looks.
+        for i in range(5):
+            await trade.handle_trade_event_update(
+                bot, _geyser_buy(SAMPLE_PUMP_MINT, f"u{i}")
+            )
+        bot._buy_token.assert_not_awaited()
+        bot._maybe_buy_confirmed_momentum.assert_not_awaited()
+
+        # Watched but not promoted yet: still nothing.
+        bot.order_flow_engine.watch(SAMPLE_PUMP_MINT, created_at=0.0, now=0.0)
+        await trade.handle_trade_event_update(bot, _geyser_buy(SAMPLE_PUMP_MINT))
+        bot._maybe_buy_confirmed_momentum.assert_not_awaited()
+
+        # Promoted: the confirmed pipeline decides, never the legacy spike.
+        bot.order_flow_engine.mark_watch_subscribed(SAMPLE_PUMP_MINT)
+        await trade.handle_trade_event_update(bot, _geyser_buy(SAMPLE_PUMP_MINT))
+        bot._maybe_buy_confirmed_momentum.assert_awaited_once()
+        legacy.assert_not_called()
+    bot._buy_token.assert_not_awaited()
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-132")
+async def test_geyser_trade_in_launch_mode_keeps_the_legacy_spike_entry(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, entry_mode="launch", enable_momentum_signals=True)
+    bot._maybe_buy_confirmed_momentum = AsyncMock()  # type: ignore[method-assign]
+    quiet = MagicMock(triggered=False)
+    with patch.object(
+        bot.order_flow_engine, "evaluate_momentum_signal", return_value=quiet
+    ) as legacy:
+        await trade.handle_trade_event_update(bot, _geyser_buy(SAMPLE_PUMP_MINT))
+    legacy.assert_called_once()
+    bot._maybe_buy_confirmed_momentum.assert_not_awaited()
+    await bot.close()
+
+
 def test_note_follow_on_buy_counts_other_wallets_above_the_floor(
     tmp_path: Path,
 ) -> None:

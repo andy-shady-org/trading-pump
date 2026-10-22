@@ -283,3 +283,30 @@ def test_curve_reserve_anomaly_tolerance_bounds_the_offset() -> None:
 
     assert curve_reserve_anomaly(within, INITIAL_VIRTUAL_TOKEN_RAW, 0) is None
     assert curve_reserve_anomaly(beyond, INITIAL_VIRTUAL_TOKEN_RAW, 0) is not None
+
+
+@pytest.mark.regression("BUG-137")
+def test_market_cap_from_reserves_takes_explicit_units() -> None:
+    from pumpfun_trading.sdk.curve import (
+        LAUNCH_MARKET_CAP_SOL,
+        market_cap_sol_from_reserves,
+    )
+
+    launch = market_cap_sol_from_reserves(
+        INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW
+    )
+    assert launch == pytest.approx(27.959, abs=1e-3)
+    assert LAUNCH_MARKET_CAP_SOL == pytest.approx(launch)
+    # The launch market cap is not the 30 SOL virtual reserve.
+    assert LAUNCH_MARKET_CAP_SOL != pytest.approx(30.0)
+    # A small lamport value is still lamports here (the guessing helper would
+    # read 500,000 lamports as 500,000 SOL).
+    assert market_cap_sol_from_reserves(500_000, TOTAL_TOKEN_SUPPLY_RAW) == (
+        pytest.approx(0.0005)
+    )
+    assert calculate_market_cap_sol(500_000, TOTAL_TOKEN_SUPPLY_RAW) == (
+        pytest.approx(500_000.0)
+    )
+    for bad in ((0, 1), (1, 0), (-1, 1)):
+        assert market_cap_sol_from_reserves(*bad) == 0.0
+    assert market_cap_sol_from_reserves(1, 1, total_supply_raw=0) == 0.0

@@ -115,6 +115,8 @@ kill -USR1 "$(jq .pid data/bot_status.json)"   # or: systemctl kill -s USR1 pump
 
 While paused the bot opens nothing (no buys, no capital rotation) but keeps managing every open position: exits, the exit retry queue and the circuit breaker run as normal. The dashboard shows `Buying: PAUSED (reason, minutes)`; `bot_status.json` carries `buying_paused` and `operator_pause`; each change is an `operator_pause` audit record and an alert. The pause **survives restarts** (a supervisor restart never resumes buying by itself); send `SIGUSR1` again to resume. Use it before maintenance, when an alert needs investigating, or to let positions run off before a stop.
 
+**Cumulative loss cap (BUG-128).** When the loss from the reference equity passes `max_cumulative_drawdown_pct`, the bot liquidates (if `auto_liquidate_on_circuit_breaker`) and sets this pause itself (reason `cumulative loss cap`). Find out why before resuming: resuming with `SIGUSR1` resets the cap, so it is measured again from the equity at that moment. A deposit raises equity above the reference and loosens the cap; pause and resume (`SIGUSR1` twice) after topping up the wallet to measure from the new balance.
+
 **Alerts an unattended operator gets** (provider from §2; delivery never blocks trading, BUG-110):
 
 | Alert | When | Config |
@@ -201,8 +203,10 @@ A paper run whose only job is to record trade flow with the funded API key, so t
 | `paper_trade` | `true` | `false` (set by `--paper-trade`) | The file can never trade live by accident |
 | `paper_starting_balance_sol` | `2.0` | default (0.25) | A 0.25 SOL paper wallet hits the breaker within hours |
 | `max_daily_drawdown_pct` | `0.5` | `0.10` | Keep recording all day |
+| `max_cumulative_drawdown_pct` | `0.0` (off) | default (0.30) | Keep recording across days (BUG-128) |
 | `max_active_positions` / `max_total_exposure_sol` | `5` / `0.05` | `2` / `0.03` | More tokens with trade data per hour |
 | `stagnant_timeout_seconds` | `120` | `45` | Trade data past 45 s, so replay can compare both timeouts |
+| `profit_ratchet_ratio` | `0.0` | default (0.50) | The ratchet floor (BUG-127) would halt buys after a small winning stretch; a capture keeps buying |
 
 Run it from the runtime directory into its own folder (the `.envrc` paths point at `data/`):
 
@@ -304,6 +308,7 @@ Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FE
      slow_lane/jupiter_quotes.jsonl | tail -n 30            # round-trip cost per token and size
    ```
    Many `status: 429` rows mean the keyless limit changed: raise `--request-gap` or `--quote-interval`. Edit the token list only between runs, and keep the edited file with the data.
+4. Reading the data (BUG-139). The sell leg is quoted a pacing gap after the buy leg, so each `round_trip_cost_bps` also holds the price move in between; sell rows carry `buy_gap_seconds` and `buy_gap_slots`. Judge costs on the distribution, `pumpfun_trading.services.slow_lane.round_trip_cost_summary(rows)` (median and quartiles per token and size), never on one row. Bars are USD (`currency: "usd"`) from each token's top pool as chosen when the backfill ran; `bars_in_sol(rows)` re-prices them against SOL's own bar, the baseline a SOL wallet has to beat.
 
 ## 7. Incident drills
 

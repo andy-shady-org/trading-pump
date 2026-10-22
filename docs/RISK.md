@@ -54,6 +54,9 @@ To prevent over-exposure to idiosyncratic microcap volatility, portfolio limits 
 * **Buffer Floor**: $0.10\text{ SOL}$.
 * **Mechanism**: Orders will not be initiated if available wallet SOL minus trade size is less than $0.10\text{ SOL}$. This reserves capital for Solana rent exemption, Compute Budget fees, and urgent liquidation transactions.
 
+### D. Open Positions at Exit Value
+The circuit breaker counts open positions at what selling them would return, not at spot: cost × market-cap ratio × the round-trip Pump.fun fee × (1 − `paper_exit_slippage_bps`), the same model a paper sell is priced with (BUG-136). Equity is therefore not overstated and the drawdown limits fire on time.
+
 ---
 
 ## 3. Daily Hard-Stop Circuit Breakers & Adaptive Realized-Ratchet Engine (FEAT-09 & FEAT-29)
@@ -64,21 +67,32 @@ To guard against high-volatility market crashes while avoiding false-positive lo
 When positions close with net realized profit, a configurable fraction (`profit_ratchet_ratio`, default `0.50`) permanently ratchets the **Effective Equity Baseline Floor**:
 $$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Cumulative Realized PnL})$$
 
+The realized PnL is today's (it resets at the 00:00 UTC rollover with the starting capital), net of fees, tips and rent.
+
 ### B. Dual-Zone Risk Evaluation
 1. **Principal Protection Zone (`Current Equity < Starting Capital`)**:
    - Strict capital preservation applies.
    - If total portfolio equity drops below $\text{Starting Capital} \times (1 - \text{max\_daily\_drawdown\_pct})$ (e.g. 15%–20% loss from principal), the bot engages **`EMERGENCY_LIQUIDATE`**, liquidating all open positions and locking out trading to protect capital.
 2. **Profit Run Zone (`Current Equity >= Starting Capital`)**:
    - The bot operates with "house money".
-   - A relaxed trailing buffer (`profit_drawdown_tolerance_pct`, default 35%) is evaluated against intraday peak equity relative to the effective baseline floor.
-   - If the profit retracement tolerance is breached, the bot engages **`HALT_NEW_BUYS`**, pausing new token entries while allowing open positions to continue exiting gracefully via trailing stop-losses (`FEAT-03`) and take-profit targets.
+   - Two checks, either of which engages **`HALT_NEW_BUYS`**, pausing new token entries while allowing open positions to continue exiting gracefully via trailing stop-losses (`FEAT-03`) and take-profit targets:
+     - **Ratchet floor:** total equity falls below the effective baseline floor above (BUG-127). With 1.0 SOL at the start of the day and +0.2 SOL realized, new buys stop below 1.1 SOL.
+     - **Retracement:** total equity falls more than `profit_drawdown_tolerance_pct` (default 35%) below the intraday peak. This is measured on the whole peak equity, not on the profit, so it is the looser of the two on most days.
 
 ### C. Circuit Breaker Trigger Actions
 
 | Action | Regime Trigger | Behavior |
 | :--- | :--- | :--- |
-| **`HALT_NEW_BUYS`** | Profit Run Zone retracement exceeds `profit_drawdown_tolerance_pct` | Soft-halts new token entries; existing positions remain active and are managed by trailing stops. |
-| **`EMERGENCY_LIQUIDATE`** | Principal loss exceeds `max_daily_drawdown_pct` | Dispatches immediate market sell orders across all open positions, engages 24-hour lockout, and emits critical webhook alerts. |
+| **`HALT_NEW_BUYS`** | Profit Run Zone: equity below the ratchet floor, or retracement from the peak exceeds `profit_drawdown_tolerance_pct` | Soft-halts new token entries; existing positions remain active and are managed by trailing stops. |
+| **`EMERGENCY_LIQUIDATE`** | Principal loss exceeds `max_daily_drawdown_pct`, or the cumulative loss exceeds `max_cumulative_drawdown_pct` | Dispatches immediate market sell orders across all open positions, locks out buying for `emergency_hard_lock_hours` (24 h by default, across the 00:00 UTC rollover; with `0` the lock ends at the rollover), and emits critical webhook alerts. |
+
+### C2. Cumulative Loss Cap (BUG-128)
+
+The daily limits re-baseline at every 00:00 UTC rollover and after every lock, so on their own they allow `max_daily_drawdown_pct` again every day. `max_cumulative_drawdown_pct` (default `0.30`, `0` = off) is measured from a reference equity that is set once when the bot first starts, persisted in the status file, lowered by profit sweeps and reset only by the operator:
+
+* When total equity is more than the cap below the reference, the bot engages `EMERGENCY_LIQUIDATE` and the **operator pause**, which survives restarts and lock expiry.
+* Resuming buying (`SIGUSR1`) is the reset: the reference moves to the equity at that moment and the lock is cleared.
+* The paper data-capture configs (`configs/capture.json`, `configs/pregrad_pilot.json`) set it to `0` so recording continues.
 
 ### D. Operator Pause and Profit Sweep (Sprint 24D, FEAT-50 / FEAT-42)
 
@@ -118,6 +132,7 @@ Upon initialization or crash recovery, the bot queries the on-chain SPL Token ac
 1. **Holding Verification**: Verifies on-chain token balances against local state storage.
 2. **Ghost Position Purging**: Removes stale or phantom entries from local storage if on-chain balances are zero.
 3. **Valuation Resynchronization**: Fetches live bonding curve states for all surviving holdings, populating baseline entry costs and initializing peak price tracking for trailing stops.
+4. **Real Balance Before Baseline** (BUG-130): a live run sets the day's circuit-breaker baseline from its first successful on-chain balance read, never from the simulated start figure. Until that read succeeds the breaker is not evaluated and new buys stay blocked.
 
 ### B. Exit Retry Queue with Escalating Slippage (BUG-08)
 
@@ -137,6 +152,8 @@ When network congestion or sudden volatility causes a sell transaction to fail:
 | `max_token_concentration_pct` | `25.0` | Percent | Maximum single-token allocation of total equity. |
 | `min_wallet_reserve_sol` | `0.10` | SOL | Mandatory wallet buffer for gas fees. |
 | `max_daily_drawdown_pct` | `15.0` | Percent | Daily circuit breaker principal loss trigger (Principal Zone). |
+| `max_cumulative_drawdown_pct` | `30.0` | Percent | Loss from the reference equity, across days and locks, that liquidates and pauses buying until the operator resumes (`0` = off). |
+| `emergency_hard_lock_hours` | `24` | Hours | Length of an emergency lock, across the 00:00 UTC rollover; `0` ends it at the rollover. |
 | `drawdown_reference_mode` | `"adaptive_ratchet"` | String | Reference mode (`"adaptive_ratchet"`, `"baseline"`, `"trailing_hwm"`). |
 | `profit_ratchet_ratio` | `0.50` | Float | Fraction of realized profits ratcheted into guaranteed baseline floor. |
 | `profit_drawdown_tolerance_pct` | `35.0` | Percent | Retracement tolerance from peak equity in Profit Run Zone. |

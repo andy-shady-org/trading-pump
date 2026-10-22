@@ -106,6 +106,41 @@ async def test_full_exit_closes_token_account_when_balance_matches() -> None:
     assert res.costs is not None and res.costs.rent_lamports < 0
 
 
+@pytest.mark.regression("BUG-129")
+async def test_live_buy_prices_the_entry_from_its_own_fill() -> None:
+    bought = 3_000_000_000_000
+    # 0.10125 SOL into the curve is 0.1 SOL after the 125 bps protocol fee.
+    client = _client(
+        get_transaction_costs=AsyncMock(return_value=_meta_costs(101_250_000))
+    )
+    client.get_token_balance = AsyncMock(side_effect=[0, bought, bought, bought])
+    executor = _executor(client)
+
+    res = await executor.execute_buy(MINT, 0.1, signal_market_cap_sol=30.0)
+
+    assert res.success
+    assert res.metadata["entry_price_source"] == "live_fill"
+    assert res.metadata["entry_market_cap_sol"] == pytest.approx(0.1 / bought * 1e15)
+    assert res.metadata["signal_market_cap_sol"] == 30.0
+
+
+@pytest.mark.regression("BUG-129")
+async def test_live_buy_without_meta_uses_the_post_fill_curve_or_the_signal() -> None:
+    client = _client()  # cost capture fails, so the balance delta has no SOL figure
+    client.get_token_balance = AsyncMock(side_effect=[0, TOKENS, TOKENS, TOKENS])
+    executor = _executor(client)
+    res = await executor.execute_buy(MINT, 0.1)
+    assert res.metadata["entry_price_source"] == "post_fill_curve"
+    assert res.metadata["entry_market_cap_sol"] == pytest.approx(30.0)
+
+    client.get_bonding_curve_state = AsyncMock(side_effect=RuntimeError("rpc down"))
+    client.get_token_balance = AsyncMock(side_effect=[0, TOKENS, TOKENS, TOKENS])
+    res = await executor.execute_buy(MINT, 0.1)
+    assert res.success
+    assert res.metadata["entry_price_source"] == "signal"
+    assert "entry_market_cap_sol" not in res.metadata
+
+
 @pytest.mark.parametrize(
     "balance, close_requested, config",
     [
@@ -402,11 +437,16 @@ async def test_buy_confirmation_timeout_with_tokens_received_is_success(
     res = await executor.execute_buy("Mint111", 0.1, slippage_bps=300)
     assert res.success
     assert res.token_amount == 7_000_000
-    assert res.metadata == {
+    assert {
+        k: res.metadata[k] for k in ("fill_source", "confirmed", "requested_sol")
+    } == {
         "fill_source": "balance_delta",
         "confirmed": False,
         "requested_sol": 0.1,
     }
+    # No transaction meta in this mock, so the entry is priced from the curve
+    # read after the fill (BUG-129).
+    assert res.metadata["entry_price_source"] == "post_fill_curve"
 
 
 @pytest.mark.regression("BUG-49", "BUG-73")

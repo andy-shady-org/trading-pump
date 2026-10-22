@@ -1166,6 +1166,106 @@ async def test_paper_sell_pays_the_exit_haircut(
     await bot.close()
 
 
+@pytest.mark.regression("BUG-136")
+async def test_breaker_values_open_positions_at_what_a_sell_returns(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        paper_exit_slippage_bps=100,
+        max_daily_drawdown_pct=0.15,
+        auto_liquidate_on_circuit_breaker=False,
+    )
+    mint = "MintExitValue11111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint, token_amount=1_000_000, cost_sol=0.50, entry_market_cap=30.0
+    )
+    bot.active_positions = bot.position_manager.get_all_positions()
+    spot = bot.position_manager.calculate_total_open_value()
+    assert spot == pytest.approx(0.50)
+    exit_value = bot._open_positions_exit_value()
+    assert exit_value == pytest.approx(0.50 * bot._paper_round_trip_fee_factor() * 0.99)
+    assert exit_value < spot
+
+    # 0.36 SOL cash + 0.50 SOL at spot is 14% below 1.0 SOL, inside the 15%
+    # limit, but selling the position returns about 0.483 SOL: 15.7% down.
+    tracker = bot.daily_equity_tracker
+    tracker.starting_equity_sol = 1.0
+    tracker.peak_daily_equity_sol = 1.0
+    tracker.last_reset_date_utc = tracker.get_current_utc_date()
+    bot.wallet_balance_sol = 0.36
+    assert await bot._check_and_enforce_circuit_breaker() is True
+    assert "portfolio drawdown" in tracker.lock_reason
+    assert bot.get_status_snapshot()["circuit_breaker_engaged"] is True
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-140")
+async def test_tier_queued_behind_a_slow_sell_of_the_same_tier_is_not_sold_again(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    mint = "MintSlowTier111111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint, token_amount=1_000_000, cost_sol=0.02, entry_market_cap=30.0
+    )
+    bot.position_manager.update_price(mint, 45.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    real_sell = bot.executor.execute_sell
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_sell(*args: Any, **kwargs: Any) -> ExecutionResult:
+        nonlocal calls
+        calls += 1
+        await release.wait()  # e.g. a Jito timeout, then the RPC fallback
+        return await real_sell(*args, **kwargs)
+
+    bot.executor.execute_sell = slow_sell  # type: ignore[method-assign]
+
+    def tier_1() -> Any:
+        return bot._sell_token(
+            mint,
+            sell_amount_tokens=500_000,
+            sell_fraction=0.5,
+            reason="take_profit_tier_1",
+            target_tier=1,
+        )
+
+    first = asyncio.create_task(tier_1())
+    await asyncio.sleep(0)
+    # The 60 s pending latch has expired, so the exit stack emits tier 1 again.
+    second = asyncio.create_task(tier_1())
+    await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.gather(first, second) == [True, False]
+    assert calls == 1
+    position = bot.active_positions[mint]
+    assert position["tier_1_executed"] is True
+    assert position["remaining_token_amount"] == 500_000
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-140")
+@pytest.mark.parametrize(
+    ("position", "tier", "expected"),
+    [
+        ({"tier_1_executed": True}, 1, True),
+        ({"tier_1_executed": False}, 1, False),
+        ({"tier_2_executed": True}, 2, True),
+        ({"executed_pre_grad_tranches": [0]}, "pre_grad_1", True),
+        ({"executed_pre_grad_tranches": [0]}, "pre_grad_2", False),
+        ({}, "pre_grad_x", False),
+        ({"tier_1_executed": True}, None, False),
+    ],
+)
+def test_tier_already_executed(
+    position: dict[str, Any], tier: Any, expected: bool
+) -> None:
+    assert TradingBot._tier_already_executed(position, tier) is expected
+
+
 @pytest.mark.regression("BUG-24", "BUG-25", "BUG-26", "BUG-27", "BUG-28")
 async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
     """
@@ -1636,6 +1736,42 @@ def make_pool(mint: str) -> RaydiumPoolKeys:
     fields = {name: f"{name}111" for name in RaydiumPoolKeys.__slots__}
     fields["coin_mint"] = mint
     return RaydiumPoolKeys(**fields)
+
+
+@pytest.mark.regression("BUG-131")
+@pytest.mark.parametrize(
+    ("dry_run", "metadata", "expected_entry"),
+    [
+        # Live: 0.02 SOL for 4e10 raw tokens is a 500 SOL market cap.
+        (False, {"fill_source": "balance_delta"}, 0.02 / 40_000_000_000 * 1e15),
+        # A post-trade balance is not a measured delta: no made-up entry.
+        (False, {"fill_source": "post_trade_balance"}, 0.0),
+        # Paper fills have no real token amount.
+        (True, {}, 0.0),
+    ],
+)
+async def test_raydium_entry_comes_from_the_fill_never_69_sol(
+    tmp_path: Path, dry_run: bool, metadata: dict[str, Any], expected_entry: float
+) -> None:
+    bot = make_bot(tmp_path, dry_run=dry_run, raydium_buy_amount_sol=0.02)
+    bot._should_buy = MagicMock(return_value=True)  # type: ignore[method-assign]
+    bot._check_account_equity_guard = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot._resolve_token_name = AsyncMock(return_value="Tok")  # type: ignore[method-assign]
+    bot.executor.execute_raydium_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            signature="sig_ray",
+            amount_sol=0.02,
+            token_amount=40_000_000_000,
+            metadata=metadata,
+        )
+    )
+    assert await bot._buy_raydium_token(MINT_2, make_pool(MINT_2)) is True
+    position = bot.position_manager.get_position(MINT_2)
+    assert position is not None
+    assert position["entry_market_cap"] == pytest.approx(expected_entry)
+    assert position["entry_market_cap"] != 69.0
+    await bot.close()
 
 
 @pytest.mark.regression("BUG-45")
@@ -5715,6 +5851,53 @@ async def test_position_refresh_interval_parsing(
     await bot.close()
 
 
+@pytest.mark.regression("BUG-130")
+async def test_live_breaker_never_baselines_on_the_simulated_balance(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, dry_run=False, reserve_balance_sol=0.1)
+    assert bot.dry_run is False
+    simulated = bot.wallet_balance_sol
+    bot.execution.get_balance_sol = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("rpc down")
+    )
+    tracker = bot.daily_equity_tracker
+
+    # The first read fails: no lock, no liquidation, and no baseline from the
+    # simulated start balance, from the health loop or the status snapshot.
+    assert await bot._check_and_enforce_circuit_breaker() is False
+    bot.get_status_snapshot()
+    assert tracker.starting_equity_sol == 0.0
+    assert tracker.last_reset_date_utc == ""
+    assert "waiting for the first wallet balance" in bot._last_event
+    from pumpfun_trading.bot.risk import evaluate_portfolio_circuit_breaker
+
+    locked, reason = evaluate_portfolio_circuit_breaker(bot)
+    assert locked and "first live wallet balance" in reason
+    assert tracker.starting_equity_sol == 0.0
+
+    # The first real read sets the day's baseline from the chain.
+    real = simulated * 0.66
+    bot.execution.get_balance_sol = AsyncMock(  # type: ignore[method-assign]
+        return_value=real
+    )
+    assert await bot._check_and_enforce_circuit_breaker() is False
+    assert tracker.starting_equity_sol == pytest.approx(real)
+    assert tracker.circuit_breaker_engaged is False
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-130")
+async def test_paper_breaker_still_uses_the_simulated_wallet(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    assert bot.dry_run is True
+    assert await bot._check_and_enforce_circuit_breaker() is False
+    assert bot.daily_equity_tracker.starting_equity_sol == pytest.approx(
+        bot.wallet_balance_sol
+    )
+    await bot.close()
+
+
 @pytest.mark.regression("BUG-114")
 async def test_breaker_trip_counted_once_and_lockout_reports_unlock_time(
     tmp_path: Path,
@@ -5748,6 +5931,50 @@ async def test_breaker_trip_counted_once_and_lockout_reports_unlock_time(
     restored.safe_startup()
     # A lock restored from disk is not counted again.
     assert restored._counted_breaker_lock_at == locked_at
+    await restored.close()
+
+
+@pytest.mark.regression("BUG-128")
+async def test_cumulative_cap_pauses_buying_until_the_operator_resumes(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        max_daily_drawdown_pct=0.15,
+        max_cumulative_drawdown_pct=0.25,
+        emergency_hard_lock_hours=24.0,
+        auto_liquidate_on_circuit_breaker=False,
+    )
+    tracker = bot.daily_equity_tracker
+    tracker.reference_equity_sol = 1.0
+    tracker.starting_equity_sol = 0.86
+    tracker.peak_daily_equity_sol = 0.86
+    tracker.last_reset_date_utc = tracker.get_current_utc_date()
+    bot.wallet_balance_sol = 0.74
+
+    assert await bot._check_and_enforce_circuit_breaker() is True
+    assert tracker.cumulative_cap_hit is True
+    assert bot.buying_paused is True
+    assert bot._operator_pause.reason == "cumulative loss cap"
+    assert bot._should_buy("mint", 40.0) is False
+
+    # The pause survives a restart, like an operator pause.
+    bot._write_status_snapshot()
+    await bot.close()
+    restored = make_bot(
+        tmp_path, max_cumulative_drawdown_pct=0.25, emergency_hard_lock_hours=24.0
+    )
+    restored.safe_startup()
+    assert restored.buying_paused is True
+    assert restored.daily_equity_tracker.cumulative_cap_hit is True
+
+    # Resuming is the operator's reset: the cap is measured from here.
+    restored.wallet_balance_sol = 0.74
+    assert restored.resume_buying(source="SIGUSR1") is True
+    assert restored.daily_equity_tracker.cumulative_cap_hit is False
+    assert restored.daily_equity_tracker.circuit_breaker_engaged is False
+    assert restored.daily_equity_tracker.reference_equity_sol == pytest.approx(0.74)
+    assert await restored._check_and_enforce_circuit_breaker() is False
     await restored.close()
 
 
@@ -6652,6 +6879,103 @@ def _buy_ready_bot(tmp_path: Path, **config: Any) -> TradingBot:
     bot._validate_balance = AsyncMock(return_value=True)  # type: ignore[method-assign]
     bot._resolve_token_name = AsyncMock(return_value="Tok")  # type: ignore[method-assign]
     return bot
+
+
+@pytest.mark.regression("BUG-129")
+async def test_live_position_is_measured_from_the_fill_not_the_signal(
+    tmp_path: Path,
+) -> None:
+    bot = _buy_ready_bot(tmp_path, dry_run=False)
+    assert bot.dry_run is False
+    bot.executor.execute_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            signature="Sig",
+            mint=SAMPLE_PUMP_MINT,
+            is_buy=True,
+            amount_sol=0.02,
+            token_amount=1_000,
+            metadata={"entry_market_cap_sol": 48.6, "entry_price_source": "live_fill"},
+        )
+    )
+    bot._record_trade = MagicMock()  # type: ignore[method-assign]
+
+    assert await bot._buy_token(SAMPLE_PUMP_MINT, 45.0, strategy="momentum")
+    position = bot.position_manager.get_position(SAMPLE_PUMP_MINT)
+    assert position is not None
+    assert position["entry_market_cap"] == pytest.approx(48.6)
+    assert position["entry_price_source"] == "live_fill"
+    assert position["signal_market_cap_sol"] == pytest.approx(45.0)
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-137")
+async def test_unknown_entry_market_cap_is_the_launch_market_cap(
+    tmp_path: Path,
+) -> None:
+    from pumpfun_trading.sdk.curve import LAUNCH_MARKET_CAP_SOL
+
+    bot = _buy_ready_bot(tmp_path)
+    bot.executor.execute_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            signature="Sig",
+            mint=SAMPLE_PUMP_MINT,
+            is_buy=True,
+            amount_sol=0.02,
+            token_amount=1_000,
+        )
+    )
+    bot._record_trade = MagicMock()  # type: ignore[method-assign]
+    assert await bot._buy_token(SAMPLE_PUMP_MINT, 0.0)
+    position = bot.position_manager.get_position(SAMPLE_PUMP_MINT)
+    assert position is not None
+    assert position["entry_market_cap"] == pytest.approx(LAUNCH_MARKET_CAP_SOL)
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-134")
+async def test_curve_reads_feed_the_slippage_estimator(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    policy = bot.executor.execution_policy
+    bot._feed_slippage_estimator(SAMPLE_PUMP_MINT, 30_000_000_000, 1_073 * 10**12)
+    bot._feed_slippage_estimator(SAMPLE_PUMP_MINT, 0, 1_073 * 10**12)  # ignored
+    observations = policy.get_estimator(SAMPLE_PUMP_MINT).get_observations()
+    assert len(observations) == 1
+    assert observations[0].virtual_sol_reserves == pytest.approx(30.0)
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-138")
+@pytest.mark.parametrize(
+    ("protocol", "creator", "expected", "alerted"),
+    [(95, 30, 125, False), (100, 50, 150, True)],
+)
+async def test_startup_checks_the_live_fee_schedule(
+    tmp_path: Path, protocol: int, creator: int, expected: int, alerted: bool
+) -> None:
+    from pumpfun_trading.sdk.fee_config import FeeConfig, FeeTier, Fees
+
+    bot = make_bot(tmp_path)
+    config = FeeConfig(
+        bump=1,
+        admin="admin",
+        flat_fees=Fees(0, 0, 0),
+        fee_tiers=(FeeTier(0, Fees(0, protocol, creator)),),
+        stable_fee_tiers=(),
+    )
+    bot.execution.get_pump_fee_config = AsyncMock(return_value=config)  # type: ignore[method-assign]
+    record_event = MagicMock()
+    bot._record_event = record_event  # type: ignore[method-assign]
+    assert await bot._check_pump_fee_schedule() == expected
+    alerts = [c.args[0] for c in record_event.call_args_list if c.kwargs.get("alert")]
+    assert bool(alerts) is alerted
+    if alerted:
+        assert "150 bps" in alerts[0] and "125 bps" in alerts[0]
+
+    bot.execution.get_pump_fee_config = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+    assert await bot._check_pump_fee_schedule() is None
+    await bot.close()
 
 
 async def test_momentum_buys_pass_the_drift_guard_to_the_executor(

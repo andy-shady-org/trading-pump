@@ -1,6 +1,8 @@
 """Pump.fun bonding-curve state, PDA derivation, instruction and trade builders."""
 
 import base64
+import logging
+import time
 from collections.abc import Sequence
 from typing import Any, Optional
 
@@ -44,16 +46,82 @@ from .execution_types import (
     NonStandardCurveError,
     NotPumpFunCurveError,
 )
+from .fee_config import FeeConfig, bonding_curve_fee_bps, decode_fee_config
 from .transport import TransactionTransportMixin
 
 # BondingCurve.quote_mint (BUG-124): zeroed or WSOL means the curve trades for SOL.
 CURVE_QUOTE_MINT_START = 83
 CURVE_QUOTE_MINT_END = 115
 SOL_QUOTE_MINTS = frozenset({SYSTEM_PROGRAM_ID, WSOL_MINT_STR})
+# The fee schedule changes rarely; re-read it at most this often (BUG-138).
+FEE_CONFIG_TTL_SECONDS = 600.0
+TOTAL_MINT_SUPPLY_RAW = 1_000_000_000_000_000
+
+logger = logging.getLogger(__name__)
 
 
 class PumpFunCurveMixin(TransactionTransportMixin):
     """Pump.fun bonding-curve reads plus buy/sell instruction and transaction builders."""
+
+    _fee_config_cache: tuple[float, FeeConfig] | None = None
+
+    @staticmethod
+    def fee_config_address() -> str:
+        """The Pump fee program's ``fee_config`` PDA for the Pump program."""
+        pda, _ = Pubkey.find_program_address(
+            [b"fee_config", FEE_CONFIG_KEY], Pubkey.from_string(PUMP_FEE_PROGRAM_ID)
+        )
+        return str(pda)
+
+    async def get_pump_fee_config(
+        self, *, max_age_seconds: float = FEE_CONFIG_TTL_SECONDS
+    ) -> FeeConfig | None:
+        """The current bonding-curve fee tiers from chain, cached (BUG-138).
+
+        ``None`` when the account cannot be read or decoded; callers then keep
+        ``pump_fee_bps``.
+        """
+        cached = self._fee_config_cache
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < max_age_seconds:
+            return cached[1]
+        address = self.fee_config_address()
+        try:
+            parsed = await self._request_rpc_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getAccountInfo",
+                    "params": [address, {"encoding": "base64"}],
+                }
+            )
+            value = (parsed.get("result") or {}).get("value")
+            if not value:
+                raise ValueError(f"fee config {address} not found")
+            owner = value.get("owner")
+            if owner is not None and str(owner) != PUMP_FEE_PROGRAM_ID:
+                raise ValueError(f"fee config {address} is owned by {owner}")
+            config = decode_fee_config(base64.b64decode(value.get("data", [""])[0]))
+        except Exception as exc:
+            logger.warning("Pump.fun fee config unavailable: %s", exc)
+            return cached[1] if cached is not None else None
+        self._fee_config_cache = (now, config)
+        return config
+
+    def curve_fee_bps(self, virtual_sol_lamports: int, virtual_token_raw: int) -> int:
+        """Fee a trade on this curve pays: the cached tier, else ``pump_fee_bps``."""
+        cached = self._fee_config_cache
+        if cached is None or virtual_sol_lamports <= 0 or virtual_token_raw <= 0:
+            return int(self.pump_fee_bps)
+        try:
+            return bonding_curve_fee_bps(
+                cached[1],
+                virtual_sol_lamports,
+                virtual_token_raw,
+                TOTAL_MINT_SUPPLY_RAW,
+            )
+        except ValueError:
+            return int(self.pump_fee_bps)
 
     @staticmethod
     def decode_bonding_curve_data(data: bytes) -> dict[str, Any]:
@@ -594,7 +662,7 @@ class PumpFunCurveMixin(TransactionTransportMixin):
                 v_sol,
                 v_token,
                 slippage_bps=slippage_bps,
-                fee_bps=self.pump_fee_bps,
+                fee_bps=self.curve_fee_bps(v_sol, v_token),
             )
 
         instructions = []
@@ -675,7 +743,7 @@ class PumpFunCurveMixin(TransactionTransportMixin):
                 v_token,
                 v_sol,
                 slippage_bps=slippage_bps,
-                fee_bps=self.pump_fee_bps,
+                fee_bps=self.curve_fee_bps(v_sol, v_token),
             )
         else:
             min_sol_lamports = max(

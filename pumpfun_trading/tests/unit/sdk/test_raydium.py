@@ -209,28 +209,35 @@ async def _raydium_instructions(client, side, pool_keys):
     return captured["ixs"]
 
 
+@pytest.mark.regression("BUG-131")
 def test_graduation_presets_and_config():
+    # The lane is off in every preset: Pump.fun migrates to PumpSwap (BUG-131).
     cfg_cons = resolve_strategy_config("conservative")
-    assert cfg_cons.enable_raydium_migration_sniping is True
+    assert cfg_cons.enable_raydium_migration_sniping is False
     assert cfg_cons.raydium_buy_amount_sol == 0.01
     assert cfg_cons.raydium_slippage_bps == 300
     assert cfg_cons.raydium_pre_migration_sol_threshold == 82.0
 
     cfg_bal = resolve_strategy_config("balanced")
-    assert cfg_bal.enable_raydium_migration_sniping is True
+    assert cfg_bal.enable_raydium_migration_sniping is False
     assert cfg_bal.raydium_buy_amount_sol == 0.02
     assert cfg_bal.raydium_slippage_bps == 500
     assert cfg_bal.raydium_pre_migration_sol_threshold == 80.0
 
     cfg_agg = resolve_strategy_config("aggressive")
-    assert cfg_agg.enable_raydium_migration_sniping is True
+    assert cfg_agg.enable_raydium_migration_sniping is False
     assert cfg_agg.raydium_buy_amount_sol == 0.05
     assert cfg_agg.raydium_slippage_bps == 800
     assert cfg_agg.raydium_priority_fee_lamports == 200_000
 
     # Dict export
     d = cfg_bal.to_dict()
-    assert d["enable_raydium_migration_sniping"] is True
+    assert d["enable_raydium_migration_sniping"] is False
+    # Still available when a config turns it on.
+    on = resolve_strategy_config(
+        "balanced", overrides={"enable_raydium_migration_sniping": True}
+    )
+    assert on.enable_raydium_migration_sniping is True
     assert d["raydium_buy_amount_sol"] == 0.02
 
 

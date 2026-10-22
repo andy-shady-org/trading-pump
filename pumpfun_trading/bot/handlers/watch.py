@@ -170,6 +170,11 @@ async def poll_watch_list(bot: TradingBot) -> None:
                 bot._market_regime().record_graduation(mint)
                 rejected[mint] = "complete"
                 continue
+            bot._feed_slippage_estimator(
+                mint,
+                int(state.get("virtual_sol_reserves", 0) or 0),
+                int(state.get("virtual_token_reserves", 0) or 0),
+            )
             v_sol = int(state.get("virtual_sol_reserves", 0) or 0) / 1e9
             v_tok = int(state.get("virtual_token_reserves", 0) or 0) / 1e6
             real_sol = int(state.get("real_sol_reserves", 0) or 0) / 1e9
