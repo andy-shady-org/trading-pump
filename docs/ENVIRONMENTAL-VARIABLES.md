@@ -23,10 +23,12 @@ graph TD
 ```
 
 1. **Explicit Command-Line Flags**: Command-line arguments passed directly to entry points (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`, `pumpfun-events`, `pumpfun`) take highest precedence.
-2. **External JSON Configuration File**: Settings loaded via `--config <path>` or `PUMPFUN_CONFIG_PATH`.
+2. **External JSON Configuration File**: Settings loaded via `--config <path>`.
 3. **Environment Variables**: Variables defined in `.env` (loaded automatically via `python-dotenv`) or active shell session environment.
-4. **Strategy Presets**: Base parameters defined by the selected strategy profile (`--preset` or `PUMPFUN_STRATEGY_PRESET`).
+4. **Strategy Presets**: Base parameters defined by the selected strategy profile (`--preset`, or `strategy_preset` in the config file).
 5. **System Defaults**: Hardcoded safe defaults defined in `TradingBotConfig` (`pumpfun_trading/strategies/base.py`).
+
+Sizing, exits, entry filters and most risk limits are **config keys**, not environment variables: set them in the `--config` file or pick a preset. Only the variables in §2 are read; a few names that earlier versions of this manual listed are not (§3.15), and the bot warns at startup when one of them is set (BUG-142).
 
 ---
 
@@ -53,14 +55,10 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_JITO_CONFIRMATION_TIMEOUT`](#pumpfun_jito_confirmation_timeout) | — | Float (Seconds) | Optional | `12.0` | Execution / Anti-MEV |
 | [`PUMPFUN_JITO_FALLBACK_TO_RPC`](#pumpfun_jito_fallback_to_rpc) | — | Boolean | Optional | `true` | Execution / Anti-MEV |
 | [`PUMPFUN_COMPUTE_UNIT_LIMIT`](#pumpfun_compute_unit_limit) | — | Integer | Optional | `200000` | Execution / Priority Fees |
-| [`PUMPFUN_BASE_BUY_SOL`](#pumpfun_base_buy_sol) | `PUMPFUN_BUY_AMOUNT_SOL` | Float (SOL) | Optional | `0.1` | Strategy Sizing |
 | [`PUMPFUN_SLIPPAGE_BPS`](#pumpfun_slippage_bps) | — | Integer (BPS) | Optional | `250` (2.5%) | Strategy / Execution |
 | [`PUMPFUN_BASE_EXIT_SLIPPAGE_BPS`](#pumpfun_base_exit_slippage_bps) | — | Integer (BPS) | Optional | `500` (5.0%) | Risk / Exit |
 | [`PUMPFUN_MAX_EXIT_SLIPPAGE_BPS`](#pumpfun_max_exit_slippage_bps) | — | Integer (BPS) | Optional | `5000` (50.0%) | Risk / Exit |
 | [`PUMPFUN_MAX_EXIT_RETRIES`](#pumpfun_max_exit_retries) | — | Integer | Optional | `5` | Risk / Exit |
-| [`PUMPFUN_STRATEGY_PRESET`](#pumpfun_strategy_preset) | `PUMPFUN_PRESET` | String | Optional | `balanced` | Strategy |
-| [`PUMPFUN_DRY_RUN`](#pumpfun_dry_run) | — | Boolean | Optional | `false` | Execution Mode |
-| [`PUMPFUN_CONFIG_PATH`](#pumpfun_config_path) | `PUMPFUN_CONFIG` | String (Path) | Optional | `None` | Configuration |
 | [`PUMPFUN_DRAWDOWN_MODE`](#pumpfun_drawdown_mode) | — | String | Optional | `adaptive_ratchet` | Risk Management |
 | [`PUMPFUN_PROFIT_RATCHET_RATIO`](#pumpfun_profit_ratchet_ratio) | — | Float | Optional | `0.50` (50%) | Risk Management |
 | [`PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT`](#pumpfun_profit_drawdown_tolerance_pct) | — | Float | Optional | `0.35` (35%) | Risk Management |
@@ -88,10 +86,10 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_REPLAY_COMPRESS`](#pumpfun_replay_compress) | — | Boolean | Optional | `true` | Replay Retention |
 | [`PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS`](#pumpfun_retention_check_interval_seconds) | — | Float (Seconds) | Optional | `3600.0` (1 hour) | Retention Engine |
 | [`PUMPFUN_ALERT_PROVIDER`](#pumpfun_alert_provider) | — | String | Optional | `none` | Alerting |
-| [`PUMPFUN_ALERT_DISCORD_WEBHOOK_URL`](#pumpfun_alert_discord_webhook_url) | `PUMPFUN_ALERT_WEBHOOK_URL` | String (URL) | Optional | `None` | Alerting |
+| [`PUMPFUN_ALERT_DISCORD_WEBHOOK_URL`](#pumpfun_alert_discord_webhook_url) | — | String (URL) | Optional | `None` | Alerting |
 | [`PUMPFUN_ALERT_SLACK_WEBHOOK_URL`](#pumpfun_alert_slack_webhook_url) | — | String (URL) | Optional | `None` | Alerting |
-| [`PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN`](#pumpfun_alert_telegram_bot_token) | `PUMPFUN_TELEGRAM_BOT_TOKEN` | String | Optional | `None` | Alerting |
-| [`PUMPFUN_ALERT_TELEGRAM_CHAT_ID`](#pumpfun_alert_telegram_chat_id) | `PUMPFUN_TELEGRAM_CHAT_ID` | String | Optional | `None` | Alerting |
+| [`PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN`](#pumpfun_alert_telegram_bot_token) | — | String | Optional | `None` | Alerting |
+| [`PUMPFUN_ALERT_TELEGRAM_CHAT_ID`](#pumpfun_alert_telegram_chat_id) | — | String | Optional | `None` | Alerting |
 | [`PUMPFUN_HEADLESS`](#pumpfun_headless) | — | Boolean | Optional | `false` | Display & Runtime |
 | [`NO_COLOR`](#no_color) | — | String | Optional | `None` | Terminal Display |
 
@@ -256,14 +254,6 @@ The table below summarizes every supported environment variable, its recognized 
 
 ### 3.5 Strategy Sizing, Presets & Exit Escalation (FEAT-03, FEAT-04)
 
-#### `PUMPFUN_BASE_BUY_SOL`
-* **Fallback Alias:** `PUMPFUN_BUY_AMOUNT_SOL`
-* **Type:** Float (SOL)
-* **Required:** Optional
-* **Default:** `0.1` (or strategy preset default)
-* **Description:** Base capital allocation committed per initial token buy order.
-* **Example:** `PUMPFUN_BASE_BUY_SOL=0.25`
-
 #### `PUMPFUN_SLIPPAGE_BPS`
 * **Fallback Alias:** None
 * **Type:** Integer (Basis Points, 1 BPS = 0.01%)
@@ -295,30 +285,6 @@ The table below summarizes every supported environment variable, its recognized 
 * **Default:** `5`
 * **Description:** Maximum number of retry attempts for failed exit orders before escalating to emergency liquidation.
 * **Example:** `PUMPFUN_MAX_EXIT_RETRIES=8`
-
-#### `PUMPFUN_STRATEGY_PRESET`
-* **Fallback Alias:** `PUMPFUN_PRESET`
-* **Type:** String (`conservative`, `balanced`, `aggressive`)
-* **Required:** Optional
-* **Default:** `balanced`
-* **Description:** Selects a preconfigured parameter profile governing entry screening strictness, take-profit multipliers, and trailing stop floors.
-* **Example:** `PUMPFUN_STRATEGY_PRESET="aggressive"`
-
-#### `PUMPFUN_DRY_RUN`
-* **Fallback Alias:** None
-* **Type:** Boolean (`true`, `false`, `1`, `0`)
-* **Required:** Optional
-* **Default:** `false`
-* **Description:** Enables paper-trading simulation mode. The bot processes real-time live market streams, screens tokens, and calculates fills without signing or broadcasting on-chain transactions.
-* **Example:** `PUMPFUN_DRY_RUN=true`
-
-#### `PUMPFUN_CONFIG_PATH`
-* **Fallback Alias:** `PUMPFUN_CONFIG`
-* **Type:** String (File Path)
-* **Required:** Optional
-* **Default:** `None`
-* **Description:** File path to an external JSON configuration file (e.g. `configs/custom-strategy.json`).
-* **Example:** `PUMPFUN_CONFIG_PATH="configs/bot-config.json"`
 
 ---
 
@@ -560,7 +526,7 @@ The table below summarizes every supported environment variable, its recognized 
 * **Example:** `PUMPFUN_ALERT_PROVIDER="discord"`
 
 #### `PUMPFUN_ALERT_DISCORD_WEBHOOK_URL`
-* **Fallback Alias:** `PUMPFUN_ALERT_WEBHOOK_URL`
+* **Fallback Alias:** None
 * **Type:** String (HTTPS URL)
 * **Required:** Optional (required if provider is `discord`)
 * **Default:** `None`
@@ -576,7 +542,7 @@ The table below summarizes every supported environment variable, its recognized 
 * **Example:** `PUMPFUN_ALERT_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/T00/B00/X00"`
 
 #### `PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN`
-* **Fallback Alias:** `PUMPFUN_TELEGRAM_BOT_TOKEN`
+* **Fallback Alias:** None
 * **Type:** String
 * **Required:** Optional (required if provider is `telegram`)
 * **Default:** `None`
@@ -584,7 +550,7 @@ The table below summarizes every supported environment variable, its recognized 
 * **Example:** `PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ"`
 
 #### `PUMPFUN_ALERT_TELEGRAM_CHAT_ID`
-* **Fallback Alias:** `PUMPFUN_TELEGRAM_CHAT_ID`
+* **Fallback Alias:** None
 * **Type:** String
 * **Required:** Optional (required if provider is `telegram`)
 * **Default:** `None`
@@ -801,6 +767,22 @@ The table below summarizes every supported environment variable, its recognized 
 
 ---
 
+### 3.15 Names That Are Not Read (BUG-142)
+
+Earlier versions of this manual, `USER-GUIDE.md` and `STRATEGY.md` listed these names, but no code reads them. Setting one changes nothing, so `pumpbot` logs a warning (and records an event) at startup for each one that is set. Use the replacement instead:
+
+| Name | Use instead |
+| :--- | :--- |
+| `PUMPFUN_DRY_RUN` | `pumpbot --dry-run` (or `--paper-trade`); `dry_run` / `paper_trade` in the config file. **Setting it does not stop live trading.** |
+| `PUMPFUN_CONFIG_PATH`, `PUMPFUN_CONFIG` | `pumpbot --config <path>` |
+| `PUMPFUN_STRATEGY_PRESET`, `PUMPFUN_PRESET` | `pumpbot --preset <name>`, or `strategy_preset` in the config file |
+| `PUMPFUN_BASE_BUY_SOL`, `PUMPFUN_BUY_AMOUNT_SOL` | `buy_amount_sol` in the config file, or `pumpbot --buy-amount-sol` |
+| `PUMPFUN_ALERT_WEBHOOK_URL` | `PUMPFUN_ALERT_DISCORD_WEBHOOK_URL` |
+| `PUMPFUN_TELEGRAM_BOT_TOKEN`, `PUMPFUN_TELEGRAM_CHAT_ID` | `PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN`, `PUMPFUN_ALERT_TELEGRAM_CHAT_ID` |
+| `PUMPFUN_STOP_LOSS`, `PUMPFUN_MAX_POSITIONS`, `PUMPFUN_MOMENTUM_*`, `PUMPFUN_TIER*_TP_*`, `PUMPFUN_TRAILING_*` and the other strategy names `STRATEGY.md` used to list | the matching config key (`stop_loss`, `max_active_positions`, …) in the config file |
+
+---
+
 ## 4. Production Configuration Templates
 
 ### Template A: High-Performance Live Trading with Yellowstone Geyser & Jito MEV
@@ -833,8 +815,6 @@ PUMPFUN_COMPUTE_UNIT_LIMIT=200000
 # ==========================================
 # 4. Strategy & Realized Ratchet Risk
 # ==========================================
-PUMPFUN_STRATEGY_PRESET="balanced"
-PUMPFUN_BASE_BUY_SOL=0.15
 PUMPFUN_SLIPPAGE_BPS=250
 PUMPFUN_DRAWDOWN_MODE="adaptive_ratchet"
 PUMPFUN_PROFIT_RATCHET_RATIO=0.50

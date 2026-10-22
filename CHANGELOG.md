@@ -38,6 +38,7 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - FEAT-65 sell quotes record their gap after the buy quote; cost-distribution and SOL-terms bar helpers (BUG-139).
 - A take-profit tier queued behind a slow sell of the same tier was sold twice (BUG-140).
 - The profit ratchet floor fell with closed losses after a win (BUG-141).
+- 51 documented environment variables were never read, `PUMPFUN_DRY_RUN` among them; they are gone from the manuals and `pumpbot` warns at startup when one is set (BUG-142).
 
 ## [0.3.0-rc.3] - 2026-10-21
 

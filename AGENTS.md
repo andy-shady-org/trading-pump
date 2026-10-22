@@ -85,6 +85,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[EXITS] Re-check Under The Lock:** a tier decision queued on the per-mint sell lock sold the same tier twice once the first slow sell finished (BUG-140). Anything that waits for a lock must re-validate its precondition after acquiring it.
 - **[REVIEW] Fix Branches Touch Shared Lines:** fourteen one-bug branches conflicted in `bot/run.py`, `tests/unit/bot/test_run.py` and the BUGS.md status table. Insert new tests at different anchors, update only the bug's own BUGS.md section on its branch, flip status rows on the integration branch, and run the merged suite before calling a set of fixes done.
 - **[RISK] A Ratchet Only Moves Up:** the BUG-127 floor was built from net realized PnL, so a closed loss after a win lowered it and the floor never held (BUG-141). Build a ratchet from a running peak, persist the peak, and test it with the giveback realized by closed trades, not only marked on open ones.
+- **[DOCS] A Documented Variable Must Be Read:** the env manual listed `PUMPFUN_DRY_RUN` and 50 other names no code reads (BUG-142). Never document a variable, alias or default without grepping the code for it; `unit/config/test_env.py` checks the §2 matrix. Don't wire up a long-documented name silently either: warn when it is set, then decide.
 
 ## Project Overview
 

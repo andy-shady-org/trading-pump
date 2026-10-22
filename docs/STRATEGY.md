@@ -111,7 +111,7 @@ $$\text{Trade Allocation (SOL)} = \min\left(\text{Base Buy SOL},\; \text{Wallet 
 * **`max_active_positions`**: Hard ceiling on concurrent open token holdings.
 * **`max_total_exposure_sol`**: Aggregate portfolio cap across all open positions.
 * **`reserve_balance_sol`**: Minimum unallocated wallet balance preserved for gas and emergency fees.
-* **Environment Variables**: `PUMPFUN_BASE_BUY_SOL`, `PUMPFUN_MAX_POSITIONS`, `PUMPFUN_MAX_TOTAL_EXPOSURE_SOL`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -175,7 +175,7 @@ $$\text{Slippage} = \frac{P_{\text{exec}} - P_{\text{spot}}}{P_{\text{spot}}} = 
 * **`min_market_cap_sol`**: Minimum bonding curve capitalization in SOL before evaluating entries (filters out instant 0-second dev self-snipes).
 * **`max_market_cap_sol`**: Maximum bonding curve capitalization in SOL for standard curve entries.
 * **`min_order_flow_buyers`**: Requires at least $N$ distinct wallet buyers before confirming entry signal.
-* **Environment Variables**: `PUMPFUN_MIN_MARKET_CAP_SOL`, `PUMPFUN_MAX_MARKET_CAP_SOL`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -227,7 +227,7 @@ Rigid "all-or-nothing" take-profit targets result in high profit giveback during
 * **`tier_2_take_profit`**: Price multiplier milestone for second profit harvest (e.g. `2.50` = +150%).
 * **`tier_2_sell_fraction`**: Fraction of initial position sold at Tier 2 (e.g. `0.35` = 35%).
 * **`moonbag_trailing_floor`**: Minimum price multiplier floor for retaining moonbags.
-* **Environment Variables**: `PUMPFUN_TIERED_TP_ENABLED`, `PUMPFUN_TIER1_TP_MULT`, `PUMPFUN_TIER1_TP_FRACTION`, `PUMPFUN_TIER2_TP_MULT`, `PUMPFUN_TIER2_TP_FRACTION`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -279,7 +279,7 @@ To capture asymmetric trend continuation while preventing profit round-tripping,
 * **`trailing_stop_drop_pct`**: Maximum allowed retracement (12%) from peak price before triggering market exit.
 * **`stop_loss`**: Hard stop-loss multiplier from initial entry (0.85 = -15% stop loss).
 * **`stagnant_timeout_seconds`**: Maximum duration (45.0s) a flat-moving token is held before recycling.
-* **Environment Variables**: `PUMPFUN_TRAILING_STOP_ENABLED`, `PUMPFUN_TRAILING_ACTIVATION_PCT`, `PUMPFUN_TRAILING_DROP_PCT`, `PUMPFUN_STOP_LOSS`, `PUMPFUN_STAGNANT_TIMEOUT`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -354,7 +354,7 @@ Held positions are re-priced from their bonding curve every `position_refresh_se
 * **`max_creator_initial_holding_pct`**: Maximum percentage of curve supply creator can hold at inception (e.g. `0.08` = 8%).
 * **`max_gini_coefficient`**: Maximum acceptable Gini concentration coefficient (e.g. `0.85`).
 * **`max_acceptable_risk_score`**: Maximum cumulative risk score before token is rejected (default `50.0`).
-* **Environment Variables**: `PUMPFUN_ANTI_RUG_ENABLED`, `PUMPFUN_MAX_CREATOR_HOLDING_PCT`, `PUMPFUN_MAX_GINI_COEFFICIENT`, `PUMPFUN_MAX_RISK_SCORE`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -466,7 +466,7 @@ To capture explosive momentum breakouts on active Pump.fun bonding curves before
 * **`momentum_min_z_score`**: Statistical Z-score threshold for trade velocity anomaly detection (e.g. `2.5`).
 * **`momentum_min_unique_buyers`**: Minimum unique buyer addresses in the active window (default `3`).
 * **`momentum_min_net_inflow_sol`**: Minimum net SOL volume deposited during the window (default `0.5 SOL`).
-* **Environment Variables**: `PUMPFUN_MOMENTUM_ENABLED`, `PUMPFUN_MOMENTUM_MIN_BUY_RATIO`, `PUMPFUN_MOMENTUM_MIN_Z_SCORE`, `PUMPFUN_MOMENTUM_MIN_UNIQUE_BUYERS`, `PUMPFUN_MOMENTUM_MIN_NET_INFLOW_SOL`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -516,7 +516,7 @@ When a token bonding curve achieves full capitalization ($\ge 85\text{ SOL}$ in 
 * **`raydium_pre_migration_sol_threshold`**: Real SOL curve reserve threshold to begin staging graduation keys (default `80.0 SOL`).
 * **`raydium_buy_amount_sol`**: Trade allocation dedicated to Raydium post-migration buy.
 * **`raydium_slippage_bps`**: Allowed slippage basis points for the Raydium swap (e.g. `500` = 5.0%).
-* **Environment Variables**: `PUMPFUN_RAYDIUM_SNIPE_ENABLED`, `PUMPFUN_RAYDIUM_BUY_SOL`, `PUMPFUN_RAYDIUM_SLIPPAGE_BPS`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -615,7 +615,7 @@ To capture high-conviction alpha generated by proven insider wallets, KOLs, and 
 * **`copy_trading_max_wallet_risk_score`**: Maximum allowable wallet risk score (default `40.0`).
 * **`copy_trading_mirror_sells`**: Automatically liquidates holdings when the tracked wallet sells (default `true`).
 * **`copy_trading_require_anti_rug_screen`**: Enforces strict anti-rug screening before mirroring copy buys (default `true`).
-* **Environment Variables**: `PUMPFUN_COPY_TRADING_ENABLED`, `PUMPFUN_COPY_TRADING_SIZING_MODE`, `PUMPFUN_COPY_TRADING_SCALE_FACTOR`, `PUMPFUN_COPY_TRADING_WALLETS`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -682,7 +682,7 @@ High-frequency algorithmic trading on Solana demands sub-millisecond execution a
 * **`rpc_endpoints`**: Ordered list of Solana JSON-RPC endpoints.
 * **`rpc_pool_circuit_breaker_threshold`**: Consecutive errors before tripping endpoint circuit breaker into OPEN state (default `3`).
 * **`rpc_pool_broadcast_concurrency`**: Number of healthy RPC nodes receiving concurrent transaction broadcasts (default `3`).
-* **Environment Variables**: `PUMPFUN_RPC_POOL_ENABLED`, `PUMPFUN_RPC_ENDPOINTS`, `PUMPFUN_RPC_POOL_CONCURRENCY`.
+* **Environment Variables**: none. These settings are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -798,7 +798,7 @@ A candidate breakout displaces the weakest active holding if and only if:
 * **`displacement_min_conviction_percentile`**: Minimum conviction percentile of candidate required to trigger displacement (e.g. `0.95` = 95th percentile).
 * **`displacement_hurdle_rate_pct`**: Minimum net EV edge over round-trip transaction costs (e.g. `0.03` = 3.0%).
 * **`min_hold_before_displacement_seconds`**: Minimum holding duration before an open asset can be displaced (default `45.0s`).
-* **Environment Variables**: `PUMPFUN_CAPITAL_ROTATION_ENABLED`, `PUMPFUN_DISPLACEMENT_MIN_CONVICTION`, `PUMPFUN_DISPLACEMENT_HURDLE_PCT`, `PUMPFUN_MIN_HOLD_BEFORE_DISPLACEMENT`.
+* **Environment Variables**: `PUMPFUN_CAPITAL_ROTATION_ENABLED`. The other settings here are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -857,7 +857,7 @@ Bonding curves approaching Raydium graduation ($\sim 85\text{ SOL}$ reserves / $
 * **`pre_graduation_entry_progress_pct`**: Minimum curve completion fraction to enter (e.g. `0.70` = 70%).
 * **`pre_graduation_max_entry_progress_pct`**: Maximum curve completion fraction for initial entry (e.g. `0.85` = 85%).
 * **`pre_graduation_tranches`**: List of progress milestones and corresponding sell fractions.
-* **Environment Variables**: `PUMPFUN_PRE_GRADUATION_ENABLED`, `PUMPFUN_PRE_GRAD_ENTRY_PROGRESS`, `PUMPFUN_PRE_GRAD_MAX_ENTRY_PROGRESS`.
+* **Environment Variables**: `PUMPFUN_PRE_GRADUATION_ENABLED`. The other settings here are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -917,7 +917,7 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
 * **`profit_drawdown_tolerance_pct`**: Allowed trailing retracement on profits in the Profit Run Zone (e.g. `0.40` = 40%).
 * **`profit_ratchet_ratio`**: Fraction of realized gains permanently banked into guaranteed baseline floor (e.g. `0.50` = 50%).
 * **`auto_liquidate_on_circuit_breaker`**: Determines whether to execute global emergency market sells upon circuit breaker engagement.
-* **Environment Variables**: `PUMPFUN_DRAWDOWN_MODE`, `PUMPFUN_MAX_DAILY_DRAWDOWN`, `PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT`, `PUMPFUN_PROFIT_RATCHET_RATIO`.
+* **Environment Variables**: `PUMPFUN_DRAWDOWN_MODE`, `PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT`, `PUMPFUN_PROFIT_RATCHET_RATIO`. The other settings here are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 
@@ -1068,7 +1068,7 @@ To provide deep observability into real-time screening verdicts, pricing calcula
 * **`enable_diagnostic_events`**: Enables structured JSONL diagnostic event persistence.
 * **`event_log_path`**: File path for diagnostic telemetry sink (default `events.jsonl`).
 * **`event_log_subsystems`**: Active subsystem filters for event logging.
-* **Environment Variables**: `PUMPFUN_DIAGNOSTIC_EVENTS_ENABLED`, `PUMPFUN_EVENT_LOG_PATH`, `PUMPFUN_EVENT_LOG_SUBSYSTEMS`.
+* **Environment Variables**: `PUMPFUN_EVENT_LOG_PATH`. The other settings here are config keys only (listed above; set them in the `--config` file or a preset), not environment variables (BUG-142).
 
 ---
 

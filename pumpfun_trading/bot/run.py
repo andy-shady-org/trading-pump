@@ -140,6 +140,7 @@ from pumpfun_trading.ops.metrics import (
     record_metric,
     restore_metrics,
 )
+from pumpfun_trading.config.env import unread_env_warnings
 from pumpfun_trading.ops.provenance import (
     PROVENANCE_EVENT,
     PROVENANCE_RECORD_TYPE,
@@ -3627,6 +3628,14 @@ class TradingBot:
             )
         return launch_bps
 
+    def _warn_unread_env_vars(self) -> list[str]:
+        """Flag documented-but-unread variables; PUMPFUN_DRY_RUN is alerted (BUG-142)."""
+        warnings = unread_env_warnings()
+        for message in warnings:
+            self._log(message, level=logging.WARNING)
+            self._record_event(message, alert=message.startswith("PUMPFUN_DRY_RUN "))
+        return warnings
+
     def _run_mode(self) -> str:
         if self.paper_trade:
             return "paper"
@@ -3674,6 +3683,7 @@ class TradingBot:
         """Starts background workers and event stream listeners."""
         self._register_signal_handlers()
         await self._collect_run_provenance()
+        self._warn_unread_env_vars()
         if hasattr(self, "event_logger") and self.event_logger is not None:
             await self.event_logger.start()
         if self.rpc_pool:
