@@ -160,6 +160,7 @@ Internal engineering documentation for maintainers, contributors, and SRE:
 * [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Unbuilt features only: candidate proposals, alpha ideas and the unscheduled backlog. An entry moves to `docs/FEATURES.md` once its code ships.
 * [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operations runbook: runtime layout, paper pilot, incident drills, wallet reconciliation, operator pause, unattended alerts, profit sweep, supervised deployment, incident response and rollback.
 * [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Per-release checklist, staged live capital gate (paper → canary → scale-up), hosted security gate, and versioning policy.
+* [**`docs/dev/RC4-HANDOFF.md`**](docs/dev/RC4-HANDOFF.md): Agent briefing for the v0.3.0-rc.4 work: branch map, BUG-127…143, FEAT-66…69 (code locations, behaviour changes, tests), ground rules for the live checkout and open work.
 * [**`docs/dev/STRATEGY-PIVOT.md`**](docs/dev/STRATEGY-PIVOT.md): v0.3.0 strategy pivot (confirmed momentum + pre-graduation), evidence, cost model, Phase 4c sprints 24E–24H and go/no-go rules.
 
 ---
