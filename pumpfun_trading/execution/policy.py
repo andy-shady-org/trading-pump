@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Union
 
@@ -17,6 +18,10 @@ from pumpfun_trading.sdk.curve import (
 from pumpfun_trading.strategies.base import TradingBotConfig
 
 Number = Union[int, float]
+
+# Estimators are now fed from every polled curve (BUG-134), so keep the
+# most recently used ones only.
+MAX_TRACKED_ESTIMATORS = 512
 
 
 @dataclass(frozen=True)
@@ -72,12 +77,15 @@ class AdaptiveExecutionPolicy:
         self.base_compute_unit_limit = base_compute_unit_limit
         self.base_compute_unit_price = base_compute_unit_price
         self.base_jito_tip_lamports = base_jito_tip_lamports
-        self._estimators: dict[str, BondingCurveVolatilityEstimator] = {}
+        self._estimators: OrderedDict[str, BondingCurveVolatilityEstimator] = (
+            OrderedDict()
+        )
 
     def get_estimator(self, mint: str) -> BondingCurveVolatilityEstimator:
         """Retrieve or create a curve volatility estimator for a given mint."""
-        if mint not in self._estimators:
-            self._estimators[mint] = BondingCurveVolatilityEstimator(
+        estimator = self._estimators.get(mint)
+        if estimator is None:
+            estimator = BondingCurveVolatilityEstimator(
                 window_seconds=60.0,
                 default_slippage_bps=self.default_slippage_bps,
                 min_slippage_bps=self.min_slippage_bps,
@@ -85,7 +93,12 @@ class AdaptiveExecutionPolicy:
                 alpha_volatility=self.alpha_volatility,
                 beta_impact=self.beta_impact,
             )
-        return self._estimators[mint]
+            self._estimators[mint] = estimator
+            while len(self._estimators) > MAX_TRACKED_ESTIMATORS:
+                self._estimators.popitem(last=False)
+        else:
+            self._estimators.move_to_end(mint)
+        return estimator
 
     def record_curve_update(
         self,

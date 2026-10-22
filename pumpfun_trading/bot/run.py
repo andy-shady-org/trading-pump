@@ -2966,6 +2966,28 @@ class TradingBot:
     def _watch_poll_due(self, mint: str, now: float) -> bool:
         return watch_handlers.watch_poll_due(self, mint, now)
 
+    def _feed_slippage_estimator(
+        self, mint: str, virtual_sol_lamports: float, virtual_token_raw: float
+    ) -> None:
+        """Give the dynamic-slippage estimator a curve read (BUG-134).
+
+        It was only fed at execution time, so its 30 s window rarely held two
+        readings and the volatility term was always 0.
+        """
+        if virtual_sol_lamports <= 0 or virtual_token_raw <= 0:
+            return
+        policy = getattr(getattr(self, "executor", None), "execution_policy", None)
+        if policy is None:
+            return
+        try:
+            policy.record_curve_update(
+                mint, float(virtual_sol_lamports) / 1_000_000_000.0, virtual_token_raw
+            )
+        except Exception as exc:  # never let telemetry break a poll
+            logging.getLogger(__name__).debug(
+                "Could not feed slippage estimator for %s: %s", mint, exc
+            )
+
     def _record_curve_poll(
         self,
         mint: str,

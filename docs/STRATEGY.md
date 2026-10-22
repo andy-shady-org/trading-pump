@@ -703,7 +703,8 @@ Static price slippage bounds and fixed priority fees create two severe vulnerabi
 
 1. **Instantaneous Price Velocity**: $v = \frac{P_{t_1} - P_{t_0}}{\max(10^{-4}, t_1 - t_0)}$
 2. **Rolling Volatility**: $\sigma_{\text{vol}} = \sqrt{\frac{1}{N} \sum_{i=1}^N (r_i - \overline{r})^2}$
-3. **Price Impact**: $\Delta P_{\text{impact}} = \frac{\Delta x}{x_{\text{virtual}}}$
+3. **Price Impact**: $\Delta P_{\text{impact}} = \frac{\Delta x}{x_{\text{virtual}}}$ (the execution slippage of the fill; for a sell $\frac{\Delta y}{y + \Delta y}$).
+   The volatility $\sigma$ is fed from every curve read the bot already makes: the watch poller, the held-position refresh and Geyser curve updates, kept for the 512 most recently read mints (BUG-134).
 4. **Dynamic Slippage**:
    $$S_{\text{dynamic}} = \operatorname{clamp}\left(\left(S_{\text{base}} + \alpha \cdot \sigma_{\text{vol}} \times 10^4 + \beta \cdot \Delta P_{\text{impact}} \times 10^4\right) \times M_{\text{urgency}},\; S_{\text{min}},\; S_{\text{max}}\right)$$
 
