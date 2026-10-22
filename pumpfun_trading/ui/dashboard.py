@@ -197,7 +197,7 @@ def build_dashboard(bot: Any) -> Panel:
     bot_status.add_row("Health", "ok" if bot._health_ok else "degraded")
     bot_status.add_row("Risk killed", "yes" if bot._risk_killed else "no")
     bot_status.add_row("Active positions", str(len(bot.active_positions)))
-    bot_status.add_row("Last event", bot._last_event)
+    # "Last event" is shown once, in the Health Check panel.
     bot_status.add_row("Status", str(bot._last_status))
     bot_status.add_row(
         "Last message",

@@ -17,6 +17,7 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - `pumpfun-drill` / `pumpfun ops drill`: four scripted risk drills on a paper bot with a simulated clock, no network and a throwaway key (cumulative cap with restart and `SIGUSR1` reset, emergency lock across midnight, live start with the balance RPC down, slow tier sell); `--report` JSON, exit code 1 on failure. `TradingBot.clock` drives the breaker checks (FEAT-69).
 
 ### Changed
+- Terminal UI: `Last event` is shown only in the Health Check panel; the duplicate row in Bot Status is gone (panel heights unchanged).
 - `pumpfun-replay --config` / `--preset` starts from the paper bot's wallet (`paper_starting_balance_sol`, else reserve + 10 buys) instead of 100 SOL when `--initial-cash` is not given, and runs the circuit breaker. Replays of `configs/canary.json` can now halt as paper would; `--no-circuit-breaker --initial-cash 100` reproduces earlier results. Sweeps, `--keep`, shadow tools and the optimizer are unchanged (FEAT-66).
 - New config key `max_cumulative_drawdown_pct` (default `0.30`, `0` = off; `0` in `configs/capture.json` and `configs/pregrad_pilot.json`): a loss cap across days and locks from a persisted reference equity. Breaching it liquidates and sets the operator pause; resuming with `SIGUSR1` resets it (BUG-128).
 - Emergency locks with `emergency_hard_lock_hours` > 0 now last their full duration across the 00:00 UTC rollover; soft halts and zero-hour locks still end at midnight (BUG-128).

@@ -112,6 +112,26 @@ def test_dashboard_shows_operator_pause_and_profit_sweep(tmp_path: Path) -> None
     assert "0.2500 SOL in 1" in text
 
 
+def test_last_event_is_shown_once_in_health_check_and_panels_stay_aligned(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    bot._last_event = "drill-event-xyz"
+    console = Console(width=200, record=True)
+    console.print(build_dashboard(bot))
+    lines = console.export_text().splitlines()
+
+    titles = next(line for line in lines if "Bot Status" in line)
+    health_start = titles.index("Health Check")
+    event_lines = [line for line in lines if "Last event" in line]
+    assert len(event_lines) == 1  # not repeated in Bot Status
+    assert event_lines[0].index("Last event") > titles.index("Bot Status")
+    assert event_lines[0].index("drill-event-xyz") > health_start
+    # All four overview panels still share one height: their bottom borders
+    # close on the same line.
+    assert any(line.count("╯╰") == 3 for line in lines)
+
+
 def test_dashboard_hides_profit_sweep_when_disabled(tmp_path: Path) -> None:
     console = Console(width=220, record=True)
     console.print(build_dashboard(make_bot(tmp_path)))
