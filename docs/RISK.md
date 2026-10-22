@@ -64,20 +64,23 @@ To guard against high-volatility market crashes while avoiding false-positive lo
 When positions close with net realized profit, a configurable fraction (`profit_ratchet_ratio`, default `0.50`) permanently ratchets the **Effective Equity Baseline Floor**:
 $$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Cumulative Realized PnL})$$
 
+The realized PnL is today's (it resets at the 00:00 UTC rollover with the starting capital), net of fees, tips and rent.
+
 ### B. Dual-Zone Risk Evaluation
 1. **Principal Protection Zone (`Current Equity < Starting Capital`)**:
    - Strict capital preservation applies.
    - If total portfolio equity drops below $\text{Starting Capital} \times (1 - \text{max\_daily\_drawdown\_pct})$ (e.g. 15%–20% loss from principal), the bot engages **`EMERGENCY_LIQUIDATE`**, liquidating all open positions and locking out trading to protect capital.
 2. **Profit Run Zone (`Current Equity >= Starting Capital`)**:
    - The bot operates with "house money".
-   - A relaxed trailing buffer (`profit_drawdown_tolerance_pct`, default 35%) is evaluated against intraday peak equity relative to the effective baseline floor.
-   - If the profit retracement tolerance is breached, the bot engages **`HALT_NEW_BUYS`**, pausing new token entries while allowing open positions to continue exiting gracefully via trailing stop-losses (`FEAT-03`) and take-profit targets.
+   - Two checks, either of which engages **`HALT_NEW_BUYS`**, pausing new token entries while allowing open positions to continue exiting gracefully via trailing stop-losses (`FEAT-03`) and take-profit targets:
+     - **Ratchet floor:** total equity falls below the effective baseline floor above (BUG-127). With 1.0 SOL at the start of the day and +0.2 SOL realized, new buys stop below 1.1 SOL.
+     - **Retracement:** total equity falls more than `profit_drawdown_tolerance_pct` (default 35%) below the intraday peak. This is measured on the whole peak equity, not on the profit, so it is the looser of the two on most days.
 
 ### C. Circuit Breaker Trigger Actions
 
 | Action | Regime Trigger | Behavior |
 | :--- | :--- | :--- |
-| **`HALT_NEW_BUYS`** | Profit Run Zone retracement exceeds `profit_drawdown_tolerance_pct` | Soft-halts new token entries; existing positions remain active and are managed by trailing stops. |
+| **`HALT_NEW_BUYS`** | Profit Run Zone: equity below the ratchet floor, or retracement from the peak exceeds `profit_drawdown_tolerance_pct` | Soft-halts new token entries; existing positions remain active and are managed by trailing stops. |
 | **`EMERGENCY_LIQUIDATE`** | Principal loss exceeds `max_daily_drawdown_pct` | Dispatches immediate market sell orders across all open positions, engages 24-hour lockout, and emits critical webhook alerts. |
 
 ### D. Operator Pause and Profit Sweep (Sprint 24D, FEAT-50 / FEAT-42)
