@@ -518,7 +518,11 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
 
     wallet_sol = float(getattr(bot, "wallet_balance_sol", 0.0) or 0.0)
     pos_mgr = getattr(bot, "position_manager", None)
-    if pos_mgr is not None and hasattr(pos_mgr, "calculate_total_open_value"):
+    exit_value = getattr(bot, "_open_positions_exit_value", None)
+    if callable(exit_value):
+        # What selling would return, not spot (BUG-136).
+        open_val_sol = float(exit_value() or 0.0)
+    elif pos_mgr is not None and hasattr(pos_mgr, "calculate_total_open_value"):
         open_val_sol = float(pos_mgr.calculate_total_open_value() or 0.0)
     else:
         open_positions = getattr(bot, "active_positions", {}) or {}

@@ -1207,11 +1207,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Suggested fix:** use per-position net returns (buy plus all sells), drop the sqrt(n) scaling or compare train and test on the same scale, require a minimum trade count instead of the zero-drawdown bonus, and report a bootstrap interval alongside the score.
 * **Verification to add:** identical per-trade return distributions on 70% and 30% splits give equal scores.
 
-### BUG-136: Open Positions Marked At Spot [OPEN]
+### BUG-136: Open Positions Marked At Spot [RESOLVED]
 * **Location:** `pumpfun_trading/bot/position_manager.py` (`calculate_total_open_value` ~L505–527), `pumpfun_trading/bot/risk.py` (`evaluate_portfolio_circuit_breaker` fallback ~L415–439)
 * **Description:** open value is cost × fraction × current/entry market cap, with no sell fee (1.25%), exit price impact or exit slippage.
 * **Impact:** low: equity is slightly overstated, so drawdown checks trigger a little late.
-* **Suggested fix:** value open positions at their estimated liquidation proceeds (`estimate_sell_proceeds` with the paper exit haircut).
+* **Resolution:** new `TradingBot._open_positions_exit_value()`: spot open value × `_paper_exit_factor()` (the round-trip Pump.fun fee and `paper_exit_slippage_bps`, the same model a paper sell is priced with). Every place that feeds the equity tracker uses it: the buy-time equity guard, the health-loop breaker check, `evaluate_portfolio_circuit_breaker`, the status snapshot drawdown and the daily summary. `calculate_total_open_value()` itself is unchanged, so displays and exposure limits still use spot. RISK.md §2D describes it.
+* **Verification:** `regression("BUG-136")` test in `unit/bot/test_run.py`: a 0.50 SOL position is valued at 0.50 × fee factor × 0.99, and 0.36 SOL cash plus that position trips a 15% limit that spot valuation (−14%) would not.
 
 ### BUG-137: Fragile Market-Cap Units And Fallback [OPEN]
 * **Location:** `pumpfun_trading/sdk/curve.py` (`calculate_market_cap_sol` ~L86–108), `pumpfun_trading/bot/run.py` (`entry_market_cap=float(market_cap_sol or 30.0)` ~L1956)

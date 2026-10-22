@@ -54,6 +54,9 @@ To prevent over-exposure to idiosyncratic microcap volatility, portfolio limits 
 * **Buffer Floor**: $0.10\text{ SOL}$.
 * **Mechanism**: Orders will not be initiated if available wallet SOL minus trade size is less than $0.10\text{ SOL}$. This reserves capital for Solana rent exemption, Compute Budget fees, and urgent liquidation transactions.
 
+### D. Open Positions at Exit Value
+The circuit breaker counts open positions at what selling them would return, not at spot: cost × market-cap ratio × the round-trip Pump.fun fee × (1 − `paper_exit_slippage_bps`), the same model a paper sell is priced with (BUG-136). Equity is therefore not overstated and the drawdown limits fire on time.
+
 ---
 
 ## 3. Daily Hard-Stop Circuit Breakers & Adaptive Realized-Ratchet Engine (FEAT-09 & FEAT-29)
