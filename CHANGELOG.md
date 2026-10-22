@@ -8,7 +8,29 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Nothing yet.
+Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change.
+
+### Changed
+- New config key `max_cumulative_drawdown_pct` (default `0.30`, `0` = off; `0` in `configs/capture.json` and `configs/pregrad_pilot.json`): a loss cap across days and locks from a persisted reference equity. Breaching it liquidates and sets the operator pause; resuming with `SIGUSR1` resets it (BUG-128).
+- Emergency locks with `emergency_hard_lock_hours` > 0 now last their full duration across the 00:00 UTC rollover; soft halts and zero-hour locks still end at midnight (BUG-128).
+- The profit-run zone also halts new buys below the realized-profit ratchet floor (BUG-127).
+- `enable_raydium_migration_sniping` defaults to `false` in every preset (BUG-131).
+- Velocity z-score baseline excludes the current and pre-creation slices; presets with a z threshold need 90 s of trade history (BUG-133).
+- Dynamic slippage: impact term is the execution slippage (about half the old term) and the volatility term is fed from every curve read (BUG-134).
+- Optimizer fitness is per position, with per-trade Sharpe / Sortino and a 1% Calmar drawdown floor; scores are not comparable with earlier runs (BUG-135).
+
+### Fixed
+- Profit ratchet floor computed but never enforced (BUG-127).
+- Daily lock lifted at UTC midnight and no cumulative loss cap (BUG-128).
+- Live positions measured from the signal market cap instead of the fill (BUG-129).
+- Live day baseline could come from the simulated start balance (BUG-130).
+- Raydium positions recorded a fixed 69 SOL entry; unknown entries became 30 SOL (BUG-131, BUG-137).
+- Geyser trade handler bought on the legacy momentum spike in confirmed mode (BUG-132).
+- Breaker valued open positions at spot, ignoring the sell fee and exit haircut (BUG-136).
+- Market cap from on-chain reserves now has explicit units; the launch market cap is 27.96 SOL, not 30 (BUG-137).
+- Pump.fun market-cap fee tiers (`fee_config`) are read from chain for live quotes and checked at startup against the modelled 125 bps (BUG-138).
+- FEAT-65 sell quotes record their gap after the buy quote; cost-distribution and SOL-terms bar helpers (BUG-139).
+- A take-profit tier queued behind a slow sell of the same tier was sold twice (BUG-140).
 
 ## [0.3.0-rc.3] - 2026-10-21
 
