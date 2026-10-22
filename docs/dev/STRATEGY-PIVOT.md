@@ -130,6 +130,7 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 - Every money-path sprint goes back through Stage 0 ([`RELEASE-GATE.md` §3.1](RELEASE-GATE.md#31-stages)).
 - v0.3.0 is a MINOR release (new config keys) and is tagged only after 24G passes Stage 0.
 - Judge each lane on its own with `pumpfun-audit pnl --group-by strategy` (`momentum`, `pre_graduation`, `launch`, later `copy`).
+- From rc.4 a paper run's go / no-go is the pre-registered rule in `configs/verdict_rules.json`, applied per lane with `pumpfun-audit verdict --strategy <lane>` (FEAT-67): adjusted for a 50 bps exit haircut and a 25,000-lamport tip, at least 100 positions, positive overall, in both halves and on at least half the UTC days, positive without the 3 best positions, and the 90% bootstrap interval of the mean per position above zero. Record the rule hash when the run starts; do not change the rule after that.
 - Wallet evidence (24I) stays off (`momentum_tracked_wallet_bonus: 0`) unless momentum with it beats momentum without it on an unseen capture and in a 72 h paper run.
 
 ### Known risks

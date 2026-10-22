@@ -111,6 +111,27 @@ pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum \
 
 `cuts` compares the net of the closed positions a rule keeps with the same share of all positions' net, in each half of the run. A rule shows an edge only when it beats that random cut in both halves. For a trail written before v0.3.0-rc.2, add `--capture capture/replay_capture.jsonl` to rebuild the FEAT-55/56/57 metrics (`top_buyer_share`, `wallet_diversity`, `round_trip_share`, `quick_flips`, `early_sol`, `creator_prior_loss`, …) from the trades recorded before each buy. See [CLI-COMMANDS.md](CLI-COMMANDS.md) (Recipe 5b).
 
+### Go / no-go verdict (FEAT-67)
+
+```bash
+pumpfun-audit verdict --path capture/audit_trail.jsonl --rules configs/verdict_rules.json --strategy momentum
+```
+
+`verdict` judges a paper run with a rule fixed before the run (`configs/verdict_rules.json`; `bot/verdict.py`), so the result cannot be tuned after the fact. It prints the rule's SHA-256: record it in the release record when the run starts and check it matches at the verdict.
+
+Every closed position's net (buy plus sells, all recorded fees, tips and rent) is adjusted for what paper does not pay: `exit_haircut_bps` of each sell's proceeds (a margin on top of `paper_exit_slippage_bps`) and a top-up of every transaction's tip to `tip_lamports`. The run is **GO** only when every check passes:
+
+| Check | Passes when | Rule keys |
+| :--- | :--- | :--- |
+| `min_positions` | at least this many closed positions | `min_positions` (100) |
+| `net_positive` | adjusted net above the minimum | `min_net_sol` (0) |
+| `halves_positive` | both halves (by entry time) positive | `split_at` (`mid`, a Unix time, or `null` for no split) |
+| `positive_days` | share of UTC days with a positive adjusted net | `min_positive_day_share` (0.5) |
+| `without_top_winners` | still positive without the best positions | `drop_top` (3) |
+| `bootstrap_lower_bound` | the lower bound of the bootstrap interval of the mean per position is above 0 | `bootstrap_samples` (10,000), `confidence` (0.90, two-sided), `seed` (7) |
+
+The report also lists per-day nets and the net without the best 0–5 positions. `--json` prints it all; the exit code is 0 on GO, 1 on NO-GO and 2 on a bad rule. Judge each lane on its own with `--strategy` (or a `strategy` key in the rule file). Command-line overrides (`--exit-haircut-bps`, `--drop-top`, …) change the hash, so they show up as a different rule. Full flag list: [`CLI-COMMANDS.md` §5](CLI-COMMANDS.md#5-forensic-audit-inspector-pumpfun-audit--pumpfun-audit).
+
 ## Example workflow
 
 ```bash

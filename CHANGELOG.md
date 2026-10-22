@@ -8,10 +8,11 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change. The rc.4 pre-flight work follows on `rc4/implementation`, one branch per item: the circuit breaker in replay (FEAT-66).
+Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change. The rc.4 pre-flight work follows on `rc4/implementation`, one branch per item: the circuit breaker in replay (FEAT-66) and the pre-registered paper verdict (FEAT-67).
 
 ### Added
 - `pumpfun-replay` models the bot's circuit breaker in live-fidelity replays and parity checks: daily limit, profit ratchet floor, cumulative cap, hard lock and emergency liquidation on the data clock; summary block `circuit_breaker`, `entry_rejections.circuit_breaker`; `--no-circuit-breaker` turns it off (FEAT-66).
+- `pumpfun-audit verdict`: a pre-registered go / no-go rule (`configs/verdict_rules.json`) on a paper audit trail, per lane: net after an exit haircut and a tip top-up, both halves and most UTC days positive, positive without the best positions, bootstrap lower bound above zero; prints the rule hash, exit code 1 on NO-GO (FEAT-67).
 
 ### Changed
 - `pumpfun-replay --config` / `--preset` starts from the paper bot's wallet (`paper_starting_balance_sol`, else reserve + 10 buys) instead of 100 SOL when `--initial-cash` is not given, and runs the circuit breaker. Replays of `configs/canary.json` can now halt as paper would; `--no-circuit-breaker --initial-cash 100` reproduces earlier results. Sweeps, `--keep`, shadow tools and the optimizer are unchanged (FEAT-66).

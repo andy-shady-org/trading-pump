@@ -96,6 +96,7 @@ Procedure: [`RUNBOOK.md` §6](RUNBOOK.md#6-paper-pilot-procedure).
 - [ ] Circuit breaker and exit retry queue observed working (forced if needed, see the drills)
 - [ ] Alerts delivered for entries, exits and breaker trips
 - [ ] Simulated PnL is positive after modelled fees and tips (informational only; paper fills are optimistic)
+- [ ] `pumpfun-audit verdict --rules configs/verdict_rules.json --strategy <lane>` is **GO** for the lane that goes to Stage 1 (FEAT-67), with the rule file unchanged since the run started (same `rules_sha256` as in the release record)
 
 ### 3.3 Stage 1 – Live canary configuration
 Start from the conservative preset and override only these fields in a dedicated config file:
@@ -208,6 +209,7 @@ Keep one record per release (or capital stage) in the `CHANGELOG.md` entry, or i
 - Release gate: PASS / FAIL (failed items: …)
 - Tests: <collected> collected, <passed> passed; coverage <n>% (branch <n>%)
 - Replay parity: unchanged / differences: …
+- Paper verdict (FEAT-67): rules sha256 <hash> recorded at <run start>; GO / NO-GO per lane (failed checks: …)
 - Mainnet simulation: done for … / not needed
 - Capital stage after this release: 0 / 1 / 2 (buy_amount_sol = …)
 - Canary daily log: date | wallet Δ SOL | audit realized PnL | gap | trades | fees+tips

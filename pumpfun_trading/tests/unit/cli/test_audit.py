@@ -556,3 +556,94 @@ def test_cuts_command_rebuilds_entry_features_from_a_capture(
     assert rule["segments"]["all"]["kept"] == 1
     assert rule["segments"]["all"]["missing"] == 0
     assert rule["beats_random_cut"] is True
+
+
+# --- verdict (FEAT-67) --------------------------------------------------------
+
+
+def _write_verdict_audit(path: Path, nets: list[float]) -> Path:
+    start = 1_792_022_400.0  # 2026-10-15 00:00 UTC
+    lines: list[dict[str, Any]] = []
+    for index, net in enumerate(nets):
+        ts = start + index * 2 * 86_400 / len(nets)
+        for action, value, extra in (
+            ("buy", 0.0, {}),
+            ("sell", net, {"proceeds_sol": 0.02, "reason": "stop_loss"}),
+        ):
+            lines.append(
+                {
+                    "type": "trade",
+                    "payload": {
+                        "action": action,
+                        "position_id": f"p{index}",
+                        "timestamp": ts + (60 if action == "sell" else 0),
+                        "strategy": "momentum",
+                        "net_pnl_sol": value,
+                        **extra,
+                    },
+                }
+            )
+    path.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
+    return path
+
+
+def test_verdict_go_prints_json_and_exits_zero(tmp_path: Path, output: Console) -> None:
+    path = _write_verdict_audit(tmp_path / "audit.jsonl", [0.002, 0.001] * 30)
+    rules = tmp_path / "rules.json"
+    rules.write_text(json.dumps({"min_positions": 50, "bootstrap_samples": 500}))
+
+    audit_cli.run_audit_cli(
+        _args("verdict", "--path", str(path), "--rules", str(rules), "--json")
+    )
+
+    report = json.loads(output.export_text())
+    assert report["verdict"] == "GO"
+    assert report["positions"] == 60
+    assert report["rules"]["min_positions"] == 50
+
+
+def test_verdict_no_go_renders_and_exits_one(tmp_path: Path, output: Console) -> None:
+    path = _write_verdict_audit(tmp_path / "audit.jsonl", [0.002, 0.001] * 30)
+
+    with pytest.raises(SystemExit) as exc:
+        # Shipped defaults need 100 positions; the haircut flag overrides.
+        audit_cli.run_audit_cli(
+            _args(
+                "verdict",
+                "--path",
+                str(path),
+                "--exit-haircut-bps",
+                "100",
+                "--tip-lamports",
+                "25000",
+                "--bootstrap-samples",
+                "200",
+            )
+        )
+    assert exc.value.code == 1
+    out = output.export_text()
+    assert "Verdict: NO-GO" in out
+    assert "min_positions" in out and "FAIL" in out
+    assert "Per UTC day" in out and "2026-10-15" in out
+    assert "Without the best N positions" in out
+
+
+def test_verdict_bad_rules_exit_two(tmp_path: Path, output: Console) -> None:
+    path = _write_verdict_audit(tmp_path / "audit.jsonl", [0.001] * 3)
+    with pytest.raises(SystemExit) as exc:
+        audit_cli.run_audit_cli(
+            _args("verdict", "--path", str(path), "--confidence", "1.5")
+        )
+    assert exc.value.code == 2
+    assert "confidence" in output.export_text()
+
+
+def test_verdict_runs_from_the_unified_cli(tmp_path: Path) -> None:
+    path = _write_verdict_audit(tmp_path / "audit.jsonl", [0.001] * 3)
+    args = _build_parser().parse_args(
+        ["audit", "verdict", "--path", str(path), "--min-positions", "3"]
+    )
+    assert args.audit_command == "verdict"
+    rules = audit_cli.verdict_rules_from_args(args)
+    assert rules.min_positions == 3
+    assert rules.exit_haircut_bps == 0.0

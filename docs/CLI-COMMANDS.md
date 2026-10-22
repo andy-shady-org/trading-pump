@@ -329,13 +329,15 @@ The `pumpfun-audit` CLI provides forensic trade accounting and incident analysis
 ### Command Syntax
 ```bash
 # Standalone binary
-pumpfun-audit [pnl | reconcile | cuts] --path <AUDIT_PATH> [OPTIONS]
+pumpfun-audit [pnl | reconcile | cuts | verdict] --path <AUDIT_PATH> [OPTIONS]
 
 # Unified CLI subcommand
-pumpfun audit [pnl | reconcile | cuts] --path <AUDIT_PATH> [OPTIONS]
+pumpfun audit [pnl | reconcile | cuts | verdict] --path <AUDIT_PATH> [OPTIONS]
 ```
 
-Without a command the audit records are listed (or summarised with `--summary`). `pnl` prints the net PnL report, `reconcile` checks the audit trail against the wallet on-chain (Sprint 24B, FEAT-49) and `cuts` tests entry rules against a random cut.
+Without a command the audit records are listed (or summarised with `--summary`). `pnl` prints the net PnL report, `reconcile` checks the audit trail against the wallet on-chain (Sprint 24B, FEAT-49), `cuts` tests entry rules against a random cut and `verdict` applies a pre-registered go / no-go rule to a paper run (FEAT-67).
+
+**Exit codes:** `reconcile` exits 1 on a gap; `verdict` exits 0 on GO, 1 on NO-GO and 2 on a bad rule; the others exit 0.
 
 ### Options & Parameter Reference
 
@@ -359,16 +361,26 @@ Without a command the audit records are listed (or summarised with `--summary`).
 | `--export` | File Path | `None` | Exports filtered audit records to a target JSON file. |
 | `--group-by` | `day` / `hour` / `reason` / `strategy` / `mint` | `None` | `pnl`: break the totals down (with `reason`, a position's buy legs are booked under its first exit reason; with `hour`, a whole position is booked under the UTC hour of its buy, from `market_regime.hour_utc`). |
 | `--keep` | `METRIC<OP>VALUE` | `None` | `cuts`: an entry rule on the buy's `entry_metrics` (then `market_regime`), e.g. `top_buyer_share<0.3`, `hour_utc>=12`; operators `< <= > >= == !=`. Repeat for more rules; all of them together are tested too. |
-| `--strategy` | String | `None` | `cuts`: only positions of this lane (`momentum`, `pre_graduation`, `launch`). |
-| `--split-at` | `mid` / Timestamp | `None` | `cuts`: also report halves A and B, split at the middle of the entry times or at this Unix time. |
+| `--strategy` | String | `None` | `cuts` / `verdict`: only positions of this lane (`momentum`, `pre_graduation`, `launch`). |
+| `--split-at` | `mid` / Timestamp | `None` | `cuts`: also report halves A and B, split at the middle of the entry times or at this Unix time. `verdict`: overrides the rule's `split_at`. |
+| `--rules` | File Path | built-in defaults | `verdict`: the pre-registered rule file, e.g. [`configs/verdict_rules.json`](../configs/verdict_rules.json). The flags below override single rules (and change the printed rule hash). |
+| `--min-positions` | Integer | `100` | `verdict`: closed positions needed. |
+| `--min-net-sol` | Float | `0.0` | `verdict`: adjusted net must be above this. |
+| `--exit-haircut-bps` | Float | `0` (file: `50`) | `verdict`: extra cut on every sell's proceeds, on top of the paper exit model. |
+| `--tip-lamports` | Integer | `0` (file: `25000`) | `verdict`: Jito tip a live transaction would pay; trades that recorded less are charged the difference. |
+| `--min-positive-day-share` | Float | `0.5` | `verdict`: share of UTC days (by entry time) with a positive adjusted net. |
+| `--drop-top` | Integer | `3` | `verdict`: the adjusted net must stay positive without this many best positions. |
+| `--bootstrap-samples` | Integer | `10000` | `verdict`: bootstrap resamples of the per-position net. |
+| `--confidence` | Float | `0.90` | `verdict`: two-sided bootstrap interval; its lower bound must be above 0. |
+| `--seed` | Integer | `7` | `verdict`: bootstrap seed, so a verdict can be re-run exactly. |
 | `--wallet` | Base58 | `None` | `reconcile`: wallet public key (required). |
 | `--rpc-url` | URL | `PUMPFUN_RPC_URL` / `SOLANA_RPC_URL` | `reconcile`: RPC used for `getTransaction`, token accounts and balance. |
 | `--start-balance` | Float | `None` | `reconcile`: wallet SOL at the start of the period; enables the whole-wallet check. |
 | `--tolerance-sol` | Float | `0.002` | `reconcile`: absolute tolerance. |
 | `--tolerance-pct` | Float | `0.05` | `reconcile`: relative tolerance; the larger of the two applies. |
 | `--no-token-check` | Flag | `false` | `reconcile`: skip the lost/phantom position check. |
- `--status-file` | File Path | `reconcile_status.json` next to `--path` | `reconcile`: where the result is stored for the dashboard Risk panel and `bot_status.json` (`PUMPFUN_RECONCILE_STATUS_PATH` overrides the default). |
- `--no-status-file` | Flag | `false` | `reconcile`: don't store the result (ad-hoc checks of other periods). |
+| `--status-file` | File Path | `reconcile_status.json` next to `--path` | `reconcile`: where the result is stored for the dashboard Risk panel and `bot_status.json` (`PUMPFUN_RECONCILE_STATUS_PATH` overrides the default). |
+| `--no-status-file` | Flag | `false` | `reconcile`: don't store the result (ad-hoc checks of other periods). |
 
 ### Execution Examples & Recipes
 
@@ -416,6 +428,18 @@ pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-
   --keep 'top_buyer_share<0.3' --keep 'wallet_diversity>=0.3'
 ```
 Confirm a rule on a second capture before gating on it. Trails written before v0.3.0-rc.2 have no FEAT-56/57 metrics: add `--capture <replay_capture.jsonl>` and `cuts` rebuilds them from the trades recorded before each buy (recorded metrics win). To test rules on replayed rather than paper positions, use `pumpfun-replay --keep` ([`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#entry-rules-on-replayed-positions---keep)).
+
+#### Recipe 5c: Pre-Registered Go / No-Go On A Paper Run (FEAT-67)
+Fix the rule **before** the run starts, and record the hash the verdict prints in the release record. A rule changed after the data is in is no longer a test:
+```bash
+# Before the run: print the rule hash (it depends on the rule only, so an empty trail will do)
+pumpfun-audit verdict --path /dev/null --rules configs/verdict_rules.json --json | jq -r .rules_sha256
+
+# After the run: judge each lane on its own
+pumpfun-audit verdict --path capture/audit_trail.jsonl --rules configs/verdict_rules.json --strategy momentum
+echo $?   # 0 = GO, 1 = NO-GO
+```
+Each closed position's net (buy and sells, all recorded costs) is first cut by `exit_haircut_bps` of its sell proceeds and topped up to `tip_lamports` per transaction. GO needs every check: at least `min_positions` positions, adjusted net above `min_net_sol`, both halves positive, at least `min_positive_day_share` of UTC days positive, still positive without the `drop_top` best positions, and the lower bound of the bootstrap interval of the per-position mean above zero. Positions still open at the end are counted and left out. `--strategy` changes the hash; pre-register the lanes you will judge.
 
 #### Recipe 6: Reconcile the Wallet Against the Audit Trail
 Compares every live trade signature's on-chain SOL change with the recorded `cash_flow_sol`, lists closed positions that still hold tokens and open positions that hold none, and (with `--start-balance`) the whole-wallet change. Live profit sweeps (audit `sweep` records, FEAT-42) count in the whole-wallet check and are printed as `profit sweeps`. Exits with code 1 when a gap exceeds max(0.002 SOL, 5%). The result is also stored in `reconcile_status.json` next to the audit trail, which the running bot's dashboard shows as `Reconciliation` and alerts on when it is a new `GAP`. `deploy/systemd/pumpfun-reconcile.timer` runs it daily under systemd:
@@ -609,6 +633,7 @@ The table below summarizes all supported options across the complete CLI command
 | **Replay & Backtest** | `--path`, `--dataset` | `replay`, `audit`, `events`, `optimize` | Input file path for `.jsonl` dataset. |
 | | `--mode` | `replay` | Replay presentation: `dashboard`, `summary`, `trades`. |
 | | `--initial-cash` | `replay` | Starting capital in SOL for backtesting (default: the paper wallet with a config). |
+| | `--rules` | `audit verdict` | Pre-registered go / no-go rule file (FEAT-67). |
 | | `--no-circuit-breaker` | `replay` | Do not model the circuit breaker in a live-fidelity replay. |
 | **Optimization** | `--method` | `optimize` | Optimization algorithm (`genetic`, `random`, `grid`). |
 | | `--iterations` / `--generations` | `optimize` | Search budget controls. |
