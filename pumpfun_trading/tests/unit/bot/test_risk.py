@@ -1618,10 +1618,15 @@ def test_cumulative_cap_state_survives_a_restart() -> None:
     assert restored.reference_equity_sol == pytest.approx(1.0)
     assert restored.cumulative_cap_hit is True
     assert restored.emergency_hard_lock_hours == pytest.approx(24.0)
-    # Snapshots written before BUG-128 have none of the new keys.
-    legacy = DailyEquityTracker.from_dict({"starting_equity_sol": 0.5})
+    # Snapshots written before BUG-128 have none of the new keys; the first
+    # evaluation takes the day's starting equity as the reference.
+    legacy = DailyEquityTracker.from_dict(
+        {"starting_equity_sol": 0.5, "last_reset_date_utc": "2026-10-15"}
+    )
     assert legacy.reference_equity_sol == 0.0
     assert legacy.cumulative_cap_hit is False
+    assert _evaluate(legacy, _utc(15, 12), 0.5, cumulative=0.25)[0] is False
+    assert legacy.reference_equity_sol == pytest.approx(0.5)
 
 
 def _risk_bot(**config):

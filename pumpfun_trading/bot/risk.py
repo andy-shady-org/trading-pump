@@ -301,6 +301,9 @@ class DailyEquityTracker:
         # day and after every lock, so on its own it allows that loss again and
         # again. This one is measured from a reference only the operator resets.
         cumulative_cap = max(0.0, float(max_cumulative_drawdown_pct or 0.0))
+        if self.reference_equity_sol <= 0.0 and self.starting_equity_sol > 0.0:
+            # A tracker restored from a pre-BUG-128 status file has no reference.
+            self.reference_equity_sol = self.starting_equity_sol
         if cumulative_cap > 0 and self.reference_equity_sol > 0:
             cumulative_loss_pct = (
                 self.reference_equity_sol - current_equity
