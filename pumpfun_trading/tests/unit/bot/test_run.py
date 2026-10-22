@@ -6654,6 +6654,31 @@ def _buy_ready_bot(tmp_path: Path, **config: Any) -> TradingBot:
     return bot
 
 
+@pytest.mark.regression("BUG-137")
+async def test_unknown_entry_market_cap_is_the_launch_market_cap(
+    tmp_path: Path,
+) -> None:
+    from pumpfun_trading.sdk.curve import LAUNCH_MARKET_CAP_SOL
+
+    bot = _buy_ready_bot(tmp_path)
+    bot.executor.execute_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            signature="Sig",
+            mint=SAMPLE_PUMP_MINT,
+            is_buy=True,
+            amount_sol=0.02,
+            token_amount=1_000,
+        )
+    )
+    bot._record_trade = MagicMock()  # type: ignore[method-assign]
+    assert await bot._buy_token(SAMPLE_PUMP_MINT, 0.0)
+    position = bot.position_manager.get_position(SAMPLE_PUMP_MINT)
+    assert position is not None
+    assert position["entry_market_cap"] == pytest.approx(LAUNCH_MARKET_CAP_SOL)
+    await bot.close()
+
+
 async def test_momentum_buys_pass_the_drift_guard_to_the_executor(
     tmp_path: Path,
 ) -> None:

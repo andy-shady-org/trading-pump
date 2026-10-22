@@ -146,6 +146,7 @@ from pumpfun_trading.sdk.costs import (
     COST_SOURCE_TRANSACTION_META,
     TransactionCosts,
 )
+from pumpfun_trading.sdk.curve import LAUNCH_MARKET_CAP_SOL
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
 from pumpfun_trading.strategies.observation import CurveObservationList
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
@@ -1953,7 +1954,7 @@ class TradingBot:
             mint=mint,
             token_amount=exec_res.token_amount or (100_000_000 if self.dry_run else 0),
             cost_sol=cost_basis,
-            entry_market_cap=float(market_cap_sol or 30.0),
+            entry_market_cap=float(market_cap_sol or LAUNCH_MARKET_CAP_SOL),
             name=position_name,
             buy_signature=exec_res.signature,
             reason=reason or "entry",
@@ -2006,7 +2007,7 @@ class TradingBot:
                     "mint": mint,
                     "name": position_name,
                     "price": price,
-                    "market_cap_sol": float(market_cap_sol or 30.0),
+                    "market_cap_sol": float(market_cap_sol or LAUNCH_MARKET_CAP_SOL),
                     "is_buy": True,
                     "sol_amount": float(effective_buy_amount),
                     "token_amount": int(exec_res.token_amount or 0),
