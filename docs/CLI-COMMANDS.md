@@ -16,6 +16,7 @@ The package exposes two operational paradigms for command-line execution:
    * `pumpfun-events`: Diagnostic runtime event inspector, filter, live tailer, and latency analytics tool.
    * `pumpfun-optimize`: Multi-objective genetic and random backtest hyperparameter optimization engine.
    * `pumpfun-arb`: Cross-venue spot disparity monitor and atomic Jito arbitrage simulation tool.
+   * `pumpfun-drill`: Scripted risk drills on a paper bot (FEAT-69): cumulative cap and operator reset, emergency lock across midnight, balance RPC down at a live start, slow tier sell.
 
 2. **Unified CLI Wrapper (`pumpfun` / `pumpfun-cli`)**: A consolidated multi-subcommand dispatcher offering a unified interface for all bot operations, analytics, and coin discovery tools:
    * `pumpfun bot [options]`: Alias for `pumpbot`.
@@ -25,6 +26,7 @@ The package exposes two operational paradigms for command-line execution:
    * `pumpfun events [options]`: Alias for `pumpfun-events`.
    * `pumpfun optimize [options]`: Alias for `pumpfun-optimize`.
    * `pumpfun arb [options]`: Alias for `pumpfun-arb`.
+   * `pumpfun ops drill [options]`: Alias for `pumpfun-drill`; `pumpfun ops prune` / `status` manage log retention.
    * `pumpfun latest-coins [options]`: Queries and displays newly created Pump.fun coins via REST API.
    * `pumpfun market-info [options]`: Fetches detailed bonding curve metrics for a specific token mint.
 
@@ -39,7 +41,7 @@ graph TD
     EVENTS["pumpfun events<br/>(pumpfun-events)<br/><i>Diagnostic Telemetry</i>"]
     OPTIMIZE["pumpfun optimize<br/>(pumpfun-optimize)<br/><i>Hyperparameter Optimizer</i>"]
     ARB["pumpfun arb<br/>(pumpfun-arb)<br/><i>Cross-Venue Arbitrage</i>"]
-    OPS["pumpfun ops<br/><i>Log Retention & Pruning</i>"]
+    OPS["pumpfun ops<br/><i>Log Retention, Pruning & Risk Drills</i>"]
     DISCOVERY["pumpfun latest-coins / market-info<br/><i>REST Coin Discovery</i>"]
 
     CLI --> BOT
@@ -604,6 +606,36 @@ pumpfun arb --mint <MINT> --max-input 0.50 --export-history arb_opportunities.js
 
 ---
 
+## 8.6. Scripted Risk Drills (`pumpfun-drill` / `pumpfun ops drill`, FEAT-69)
+
+### Purpose & Operational Utility
+Forces the breaker situations that are hard to cause on a running instance and checks the bot handles them. Each drill builds a real paper `TradingBot` in its own scratch folder and drives its risk code on a simulated clock and wallet. No stream is opened, nothing is signed with a real key (a throwaway keypair), the balance RPC and the sell executor are fakes, alerts are captured instead of sent, and the operator's `PUMPFUN_*` environment is ignored. Runs in seconds; see [`dev/RUNBOOK.md` §7.1](dev/RUNBOOK.md#71-scripted-risk-drills-feat-69) for what each drill checks.
+
+### Command Syntax
+```bash
+pumpfun-drill [--only DRILL ...] [--workdir DIR] [--report PATH] [--json] [--list]
+pumpfun ops drill [same options]
+```
+
+### Options & Parameter Reference
+
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--only` | `cumulative_cap` / `midnight_lock` / `balance_rpc_down` / `slow_tier_sell` (repeatable) | all four | Run only these drills. |
+| `--workdir` | Directory | a new temp dir | Keep each drill's `bot_status.json`, `audit_trail.jsonl` and `bot.log` here, one subfolder per drill. |
+| `--report` | File Path | `None` | Also write the JSON report (per drill: checks, pass / fail, details) for the release record. |
+| `--json` | Flag | off | Print the JSON report instead of the tables. |
+| `--list` | Flag | off | List the drills and exit. |
+
+**Exit codes:** 0 when every drill passes, 1 when a check fails or a drill raises.
+
+#### Recipe: Drills For A Release Record
+```bash
+pumpfun-drill --report docs/dev/releases/v0.3.0rc4-drills.json
+```
+
+---
+
 ## 9. Complete CLI Parameter Matrix
 
 The table below summarizes all supported options across the complete CLI command surface:
@@ -634,6 +666,7 @@ The table below summarizes all supported options across the complete CLI command
 | | `--mode` | `replay` | Replay presentation: `dashboard`, `summary`, `trades`. |
 | | `--initial-cash` | `replay` | Starting capital in SOL for backtesting (default: the paper wallet with a config). |
 | | `--rules` | `audit verdict` | Pre-registered go / no-go rule file (FEAT-67). |
+| **Drills** | `--only` / `--workdir` / `--report` | `drill`, `ops drill` | Select drills, keep their files, write the JSON report (FEAT-69). |
 | | `--no-circuit-breaker` | `replay` | Do not model the circuit breaker in a live-fidelity replay. |
 | **Optimization** | `--method` | `optimize` | Optimization algorithm (`genetic`, `random`, `grid`). |
 | | `--iterations` / `--generations` | `optimize` | Search budget controls. |

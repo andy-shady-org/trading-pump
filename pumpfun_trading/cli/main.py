@@ -195,11 +195,24 @@ def build_ops_parser(
     status_p.add_argument(
         "--json", action="store_true", help="Emit storage telemetry as JSON"
     )
+
+    from pumpfun_trading.cli.drill import add_drill_arguments
+
+    add_drill_arguments(
+        ops_subparsers.add_parser(
+            "drill", help="Scripted risk drills on a paper bot (FEAT-69)"
+        )
+    )
     return parser
 
 
 def run_ops_cli(args: argparse.Namespace) -> None:
     ops_cmd = getattr(args, "ops_command", None) or "status"
+    if ops_cmd == "drill":
+        from pumpfun_trading.cli.drill import run_drill_cli
+
+        run_drill_cli(args)
+        return
     target_dir = getattr(args, "target", ".") or "."
     policy = RetentionPolicy(
         max_age_days=getattr(args, "days", 30) or 30,

@@ -216,6 +216,16 @@ pumpfun-audit verdict --path runtime/audit_trail.jsonl --rules configs/verdict_r
 
 `verdict` only says GO when a paper run's profit survives a margin for live costs, holds in both halves and on most days, does not rest on a few lucky trades, and is statistically above zero. See [`AUDIT-TOOL.md`](AUDIT-TOOL.md#go--no-go-verdict-feat-67).
 
+### Workflow 4b: Risk Drills Before A Paper Or Live Run (`pumpfun-drill`)
+Check that the loss limits work on the build you are about to run. The drills use a throwaway wallet and no network, so they are safe to run anywhere:
+
+```bash
+pumpfun-drill                          # all four drills; exit code 1 if one fails
+pumpfun-drill --report drills.json     # keep the result for the release record
+```
+
+They trip the cumulative loss cap and resume with `SIGUSR1`, take an emergency lock just before midnight UTC, start a live bot whose balance RPC is down, and slow down a take-profit sell. See [`dev/RUNBOOK.md` §7.1](dev/RUNBOOK.md#71-scripted-risk-drills-feat-69).
+
 ### Workflow 5: Market Stream Harvesting & Replay Dataset Generation (FEAT-21)
 Capture live market quotes or generate deterministic synthetic price curves for strategy calibration without financial risk:
 

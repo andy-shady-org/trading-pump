@@ -2042,3 +2042,29 @@ def test_peak_realized_resets_with_the_day_and_survives_a_restart() -> None:
     tracker.initialize_or_rollover(1.05, now_utc=day1 + datetime.timedelta(days=1))
     assert tracker.peak_realized_daily_pnl_sol == 0.0
     assert tracker.effective_baseline_sol == pytest.approx(1.05)
+
+
+def test_portfolio_breaker_uses_the_bot_clock_when_it_has_one() -> None:
+    """The paper drills drive the breaker with a simulated clock (FEAT-69)."""
+
+    from pumpfun_trading.bot.risk import evaluate_portfolio_circuit_breaker
+
+    when = datetime.datetime(2026, 1, 5, 23, 55, tzinfo=datetime.timezone.utc)
+    tracker = DailyEquityTracker()
+    bot = SimpleNamespace(
+        daily_equity_tracker=tracker,
+        dry_run=True,
+        wallet_balance_sol=1.0,
+        active_positions={},
+        config=SimpleNamespace(max_daily_drawdown_pct=0.15),
+        now_timestamp=lambda: when.timestamp(),
+    )
+    evaluate_portfolio_circuit_breaker(bot)
+    assert tracker.last_reset_date_utc == "2026-01-05"
+
+    # A clock that is not a number (a MagicMock bot) falls back to real time.
+    other = DailyEquityTracker()
+    bot.daily_equity_tracker = other
+    bot.now_timestamp = lambda: "soon"
+    evaluate_portfolio_circuit_breaker(bot)
+    assert other.last_reset_date_utc == DailyEquityTracker.get_current_utc_date()

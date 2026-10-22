@@ -582,11 +582,22 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
     profit_tolerance = getattr(cfg, "profit_drawdown_tolerance_pct", None)
     cumulative_cap = float(getattr(cfg, "max_cumulative_drawdown_pct", 0.0) or 0.0)
 
+    # The bot's clock, so a paper drill can cross midnight (FEAT-69).
+    now_fn = getattr(bot, "now_timestamp", None)
+    now_ts = now_fn() if callable(now_fn) else None
+    if not isinstance(now_ts, (int, float)) or isinstance(now_ts, bool):
+        now_ts = None
     is_locked, reason = tracker.evaluate_circuit_breaker(
         max_daily_drawdown_pct=max_drawdown,
         emergency_hard_lock_hours=lock_hours,
         current_wallet_balance_sol=wallet_sol,
         open_positions_valuation_sol=open_val_sol,
+        now_timestamp=now_ts,
+        now_utc=(
+            datetime.datetime.fromtimestamp(now_ts, tz=datetime.timezone.utc)
+            if now_ts is not None
+            else None
+        ),
         drawdown_reference_mode=mode,
         profit_ratchet_ratio=ratchet_ratio,
         profit_drawdown_tolerance_pct=profit_tolerance,

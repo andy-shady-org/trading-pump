@@ -562,3 +562,11 @@ Measurement only: these inputs are recorded and can be used as shadow filters an
 - **Read-Out**: `pumpfun-replay` lists the capture's stamps as `capture_runs` in its summary and skips the rows as market data; `--compare-audit` prints the run's stamp and warns when the replay `--config` file differs from the run's (`file sha256`), or the build had modified tracked files. `pumpfun-audit --path … --record-type run_started` lists the runs in a trail.
 - **Not built**: a check that refuses to start on a dirty checkout or a config that differs from the release record.
 
+---
+
+## 41. Scripted Risk Drills (FEAT-69)
+
+- **`pumpfun-drill` / `pumpfun ops drill`** (`ops/drills.py`, `cli/drill.py`): four drills on a real paper `TradingBot` in a scratch folder, on a simulated clock and wallet, with no network, no real key and captured alerts: `cumulative_cap` (cap trip, pause across a restart and the lock expiry, `SIGUSR1` reset; BUG-128), `midnight_lock` (emergency lock at 23:55 UTC holds across midnight; BUG-128), `balance_rpc_down` (live start with the balance RPC down: no baseline, buys blocked, then the real balance; BUG-130) and `slow_tier_sell` (a tier sell past the 60 s pending latch is not repeated; BUG-140). Exit code 1 on a failure; `--report` writes JSON for the release record.
+- **Bot Clock**: `TradingBot.clock` (default `time.time`) drives the breaker checks, the day rollover and the status drawdown, so a drill or test can cross midnight without waiting.
+- **Not built**: drills for the process-level cases (kill and restart, stream loss, supervisor restart, degradation alert, trade-feed breaker, profit sweep); they stay manual ([`RUNBOOK.md` §7.2](dev/RUNBOOK.md#72-manual-drills)).
+

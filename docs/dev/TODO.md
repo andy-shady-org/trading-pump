@@ -32,8 +32,8 @@ Done: net PnL accounting and reconciliation (24B), backtest fidelity (24C), unat
 
 ### Sprint 24A: Paper Pilot & Live Canary — see [`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate) and [`RUNBOOK.md`](RUNBOOK.md)
 Done: release tagging, runtime directory, the v0.2.0 / v0.2.1 Stage 0 runs (invalid / FAIL) and their fixes, the v0.2.3 capture run ([`DONE.md`](DONE.md#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd)).
-- [ ] Run the incident drills in paper mode ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills))
-- [ ] Stage 0: 72 h paper pilot on the live stream with replay recording, on the build and lane that pass the replay go/no-go ([`STRATEGY-PIVOT.md` §5](STRATEGY-PIVOT.md#5-go--no-go)); record the summary in the release record
+- [ ] Run the incident drills in paper mode ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills)): `pumpfun-drill --report` for the scripted breaker drills (§7.1, FEAT-69) on the release build, then the manual drills (§7.2) on the paper deployment
+- [ ] Stage 0: 72 h paper pilot on the live stream with replay recording, on the build and lane that pass the replay go/no-go ([`STRATEGY-PIVOT.md` §5](STRATEGY-PIVOT.md#5-go--no-go)); record the rule hash before it starts and judge it with `pumpfun-audit verdict --rules configs/verdict_rules.json` (FEAT-67); record the summary and the run's `run_provenance` (FEAT-68) in the release record
 - [ ] Test `min_holder_count: 6` on a capture it was not picked from; only if it stays positive in replay put it in `canary.json`
 - [ ] Stage 1: live canary on a dedicated hot wallet with the canary config ([`RELEASE-GATE.md` §3.3](RELEASE-GATE.md#33-stage-1--live-canary-configuration): 0.02 SOL buys, `entry_mode: confirmed`, lower tip; arbitrage, back-running, pre-graduation harvesting, Raydium sniping and copy trading off until their own paper runs)
 - [ ] Daily wallet reconciliation (on-chain Δ SOL vs audit realized PnL) logged for every canary day ([`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-reconciliation))
