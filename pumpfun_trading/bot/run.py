@@ -140,6 +140,14 @@ from pumpfun_trading.ops.metrics import (
     record_metric,
     restore_metrics,
 )
+from pumpfun_trading.ops.provenance import (
+    PROVENANCE_EVENT,
+    PROVENANCE_RECORD_TYPE,
+    collect_run_provenance,
+    fee_tiers_summary,
+    provenance_capture_row,
+    short_build_label,
+)
 from pumpfun_trading.ops.redact import redact_text
 from pumpfun_trading.sdk.costs import (
     BASE_FEE_LAMPORTS_PER_SIGNATURE,
@@ -331,6 +339,10 @@ class TradingBot:
         # Live runs start from the simulated figure above until the first real
         # balance read; the breaker must not baseline the day on it (BUG-130).
         self._live_balance_confirmed = False
+        # Build, config and fee schedule of this run (FEAT-68); set at start().
+        self.config_path: str | None = None
+        self.run_provenance: dict[str, Any] | None = None
+        self._pump_fee_config: FeeConfig | None = None
         self.screening_cache = ScreeningCache(
             default_ttl=float(self.config.screening_cache_ttl_seconds)
         )
@@ -1577,6 +1589,7 @@ class TradingBot:
             # Unattended operation (Sprint 24D): pause, summary, degradation, sweep.
             "buying_paused": self.buying_paused,
             "operator_pause": self._operator_pause.to_dict(),
+            "run_provenance": self.run_provenance,
             "daily_summary": self._daily_summary.to_dict(),
             "degraded_conditions": self._degradation.degraded_for(time.monotonic()),
             "trade_feed_available": self.trade_feed_available(),
@@ -3586,6 +3599,7 @@ class TradingBot:
         except Exception as exc:
             config = None
             self._log(f"Pump.fun fee config check failed: {exc}", level=logging.DEBUG)
+        self._pump_fee_config = config if isinstance(config, FeeConfig) else None
         if not isinstance(config, FeeConfig):
             self._record_event(
                 "Pump.fun fee config unreadable: fees modelled at "
@@ -3613,9 +3627,53 @@ class TradingBot:
             )
         return launch_bps
 
+    def _run_mode(self) -> str:
+        if self.paper_trade:
+            return "paper"
+        return "dry-run" if self.dry_run else "live"
+
+    async def _collect_run_provenance(self) -> None:
+        """Version, commit and config hash, before anything is traded (FEAT-68)."""
+        try:
+            # git runs in a subprocess: keep it off the event loop.
+            self.run_provenance = await asyncio.to_thread(
+                collect_run_provenance,
+                self.config,
+                mode=self._run_mode(),
+                config_path=self.config_path,
+                modelled_fee_bps=PUMP_DEFAULT_FEE_BPS,
+            )
+        except Exception as exc:
+            self._log(f"Run provenance unavailable: {exc}", level=logging.WARNING)
+            self.run_provenance = None
+
+    def _record_run_provenance(self, launch_fee_bps: int | None) -> None:
+        """Add the fee schedule, then write the status file, audit and capture."""
+        provenance = self.run_provenance
+        if provenance is None:
+            return
+        provenance["fee_launch_bps"] = launch_fee_bps
+        provenance["fee_tiers"] = fee_tiers_summary(self._pump_fee_config)
+        self._log(
+            f"Run provenance: {short_build_label(provenance)}, config "
+            f"{str(provenance.get('config_sha256'))[:12]}, mode {provenance.get('mode')}",
+            level=logging.INFO,
+        )
+        self._write_audit_record(PROVENANCE_RECORD_TYPE, dict(provenance))
+        if self.replay_recorder is not None:
+            self.replay_recorder.record_snapshot(provenance_capture_row(provenance))
+        if hasattr(self, "event_logger") and self.event_logger is not None:
+            self.event_logger.emit(
+                category=EventCategory.LIFECYCLE,
+                severity=EventSeverity.INFO,
+                event_name=PROVENANCE_EVENT,
+                data=dict(provenance),
+            )
+
     async def start(self) -> None:
         """Starts background workers and event stream listeners."""
         self._register_signal_handlers()
+        await self._collect_run_provenance()
         if hasattr(self, "event_logger") and self.event_logger is not None:
             await self.event_logger.start()
         if self.rpc_pool:
@@ -3632,7 +3690,12 @@ class TradingBot:
         self._record_event(
             f"bot started ({self.config.strategy_preset} preset, "
             f"{'paper' if self.paper_trade else 'live'}, pid {os.getpid()}"
-            f"{', buying PAUSED' if self.buying_paused else ''})",
+            + (
+                f", {short_build_label(self.run_provenance)}"
+                if self.run_provenance
+                else ""
+            )
+            + f"{', buying PAUSED' if self.buying_paused else ''})",
             alert=True,
         )
         if hasattr(self, "event_logger") and self.event_logger is not None:
@@ -3649,7 +3712,8 @@ class TradingBot:
             )
         self._transition_to(TradingBotState.MONITORING, reason="bot_started")
         await self._reconcile_positions_on_startup()
-        await self._check_pump_fee_schedule()
+        launch_fee_bps = await self._check_pump_fee_schedule()
+        self._record_run_provenance(launch_fee_bps)
 
         health_task = asyncio.create_task(self._run_health_loop())
         refresh_task = asyncio.create_task(self._run_position_refresh_loop())

@@ -97,6 +97,7 @@ def main() -> None:
             headless=args.headless,
             replay_log_path=args.record_replay,
         )
+        bot.config_path = args.config
         try:
             await bot.start()
         finally:

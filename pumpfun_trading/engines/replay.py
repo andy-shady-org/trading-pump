@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from pumpfun_trading.bot.risk import CircuitBreakerAction, DailyEquityTracker
+from pumpfun_trading.ops.provenance import PROVENANCE_EVENT
 from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.strategies.arbitrage import CrossVenueDisparityMonitor
 from pumpfun_trading.strategies.base import TradingBotConfig
@@ -44,10 +45,24 @@ CURVE_INITIAL_VIRTUAL_SOL = 30.0
 # of the mint this soon after the fill is due is that read (curve_poll rows).
 CURVE_READ_FILL_TOLERANCE_SECONDS = 1.0
 # Capture rows that are not market data.
-NON_MARKET_EVENTS = frozenset({"screening", "shadow_entry"})
+# Rows a capture holds that are not market data: screener inputs, shadow
+# fills and the run's provenance stamp (FEAT-68).
+NON_MARKET_EVENTS = frozenset({"screening", "shadow_entry", PROVENANCE_EVENT})
 # The paper bot checks its circuit breaker in a 5 s health loop and before
 # every buy; replay does the same on the data clock (FEAT-66).
 BREAKER_EVAL_SECONDS = 5.0
+# Fields of a capture's provenance rows repeated in the replay summary.
+CAPTURE_RUN_KEYS = (
+    "started_at_utc",
+    "package_version",
+    "git_commit",
+    "git_dirty",
+    "mode",
+    "config_path",
+    "config_sha256",
+    "config_file_sha256",
+    "fee_launch_bps",
+)
 
 
 def real_sol_from_market_cap(market_cap_sol: float) -> float:
@@ -1018,7 +1033,18 @@ class PaperTradingEngine:
             "locks": [],
         }
 
+        # Provenance stamps of the run(s) that recorded the capture (FEAT-68).
+        capture_runs: list[dict[str, Any]] = []
+
         for index, snapshot in enumerate(snapshots):
+            if snapshot.get("event") == PROVENANCE_EVENT:
+                capture_runs.append(
+                    {
+                        key: snapshot.get(key)
+                        for key in CAPTURE_RUN_KEYS
+                        if snapshot.get(key) is not None
+                    }
+                )
             if snapshot.get("event") in NON_MARKET_EVENTS or is_record_only_row(
                 snapshot
             ):
@@ -1733,6 +1759,8 @@ class PaperTradingEngine:
         }
         if confirmed:
             summary["watch_stats"] = watch_stats
+        if capture_runs:
+            summary["capture_runs"] = capture_runs
         if tracker is not None:
             summary["circuit_breaker"] = {
                 **breaker_stats,

@@ -72,6 +72,7 @@ The table below summarizes every supported environment variable, its recognized 
 | [`PUMPFUN_RECONCILE_STATUS_PATH`](#pumpfun_reconcile_status_path) | — | String (Path) | Optional | `reconcile_status.json` next to the audit trail | Persistence / Forensic |
 | [`PUMPFUN_RECORD_REPLAY`](#pumpfun_record_replay) | — | Boolean / Path | Optional | `false` | Replay Simulation |
 | [`PUMPFUN_REPLAY_LOG_PATH`](#pumpfun_replay_log_path) | — | String (Path) | Optional | `None` | Replay Simulation |
+| [`PUMPFUN_GIT_COMMIT`](#pumpfun_git_commit) | — | String | Optional | unset (read from the checkout) | Run provenance |
 | [`PUMPFUN_BOT_LOG_PATH`](#pumpfun_bot_log_path) | — | String (Path) | Optional | `bot.log` (config `log_file`) | Log Retention |
 | [`PUMPFUN_LOG_MAX_BYTES`](#pumpfun_log_max_bytes) | — | Integer (Bytes) | Optional | `10485760` (10 MB) | Log Retention |
 | [`PUMPFUN_LOG_BACKUP_COUNT`](#pumpfun_log_backup_count) | — | Integer | Optional | `5` | Log Retention |
@@ -421,6 +422,14 @@ The table below summarizes every supported environment variable, its recognized 
 * **Default:** `None`
 * **Description:** Explicit destination file path for market replay recordings.
 * **Example:** `PUMPFUN_REPLAY_LOG_PATH="datasets/market_replay_20261014.jsonl"`
+
+#### `PUMPFUN_GIT_COMMIT`
+* **Fallback Alias:** None
+* **Type:** String (git commit)
+* **Required:** Optional
+* **Default:** unset: the bot reads the commit, branch and modified-files flag of the checkout it runs from (`git rev-parse`, local only)
+* **Description:** The commit to record in the run provenance stamp (FEAT-68) when the package runs from a copy without `.git` (a wheel or a copied tree). Ignored when the checkout can be read. The stamp then shows `git_source: "env"`; with neither, `git_commit` is `null` and `git_source` is `"unavailable"`.
+* **Example:** `PUMPFUN_GIT_COMMIT="$(git -C /opt/pumpfun-trading rev-parse HEAD)"`
 
 ---
 

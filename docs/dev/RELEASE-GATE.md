@@ -206,6 +206,7 @@ Keep one record per release (or capital stage) in the `CHANGELOG.md` entry, or i
 ```markdown
 ### Release record – vX.Y.Z (YYYY-MM-DD)
 - Commit: <sha>
+- Run provenance (FEAT-68, from the `run_started` audit record of each paper / live run): version, `git_commit` (`git_dirty` must be `false`), `config_path` + `config_file_sha256`, `fee_launch_bps`
 - Release gate: PASS / FAIL (failed items: …)
 - Tests: <collected> collected, <passed> passed; coverage <n>% (branch <n>%)
 - Replay parity: unchanged / differences: …

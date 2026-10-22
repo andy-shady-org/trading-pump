@@ -523,16 +523,20 @@ def _run_parity(
     """Print the replay-vs-live parity report; exit 1 outside the tolerance."""
     from pumpfun_trading.bot.audit import load_audit_records
     from pumpfun_trading.bot.pnl import trade_payloads
-    from pumpfun_trading.engines.parity import compare_replay_to_audit
+    from pumpfun_trading.engines.parity import (
+        compare_replay_to_audit,
+        provenance_notes,
+    )
 
     if not summary.get("live_fidelity"):
         raise SystemExit(
             "--compare-audit needs a live-fidelity replay: pass --config or --preset "
             "and don't use --simple-exits"
         )
+    audit_records = load_audit_records(audit_path)
     report = compare_replay_to_audit(
         summary.get("trades", []),
-        trade_payloads(load_audit_records(audit_path)),
+        trade_payloads(audit_records),
         tolerance_sol=float(getattr(args, "parity_tolerance_sol", 0.002)),
         tolerance_pct=float(getattr(args, "parity_tolerance_pct", 0.10)),
     )
@@ -562,6 +566,8 @@ def _run_parity(
             f"{row['live_net_pnl_sol']:.6f}",
             f"{row['replay_net_pnl_sol']:.6f}",
         )
+    for note in provenance_notes(audit_records, getattr(args, "config", None)):
+        console.print(f"[yellow]{note}[/yellow]")
     console.print(table)
     counts = report["counts"]
     verdict = "PASS" if report["within_tolerance"] else "GAP"

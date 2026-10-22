@@ -17,6 +17,7 @@ from pumpfun_trading.cli import replay as replay_cli
 from pumpfun_trading.engines.parity import (
     compare_replay_to_audit,
     normalise_exit_reason,
+    provenance_notes,
 )
 from pumpfun_trading.engines.replay import PaperTradingEngine
 from pumpfun_trading.strategies.base import TradingBotConfig
@@ -289,3 +290,100 @@ def test_replay_cli_compare_audit_needs_live_fidelity(tmp_path: Path) -> None:
         replay_cli.run_replay_cli(
             _args(capture, tmp_path / "audit.jsonl", simple_exits=True)
         )
+
+
+# --- Run provenance in the parity report (FEAT-68) ----------------------------
+
+
+def _run_started(config_hash: str | None, dirty: bool = False) -> dict[str, Any]:
+    return {
+        "type": "run_started",
+        "payload": {
+            "started_at_utc": "2026-10-15T00:00:00Z",
+            "package_version": "0.3.0rc4",
+            "git_commit": "abcdef1234567890",
+            "git_dirty": dirty,
+            "mode": "paper",
+            "config_path": "configs/canary.json",
+            "config_file_sha256": config_hash,
+        },
+    }
+
+
+def test_provenance_notes_flag_old_trails_dirty_builds_and_other_configs(
+    tmp_path: Path,
+) -> None:
+    assert provenance_notes([{"type": "trade", "payload": {}}], None) == [
+        "audit trail has no run provenance (written before rc.4)"
+    ]
+    config = tmp_path / "canary.json"
+    config.write_text("{}", encoding="utf-8")
+    from pumpfun_trading.ops.provenance import file_sha256
+
+    same = provenance_notes([_run_started(file_sha256(config))], str(config))
+    assert len(same) == 1
+    assert "0.3.0rc4 @ abcdef12" in same[0] and "paper" in same[0]
+
+    other = provenance_notes([_run_started("0" * 64, dirty=True)], str(config))
+    assert any("modified tracked files" in note for note in other)
+    assert any("parity compares different settings" in note for note in other)
+
+
+def test_compare_audit_prints_provenance_and_replay_skips_the_stamp(
+    tmp_path: Path,
+) -> None:
+    capture = tmp_path / "capture.jsonl"
+    audit = tmp_path / "audit.jsonl"
+    stamp = {
+        "event": "run_provenance",
+        "timestamp": 0.5,
+        "package_version": "0.3.0rc4",
+        "git_commit": "abcdef1234567890",
+        "config_sha256": "c" * 64,
+        "mode": "paper",
+    }
+    _write_jsonl(capture, [stamp, *_capture()])
+    summary = PaperTradingEngine(
+        initial_cash=1.0, strategy_config=_config(), live_fidelity=True
+    ).run([stamp, *_capture()])
+    assert summary["capture_runs"] == [
+        {
+            "package_version": "0.3.0rc4",
+            "git_commit": "abcdef1234567890",
+            "mode": "paper",
+            "config_sha256": "c" * 64,
+        }
+    ]
+    plain = PaperTradingEngine(
+        initial_cash=1.0, strategy_config=_config(), live_fidelity=True
+    ).run(_capture())
+    assert "capture_runs" not in plain
+    assert summary["trades"] == plain["trades"]
+
+    replay_net = sum(t["pnl"] for t in summary["trades"] if t["action"] == "sell")
+    _write_jsonl(
+        audit,
+        [
+            _run_started("0" * 64),
+            {"type": "trade", "payload": _live("A", "buy")},
+            {
+                "type": "trade",
+                "payload": _live("A", "sell", replay_net, "stop_loss_hit (86%)"),
+            },
+        ],
+    )
+    console = _output()
+    config_file = tmp_path / "replay.json"
+    config_file.write_text("{}", encoding="utf-8")
+    with (
+        patch.object(replay_cli, "console", console),
+        patch(
+            "pumpfun_trading.strategies.presets.resolve_strategy_config",
+            return_value=_config(),
+        ),
+    ):
+        replay_cli.run_replay_cli(_args(capture, audit, config=str(config_file)))
+
+    text = console.export_text()
+    assert "run 2026-10-15T00:00:00Z: 0.3.0rc4 @ abcdef12" in text
+    assert "parity compares different settings" in text

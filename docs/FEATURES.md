@@ -553,3 +553,12 @@ Measurement only: these inputs are recorded and can be used as shadow filters an
 - **Adjusted Net**: each closed position's recorded net, less `exit_haircut_bps` of its sell proceeds and a top-up of every transaction's tip to `tip_lamports`; open positions are counted and left out; `--strategy` judges one lane.
 - **Checks**: minimum positions, net above `min_net_sol`, both halves positive, share of positive UTC days, positive without the `drop_top` best positions, and a seeded bootstrap interval of the mean per position whose lower bound must be above zero. Per-day nets and the net without the best 0–5 positions are reported.
 
+---
+
+## 40. Run Provenance Stamp (FEAT-68)
+
+- **What Made A Run** (`ops/provenance.py`): at startup the bot records the package version, git commit / branch / modified-files flag of the checkout it runs from (local `git`, no network; `PUMPFUN_GIT_COMMIT` for a copy without `.git`), Python version and platform, the mode (`paper`, `dry-run`, `live`), preset and entry mode, the `--config` path with a SHA-256 of the file and of the effective config (URLs and secrets redacted first), the Pump.fun fee tiers read at startup next to the modelled 125 bps (BUG-138), and the cost switches `PUMPFUN_USE_JITO` / `PUMPFUN_JITO_*_TIP_LAMPORTS`.
+- **Where It Goes**: `run_provenance` in `bot_status.json`, a `run_started` audit record, an `event: "run_provenance"` row at the start of a `--record-replay` capture, a `run_provenance` diagnostic event, and the version and short commit in the `bot started` alert.
+- **Read-Out**: `pumpfun-replay` lists the capture's stamps as `capture_runs` in its summary and skips the rows as market data; `--compare-audit` prints the run's stamp and warns when the replay `--config` file differs from the run's (`file sha256`), or the build had modified tracked files. `pumpfun-audit --path … --record-type run_started` lists the runs in a trail.
+- **Not built**: a check that refuses to start on a dirty checkout or a config that differs from the release record.
+

@@ -9,7 +9,7 @@ The audit trail tool lets you inspect the bot's JSONL event stream for state tra
 The bot writes structured records to the configured audit log path (default: a temp file, or the path set with `PUMPFUN_AUDIT_LOG`). Each line is a JSON object containing:
 
 - `timestamp`: Unix time when the record was written
-- `type`: record category (`trade`, `state_transition`, `event`, `metric`)
+- `type`: record category (`trade`, `state_transition`, `event`, `metric`, `run_started`)
 - `state`: the bot state at the time of the record
 - `payload`: the record-specific details
 
@@ -33,6 +33,8 @@ State transition records include:
 Event records include:
 
 - a human-readable message payload
+
+Run records (`run_started`, FEAT-68, one per start) hold the run's provenance stamp: `package_version`, `git_commit` / `git_branch` / `git_dirty` / `git_source`, `mode`, `strategy_preset`, `entry_mode`, `config_path`, `config_file_sha256`, `config_sha256` (effective config, URLs redacted), `fee_model_bps`, `fee_launch_bps`, `fee_tiers`, `cost_env` (Jito switches and tip sizes only), `python_version`, `platform`, `pid` and `started_at` / `started_at_utc`. List them with `pumpfun-audit --path audit_trail.jsonl --record-type run_started --json`, and copy the commit and hashes into the release record.
 
 ## CLI usage
 
