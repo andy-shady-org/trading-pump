@@ -1638,6 +1638,42 @@ def make_pool(mint: str) -> RaydiumPoolKeys:
     return RaydiumPoolKeys(**fields)
 
 
+@pytest.mark.regression("BUG-131")
+@pytest.mark.parametrize(
+    ("dry_run", "metadata", "expected_entry"),
+    [
+        # Live: 0.02 SOL for 4e10 raw tokens is a 500 SOL market cap.
+        (False, {"fill_source": "balance_delta"}, 0.02 / 40_000_000_000 * 1e15),
+        # A post-trade balance is not a measured delta: no made-up entry.
+        (False, {"fill_source": "post_trade_balance"}, 0.0),
+        # Paper fills have no real token amount.
+        (True, {}, 0.0),
+    ],
+)
+async def test_raydium_entry_comes_from_the_fill_never_69_sol(
+    tmp_path: Path, dry_run: bool, metadata: dict[str, Any], expected_entry: float
+) -> None:
+    bot = make_bot(tmp_path, dry_run=dry_run, raydium_buy_amount_sol=0.02)
+    bot._should_buy = MagicMock(return_value=True)  # type: ignore[method-assign]
+    bot._check_account_equity_guard = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    bot._resolve_token_name = AsyncMock(return_value="Tok")  # type: ignore[method-assign]
+    bot.executor.execute_raydium_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            signature="sig_ray",
+            amount_sol=0.02,
+            token_amount=40_000_000_000,
+            metadata=metadata,
+        )
+    )
+    assert await bot._buy_raydium_token(MINT_2, make_pool(MINT_2)) is True
+    position = bot.position_manager.get_position(MINT_2)
+    assert position is not None
+    assert position["entry_market_cap"] == pytest.approx(expected_entry)
+    assert position["entry_market_cap"] != 69.0
+    await bot.close()
+
+
 @pytest.mark.regression("BUG-45")
 async def test_snapshot_round_trip_keeps_cost_basis_and_pool(tmp_path):
     """BUG-45: cost_sol, position_id and pool keys survive a restart."""

@@ -179,7 +179,8 @@ class TradingBotConfig:
     # coin completed this often (0 = off), so a migration missed by the curve
     # refresh and ``subscribeMigration`` (reconnect, restart) still exits.
     graduation_backfill_seconds: float = 30.0
-    enable_raydium_migration_sniping: bool = True
+    # Off by default: Pump.fun migrates to PumpSwap, not Raydium (BUG-123 / BUG-131).
+    enable_raydium_migration_sniping: bool = False
     raydium_pre_migration_sol_threshold: float = 80.0
     raydium_buy_amount_sol: float = 0.02
     raydium_slippage_bps: int = 500

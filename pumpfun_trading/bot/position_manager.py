@@ -318,11 +318,14 @@ class PositionManager:
             effective_buy_price = float(cost_sol or 0.0)
 
         now_ts = time.time()
+        # An unknown entry stays 0: the first price the position sees becomes
+        # its entry (BUG-76), never a made-up figure (BUG-131).
+        entry_mc = max(0.0, float(entry_market_cap or 0.0))
         pos_dict: dict[str, Any] = {
             "name": name.strip() or mint,
-            "entry_market_cap": float(entry_market_cap or 30.0),
-            "current_market_cap": float(entry_market_cap or 30.0),
-            "peak_market_cap": float(entry_market_cap or 30.0),
+            "entry_market_cap": entry_mc,
+            "current_market_cap": entry_mc,
+            "peak_market_cap": entry_mc,
             "initial_token_amount": int(token_amount),
             "remaining_token_amount": int(token_amount),
             "token_amount": int(token_amount),
@@ -334,7 +337,7 @@ class PositionManager:
             "first_seen": now_ts,
             "entry_time": now_ts,
             "last_price_change_at": now_ts,
-            "last_price": float(entry_market_cap or 30.0),
+            "last_price": entry_mc,
             "entry_reason": reason or "entry",
             "dry_run": bool(dry_run),
             "tier_1_executed": False,
