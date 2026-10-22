@@ -51,6 +51,7 @@ Run from a clean checkout of the release commit. Commands use the nox sessions s
 ### 2.3 Trading behaviour
 - [ ] Replay parity: for runtime, strategy or execution changes, replaying the recorded datasets in `test-data/` gives the same decisions as the previous release, or every difference is explained in the release notes
 - [ ] Risk controls exercised by the suite: stop-loss, trailing stop, tiered take-profit (2.0x / 3.5x / moonbag), daily drawdown breaker, emergency liquidation, exit retry queue
+- [ ] `pumpfun-drill --report <file>` passes on the release build (cumulative cap and operator reset, emergency lock across midnight, balance RPC down at a live start, slow tier sell; [`RUNBOOK.md` §7.1](RUNBOOK.md#71-scripted-risk-drills-feat-69)); report attached to the release record
 - [ ] Any change to instruction layouts, account lists, fees or Jito submission is simulated against mainnet (`simulateTransaction`) before release, as was done for BUG-34
 
 ### 2.4 Security and secrets
@@ -93,7 +94,7 @@ Procedure: [`RUNBOOK.md` §6](RUNBOOK.md#6-paper-pilot-procedure).
 - [ ] RSS memory stable (no monotonic growth; target ≤ 250 MB)
 - [ ] Stream reconnects observed and recovered without a restart
 - [ ] At least one stop-loss, one take-profit tier and one stagnant/max-hold exit fired as configured
-- [ ] Circuit breaker and exit retry queue observed working (forced if needed, see the drills)
+- [ ] Circuit breaker and exit retry queue observed working (forced if needed: `pumpfun-drill`, RUNBOOK §7.1, and the manual drills in §7.2)
 - [ ] Alerts delivered for entries, exits and breaker trips
 - [ ] Simulated PnL is positive after modelled fees and tips (informational only; paper fills are optimistic)
 - [ ] `pumpfun-audit verdict --rules configs/verdict_rules.json --strategy <lane>` is **GO** for the lane that goes to Stage 1 (FEAT-67), with the rule file unchanged since the run started (same `rules_sha256` as in the release record)
@@ -210,6 +211,7 @@ Keep one record per release (or capital stage) in the `CHANGELOG.md` entry, or i
 - Release gate: PASS / FAIL (failed items: …)
 - Tests: <collected> collected, <passed> passed; coverage <n>% (branch <n>%)
 - Replay parity: unchanged / differences: …
+- Scripted drills (FEAT-69): `pumpfun-drill` PASS / FAIL (report: …)
 - Paper verdict (FEAT-67): rules sha256 <hash> recorded at <run start>; GO / NO-GO per lane (failed checks: …)
 - Mainnet simulation: done for … / not needed
 - Capital stage after this release: 0 / 1 / 2 (buy_amount_sol = …)

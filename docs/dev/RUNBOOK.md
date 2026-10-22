@@ -324,6 +324,27 @@ Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FE
 
 Run these in paper mode before Stage 1 and after any release that touches lifecycle, persistence or execution.
 
+### 7.1 Scripted risk drills (FEAT-69)
+
+Four drills that are hard to force on a running instance are scripted. `pumpfun-drill` (or `pumpfun ops drill`) builds a real paper bot per drill in a scratch folder, drives its risk code on a simulated clock and wallet, and checks the outcome. It opens no stream, signs nothing with a real key (a throwaway keypair), replaces the balance RPC and the sell executor with fakes, captures alerts instead of sending them, and ignores the operator's `PUMPFUN_*` environment. It takes seconds:
+
+```bash
+pumpfun-drill --report releases/v0.3.0rc4-drills.json      # all four; exit 1 if any fails
+pumpfun-drill --only midnight_lock --workdir /tmp/drills   # one drill, keep its files
+pumpfun-drill --list
+```
+
+| Drill | What it does | Pass condition |
+|---|---|---|
+| `cumulative_cap` | 1.0 SOL wallet loses 14% on day 1 and 12% more on day 2 (25% cap, 15% daily limit); restart; 25 h later; `SIGUSR1` | Day 1 within the daily limit; day 2 trips the cumulative cap (BUG-128) and pauses buying with reason `cumulative loss cap`; paused and capped after a restart and after the 24 h lock expires; `SIGUSR1` resumes and moves the reference to the current equity; two `operator_pause` audit records |
+| `midnight_lock` | 20% loss at 23:55 UTC (15% limit, 24 h hard lock); check at 00:05 and 24 h later | Emergency lock; `lockout_until` 24 h after the lock; still locked after the 00:00 rollover; released 24 h after the lock with the baseline at the equity then |
+| `balance_rpc_down` | Live-mode bot (throwaway key, no transactions possible) whose balance RPC fails, then answers 0.20 SOL | No day baseline from the simulated start balance; breaker "waiting for the first live wallet balance read"; equity guard refuses the buy; status file shows no baseline; after recovery the baseline is 0.20 SOL (BUG-130) |
+| `slow_tier_sell` | Tier-1 sell held in flight while the exit stack emits tier 1 again (the 60 s pending latch has run out) | First sell `True`, repeat `False`; one executor call; tier 1 marked executed with half the tokens left (BUG-140) |
+
+Attach the `--report` JSON to the release record. The scripted drills cover the breaker paths; the manual drills below still have to run on the paper deployment itself, because they test the process, the supervisor, the stream and the alert channel.
+
+### 7.2 Manual drills
+
 | Drill | How | Pass condition |
 |---|---|---|
 | Orderly shutdown | `SIGINT`, then `SIGTERM` on a second run | Final snapshot and audit events written; clean exit |
@@ -377,6 +398,8 @@ Hardening checklist:
 | Live bot | `pumpbot --config configs/<instance>.json [--headless]` |
 | Paper pilot | `pumpbot --config configs/<instance>.json --paper-trade --headless` |
 | Pause / resume new buys | `kill -USR1 "$(jq .pid data/bot_status.json)"` |
+| Scripted risk drills | `pumpfun-drill --report <file>` (§7.1) |
+| Paper go / no-go | `pumpfun-audit verdict --path <trail> --rules configs/verdict_rules.json --strategy <lane>` (§6.3) |
 | Supervised bot | `systemctl {status,stop,restart} pumpbot`, `journalctl -u pumpbot -f` |
 | Status snapshot | `jq . data/bot_status.json` |
 | Audit trail | `pumpfun-audit --path data/audit_trail.jsonl --summary` |

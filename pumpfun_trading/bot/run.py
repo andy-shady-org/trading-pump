@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime
 import logging
 import os
 import signal
@@ -9,7 +10,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from dotenv import load_dotenv
 from rich.live import Live
@@ -340,6 +341,8 @@ class TradingBot:
         # Live runs start from the simulated figure above until the first real
         # balance read; the breaker must not baseline the day on it (BUG-130).
         self._live_balance_confirmed = False
+        # Wall clock of the risk checks; the paper drills drive it (FEAT-69).
+        self.clock: Callable[[], float] = time.time
         # Build, config and fee schedule of this run (FEAT-68); set at start().
         self.config_path: str | None = None
         self.run_provenance: dict[str, Any] | None = None
@@ -1352,7 +1355,9 @@ class TradingBot:
             self.wallet_balance_sol = balance_sol
             self._live_balance_confirmed = True
             open_val_sol = self._open_positions_exit_value()
-            self.daily_equity_tracker.update_valuation(balance_sol, open_val_sol)
+            self.daily_equity_tracker.update_valuation(
+                balance_sol, open_val_sol, now_utc=self._now_utc()
+            )
 
             if balance_sol - required_sol < self.config.reserve_balance_sol:
                 self._log(
@@ -1386,6 +1391,15 @@ class TradingBot:
         except Exception:
             return False
 
+    def now_timestamp(self) -> float:
+        """The risk checks' clock (``time.time`` unless a drill sets ``clock``)."""
+        return float(self.clock())
+
+    def _now_utc(self) -> datetime.datetime:
+        return datetime.datetime.fromtimestamp(
+            self.now_timestamp(), tz=datetime.timezone.utc
+        )
+
     def _equity_known(self) -> bool:
         """Paper / dry-run equity is simulated; a live run needs one real balance read."""
         return bool(self.dry_run or getattr(self, "_live_balance_confirmed", False))
@@ -1399,7 +1413,7 @@ class TradingBot:
                 self._live_balance_confirmed = True
             open_val_sol = self._open_positions_exit_value()
             self.daily_equity_tracker.update_valuation(
-                self.wallet_balance_sol, open_val_sol
+                self.wallet_balance_sol, open_val_sol, now_utc=self._now_utc()
             )
         except Exception as exc:
             self._log(
@@ -1493,7 +1507,7 @@ class TradingBot:
         # the live balance is known (BUG-130).
         drawdown = (
             self.daily_equity_tracker.calculate_drawdown(
-                self.wallet_balance_sol, open_val
+                self.wallet_balance_sol, open_val, now_utc=self._now_utc()
             )
             if self._equity_known()
             else 0.0
