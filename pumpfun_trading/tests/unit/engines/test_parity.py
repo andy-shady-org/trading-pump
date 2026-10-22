@@ -27,6 +27,11 @@ from pumpfun_trading.tests.support.factories import make_config
     ("reason", "expected"),
     [
         (
+            "circuit_breaker: portfolio drawdown 12.00% exceeded maximum allowed",
+            "circuit_breaker_liquidation",
+        ),
+        ("circuit_breaker_liquidation", "circuit_breaker_liquidation"),
+        (
             "stagnant_curve_timeout (181.0s >= 180.0s without price movement)",
             "stagnant_timeout",
         ),

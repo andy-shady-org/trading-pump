@@ -155,6 +155,7 @@ Only shipped code belongs here. Unbuilt features and the unbuilt parts of a ship
 - **Observability & Analytics**: Calculates Profit Factor, Maximum Drawdown, Win Rate, Average Trade Return, and Final Equity.
 - **Dual Mint/Name Display**: Displays both Mint Name and Mint Address in trade inspection tables.
 - **Multiple Output Modes**: Rich live dashboard view, tabular trade logs, or summary statistical output.
+- **Live Fidelity, Costs And Circuit Breaker**: with a config, replay uses the live sizing, exits, modelled costs and (FEAT-66, §38) the bot's circuit breaker; see [`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#live-fidelity-replay-sprint-24c-bug-61).
 
 ---
 
@@ -534,3 +535,13 @@ Measurement only: these inputs are recorded and can be used as shadow filters an
 - **Record-Only Curve Observations (rc.3)** (`strategies/observation.py`, `bot/handlers/observe.py`): a deterministic sample of screen-rejected launches (`screen_reject_sample_pct`, rows tagged `reject_sample` with the screen's `reject_reasons`) and curves past `graduation_discovery_min_real_sol` found by a bounded Pump.fun API scan (`graduation_discovery_scan_seconds`, rows tagged `discovery`), polled in their own task as `curve_poll` rows with `observation_start` / `observation_end` records. Never watched, promoted or bought; replay and the shadow tools skip the rows. **Not built**: any rule that relaxes the screen or lets the pre-graduation lane buy discovered curves ([`TODO.md`](dev/TODO.md) Sprints 24G / 24H).
 - **Stop Crossings (rc.3)** (`record_stop_crossings`, `execution/sell_pipeline.py`): the first trade-feed and curve-refresh price at or below `stop_loss` per position, and `exit_metrics` (trigger, fill and crossing ratios, lead seconds) on full-exit sell records. **Not built**: a stop triggered on trade-feed prices.
 - **Slow-Lane Data (FEAT-65 phase 0, rc.3)** (`services/slow_lane.py`, `pumpfun-recorder --jupiter-quotes` / `--backfill-bars`): a separate, keyless recorder for liquid Solana tokens (`configs/slow_lane_tokens.json`): Jupiter round-trip quotes at 0.02 / 0.1 / 0.5 SOL with route, pools, price impact and round-trip cost, Jupiter prices and liquidity, priority-fee samples for the quoted pools, and GeckoTerminal daily / hourly OHLCV bars. No wallet, no transactions; rows stay out of the Pump.fun captures ([`RUNBOOK.md` §6.4](dev/RUNBOOK.md)). **Not built**: the bar backtester, the strategy, the Jupiter swap client and everything else in [FEAT-65](dev/PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter).
+
+---
+
+## 38. Circuit Breaker In Replay (FEAT-66)
+
+- **Same Breaker, Data Clock** (`engines/replay.py`, `PaperTradingEngine(circuit_breaker=True)`): a live-fidelity replay runs the bot's `DailyEquityTracker` every 5 s of capture time and before each buy, with open positions at exit value. Daily limit, profit ratchet floor, retracement tolerance, cumulative cap, hard lock across the UTC rollover and emergency liquidation all apply; a cumulative-cap trip is final, as no operator resumes it.
+- **Paper Wallet Bankroll**: `pumpfun-replay --config` starts from the paper bot's wallet (`simulated_starting_balance_sol`: `paper_starting_balance_sol`, else reserve + 10 buys) unless `--initial-cash` is given, so the breaker and reserve check see paper's equity.
+- **Read-Out**: summary block `circuit_breaker` (trips, liquidations, locks with reason, refused buys, state at the end) and a summary-table row; refused buys count as `entry_rejections.circuit_breaker`. On by default for plain replays and `--compare-audit`; `--no-circuit-breaker` turns it off. Sweeps, `--keep`, shadow tools and the optimizer do not model it.
+- **Not modelled**: the operator pause and `SIGUSR1` resume, the profit sweep's withdrawals, and the live balance-read guard (BUG-130); replay has no wallet RPC.
+

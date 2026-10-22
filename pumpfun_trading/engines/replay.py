@@ -12,6 +12,7 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 
+from pumpfun_trading.bot.risk import CircuitBreakerAction, DailyEquityTracker
 from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.strategies.arbitrage import CrossVenueDisparityMonitor
 from pumpfun_trading.strategies.base import TradingBotConfig
@@ -44,6 +45,9 @@ CURVE_INITIAL_VIRTUAL_SOL = 30.0
 CURVE_READ_FILL_TOLERANCE_SECONDS = 1.0
 # Capture rows that are not market data.
 NON_MARKET_EVENTS = frozenset({"screening", "shadow_entry"})
+# The paper bot checks its circuit breaker in a 5 s health loop and before
+# every buy; replay does the same on the data clock (FEAT-66).
+BREAKER_EVAL_SECONDS = 5.0
 
 
 def real_sol_from_market_cap(market_cap_sol: float) -> float:
@@ -86,6 +90,14 @@ class PaperTradingEngine:
     live bot pays (``paper_entry_delay_seconds`` / ``paper_entry_slippage_bps``):
     the fill is priced from the last curve price at signal + delay, worsened by
     the penalty, and the position takes no exits until it has filled.
+
+    With ``circuit_breaker=True`` (live fidelity only, FEAT-66) the engine runs
+    the bot's ``DailyEquityTracker`` on the data clock: equity is cash plus open
+    positions at exit value, realized PnL is booked per sell, buys are refused
+    while it is locked (daily limit, profit ratchet floor, cumulative cap), and
+    an ``EMERGENCY_LIQUIDATE`` lock sells every filled position when
+    ``auto_liquidate_on_circuit_breaker`` is set. A cumulative-cap trip stops
+    buying for the rest of the replay (there is no operator to resume it).
     """
 
     def __init__(
@@ -107,9 +119,12 @@ class PaperTradingEngine:
         live_fidelity: bool = False,
         cost_model: ReplayCostModel | None = None,
         entry_mode: str = "auto",
+        circuit_breaker: bool = False,
     ) -> None:
         if entry_mode not in {"auto", "live_fills", "signals", "confirmed"}:
             raise ValueError(f"Unsupported entry_mode: {entry_mode}")
+        if circuit_breaker and not live_fidelity:
+            raise ValueError("circuit_breaker=True requires live_fidelity=True")
         if entry_mode == "confirmed" and not live_fidelity:
             raise ValueError("entry_mode='confirmed' requires live_fidelity=True")
         if live_fidelity and strategy_config is None:
@@ -137,6 +152,7 @@ class PaperTradingEngine:
         self.live_fidelity = bool(live_fidelity)
         self.cost_model = cost_model
         self.entry_mode = entry_mode
+        self.circuit_breaker = bool(circuit_breaker)
         self.enable_order_flow_momentum = enable_order_flow_momentum or (
             bool(strategy_config.enable_momentum_signals) if strategy_config else False
         )
@@ -787,6 +803,60 @@ class PaperTradingEngine:
         exec_sell_price = price * (1.0 - self._exit_slippage_bps() / 10_000.0)
         return quantity * exec_sell_price * (1.0 - self.fee_bps / 10_000.0)
 
+    def _open_exit_value(
+        self, positions: dict[str, dict[str, Any]], last_prices: dict[str, float]
+    ) -> float:
+        """Open positions at what selling them would return (BUG-136 / FEAT-66)."""
+        return sum(
+            self._sell_value(
+                float(pos["quantity"]),
+                last_prices.get(pos["mint"], float(pos["entry_price"])),
+            )
+            for pos in positions.values()
+        )
+
+    def _evaluate_breaker(
+        self,
+        tracker: DailyEquityTracker,
+        *,
+        cash: float,
+        positions: dict[str, dict[str, Any]],
+        last_prices: dict[str, float],
+        ts: float,
+    ) -> tuple[bool, str]:
+        """One circuit-breaker check at data time ``ts``, as the bot does it."""
+        cfg = self.strategy_config
+        assert cfg is not None
+        return tracker.evaluate_circuit_breaker(
+            max_daily_drawdown_pct=float(cfg.max_daily_drawdown_pct),
+            emergency_hard_lock_hours=float(cfg.emergency_hard_lock_hours),
+            current_wallet_balance_sol=cash,
+            open_positions_valuation_sol=self._open_exit_value(positions, last_prices),
+            now_timestamp=ts,
+            now_utc=datetime.fromtimestamp(ts, tz=timezone.utc),
+            drawdown_reference_mode=cfg.drawdown_reference_mode,
+            profit_ratchet_ratio=cfg.profit_ratchet_ratio,
+            profit_drawdown_tolerance_pct=cfg.profit_drawdown_tolerance_pct,
+            max_cumulative_drawdown_pct=float(
+                getattr(cfg, "max_cumulative_drawdown_pct", 0.0) or 0.0
+            ),
+        )
+
+    def _note_breaker_trip(
+        self,
+        stats: dict[str, Any],
+        tracker: DailyEquityTracker,
+        snapshot: dict[str, Any],
+    ) -> None:
+        stats["trips"] += 1
+        stats["locks"].append(
+            {
+                "timestamp": self._snapshot_timestamp(snapshot),
+                "action": tracker.circuit_breaker_action.value,
+                "reason": tracker.lock_reason,
+            }
+        )
+
     def _live_exit_pass(
         self,
         *,
@@ -938,6 +1008,15 @@ class PaperTradingEngine:
         has_curve_reads = any(s.get("event") == "curve_poll" for s in snapshots)
         # Buys the entry drift guard skipped at the fill.
         refused_buys = 0
+        # Circuit breaker on the data clock (FEAT-66).
+        tracker = DailyEquityTracker() if self.circuit_breaker else None
+        breaker_checked_at: float | None = None
+        breaker_booked = 0
+        breaker_stats: dict[str, Any] = {
+            "trips": 0,
+            "liquidations": 0,
+            "locks": [],
+        }
 
         for index, snapshot in enumerate(snapshots):
             if snapshot.get("event") in NON_MARKET_EVENTS or is_record_only_row(
@@ -1317,6 +1396,61 @@ class PaperTradingEngine:
                     stats=watch_stats,
                 )
 
+            breaker_locked = False
+            if tracker is not None:
+                for booked in trades[breaker_booked:]:
+                    if booked.get("action") in {"sell", "arbitrage"}:
+                        tracker.record_realized_trade(
+                            float(booked.get("pnl") or 0.0),
+                            float(booked.get("costs_sol") or 0.0),
+                        )
+                breaker_booked = len(trades)
+                was_locked = tracker.circuit_breaker_engaged
+                if (
+                    breaker_checked_at is None
+                    or ts - breaker_checked_at >= BREAKER_EVAL_SECONDS
+                ):
+                    breaker_checked_at = ts
+                    breaker_locked, _ = self._evaluate_breaker(
+                        tracker,
+                        cash=cash,
+                        positions=positions,
+                        last_prices=last_prices,
+                        ts=ts,
+                    )
+                else:
+                    breaker_locked = tracker.circuit_breaker_engaged
+                if breaker_locked and not was_locked:
+                    self._note_breaker_trip(breaker_stats, tracker, snapshot)
+                cfg_live = self.strategy_config
+                if (
+                    breaker_locked
+                    and tracker.circuit_breaker_action
+                    == CircuitBreakerAction.EMERGENCY_LIQUIDATE
+                    and bool(
+                        getattr(cfg_live, "auto_liquidate_on_circuit_breaker", True)
+                    )
+                ):
+                    for held in [
+                        m for m, p in positions.items() if "fill_due" not in p
+                    ]:
+                        cash_in, _ = self._live_exit_pass(
+                            mint=held,
+                            price=last_prices.get(held, positions[held]["entry_price"]),
+                            ts=ts,
+                            raw_ts=self._snapshot_timestamp(snapshot),
+                            positions=positions,
+                            trades=trades,
+                            last_prices=last_prices,
+                            forced_reason="circuit_breaker_liquidation",
+                        )
+                        cash += cash_in
+                        breaker_stats["liquidations"] += 1
+                        if held == mint:
+                            exited_this_snapshot = True
+                # No operator in a replay: a cumulative-cap trip is final.
+                breaker_locked = breaker_locked or tracker.cumulative_cap_hit
+
             # No re-entry on the same snapshot that closed the position (BUG-83).
             if (
                 mint not in positions
@@ -1344,7 +1478,24 @@ class PaperTradingEngine:
                 )
                 and len(positions) < self.max_positions
             ):
-                if self.live_fidelity:
+                if tracker is not None and not breaker_locked:
+                    # The bot re-checks the breaker in its equity guard (FEAT-66).
+                    breaker_checked_at = ts
+                    breaker_locked, _ = self._evaluate_breaker(
+                        tracker,
+                        cash=cash,
+                        positions=positions,
+                        last_prices=last_prices,
+                        ts=ts,
+                    )
+                    if breaker_locked:
+                        self._note_breaker_trip(breaker_stats, tracker, snapshot)
+                if tracker is not None and breaker_locked:
+                    entry_rejections["circuit_breaker"] = (
+                        entry_rejections.get("circuit_breaker", 0) + 1
+                    )
+                    spend_budget = 0.0
+                elif self.live_fidelity:
                     spend_budget = self._live_entry_size(
                         cash, positions, mint, buys_per_mint, entry_rejections
                     )
@@ -1582,6 +1733,14 @@ class PaperTradingEngine:
         }
         if confirmed:
             summary["watch_stats"] = watch_stats
+        if tracker is not None:
+            summary["circuit_breaker"] = {
+                **breaker_stats,
+                "refused_buys": entry_rejections.get("circuit_breaker", 0),
+                "engaged_at_end": tracker.circuit_breaker_engaged,
+                "cumulative_cap_hit": tracker.cumulative_cap_hit,
+                "reference_equity_sol": tracker.reference_equity_sol,
+            }
         self.trades = trades
         return summary
 
@@ -1652,6 +1811,18 @@ def render_replay_summary(
                 "entry_rejections",
                 ", ".join(f"{k}={v}" for k, v in sorted(rejections.items())),
             )
+    breaker = summary.get("circuit_breaker")
+    if isinstance(breaker, dict):
+        table.add_row(
+            "circuit_breaker",
+            (
+                f"trips={breaker.get('trips', 0)} "
+                f"liquidations={breaker.get('liquidations', 0)} "
+                f"refused_buys={breaker.get('refused_buys', 0)} "
+                f"engaged_at_end={bool(breaker.get('engaged_at_end'))} "
+                f"cumulative_cap_hit={bool(breaker.get('cumulative_cap_hit'))}"
+            ),
+        )
     target.print(table)
 
 

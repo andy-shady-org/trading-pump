@@ -486,4 +486,17 @@ class TradingBotConfig:
         return cls.from_dict(raw)
 
 
-__all__ = ["TradingBotConfig"]
+def simulated_starting_balance_sol(config: TradingBotConfig) -> float:
+    """Starting SOL of a paper / dry-run wallet, and of a replay that models it.
+
+    ``paper_starting_balance_sol`` when set, else the reserve plus ten buys.
+    The paper bot and live-fidelity replay share it, so their circuit breakers
+    measure losses against the same equity (FEAT-66).
+    """
+    configured = getattr(config, "paper_starting_balance_sol", 0.0)
+    if isinstance(configured, (int, float)) and configured > 0:
+        return float(configured)
+    return float(config.reserve_balance_sol + config.buy_amount_sol * 10)
+
+
+__all__ = ["TradingBotConfig", "simulated_starting_balance_sol"]

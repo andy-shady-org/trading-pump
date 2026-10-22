@@ -111,8 +111,20 @@ def build_parser(
     parser.add_argument(
         "--initial-cash",
         type=float,
-        default=100.0,
-        help="Initial cash balance in SOL",
+        default=None,
+        help=(
+            "Initial cash balance in SOL (default: with --config, the paper "
+            "wallet the bot starts with, paper_starting_balance_sol or reserve + "
+            "10 buys; otherwise 100; --sweep / --keep use 100)"
+        ),
+    )
+    parser.add_argument(
+        "--no-circuit-breaker",
+        action="store_true",
+        help=(
+            "Do not model the bot's circuit breaker (daily limit, profit ratchet "
+            "floor, cumulative cap) in a live-fidelity replay (FEAT-66)"
+        ),
     )
     parser.add_argument(
         "--shadow-report",
@@ -261,15 +273,23 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
 
     engine: PaperTradingEngine | None = None
     if config is not None or initial_cash_val is not None:
-        initial_cash = (
-            float(initial_cash_val) if initial_cash_val is not None else 100.0
-        )
+        live_replay = config is not None and not getattr(args, "simple_exits", False)
+        if initial_cash_val is not None:
+            initial_cash = float(initial_cash_val)
+        elif live_replay and config is not None:
+            # The paper wallet the bot starts with, so the breaker measures
+            # losses against the same equity (FEAT-66).
+            from pumpfun_trading.strategies.base import simulated_starting_balance_sol
+
+            initial_cash = simulated_starting_balance_sol(config)
+        else:
+            initial_cash = 100.0
         take_profit = config.take_profit if config is not None else 1.5
         stop_loss = config.stop_loss if config is not None else 0.85
         max_positions = config.max_active_positions if config is not None else 1
         # A config/preset replays with the live sizing and exit stack (BUG-61)
         # and, unless --no-costs, books modelled fees, tips and rent.
-        live = config is not None and not getattr(args, "simple_exits", False)
+        live = live_replay
         cost_model = None
         if live and config is not None and not getattr(args, "no_costs", False):
             from pumpfun_trading.engines.costs import ReplayCostModel
@@ -287,6 +307,7 @@ def run_replay_cli(args: argparse.Namespace | None = None) -> None:
             strategy_config=config,
             live_fidelity=live,
             cost_model=cost_model,
+            circuit_breaker=live and not getattr(args, "no_circuit_breaker", False),
         )
 
     summary = run_replay(

@@ -8,9 +8,13 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change.
+Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change. The rc.4 pre-flight work follows on `rc4/implementation`, one branch per item: the circuit breaker in replay (FEAT-66).
+
+### Added
+- `pumpfun-replay` models the bot's circuit breaker in live-fidelity replays and parity checks: daily limit, profit ratchet floor, cumulative cap, hard lock and emergency liquidation on the data clock; summary block `circuit_breaker`, `entry_rejections.circuit_breaker`; `--no-circuit-breaker` turns it off (FEAT-66).
 
 ### Changed
+- `pumpfun-replay --config` / `--preset` starts from the paper bot's wallet (`paper_starting_balance_sol`, else reserve + 10 buys) instead of 100 SOL when `--initial-cash` is not given, and runs the circuit breaker. Replays of `configs/canary.json` can now halt as paper would; `--no-circuit-breaker --initial-cash 100` reproduces earlier results. Sweeps, `--keep`, shadow tools and the optimizer are unchanged (FEAT-66).
 - New config key `max_cumulative_drawdown_pct` (default `0.30`, `0` = off; `0` in `configs/capture.json` and `configs/pregrad_pilot.json`): a loss cap across days and locks from a persisted reference equity. Breaching it liquidates and sets the operator pause; resuming with `SIGUSR1` resets it (BUG-128).
 - Emergency locks with `emergency_hard_lock_hours` > 0 now last their full duration across the 00:00 UTC rollover; soft halts and zero-hour locks still end at midnight (BUG-128).
 - The profit-run zone also halts new buys below the realized-profit ratchet floor (BUG-127).
