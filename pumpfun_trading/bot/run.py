@@ -146,8 +146,14 @@ from pumpfun_trading.sdk.costs import (
     COST_SOURCE_TRANSACTION_META,
     TransactionCosts,
 )
-from pumpfun_trading.sdk.curve import LAUNCH_MARKET_CAP_SOL, TOTAL_TOKEN_SUPPLY_RAW
+from pumpfun_trading.sdk.curve import (
+    INITIAL_VIRTUAL_SOL_LAMPORTS,
+    INITIAL_VIRTUAL_TOKEN_RAW,
+    LAUNCH_MARKET_CAP_SOL,
+    TOTAL_TOKEN_SUPPLY_RAW,
+)
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
+from pumpfun_trading.sdk.fee_config import FeeConfig, bonding_curve_fee_bps
 from pumpfun_trading.strategies.observation import CurveObservationList
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
 from pumpfun_trading.strategies.shadow import (
@@ -3540,6 +3546,49 @@ class TradingBot:
                 except Exception:
                     pass
 
+    async def _check_pump_fee_schedule(self) -> int | None:
+        """Compare the on-chain fee tiers with the modelled fee (BUG-138).
+
+        Live min-out quotes use the tier of each curve once the fee config is
+        cached; paper, replay and the cost guard model ``PUMP_DEFAULT_FEE_BPS``,
+        so a different launch-tier fee is alerted. Returns that fee, or
+        ``None`` when the fee config cannot be read.
+        """
+        getter = getattr(self.execution, "get_pump_fee_config", None)
+        if not callable(getter):
+            return None
+        try:
+            config = await asyncio.wait_for(getter(), timeout=5.0)
+        except Exception as exc:
+            config = None
+            self._log(f"Pump.fun fee config check failed: {exc}", level=logging.DEBUG)
+        if not isinstance(config, FeeConfig):
+            self._record_event(
+                "Pump.fun fee config unreadable: fees modelled at "
+                f"{PUMP_DEFAULT_FEE_BPS} bps",
+                alert=False,
+            )
+            return None
+        launch_bps = bonding_curve_fee_bps(
+            config,
+            INITIAL_VIRTUAL_SOL_LAMPORTS,
+            INITIAL_VIRTUAL_TOKEN_RAW,
+            TOTAL_TOKEN_SUPPLY_RAW,
+        )
+        tiers = ", ".join(
+            f">= {tier.market_cap_lamports_threshold / 1e9:g} SOL: "
+            f"{tier.fees.bonding_curve_bps} bps"
+            for tier in config.fee_tiers
+        )
+        self._log(f"Pump.fun bonding-curve fee tiers: {tiers}", level=logging.INFO)
+        if launch_bps != PUMP_DEFAULT_FEE_BPS:
+            self._record_event(
+                f"Pump.fun launch-tier fee is {launch_bps} bps, but paper, replay "
+                f"and the cost guard model {PUMP_DEFAULT_FEE_BPS} bps",
+                alert=True,
+            )
+        return launch_bps
+
     async def start(self) -> None:
         """Starts background workers and event stream listeners."""
         self._register_signal_handlers()
@@ -3576,6 +3625,7 @@ class TradingBot:
             )
         self._transition_to(TradingBotState.MONITORING, reason="bot_started")
         await self._reconcile_positions_on_startup()
+        await self._check_pump_fee_schedule()
 
         health_task = asyncio.create_task(self._run_health_loop())
         refresh_task = asyncio.create_task(self._run_position_refresh_loop())

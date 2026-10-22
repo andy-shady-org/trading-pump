@@ -140,6 +140,10 @@ Where:
            0 SOL                                 ~85 SOL
 ```
 
+### Trading Fees (BUG-138)
+
+Since 2025-09-01 the bonding-curve fee comes from market-cap tiers in the Pump fee program's `fee_config` account (protocol + creator bps of the tier the curve's market cap falls in), not a flat rate. At startup the bot reads that account (`sdk/fee_config.py`), logs the tiers and alerts when the launch-tier fee differs from the 125 bps that paper fills, replay and the cost guard model (`PUMP_DEFAULT_FEE_BPS`). Live buy and sell minimum-output quotes use the tier of each curve once the config is cached, falling back to 125 bps when it cannot be read.
+
 ### Exact Price & Execution Impact Equations
 
 When an order deposits $\Delta x$ SOL into the bonding curve:

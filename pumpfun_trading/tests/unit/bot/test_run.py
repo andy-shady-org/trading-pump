@@ -6880,6 +6880,38 @@ async def test_curve_reads_feed_the_slippage_estimator(tmp_path: Path) -> None:
     await bot.close()
 
 
+@pytest.mark.regression("BUG-138")
+@pytest.mark.parametrize(
+    ("protocol", "creator", "expected", "alerted"),
+    [(95, 30, 125, False), (100, 50, 150, True)],
+)
+async def test_startup_checks_the_live_fee_schedule(
+    tmp_path: Path, protocol: int, creator: int, expected: int, alerted: bool
+) -> None:
+    from pumpfun_trading.sdk.fee_config import FeeConfig, FeeTier, Fees
+
+    bot = make_bot(tmp_path)
+    config = FeeConfig(
+        bump=1,
+        admin="admin",
+        flat_fees=Fees(0, 0, 0),
+        fee_tiers=(FeeTier(0, Fees(0, protocol, creator)),),
+        stable_fee_tiers=(),
+    )
+    bot.execution.get_pump_fee_config = AsyncMock(return_value=config)  # type: ignore[method-assign]
+    record_event = MagicMock()
+    bot._record_event = record_event  # type: ignore[method-assign]
+    assert await bot._check_pump_fee_schedule() == expected
+    alerts = [c.args[0] for c in record_event.call_args_list if c.kwargs.get("alert")]
+    assert bool(alerts) is alerted
+    if alerted:
+        assert "150 bps" in alerts[0] and "125 bps" in alerts[0]
+
+    bot.execution.get_pump_fee_config = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+    assert await bot._check_pump_fee_schedule() is None
+    await bot.close()
+
+
 async def test_momentum_buys_pass_the_drift_guard_to_the_executor(
     tmp_path: Path,
 ) -> None:
