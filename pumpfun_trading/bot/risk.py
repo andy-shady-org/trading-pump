@@ -45,6 +45,9 @@ class DailyEquityTracker:
     # lowered by withdrawals and reset only by the operator (BUG-128).
     reference_equity_sol: float = 0.0
     cumulative_cap_hit: bool = False
+    # Highest net realized PnL so far today: the ratchet floor only moves up,
+    # so profit given back through closed trades stays protected (BUG-141).
+    peak_realized_daily_pnl_sol: float = 0.0
 
     @property
     def realized_daily_gross_pnl_sol(self) -> float:
@@ -55,11 +58,17 @@ class DailyEquityTracker:
     def effective_baseline_sol(self) -> float:
         """
         Calculates the ratcheted baseline equity floor:
-        Starting Capital + profit_ratchet_ratio * max(0, cumulative_realized_pnl_sol).
-        Guaranteed >= starting_equity_sol and >= 0.0.
+        Starting Capital + profit_ratchet_ratio * max(0, peak realized PnL today).
+        The peak, not the current realized PnL, so closed losses after a win
+        do not lower the floor (BUG-141). Guaranteed >= starting_equity_sol
+        and >= 0.0.
         """
         if self.drawdown_reference_mode == "adaptive_ratchet":
-            realized_gain = max(0.0, float(self.realized_daily_pnl_sol))
+            realized_gain = max(
+                0.0,
+                float(self.peak_realized_daily_pnl_sol),
+                float(self.realized_daily_pnl_sol),
+            )
             ratchet = (
                 self.starting_equity_sol
                 + float(self.profit_ratchet_ratio) * realized_gain
@@ -104,6 +113,7 @@ class DailyEquityTracker:
             self.peak_daily_equity_sol = current_equity
             self.realized_daily_pnl_sol = 0.0
             self.realized_daily_costs_sol = 0.0
+            self.peak_realized_daily_pnl_sol = 0.0
             if self.reference_equity_sol <= 0.0:
                 self.reference_equity_sol = current_equity
             # A new UTC trading day releases a daily lock (BUG-47), but not an
@@ -192,6 +202,9 @@ class DailyEquityTracker:
         """
         self.realized_daily_pnl_sol += float(pnl_sol)
         self.realized_daily_costs_sol += float(costs_sol)
+        self.peak_realized_daily_pnl_sol = max(
+            self.peak_realized_daily_pnl_sol, self.realized_daily_pnl_sol
+        )
         return self.realized_daily_pnl_sol
 
     def record_withdrawal(self, amount_sol: float) -> None:
@@ -289,6 +302,7 @@ class DailyEquityTracker:
                 self.peak_daily_equity_sol = self.starting_equity_sol
                 self.realized_daily_pnl_sol = 0.0
                 self.realized_daily_costs_sol = 0.0
+                self.peak_realized_daily_pnl_sol = 0.0
             else:
                 return True, self.lock_reason or "portfolio circuit breaker active"
 
@@ -413,8 +427,9 @@ class DailyEquityTracker:
             self.lock_reason = (
                 f"profit ratchet floor: equity {current_equity:.4f} SOL fell below "
                 f"{ratchet_floor:.4f} SOL (starting {self.starting_equity_sol:.4f} SOL "
-                f"+ {self.profit_ratchet_ratio:.0%} of realized "
-                f"{self.realized_daily_pnl_sol:+.4f} SOL)"
+                f"+ {self.profit_ratchet_ratio:.0%} of peak realized "
+                f"{max(self.peak_realized_daily_pnl_sol, self.realized_daily_pnl_sol):+.4f} SOL, "
+                f"now {self.realized_daily_pnl_sol:+.4f} SOL)"
             )
             return True, self.lock_reason
 
@@ -446,6 +461,7 @@ class DailyEquityTracker:
             "realized_daily_pnl_sol": self.realized_daily_pnl_sol,
             "realized_daily_costs_sol": self.realized_daily_costs_sol,
             "realized_daily_gross_pnl_sol": self.realized_daily_gross_pnl_sol,
+            "peak_realized_daily_pnl_sol": self.peak_realized_daily_pnl_sol,
             "effective_baseline_sol": self.effective_baseline_sol,
             "drawdown_reference_mode": self.drawdown_reference_mode,
             "profit_ratchet_ratio": self.profit_ratchet_ratio,
@@ -501,6 +517,11 @@ class DailyEquityTracker:
             ),
             reference_equity_sol=float(data.get("reference_equity_sol", 0.0) or 0.0),
             cumulative_cap_hit=bool(data.get("cumulative_cap_hit", False)),
+            # A status file from before BUG-141 has no peak: start from today's.
+            peak_realized_daily_pnl_sol=max(
+                float(data.get("peak_realized_daily_pnl_sol", 0.0) or 0.0),
+                float(data.get("realized_daily_pnl_sol", 0.0) or 0.0),
+            ),
         )
 
 
@@ -561,11 +582,22 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
     profit_tolerance = getattr(cfg, "profit_drawdown_tolerance_pct", None)
     cumulative_cap = float(getattr(cfg, "max_cumulative_drawdown_pct", 0.0) or 0.0)
 
+    # The bot's clock, so a paper drill can cross midnight (FEAT-69).
+    now_fn = getattr(bot, "now_timestamp", None)
+    now_ts = now_fn() if callable(now_fn) else None
+    if not isinstance(now_ts, (int, float)) or isinstance(now_ts, bool):
+        now_ts = None
     is_locked, reason = tracker.evaluate_circuit_breaker(
         max_daily_drawdown_pct=max_drawdown,
         emergency_hard_lock_hours=lock_hours,
         current_wallet_balance_sol=wallet_sol,
         open_positions_valuation_sol=open_val_sol,
+        now_timestamp=now_ts,
+        now_utc=(
+            datetime.datetime.fromtimestamp(now_ts, tz=datetime.timezone.utc)
+            if now_ts is not None
+            else None
+        ),
         drawdown_reference_mode=mode,
         profit_ratchet_ratio=ratchet_ratio,
         profit_drawdown_tolerance_pct=profit_tolerance,

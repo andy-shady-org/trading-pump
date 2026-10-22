@@ -84,6 +84,9 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[LIVE] Real Numbers Only:** live positions were measured from the signal market cap (BUG-129) and the day's baseline could come from the simulated start balance (BUG-130). Price live entries from the fill, value equity at exit value (BUG-136), and never let a placeholder (`or 30.0`, 69 SOL, a simulated balance) reach a decision.
 - **[EXITS] Re-check Under The Lock:** a tier decision queued on the per-mint sell lock sold the same tier twice once the first slow sell finished (BUG-140). Anything that waits for a lock must re-validate its precondition after acquiring it.
 - **[REVIEW] Fix Branches Touch Shared Lines:** fourteen one-bug branches conflicted in `bot/run.py`, `tests/unit/bot/test_run.py` and the BUGS.md status table. Insert new tests at different anchors, update only the bug's own BUGS.md section on its branch, flip status rows on the integration branch, and run the merged suite before calling a set of fixes done.
+- **[RISK] A Ratchet Only Moves Up:** the BUG-127 floor was built from net realized PnL, so a closed loss after a win lowered it and the floor never held (BUG-141). Build a ratchet from a running peak, persist the peak, and test it with the giveback realized by closed trades, not only marked on open ones.
+- **[DOCS] A Documented Variable Must Be Read:** the env manual listed `PUMPFUN_DRY_RUN` and 50 other names no code reads (BUG-142). Never document a variable, alias or default without grepping the code for it; `unit/config/test_env.py` checks the §2 matrix. Don't wire up a long-documented name silently either: warn when it is set, then decide.
+- **[TESTS] Proxies And Threads Bypass The DNS Guard:** a test posted a real Discord alert: `urllib` sent it to the local `HTTPS_PROXY`, and the alert worker thread ran after the per-test guard was undone (BUG-143). Keep every file a bot writes inside `tmp_path`, capture alerts in tests, and never rely on DNS blocking alone for a client that honours proxy variables.
 
 ## Project Overview
 
@@ -135,12 +138,12 @@ Accessible to end-users, quant traders, and bot operators; planned to be publish
 
 * [**`docs/USER-GUIDE.md`**](docs/USER-GUIDE.md): Central knowledge hub and primary onboarding portal for both hosted Web UI instances and operator Terminal UI mode.
 * [**`docs/ENVIRONMENTAL-VARIABLES.md`**](docs/ENVIRONMENTAL-VARIABLES.md): Exhaustive environment variables manual, fallback aliases, default values, and production configuration recipes.
-* [**`docs/CLI-COMMANDS.md`**](docs/CLI-COMMANDS.md): Exhaustive command-line interface manual for all standalone binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`) and unified `pumpfun` subcommands.
+* [**`docs/CLI-COMMANDS.md`**](docs/CLI-COMMANDS.md): Exhaustive command-line interface manual for all standalone binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`, `pumpfun-drill`) and unified `pumpfun` subcommands.
 * [**`docs/STRATEGY.md`**](docs/STRATEGY.md): Wealth generation blueprint, bonding curve pricing math ($P = \Delta y / \Delta x$), fractional Kelly bankroll management, multi-tier profit scaling, dynamic trailing stops, and anti-rug heuristic scoring.
 * [**`docs/RISK.md`**](docs/RISK.md): Multi-tier capital preservation, position concentration caps, daily hard-stop circuit breakers (FEAT-09), startup on-chain reconciliation, and emergency exit queues.
 * [**`docs/TERMINAL-UI.md`**](docs/TERMINAL-UI.md): Rich console dashboard manual, sub-millisecond slot latency telemetry, and multi-channel alerting (Discord, Slack, Telegram) for operator self-funding.
 * [**`docs/WEB-UI.md`**](docs/WEB-UI.md): Architecture specification for the hosted multi-tenant Web Dashboard (FEAT-10): FastAPI control plane, Vue 3 + Vuetify MD3 PWA, container-per-tenant bots, zero-knowledge key ingestion, draft API, and terminal UI deprecation roadmap.
-* [**`docs/FEATURES.md`**](docs/FEATURES.md): Catalog of shipped capabilities only (§1–37); unbuilt parts are marked **Not built** and tracked in `docs/dev/PROPOSED-FEATURES.md`.
+* [**`docs/FEATURES.md`**](docs/FEATURES.md): Catalog of shipped capabilities only (§1–41); unbuilt parts are marked **Not built** and tracked in `docs/dev/PROPOSED-FEATURES.md`.
 * [**`docs/REPLAY-ENGINE.md`**](docs/REPLAY-ENGINE.md): Historical market replay and strategy backtesting simulator (`pumpfun-replay`).
 * [**`docs/AUDIT-TOOL.md`**](docs/AUDIT-TOOL.md): Forensic trade accounting and telemetry inspection CLI (`pumpfun-audit`).
 
@@ -196,10 +199,11 @@ The package exposes dedicated, high-performance CLI entry points:
 * `pumpbot`: Start the live trading bot runtime (with `--preset`, `--headless`, `--dry-run` flags). `SIGUSR1` toggles the operator pause (no new buys, exits continue); exit code 1 means the stream loop ended without a shutdown request.
 * `pumpfun-replay`: Run historical market replays, strategy backtests, and trade simulations from recorded JSONL datasets.
 * `pumpfun-recorder`: Harvest live market streams, generate synthetic scenarios, or export token trades to replay files.
-* `pumpfun-audit`: Query, filter, and inspect structured JSONL audit trails with Rich table rendering.
+* `pumpfun-audit`: Query, filter, and inspect structured JSONL audit trails with Rich table rendering; `pnl`, `reconcile`, `cuts` and `verdict` (pre-registered go / no-go, exit code 1 on NO-GO).
 * `pumpfun-events`: Query, inspect, filter, and tail structured diagnostic runtime event streams.
 * `pumpfun-optimize`: Run genetic, random, and grid hyperparameter backtest optimization over historical replay datasets.
 * `pumpfun-arb`: Monitor cross-venue spot price disparities and simulate/execute atomic Jito arbitrage bundles.
+* `pumpfun-drill`: Scripted risk drills on a paper bot (`ops/drills.py`; also `pumpfun ops drill`); exit code 1 when a drill fails. Drive time through `TradingBot.clock`, never by sleeping.
 * `pumpfun-cli` / `pumpfun`: Unified CLI wrapper dispatching to `bot`, `replay`, `record`, `audit`, `events`, `optimize`, `arb`, or `ops` subcommands.
 
 ---

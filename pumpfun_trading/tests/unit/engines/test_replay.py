@@ -1656,3 +1656,180 @@ def test_mirrored_fill_rows_carry_lane_penalty_and_buy_flow() -> None:
     # not a momentum fill, its clock was never fed, and it exits 45 s in.
     assert MINT_A not in sells
     assert sells[MINT_B] == "stagnant_buy_flow"
+
+
+# --- Circuit breaker in replay (FEAT-66) ------------------------------------
+
+MINT_C = "MintC"
+DAY = 86_400.0
+
+
+def _breaker_engine(cash: float = 0.05, **overrides: Any) -> PaperTradingEngine:
+    return PaperTradingEngine(
+        initial_cash=cash,
+        fee_bps=0,
+        slippage_bps=0,
+        strategy_config=_config(**overrides),
+        live_fidelity=True,
+        circuit_breaker=True,
+    )
+
+
+def test_circuit_breaker_is_off_by_default_and_needs_live_fidelity() -> None:
+    summary = _engine().run([_snap(MINT_A, 1.0, 0.0, buy=True)])
+    assert "circuit_breaker" not in summary
+    with pytest.raises(ValueError, match="live_fidelity"):
+        PaperTradingEngine(strategy_config=_config(), circuit_breaker=True)
+
+
+def test_daily_limit_trip_liquidates_and_refuses_later_buys() -> None:
+    # A: -50% stop-loss = -0.005 SOL, 10% of the 0.05 SOL wallet, past the 5%
+    # daily limit: the emergency lock force-sells B and refuses C.
+    summary = _breaker_engine(max_daily_drawdown_pct=0.05).run(
+        [
+            _snap(MINT_A, 1.0, 0.0, buy=True),
+            _snap(MINT_B, 1.0, 1.0, buy=True),
+            _snap(MINT_B, 0.98, 2.0),
+            _snap(MINT_A, 0.5, 6.0),
+            _snap(MINT_C, 1.0, 7.0, buy=True),
+        ]
+    )
+
+    reasons = {t["mint"]: t["reason"] for t in _sells(summary)}
+    assert reasons == {
+        MINT_A: "stop_loss",
+        MINT_B: "circuit_breaker_liquidation",
+    }
+    breaker = summary["circuit_breaker"]
+    assert breaker["trips"] == 1
+    assert breaker["liquidations"] == 1
+    assert breaker["locks"][0]["action"] == "emergency_liquidate"
+    assert "exceeded maximum allowed limit" in breaker["locks"][0]["reason"]
+    assert breaker["refused_buys"] == summary["entry_rejections"]["circuit_breaker"]
+    assert breaker["refused_buys"] == 1
+    assert breaker["engaged_at_end"] is True
+    assert summary["buy_count"] == 2
+    assert summary["open_positions"] == 0
+
+
+def test_mark_to_market_trip_liquidates_the_current_mint_without_reentry() -> None:
+    # No exit fires (stop at -70%), but B marked at 0.5 is a 10% loss of the
+    # wallet: both positions are sold and B's buy signal on that snapshot is
+    # not taken.
+    summary = _breaker_engine(max_daily_drawdown_pct=0.05, stop_loss=0.3).run(
+        [
+            _snap(MINT_A, 1.0, 0.0, buy=True),
+            _snap(MINT_B, 1.0, 1.0, buy=True),
+            _snap(MINT_B, 0.5, 6.0, buy=True),
+        ]
+    )
+
+    sells = _sells(summary)
+    assert {t["reason"] for t in sells} == {"circuit_breaker_liquidation"}
+    assert {t["mint"] for t in sells} == {MINT_A, MINT_B}
+    assert summary["circuit_breaker"]["liquidations"] == 2
+    assert summary["buy_count"] == 2
+    assert summary["open_positions"] == 0
+
+
+def test_emergency_lock_keeps_positions_without_auto_liquidation() -> None:
+    summary = _breaker_engine(
+        max_daily_drawdown_pct=0.05, auto_liquidate_on_circuit_breaker=False
+    ).run(
+        [
+            _snap(MINT_A, 1.0, 0.0, buy=True),
+            _snap(MINT_B, 1.0, 1.0, buy=True),
+            _snap(MINT_A, 0.5, 6.0),
+            _snap(MINT_C, 1.0, 7.0, buy=True),
+        ]
+    )
+
+    assert [t["mint"] for t in _sells(summary)] == [MINT_A]
+    assert summary["circuit_breaker"]["liquidations"] == 0
+    assert summary["open_positions"] == 1
+    assert summary["entry_rejections"]["circuit_breaker"] == 1
+
+
+@pytest.mark.regression("BUG-127")
+def test_profit_ratchet_floor_halts_buys_until_the_next_utc_day() -> None:
+    # +0.01 realized (equity 0.06, floor 0.055), then open B is marked down
+    # 0.006: equity 0.054 sits under the floor but well inside the 35%
+    # retracement tolerance, so only the floor halts buys.
+    summary = _breaker_engine(profit_ratchet_ratio=0.5, stop_loss=0.3).run(
+        [
+            _snap(MINT_A, 1.0, 0.0, buy=True),
+            _snap(MINT_A, 2.0, 5.0, sell_signal=True),
+            _snap(MINT_B, 1.0, 10.0, buy=True),
+            _snap(MINT_B, 0.4, 20.0),
+            _snap(MINT_C, 1.0, 30.0, buy=True),
+            _snap(MINT_C, 1.0, DAY + 10.0, buy=True),
+        ]
+    )
+
+    breaker = summary["circuit_breaker"]
+    assert breaker["locks"][0]["action"] == "halt_new_buys"
+    assert "profit ratchet floor" in breaker["locks"][0]["reason"]
+    assert breaker["liquidations"] == 0
+    assert breaker["refused_buys"] == 1
+    # A HALT lock lifts at the rollover, so C is bought the next day.
+    assert summary["buy_count"] == 3
+    assert breaker["engaged_at_end"] is False
+
+
+@pytest.mark.regression("BUG-128")
+def test_cumulative_cap_trip_is_final_across_days_and_hard_lock_expiry() -> None:
+    summary = _breaker_engine(
+        max_daily_drawdown_pct=0.9,
+        max_cumulative_drawdown_pct=0.05,
+        emergency_hard_lock_hours=1.0,
+    ).run(
+        [
+            _snap(MINT_A, 1.0, 0.0, buy=True),
+            _snap(MINT_A, 0.5, 6.0),
+            _snap(MINT_B, 1.0, 2 * 3600.0, buy=True),
+            _snap(MINT_C, 1.0, 3 * DAY, buy=True),
+        ]
+    )
+
+    breaker = summary["circuit_breaker"]
+    assert breaker["cumulative_cap_hit"] is True
+    assert breaker["reference_equity_sol"] == pytest.approx(0.05)
+    assert "cumulative loss" in breaker["locks"][0]["reason"]
+    assert breaker["refused_buys"] == 2
+    assert summary["buy_count"] == 1
+
+
+def test_breaker_rechecks_before_a_buy_between_data_clock_checks() -> None:
+    # A's stop-loss and C's buy signal fall inside one 5 s evaluation window;
+    # the pre-buy check still sees the loss, as the bot's equity guard does.
+    summary = _breaker_engine(max_daily_drawdown_pct=0.05).run(
+        [
+            _snap(MINT_A, 1.0, 0.0, buy=True),
+            _snap(MINT_A, 0.5, 1.0),
+            _snap(MINT_C, 1.0, 2.0, buy=True),
+        ]
+    )
+
+    assert summary["circuit_breaker"]["trips"] == 1
+    assert summary["circuit_breaker"]["refused_buys"] == 1
+    assert summary["buy_count"] == 1
+
+
+def test_render_summary_shows_circuit_breaker_row() -> None:
+    buf = io.StringIO()
+    render_replay_summary(
+        {
+            "live_fidelity": True,
+            "circuit_breaker": {
+                "trips": 2,
+                "liquidations": 1,
+                "refused_buys": 4,
+                "engaged_at_end": True,
+                "cumulative_cap_hit": False,
+            },
+        },
+        Console(file=buf, width=200),
+    )
+    out = buf.getvalue()
+    assert "circuit_breaker" in out
+    assert "trips=2" in out and "refused_buys=4" in out

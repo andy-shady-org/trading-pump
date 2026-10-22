@@ -229,6 +229,8 @@ def test_persistence_writes_where_it_was_told(tmp_path: Path) -> None:
 
 
 def test_event_logger_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # conftest points the event log into tmp_path; this test checks the config path.
+    monkeypatch.delenv("PUMPFUN_EVENT_LOG_PATH", raising=False)
     logger, path = factory.build_event_logger(
         make_config(event_log_path=str(tmp_path / "cfg.jsonl"))
     )
@@ -325,3 +327,20 @@ def test_jito_flag_and_execution_client_from_env(
     )
     assert captured["jito_entry_tip_lamports"] == 0
     assert captured["jito_exit_tip_lamports"] == 50_000
+
+
+@pytest.mark.regression("BUG-143")
+def test_tests_never_write_event_logs_or_reach_a_proxy(tmp_path: Path) -> None:
+    """Every bot a test builds logs its events under the test's tmp dir."""
+    import os
+    import socket
+
+    from pumpfun_trading.tests.support.factories import make_bot
+
+    _, path = factory.build_event_logger(make_config())
+    assert Path(path).parent == tmp_path
+    bot = make_bot(tmp_path)
+    assert Path(bot.event_logger.output_path).parent == tmp_path
+    assert not any(os.environ.get(name) for name in ("HTTPS_PROXY", "https_proxy"))
+    with pytest.raises(socket.gaierror, match="external network disabled"):
+        socket.getaddrinfo("discord.com", 443)

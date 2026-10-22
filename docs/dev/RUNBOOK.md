@@ -46,6 +46,12 @@ All variables are documented in [`../ENVIRONMENTAL-VARIABLES.md`](../ENVIRONMENT
    Add `--paper-trade` for the paper pilot or `--dry-run` for a smoke test.
 3. Check the startup logs: logger initialized, configuration printed (mode `live` / `paper` / `dry-run` is what you expect), health state initialized, startup reconciliation finished.
 4. Confirm `data/bot_status.json` is created and shows the expected state and positions.
+   Check the run provenance stamp (FEAT-68) is the build and config you meant to run, and copy it into the release record:
+   ```bash
+   jq '.run_provenance | {package_version, git_commit, git_dirty, mode, config_path, config_file_sha256, fee_launch_bps, cost_env}' data/bot_status.json
+   sha256sum configs/<instance>.json     # must equal config_file_sha256
+   ```
+   `git_dirty: true` means the checkout the bot runs from has modified tracked files: stop and pin a clean tag before any run whose result will be used. `fee_launch_bps` other than 125 means the on-chain fee schedule changed (BUG-138); `null` means it could not be read.
 5. Confirm `data/audit_trail.jsonl` receives state and trade entries.
 
 ## 4. Normal runtime checks
@@ -183,7 +189,7 @@ Run these on a **copy** of the capture, from a second runtime directory, never a
    pumpfun-replay --path data/replay_capture.jsonl --config configs/canary.json \
      --compare-audit data/audit_trail.jsonl --mode summary
    ```
-   Exit code 0 means the replay's net PnL is within tolerance of the audit trail. Explain every "exit differs", "live only" and "replay only" row in the release record before trusting replay for tuning. Live fills at executed prices and real (dynamic) tips, so small gaps are expected.
+   Exit code 0 means the replay's net PnL is within tolerance of the audit trail. Explain every "exit differs", "live only" and "replay only" row in the release record before trusting replay for tuning. Live fills at executed prices and real (dynamic) tips, so small gaps are expected. From rc.4 the replay models the circuit breaker and starts from the paper wallet (FEAT-66): a halted paper day halts in replay too, and the replay summary's `circuit_breaker.locks` should match the paper run's `circuit_breaker` events. Compare a pre-rc.4 result only with `--no-circuit-breaker --initial-cash 100`.
 2. **Exit attribution:** `pumpfun-audit pnl --group-by reason` (live) and the replay `--mode trades` ledger (`reason`, `hold_seconds`) show which exits earn and which give money back. The replay summary's `entry_rejections` shows which risk limit blocked entries.
 3. **Tune** only once parity passes, on at least two days of capture, with the split on a day boundary:
    ```bash
@@ -228,7 +234,7 @@ In the first minutes check that `capture/bot.log` has "Successfully subscribed t
 
 From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json` with `entry_mode: "confirmed"` ([`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)). Copy both into the runtime `configs/` (keep the v0.2.x files as `*.v0.2.json` for rollback, §5.4). Each step starts only if the one before passed; record every result in `STRATEGY-PIVOT.md` §6.
 
-0. **Before a new run.** Archive the previous run folders (`runtime/archive/paper-<tag>/capture/` and `.../pilot/`; `run-paper.sh` refuses a non-empty folder), pin `runtime/pumpfun-trading` to the new tag and reinstall it into the runtime venv, and copy `configs/capture.json`, `configs/canary.json` and `configs/pregrad_pilot.json` into the runtime `configs/`.
+0. **Before a new run.** Archive the previous run folders (`runtime/archive/paper-<tag>/capture/` and `.../pilot/`; `run-paper.sh` refuses a non-empty folder), pin `runtime/pumpfun-trading` to the new tag and reinstall it into the runtime venv, and copy `configs/capture.json`, `configs/canary.json`, `configs/pregrad_pilot.json` and `configs/verdict_rules.json` into the runtime `configs/`. After each run starts, check its `run_provenance` in the status file (§3 step 4).
 1. **Capture (48 h from rc.3, paper).** Run `configs/capture.json` as in §6.2. One day was too few trades to tell a 0.0001 SOL-per-position edge from noise or to test the time-of-day effect ([`STRATEGY-PIVOT.md` §6.10](STRATEGY-PIVOT.md#610-v030-rc2-capture-and-pilot-momentum-no-go-stop-092-adopted-2026-10-21)). Checks while it runs:
    - dashboard `Watch list: N watched, S/20 subscribed`: N stays ≤ `watch_max_mints` (300) and S ≤ `watch_max_trade_subscriptions`;
    - `watch_list.stats` in `capture/bot_status.json`: `watched` and `promoted` grow, `poll_errors` stays near 0, `dropped_not_pump_fun` / `dropped_non_standard` are counted, not bought;
@@ -240,7 +246,7 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
    PUMPFUN_JITO_TIP_LAMPORTS=25000 pumpfun-replay --path capture/replay_capture.jsonl \
      --config configs/canary.json --initial-cash 2.0 --mode summary
    ```
-   Go only if `net_pnl_sol` > 0 and `entries_from` is `confirmed`. If not, do not start Stage 0: re-tune on this capture, then wait for a third one to confirm.
+   Go only if `net_pnl_sol` > 0 and `entries_from` is `confirmed`. From rc.4 this replay also runs canary's circuit breaker (10% daily limit, ratchet floor, 30% cumulative cap; FEAT-66), as Stage 1 would: read `circuit_breaker` in the summary, and treat a cumulative-cap trip as NO-GO. If not, do not start Stage 0: re-tune on this capture, then wait for a third one to confirm.
 
    **Read-out (rc.2 captures on).** The recorder rotates the capture (`replay_capture.jsonl.1.gz` is the newest archived part), so first join the parts, oldest first, into one file and read that:
    ```bash
@@ -273,7 +279,11 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
    ```
    Compare the sample's `peak_real_sol` and `cause: "complete"` share per rejection reason with the watched mints' (`curve_poll` rows with `source: "watch"`); a cap is worth relaxing only if its rejects do better on this capture **and** the next. For the stops, compare `trade_feed_cross_ratio`, `refresh_cross_ratio` and `fill_ratio` on `stop_loss` exits: a trade-feed trigger is worth building only if the feed crosses first and materially above the fill. While the runs are up, `watch_list.reject_sample`, `watch_list.discovery` and the `discovery_scan_errors` / `observation_poll_errors` counters in `bot_status.json` should look sane (lists below their caps, errors near 0); a rising `discovery_scan_errors` means the Pump.fun API query changed.
    A variant or rule counts only if it beats the random cut in both halves, on this capture **and** the one before; set the tip variables as for the capture, and record every result in `STRATEGY-PIVOT.md` §6. `--compare-audit` agrees only when the config sets `paper_exit_slippage_bps` (BUG-126): on trails written before rc.3 paper sells took no slippage, so replay comes out about 1% per exit below paper.
-3. **Stage 0 (72 h, paper)** with `configs/canary.json --paper-trade` and `--record-replay`, per §6 and `RELEASE-GATE.md` §3.1. Judge it with `pumpfun-audit pnl --group-by strategy` (`momentum` row) and per position, never per sell.
+3. **Stage 0 (72 h, paper)** with `configs/canary.json --paper-trade` and `--record-replay`, per §6 and `RELEASE-GATE.md` §3.1. Before it starts, record the rule hash in the release record (`pumpfun-audit verdict --path /dev/null --rules configs/verdict_rules.json --json | jq -r .rules_sha256`) and do not touch `configs/verdict_rules.json` until the run ends. Judge it with the pre-registered rule, per lane and per position, never per sell (FEAT-67):
+   ```bash
+   pumpfun-audit verdict --path pilot/audit_trail.jsonl --rules configs/verdict_rules.json --strategy momentum
+   ```
+   Exit code 0 (GO) with an unchanged hash is the Stage 0 profit criterion; `pumpfun-audit pnl --group-by strategy` stays the breakdown. The same command judges the capture run and the pre-graduation pilot (`--strategy pre_graduation`), as evidence only.
 4. **Stage 1 (live canary)** with `configs/canary.json` on the dedicated hot wallet: 0.02 SOL buys, ≤ 2 positions, 0.05 SOL exposure (`RELEASE-GATE.md` §3.3). Exit criteria: ≥ 100 trades, net > 0, daily reconciliation clean (§5.3).
 
 **Tip experiment.** Replay already shows the tip is small next to the edge on this lane (0 / 25k / 50k / 100k lamports: +0.139 / +0.132 / +0.124 / +0.109 SOL over the v0.2.3 day). What replay cannot show is landing. During Stage 0 and the first canary days compare `PUMPFUN_JITO_TIP_LAMPORTS` 0 (direct RPC, `PUMPFUN_USE_JITO=false`), 25,000 and 50,000 for at least one day each, and keep the lowest tip whose buys land within the `paper_entry_delay_seconds` assumption (1.5 s) and whose net per position does not drop. Record landing time and net per position for each setting.
@@ -313,6 +323,27 @@ Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FE
 ## 7. Incident drills
 
 Run these in paper mode before Stage 1 and after any release that touches lifecycle, persistence or execution.
+
+### 7.1 Scripted risk drills (FEAT-69)
+
+Four drills that are hard to force on a running instance are scripted. `pumpfun-drill` (or `pumpfun ops drill`) builds a real paper bot per drill in a scratch folder, drives its risk code on a simulated clock and wallet, and checks the outcome. It opens no stream, signs nothing with a real key (a throwaway keypair), replaces the balance RPC and the sell executor with fakes, captures alerts instead of sending them, and ignores the operator's `PUMPFUN_*` environment. It takes seconds:
+
+```bash
+pumpfun-drill --report releases/v0.3.0rc4-drills.json      # all four; exit 1 if any fails
+pumpfun-drill --only midnight_lock --workdir /tmp/drills   # one drill, keep its files
+pumpfun-drill --list
+```
+
+| Drill | What it does | Pass condition |
+|---|---|---|
+| `cumulative_cap` | 1.0 SOL wallet loses 14% on day 1 and 12% more on day 2 (25% cap, 15% daily limit); restart; 25 h later; `SIGUSR1` | Day 1 within the daily limit; day 2 trips the cumulative cap (BUG-128) and pauses buying with reason `cumulative loss cap`; paused and capped after a restart and after the 24 h lock expires; `SIGUSR1` resumes and moves the reference to the current equity; two `operator_pause` audit records |
+| `midnight_lock` | 20% loss at 23:55 UTC (15% limit, 24 h hard lock); check at 00:05 and 24 h later | Emergency lock; `lockout_until` 24 h after the lock; still locked after the 00:00 rollover; released 24 h after the lock with the baseline at the equity then |
+| `balance_rpc_down` | Live-mode bot (throwaway key, no transactions possible) whose balance RPC fails, then answers 0.20 SOL | No day baseline from the simulated start balance; breaker "waiting for the first live wallet balance read"; equity guard refuses the buy; status file shows no baseline; after recovery the baseline is 0.20 SOL (BUG-130) |
+| `slow_tier_sell` | Tier-1 sell held in flight while the exit stack emits tier 1 again (the 60 s pending latch has run out) | First sell `True`, repeat `False`; one executor call; tier 1 marked executed with half the tokens left (BUG-140) |
+
+Attach the `--report` JSON to the release record. The scripted drills cover the breaker paths; the manual drills below still have to run on the paper deployment itself, because they test the process, the supervisor, the stream and the alert channel.
+
+### 7.2 Manual drills
 
 | Drill | How | Pass condition |
 |---|---|---|
@@ -367,6 +398,8 @@ Hardening checklist:
 | Live bot | `pumpbot --config configs/<instance>.json [--headless]` |
 | Paper pilot | `pumpbot --config configs/<instance>.json --paper-trade --headless` |
 | Pause / resume new buys | `kill -USR1 "$(jq .pid data/bot_status.json)"` |
+| Scripted risk drills | `pumpfun-drill --report <file>` (§7.1) |
+| Paper go / no-go | `pumpfun-audit verdict --path <trail> --rules configs/verdict_rules.json --strategy <lane>` (§6.3) |
 | Supervised bot | `systemctl {status,stop,restart} pumpbot`, `journalctl -u pumpbot -f` |
 | Status snapshot | `jq . data/bot_status.json` |
 | Audit trail | `pumpfun-audit --path data/audit_trail.jsonl --summary` |

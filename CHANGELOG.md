@@ -8,12 +8,19 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change.
+Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change. The rc.4 pre-flight work follows on `rc4/implementation`, one branch per item: the circuit breaker in replay (FEAT-66), the pre-registered paper verdict (FEAT-67), the run provenance stamp (FEAT-68) and the scripted risk drills (FEAT-69).
+
+### Added
+- `pumpfun-replay` models the bot's circuit breaker in live-fidelity replays and parity checks: daily limit, profit ratchet floor, cumulative cap, hard lock and emergency liquidation on the data clock; summary block `circuit_breaker`, `entry_rejections.circuit_breaker`; `--no-circuit-breaker` turns it off (FEAT-66).
+- `pumpfun-audit verdict`: a pre-registered go / no-go rule (`configs/verdict_rules.json`) on a paper audit trail, per lane: net after an exit haircut and a tip top-up, both halves and most UTC days positive, positive without the best positions, bootstrap lower bound above zero; prints the rule hash, exit code 1 on NO-GO (FEAT-67).
+- Run provenance stamp at startup: version, git commit / branch / modified flag, mode, config path with file and effective-config SHA-256, Pump.fun fee tiers and Jito tip switches, in `bot_status.json` (`run_provenance`), a `run_started` audit record, an `event: "run_provenance"` capture row and the `bot started` alert; new optional `PUMPFUN_GIT_COMMIT` for copies without `.git`. Replay lists a capture's stamps (`capture_runs`) and `--compare-audit` warns when the replay config file differs from the run's (FEAT-68).
+- `pumpfun-drill` / `pumpfun ops drill`: four scripted risk drills on a paper bot with a simulated clock, no network and a throwaway key (cumulative cap with restart and `SIGUSR1` reset, emergency lock across midnight, live start with the balance RPC down, slow tier sell); `--report` JSON, exit code 1 on failure. `TradingBot.clock` drives the breaker checks (FEAT-69).
 
 ### Changed
+- `pumpfun-replay --config` / `--preset` starts from the paper bot's wallet (`paper_starting_balance_sol`, else reserve + 10 buys) instead of 100 SOL when `--initial-cash` is not given, and runs the circuit breaker. Replays of `configs/canary.json` can now halt as paper would; `--no-circuit-breaker --initial-cash 100` reproduces earlier results. Sweeps, `--keep`, shadow tools and the optimizer are unchanged (FEAT-66).
 - New config key `max_cumulative_drawdown_pct` (default `0.30`, `0` = off; `0` in `configs/capture.json` and `configs/pregrad_pilot.json`): a loss cap across days and locks from a persisted reference equity. Breaching it liquidates and sets the operator pause; resuming with `SIGUSR1` resets it (BUG-128).
 - Emergency locks with `emergency_hard_lock_hours` > 0 now last their full duration across the 00:00 UTC rollover; soft halts and zero-hour locks still end at midnight (BUG-128).
-- The profit-run zone also halts new buys below the realized-profit ratchet floor (BUG-127).
+- The profit-run zone also halts new buys below the realized-profit ratchet floor (BUG-127). The floor follows the day's peak realized PnL, so a win given back through closed trades halts buys too (BUG-141).
 - `enable_raydium_migration_sniping` defaults to `false` in every preset (BUG-131).
 - Velocity z-score baseline excludes the current and pre-creation slices; presets with a z threshold need 90 s of trade history (BUG-133).
 - Dynamic slippage: impact term is the execution slippage (about half the old term) and the volatility term is fed from every curve read (BUG-134).
@@ -31,6 +38,9 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - Pump.fun market-cap fee tiers (`fee_config`) are read from chain for live quotes and checked at startup against the modelled 125 bps (BUG-138).
 - FEAT-65 sell quotes record their gap after the buy quote; cost-distribution and SOL-terms bar helpers (BUG-139).
 - A take-profit tier queued behind a slow sell of the same tier was sold twice (BUG-140).
+- The profit ratchet floor fell with closed losses after a win (BUG-141).
+- 51 documented environment variables were never read, `PUMPFUN_DRY_RUN` among them; they are gone from the manuals and `pumpbot` warns at startup when one is set (BUG-142).
+- The test suite wrote `events.jsonl` into the working directory and one test posted a real webhook past the DNS guard; event logs now go to the test's temp dir, proxy variables are removed and the DNS guard covers the whole session (BUG-143).
 
 ## [0.3.0-rc.3] - 2026-10-21
 

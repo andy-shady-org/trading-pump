@@ -23,13 +23,13 @@ Update this table whenever a gate run finishes. Link the release record rather t
 
 | Item | Status | Evidence |
 |---|---|---|
-| Release gate for the current `main` | PASS on `v0.2.1` (`987fd92`): 1,321 tests, coverage 96.38%; 3.11 in CI | [`CHANGELOG.md`](../../CHANGELOG.md) v0.2.1 release record |
-| Live capital stage | **Stage 0 – Paper pilot: not passed.** The v0.2.1 run was closed as FAIL at T + 1 h 33 min (2026-10-17) | [v0.2.1 Stage 0 log](releases/v0.2.1-stage0.md#close-out--2026-10-17-1314-t--1-h-33-min): operations clean, but the breaker locked buying after 1 h, net −0.022975 SOL over 34 positions (5.9% profitable), no trade data for held positions (BUG-112). The v0.2.0 run ([log](releases/v0.2.0-stage0.md)) could not pass (BUG-104). Next: BUG-112/113 and entry confirmation, a capture run, then a new Stage 0 |
-| Net PnL measurement | Implemented on branch `sprint-24b-net-pnl` (fees, tips, rent per trade; `pumpfun-audit pnl` / `reconcile`, last result on the dashboard); release gate green (922 tests, coverage 96.3%); test-pass bugs BUG-97…101 fixed; cost parser checked read-only on real mainnet sells; the bot's own canary trades not yet reconciled | Sprint 24B (FEAT-49, BUG-96) |
-| Unattended operation | Implemented on branch `sprint-24d-income-ops`: operator pause (`SIGUSR1`), daily summary / degradation / reconciliation-gap alerts, non-blocking alerts (BUG-110), profit sweep (off by default), systemd / launchd templates in `deploy/`; 1,321 tests, coverage 96.38%. Pause, sweep, supervisor-restart and degradation drills ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills)) not yet run; keep the sweep off on a funded wallet until its drill passes | Sprint 24D (FEAT-50, FEAT-42) |
+| Release gate for the current `main` | PASS on `v0.3.0-rc.3` (2026-10-21): coverage 96.95%, `nox -s format lint mypy tests-3.14 package`, 3.11–3.13 in CI. **`rc4/implementation`** (rc.4 fixes BUG-127…143 and pre-flight FEAT-66…69): not yet run through the gate. A local run on Linux with the dev venv's pinned packages gave ruff / black / mypy clean and 2,075 tests passing on 3.14 and 3.11, coverage 97.05%; still to do: `nox -s tests` and `nox -s package` on the Mac, the CI matrix, `pumpfun-drill --report` | [`CHANGELOG.md`](../../CHANGELOG.md) v0.3.0-rc.3 release record; Unreleased section |
+| Live capital stage | **Stage 0 – Paper pilot: not passed.** v0.2.1 Stage 0 closed as FAIL (2026-10-17). v0.3.0-rc.1 and rc.2 paper runs were momentum NO-GO; the rc.3 72 h paper runs (capture and pre-graduation pilot) started on 2026-10-21 and are not read out yet. rc.4 adds the pre-registered verdict (FEAT-67), so the next Stage 0 is judged by `configs/verdict_rules.json` | [v0.2.1 Stage 0 log](releases/v0.2.1-stage0.md#close-out--2026-10-17-1314-t--1-h-33-min); [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log) |
+| Net PnL measurement | Shipped in v0.2.0 (Sprint 24B, FEAT-49): fees, tips and rent per trade, `pumpfun-audit pnl` / `reconcile`, last result on the dashboard. The cost parser was checked read-only on mainnet sells; the bot's own canary trades are not yet reconciled (no live trade yet) | Sprint 24B; [`TODO.md`](TODO.md) Sprint 24B open item |
+| Unattended operation | Shipped in v0.2.1 (Sprint 24D, FEAT-50, FEAT-42): operator pause (`SIGUSR1`), daily summary / degradation / reconciliation-gap alerts, non-blocking alerts (BUG-110), profit sweep (off by default), systemd / launchd templates in `deploy/`. The breaker drills are scripted from rc.4 (`pumpfun-drill`, [`RUNBOOK.md` §7.1](RUNBOOK.md#71-scripted-risk-drills-feat-69)); the pause, sweep, supervisor-restart and degradation drills on a paper deployment (§7.2) are not yet run, so keep the sweep off on a funded wallet | Sprint 24D (FEAT-50, FEAT-42) |
 | Funding gate for the Web UI ([§3.7](#37-funding-gate-for-the-web-ui)) | Not passed | – |
-| Mainnet-verified money paths | Pump.fun `buy`/`sell` layout only (BUG-34) | `BUGS.md` |
-| Open (mitigated) defects that limit live scope | BUG-37, BUG-55, BUG-59, BUG-90, BUG-92 (BUG-61 resolved in Sprint 24C) | See [§3.5](#35-features-that-must-stay-off-until-proven) |
+| Mainnet-verified money paths | Pump.fun `buy`/`sell` layout only (BUG-34). Not yet verified on a real trade: the live entry price from the fill (BUG-129), the market-cap fee tiers (BUG-138), the PumpSwap exit (BUG-123) | `BUGS.md` |
+| Open (mitigated) defects that limit live scope | BUG-37, BUG-55, BUG-59, BUG-90, BUG-92 | See [§3.5](#35-features-that-must-stay-off-until-proven) |
 
 ---
 
@@ -51,6 +51,7 @@ Run from a clean checkout of the release commit. Commands use the nox sessions s
 ### 2.3 Trading behaviour
 - [ ] Replay parity: for runtime, strategy or execution changes, replaying the recorded datasets in `test-data/` gives the same decisions as the previous release, or every difference is explained in the release notes
 - [ ] Risk controls exercised by the suite: stop-loss, trailing stop, tiered take-profit (2.0x / 3.5x / moonbag), daily drawdown breaker, emergency liquidation, exit retry queue
+- [ ] `pumpfun-drill --report <file>` passes on the release build (cumulative cap and operator reset, emergency lock across midnight, balance RPC down at a live start, slow tier sell; [`RUNBOOK.md` §7.1](RUNBOOK.md#71-scripted-risk-drills-feat-69)); report attached to the release record
 - [ ] Any change to instruction layouts, account lists, fees or Jito submission is simulated against mainnet (`simulateTransaction`) before release, as was done for BUG-34
 
 ### 2.4 Security and secrets
@@ -93,9 +94,10 @@ Procedure: [`RUNBOOK.md` §6](RUNBOOK.md#6-paper-pilot-procedure).
 - [ ] RSS memory stable (no monotonic growth; target ≤ 250 MB)
 - [ ] Stream reconnects observed and recovered without a restart
 - [ ] At least one stop-loss, one take-profit tier and one stagnant/max-hold exit fired as configured
-- [ ] Circuit breaker and exit retry queue observed working (forced if needed, see the drills)
+- [ ] Circuit breaker and exit retry queue observed working (forced if needed: `pumpfun-drill`, RUNBOOK §7.1, and the manual drills in §7.2)
 - [ ] Alerts delivered for entries, exits and breaker trips
 - [ ] Simulated PnL is positive after modelled fees and tips (informational only; paper fills are optimistic)
+- [ ] `pumpfun-audit verdict --rules configs/verdict_rules.json --strategy <lane>` is **GO** for the lane that goes to Stage 1 (FEAT-67), with the rule file unchanged since the run started (same `rules_sha256` as in the release record)
 
 ### 3.3 Stage 1 – Live canary configuration
 Start from the conservative preset and override only these fields in a dedicated config file:
@@ -205,9 +207,12 @@ Keep one record per release (or capital stage) in the `CHANGELOG.md` entry, or i
 ```markdown
 ### Release record – vX.Y.Z (YYYY-MM-DD)
 - Commit: <sha>
+- Run provenance (FEAT-68, from the `run_started` audit record of each paper / live run): version, `git_commit` (`git_dirty` must be `false`), `config_path` + `config_file_sha256`, `fee_launch_bps`
 - Release gate: PASS / FAIL (failed items: …)
 - Tests: <collected> collected, <passed> passed; coverage <n>% (branch <n>%)
 - Replay parity: unchanged / differences: …
+- Scripted drills (FEAT-69): `pumpfun-drill` PASS / FAIL (report: …)
+- Paper verdict (FEAT-67): rules sha256 <hash> recorded at <run start>; GO / NO-GO per lane (failed checks: …)
 - Mainnet simulation: done for … / not needed
 - Capital stage after this release: 0 / 1 / 2 (buy_amount_sol = …)
 - Canary daily log: date | wallet Δ SOL | audit realized PnL | gap | trades | fees+tips

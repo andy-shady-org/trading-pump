@@ -16,6 +16,7 @@ The package exposes two operational paradigms for command-line execution:
    * `pumpfun-events`: Diagnostic runtime event inspector, filter, live tailer, and latency analytics tool.
    * `pumpfun-optimize`: Multi-objective genetic and random backtest hyperparameter optimization engine.
    * `pumpfun-arb`: Cross-venue spot disparity monitor and atomic Jito arbitrage simulation tool.
+   * `pumpfun-drill`: Scripted risk drills on a paper bot (FEAT-69): cumulative cap and operator reset, emergency lock across midnight, balance RPC down at a live start, slow tier sell.
 
 2. **Unified CLI Wrapper (`pumpfun` / `pumpfun-cli`)**: A consolidated multi-subcommand dispatcher offering a unified interface for all bot operations, analytics, and coin discovery tools:
    * `pumpfun bot [options]`: Alias for `pumpbot`.
@@ -25,6 +26,7 @@ The package exposes two operational paradigms for command-line execution:
    * `pumpfun events [options]`: Alias for `pumpfun-events`.
    * `pumpfun optimize [options]`: Alias for `pumpfun-optimize`.
    * `pumpfun arb [options]`: Alias for `pumpfun-arb`.
+   * `pumpfun ops drill [options]`: Alias for `pumpfun-drill`; `pumpfun ops prune` / `status` manage log retention.
    * `pumpfun latest-coins [options]`: Queries and displays newly created Pump.fun coins via REST API.
    * `pumpfun market-info [options]`: Fetches detailed bonding curve metrics for a specific token mint.
 
@@ -39,7 +41,7 @@ graph TD
     EVENTS["pumpfun events<br/>(pumpfun-events)<br/><i>Diagnostic Telemetry</i>"]
     OPTIMIZE["pumpfun optimize<br/>(pumpfun-optimize)<br/><i>Hyperparameter Optimizer</i>"]
     ARB["pumpfun arb<br/>(pumpfun-arb)<br/><i>Cross-Venue Arbitrage</i>"]
-    OPS["pumpfun ops<br/><i>Log Retention & Pruning</i>"]
+    OPS["pumpfun ops<br/><i>Log Retention, Pruning & Risk Drills</i>"]
     DISCOVERY["pumpfun latest-coins / market-info<br/><i>REST Coin Discovery</i>"]
 
     CLI --> BOT
@@ -255,7 +257,8 @@ pumpfun replay --path <DATASET_PATH> [OPTIONS]
 | `--mode` | `--replay-mode` | Choice | `dashboard` | Output presentation mode: `dashboard`, `summary`, or `trades`. |
 | `--preset` | — | Choice | `None` | Overrides strategy preset (`conservative`, `balanced`, `aggressive`). |
 | `--config` | — | File Path | `None` | Path to custom strategy JSON configuration file. |
-| `--initial-cash` | — | Float | `100.0` | Initial starting capital in SOL for the backtest. |
+| `--initial-cash` | — | Float | paper wallet / `100.0` | Starting cash in SOL. Default with `--config` / `--preset`: the wallet a paper bot starts with (`paper_starting_balance_sol`, else `reserve_balance_sol` + 10 × `buy_amount_sol`); with `--simple-exits`, without a config, and for `--sweep` / `--keep`: `100.0`. |
+| `--no-circuit-breaker` | — | Flag | off | Live-fidelity replay without the bot's circuit breaker (daily limit, profit ratchet floor, cumulative cap, emergency liquidation; FEAT-66). With `--initial-cash 100` it reproduces a replay from before rc.4. |
 | `--simple-exits` | — | Flag | off | With `--config`/`--preset`, use the legacy fraction-of-cash sizing and flat take-profit/stop-loss instead of the live sizing and exit stack. |
 | `--no-costs` | — | Flag | off | Live-fidelity replay without modelled fees, tips and rent (reports gross PnL). |
 | `--tip-lamports` | — | Integer | `PUMPFUN_JITO_TIP_LAMPORTS` | Modelled Jito tip per trade (0 when `PUMPFUN_USE_JITO=false`). |
@@ -328,13 +331,15 @@ The `pumpfun-audit` CLI provides forensic trade accounting and incident analysis
 ### Command Syntax
 ```bash
 # Standalone binary
-pumpfun-audit [pnl | reconcile | cuts] --path <AUDIT_PATH> [OPTIONS]
+pumpfun-audit [pnl | reconcile | cuts | verdict] --path <AUDIT_PATH> [OPTIONS]
 
 # Unified CLI subcommand
-pumpfun audit [pnl | reconcile | cuts] --path <AUDIT_PATH> [OPTIONS]
+pumpfun audit [pnl | reconcile | cuts | verdict] --path <AUDIT_PATH> [OPTIONS]
 ```
 
-Without a command the audit records are listed (or summarised with `--summary`). `pnl` prints the net PnL report, `reconcile` checks the audit trail against the wallet on-chain (Sprint 24B, FEAT-49) and `cuts` tests entry rules against a random cut.
+Without a command the audit records are listed (or summarised with `--summary`). `pnl` prints the net PnL report, `reconcile` checks the audit trail against the wallet on-chain (Sprint 24B, FEAT-49), `cuts` tests entry rules against a random cut and `verdict` applies a pre-registered go / no-go rule to a paper run (FEAT-67).
+
+**Exit codes:** `reconcile` exits 1 on a gap; `verdict` exits 0 on GO, 1 on NO-GO and 2 on a bad rule; the others exit 0.
 
 ### Options & Parameter Reference
 
@@ -358,16 +363,26 @@ Without a command the audit records are listed (or summarised with `--summary`).
 | `--export` | File Path | `None` | Exports filtered audit records to a target JSON file. |
 | `--group-by` | `day` / `hour` / `reason` / `strategy` / `mint` | `None` | `pnl`: break the totals down (with `reason`, a position's buy legs are booked under its first exit reason; with `hour`, a whole position is booked under the UTC hour of its buy, from `market_regime.hour_utc`). |
 | `--keep` | `METRIC<OP>VALUE` | `None` | `cuts`: an entry rule on the buy's `entry_metrics` (then `market_regime`), e.g. `top_buyer_share<0.3`, `hour_utc>=12`; operators `< <= > >= == !=`. Repeat for more rules; all of them together are tested too. |
-| `--strategy` | String | `None` | `cuts`: only positions of this lane (`momentum`, `pre_graduation`, `launch`). |
-| `--split-at` | `mid` / Timestamp | `None` | `cuts`: also report halves A and B, split at the middle of the entry times or at this Unix time. |
+| `--strategy` | String | `None` | `cuts` / `verdict`: only positions of this lane (`momentum`, `pre_graduation`, `launch`). |
+| `--split-at` | `mid` / Timestamp | `None` | `cuts`: also report halves A and B, split at the middle of the entry times or at this Unix time. `verdict`: overrides the rule's `split_at`. |
+| `--rules` | File Path | built-in defaults | `verdict`: the pre-registered rule file, e.g. [`configs/verdict_rules.json`](../configs/verdict_rules.json). The flags below override single rules (and change the printed rule hash). |
+| `--min-positions` | Integer | `100` | `verdict`: closed positions needed. |
+| `--min-net-sol` | Float | `0.0` | `verdict`: adjusted net must be above this. |
+| `--exit-haircut-bps` | Float | `0` (file: `50`) | `verdict`: extra cut on every sell's proceeds, on top of the paper exit model. |
+| `--tip-lamports` | Integer | `0` (file: `25000`) | `verdict`: Jito tip a live transaction would pay; trades that recorded less are charged the difference. |
+| `--min-positive-day-share` | Float | `0.5` | `verdict`: share of UTC days (by entry time) with a positive adjusted net. |
+| `--drop-top` | Integer | `3` | `verdict`: the adjusted net must stay positive without this many best positions. |
+| `--bootstrap-samples` | Integer | `10000` | `verdict`: bootstrap resamples of the per-position net. |
+| `--confidence` | Float | `0.90` | `verdict`: two-sided bootstrap interval; its lower bound must be above 0. |
+| `--seed` | Integer | `7` | `verdict`: bootstrap seed, so a verdict can be re-run exactly. |
 | `--wallet` | Base58 | `None` | `reconcile`: wallet public key (required). |
 | `--rpc-url` | URL | `PUMPFUN_RPC_URL` / `SOLANA_RPC_URL` | `reconcile`: RPC used for `getTransaction`, token accounts and balance. |
 | `--start-balance` | Float | `None` | `reconcile`: wallet SOL at the start of the period; enables the whole-wallet check. |
 | `--tolerance-sol` | Float | `0.002` | `reconcile`: absolute tolerance. |
 | `--tolerance-pct` | Float | `0.05` | `reconcile`: relative tolerance; the larger of the two applies. |
 | `--no-token-check` | Flag | `false` | `reconcile`: skip the lost/phantom position check. |
- `--status-file` | File Path | `reconcile_status.json` next to `--path` | `reconcile`: where the result is stored for the dashboard Risk panel and `bot_status.json` (`PUMPFUN_RECONCILE_STATUS_PATH` overrides the default). |
- `--no-status-file` | Flag | `false` | `reconcile`: don't store the result (ad-hoc checks of other periods). |
+| `--status-file` | File Path | `reconcile_status.json` next to `--path` | `reconcile`: where the result is stored for the dashboard Risk panel and `bot_status.json` (`PUMPFUN_RECONCILE_STATUS_PATH` overrides the default). |
+| `--no-status-file` | Flag | `false` | `reconcile`: don't store the result (ad-hoc checks of other periods). |
 
 ### Execution Examples & Recipes
 
@@ -415,6 +430,18 @@ pumpfun-audit cuts --path capture/audit_trail.jsonl --strategy momentum --split-
   --keep 'top_buyer_share<0.3' --keep 'wallet_diversity>=0.3'
 ```
 Confirm a rule on a second capture before gating on it. Trails written before v0.3.0-rc.2 have no FEAT-56/57 metrics: add `--capture <replay_capture.jsonl>` and `cuts` rebuilds them from the trades recorded before each buy (recorded metrics win). To test rules on replayed rather than paper positions, use `pumpfun-replay --keep` ([`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#entry-rules-on-replayed-positions---keep)).
+
+#### Recipe 5c: Pre-Registered Go / No-Go On A Paper Run (FEAT-67)
+Fix the rule **before** the run starts, and record the hash the verdict prints in the release record. A rule changed after the data is in is no longer a test:
+```bash
+# Before the run: print the rule hash (it depends on the rule only, so an empty trail will do)
+pumpfun-audit verdict --path /dev/null --rules configs/verdict_rules.json --json | jq -r .rules_sha256
+
+# After the run: judge each lane on its own
+pumpfun-audit verdict --path capture/audit_trail.jsonl --rules configs/verdict_rules.json --strategy momentum
+echo $?   # 0 = GO, 1 = NO-GO
+```
+Each closed position's net (buy and sells, all recorded costs) is first cut by `exit_haircut_bps` of its sell proceeds and topped up to `tip_lamports` per transaction. GO needs every check: at least `min_positions` positions, adjusted net above `min_net_sol`, both halves positive, at least `min_positive_day_share` of UTC days positive, still positive without the `drop_top` best positions, and the lower bound of the bootstrap interval of the per-position mean above zero. Positions still open at the end are counted and left out. `--strategy` changes the hash; pre-register the lanes you will judge.
 
 #### Recipe 6: Reconcile the Wallet Against the Audit Trail
 Compares every live trade signature's on-chain SOL change with the recorded `cash_flow_sol`, lists closed positions that still hold tokens and open positions that hold none, and (with `--start-balance`) the whole-wallet change. Live profit sweeps (audit `sweep` records, FEAT-42) count in the whole-wallet check and are printed as `profit sweeps`. Exits with code 1 when a gap exceeds max(0.002 SOL, 5%). The result is also stored in `reconcile_status.json` next to the audit trail, which the running bot's dashboard shows as `Reconciliation` and alerts on when it is a new `GAP`. `deploy/systemd/pumpfun-reconcile.timer` runs it daily under systemd:
@@ -579,6 +606,36 @@ pumpfun arb --mint <MINT> --max-input 0.50 --export-history arb_opportunities.js
 
 ---
 
+## 8.6. Scripted Risk Drills (`pumpfun-drill` / `pumpfun ops drill`, FEAT-69)
+
+### Purpose & Operational Utility
+Forces the breaker situations that are hard to cause on a running instance and checks the bot handles them. Each drill builds a real paper `TradingBot` in its own scratch folder and drives its risk code on a simulated clock and wallet. No stream is opened, nothing is signed with a real key (a throwaway keypair), the balance RPC and the sell executor are fakes, alerts are captured instead of sent, and the operator's `PUMPFUN_*` environment is ignored. Runs in seconds; see [`dev/RUNBOOK.md` §7.1](dev/RUNBOOK.md#71-scripted-risk-drills-feat-69) for what each drill checks.
+
+### Command Syntax
+```bash
+pumpfun-drill [--only DRILL ...] [--workdir DIR] [--report PATH] [--json] [--list]
+pumpfun ops drill [same options]
+```
+
+### Options & Parameter Reference
+
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--only` | `cumulative_cap` / `midnight_lock` / `balance_rpc_down` / `slow_tier_sell` (repeatable) | all four | Run only these drills. |
+| `--workdir` | Directory | a new temp dir | Keep each drill's `bot_status.json`, `audit_trail.jsonl` and `bot.log` here, one subfolder per drill. |
+| `--report` | File Path | `None` | Also write the JSON report (per drill: checks, pass / fail, details) for the release record. |
+| `--json` | Flag | off | Print the JSON report instead of the tables. |
+| `--list` | Flag | off | List the drills and exit. |
+
+**Exit codes:** 0 when every drill passes, 1 when a check fails or a drill raises.
+
+#### Recipe: Drills For A Release Record
+```bash
+pumpfun-drill --report docs/dev/releases/v0.3.0rc4-drills.json
+```
+
+---
+
 ## 9. Complete CLI Parameter Matrix
 
 The table below summarizes all supported options across the complete CLI command surface:
@@ -607,7 +664,10 @@ The table below summarizes all supported options across the complete CLI command
 | | `--from-mint` | `record` | Exports historical trades for a mint via REST API. |
 | **Replay & Backtest** | `--path`, `--dataset` | `replay`, `audit`, `events`, `optimize` | Input file path for `.jsonl` dataset. |
 | | `--mode` | `replay` | Replay presentation: `dashboard`, `summary`, `trades`. |
-| | `--initial-cash` | `replay` | Starting capital in SOL for backtesting. |
+| | `--initial-cash` | `replay` | Starting capital in SOL for backtesting (default: the paper wallet with a config). |
+| | `--rules` | `audit verdict` | Pre-registered go / no-go rule file (FEAT-67). |
+| **Drills** | `--only` / `--workdir` / `--report` | `drill`, `ops drill` | Select drills, keep their files, write the JSON report (FEAT-69). |
+| | `--no-circuit-breaker` | `replay` | Do not model the circuit breaker in a live-fidelity replay. |
 | **Optimization** | `--method` | `optimize` | Optimization algorithm (`genetic`, `random`, `grid`). |
 | | `--iterations` / `--generations` | `optimize` | Search budget controls. |
 | | `--population-size` | `optimize` | Genetic algorithm population size. |

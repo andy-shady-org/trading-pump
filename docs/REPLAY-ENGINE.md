@@ -71,6 +71,8 @@ With `--config` or `--preset`, replay runs the same sizing, risk limits and exit
 - **Sizing and limits:** every entry spends `buy_amount_sol`. It is skipped, with the reason counted in `entry_rejections`, when the live limits would refuse it: `max_buy_attempts_per_mint`, `max_total_exposure_sol`, `max_position_size_sol`, `max_token_concentration_pct` or `reserve_balance_sol`.
 - **Exits:** the live exit stack from `strategies/exits.py`: stop-loss, stagnant-curve and max-hold timeouts, tiered take-profits (partial sells), moonbag floor, trailing stop, or single take-profit when tiers are off. Time-based exits run on the replay clock for every open position, like the live refresh loop. A graduated curve exits as `bonding_curve_graduated`. Each sell records `reason` (the exit type), `exit_detail`, `partial` and `hold_seconds`.
 - **Costs** (`engines/costs.py`; turn off with `--no-costs`): Pump.fun's fee on each side (125 bps), the 5,000-lamport network fee plus `--priority-fee-lamports`, the Jito tip (`--tip-lamports`, default `PUMPFUN_JITO_TIP_LAMPORTS` when `PUMPFUN_USE_JITO` is on) and the token-account rent, paid on the buy and refunded when a full exit closes the account. Sells carry `gross_pnl_sol`, `costs_sol` and `net_pnl_sol`; `pnl` is net, so win rate, profit factor and the optimizer's fitness are all after costs.
+- **Circuit breaker (FEAT-66; turn off with `--no-circuit-breaker`):** the bot's `DailyEquityTracker` runs on the data clock, as the paper bot runs it in its 5 s health loop: every 5 s of capture time and again before each buy, with cash plus open positions at exit value (BUG-136). The daily limit (`max_daily_drawdown_pct`), the profit ratchet floor and retracement tolerance (BUG-127), the cumulative cap (`max_cumulative_drawdown_pct`, BUG-128), the hard lock across the UTC rollover and `auto_liquidate_on_circuit_breaker` all apply. A tripped breaker refuses buys (`entry_rejections.circuit_breaker`), an emergency lock sells every open position (`reason: circuit_breaker_liquidation`), and a cumulative-cap trip stays on to the end of the replay, since there is no operator to resume it. The summary's `circuit_breaker` block lists `trips`, `liquidations`, `locks` (time, action, reason), `refused_buys`, `engaged_at_end`, `cumulative_cap_hit` and `reference_equity_sol`. Realized PnL is booked when each sell is replayed, net of costs; the bot books it when the sell confirms.
+- **Starting cash:** without `--initial-cash`, a live-fidelity replay starts with the wallet a paper bot starts with: `paper_starting_balance_sol`, else `reserve_balance_sol` + 10 × `buy_amount_sol` (`simulated_starting_balance_sol`). The breaker's percentages and the reserve check then see the same equity as paper. `--simple-exits`, `--sweep`, `--keep`, the shadow tools and `pumpfun-optimize` keep a 100 SOL bankroll (or the optimizer's own) and no breaker, so their results are unchanged.
 - **Entries:** on a capture recorded by `pumpbot --record-replay`, replay buys only where the live bot bought (its recorded fills), so exits, sizing and costs can be compared with the audit trail. On datasets without fills (synthetic scenarios, harvester output) it buys on buy signals. The bot's own fills and other wallets' trades are price points, never exit orders.
 
 !!! warning "What live-fidelity replay does not replay"
@@ -153,6 +155,10 @@ pumpfun-replay --path data/replay_capture.jsonl --config configs/canary.json \
 
 Lines up the replay trades with the audit trail per mint: entries in both / live only / replay only, exit reasons (live reason text is normalised to the exit type), and net PnL. It exits with code 1 when the net PnL gap is larger than `max(--parity-tolerance-sol, --parity-tolerance-pct × |live net PnL|)` (defaults 0.002 SOL and 10%). Expected, explainable differences: live fills at the executed price (a curve read, which can see trades the capture's trade stream missed) while replay fills at the recorded market cap, live costs come from the transaction (dynamic tips) while replay uses the model, and live exits can lag by one refresh.
 
+Parity replays model the circuit breaker (above), so a paper run that halted shows the same halt in replay instead of a "live only" gap. The breaker also explains a "replay only" row: when replay trips where paper did not (or the other way round), compare the summary's `circuit_breaker.locks` with the `circuit_breaker` events in the paper run's `events.jsonl` before reading anything else. `--no-circuit-breaker --initial-cash 100` reproduces a replay from before rc.4.
+
+From rc.4 both sides carry a provenance stamp (FEAT-68): the capture starts with an `event: "run_provenance"` row and the audit trail with a `run_started` record (version, commit, config path and hashes, fee tiers, tip switches). The parity report prints the run's stamp first and warns when the `--config` file you replay with is not byte-identical to the one the run used, or when the run was built from a checkout with modified files. The replay summary lists a capture's stamps as `capture_runs`; the rows themselves are never market data.
+
 ## Command usage
 
 The replay feature is exposed through the dedicated `pumpfun-replay` CLI command:
@@ -170,6 +176,10 @@ pumpfun-replay --path ./historical_snapshots.json --mode trades
 - `--mint`: filter replay snapshots by token mint address
 - `--mint-name`: filter replay snapshots by token / mint name
 - `--token-name`: alias to filter replay snapshots by token name
+- `--initial-cash`: starting cash in SOL (default: the paper wallet with `--config` / `--preset`, else 100)
+- `--no-circuit-breaker`: do not model the circuit breaker in a live-fidelity replay
+
+The full flag list is in [`CLI-COMMANDS.md` §4](CLI-COMMANDS.md#4-historical-replay-engine-pumpfun-replay--pumpfun-replay).
 
 The replay flow is intentionally isolated from the live bot execution flow:
 

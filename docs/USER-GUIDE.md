@@ -35,7 +35,7 @@ graph TD
 ```
 
 ### Specialized Documentation Directory
-* [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md): Exhaustive command-line documentation for all dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`, `pumpfun-events`, `pumpfun-optimize`, `pumpfun-arb`) and unified `pumpfun` subcommands, including parameter tables, options, and operational recipes.
+* [**Complete CLI Reference Manual (`docs/CLI-COMMANDS.md`)**](CLI-COMMANDS.md): Exhaustive command-line documentation for all dedicated binaries (`pumpbot`, `pumpfun-recorder`, `pumpfun-replay`, `pumpfun-audit`, `pumpfun-events`, `pumpfun-optimize`, `pumpfun-arb`, `pumpfun-drill`) and unified `pumpfun` subcommands, including parameter tables, options, and operational recipes.
 * [**Environment Variables Reference Manual (`docs/ENVIRONMENTAL-VARIABLES.md`)**](ENVIRONMENTAL-VARIABLES.md): Exhaustive reference for all environment variables, fallback aliases, data types, requirement rules, retention policies, and production deployment templates.
 * [**Terminal Operations & Self-Funding Guide (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md): Zero-dependency console monitor (`pumpbot`), sub-millisecond slot latency telemetry, complete visual dashboard field descriptions, alternate-screen buffer rendering, and multi-channel alerting (Discord, Slack, Telegram).
 * [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](STRATEGY.md): Constant-product bonding curve mathematics, fractional Kelly bankroll management, dynamic trailing stop-loss mechanics, multi-tier take-profit scaling (2.0x / 3.5x / Moonbag), and anti-rug heuristic filters.
@@ -134,8 +134,6 @@ Terminal operators configure the bot using a `.env` file in the project root or 
 | `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | **Required\*** | `wss://pumpportal.fun/api/data` | WebSocket streaming endpoint for event-driven market data ingestion. Keep it key-free. |
 | `PUMPFUN_STREAM_API_KEY` | — | **Yes** (PumpPortal trading) | `None` | PumpPortal API key, sent only when connecting to `pumpportal.fun`; never shown on the dashboard (BUG-118). |
 | `PUMPFUN_USE_JITO` | — | Optional | `true` | Enables private mempool bundle routing via Jito Block Engine to prevent sandwich attacks. |
-| `PUMPFUN_BASE_BUY_SOL` | `PUMPFUN_BUY_AMOUNT_SOL` | Optional | `0.1` | Base buy allocation per trade in SOL. |
-| `PUMPFUN_STRATEGY_PRESET` | `PUMPFUN_PRESET` | Optional | `balanced` | Preconfigured strategy profile: `conservative`, `balanced`, or `aggressive`. |
 | `PUMPFUN_DRAWDOWN_MODE` | — | Optional | `adaptive_ratchet` | Portfolio drawdown reference mode (`adaptive_ratchet`, `baseline`, `trailing_hwm`). |
 | `PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS` | — | Optional | `true` | Enables high-throughput asynchronous JSONL diagnostic event telemetry (FEAT-30). |
 | `PUMPFUN_LOG_MAX_BYTES` | — | Optional | `10485760` (10 MB) | Maximum size before application log rotates with automated gzip compression (FEAT-22). |
@@ -192,7 +190,12 @@ pumpfun-replay --path runtime/replay_market_data.jsonl --mode summary
 
 # Granular trade execution ledger filtered by token name
 pumpfun-replay --path runtime/replay_market_data.jsonl --mode trades --mint-name SolCat
+
+# Replay with the bot's sizing, exits, costs and circuit breaker, from the paper wallet
+pumpfun-replay --path runtime/replay_market_data.jsonl --config configs/canary.json --mode summary
 ```
+
+With `--config` or `--preset` the replay behaves like the paper bot: same sizing, exits and modelled costs, and the same circuit breaker (daily loss limit, profit ratchet floor, cumulative cap), starting from the paper wallet. The summary shows how often the breaker tripped and how many buys it refused. Add `--no-circuit-breaker` to see the strategy without it ([`REPLAY-ENGINE.md`](REPLAY-ENGINE.md#live-fidelity-replay-sprint-24c-bug-61)).
 
 ### Workflow 4: Forensic Audit & Accounting via `pumpfun-audit`
 Inspect historical execution records, state transitions, slippage, and on-chain reconciliation events:
@@ -206,7 +209,22 @@ pumpfun-audit --path runtime/audit_trail.jsonl --summary
 
 # Filter audit records by specific token or mint
 pumpfun-audit --path runtime/audit_trail.jsonl --mint-name SolCat --limit 20
+
+# Go / no-go on a paper run, with the rule fixed before the run (exit code 0 = GO)
+pumpfun-audit verdict --path runtime/audit_trail.jsonl --rules configs/verdict_rules.json --strategy momentum
 ```
+
+`verdict` only says GO when a paper run's profit survives a margin for live costs, holds in both halves and on most days, does not rest on a few lucky trades, and is statistically above zero. See [`AUDIT-TOOL.md`](AUDIT-TOOL.md#go--no-go-verdict-feat-67).
+
+### Workflow 4b: Risk Drills Before A Paper Or Live Run (`pumpfun-drill`)
+Check that the loss limits work on the build you are about to run. The drills use a throwaway wallet and no network, so they are safe to run anywhere:
+
+```bash
+pumpfun-drill                          # all four drills; exit code 1 if one fails
+pumpfun-drill --report drills.json     # keep the result for the release record
+```
+
+They trip the cumulative loss cap and resume with `SIGUSR1`, take an emergency lock just before midnight UTC, start a live bot whose balance RPC is down, and slow down a take-profit sell. See [`dev/RUNBOOK.md` §7.1](dev/RUNBOOK.md#71-scripted-risk-drills-feat-69).
 
 ### Workflow 5: Market Stream Harvesting & Replay Dataset Generation (FEAT-21)
 Capture live market quotes or generate deterministic synthetic price curves for strategy calibration without financial risk:

@@ -9,7 +9,7 @@ This document defines how the `pumpfun_trading` test suite is organised, the con
 1. **Tests mirror the source.** The tests for `pumpfun_trading/<pkg>/<module>.py` live in `pumpfun_trading/tests/unit/<pkg>/test_<module>.py` (NOTES.md §3).
 2. **Test behaviour, not coverage.** No file is organised by a coverage percentage. A failing test must point at a module and a behaviour.
 3. **One source of truth for fixtures.** Configs, bots, positions, pool keys, payload bytes and key constants come from `tests/support/`; nothing is copied between files.
-4. **Deterministic.** No real sleeps, network, or wall clock. Use `FakeClock`, fakes from `support/fakes.py`, and `await` instead of nested `asyncio.run`.
+4. **Deterministic.** No real sleeps, network, or wall clock. Use `FakeClock`, fakes from `support/fakes.py`, and `await` instead of nested `asyncio.run`. `tests/conftest.py` blocks DNS for non-local hosts for the whole session, removes proxy variables, and points the status file, audit trail, `bot.log` and `events.jsonl` into the test's `tmp_path` (BUG-143); a test that enables alerts must capture them (`bot._send_alert = sent.append`), never post them.
 5. **Regressions are linked to bugs.** Every resolved bug in [`BUGS.md`](BUGS.md) has at least one test tagged `@pytest.mark.regression("BUG-xx")`, placed beside the module it guards.
 6. **Public seams first.** Tests drive `TradingBot` through public entry points (factory, handlers, controller), not private attributes, so the runtime can be refactored safely.
 7. **Gates never move.** Coverage stays **≥ 95%** at every step; `fail_under` is never lowered.

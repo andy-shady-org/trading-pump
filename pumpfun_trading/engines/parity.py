@@ -10,7 +10,7 @@ trusted for tuning (Sprint 24C).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from pumpfun_trading.bot.pnl import is_buy, is_sell, trade_net_pnl
 
@@ -27,6 +27,9 @@ _LIVE_REASON_TO_EXIT_TYPE = {
     "moonbag_floor_hit": "moonbag_floor",
     "trailing_stop_hit": "trailing_stop",
     "take_profit_hit": "take_profit",
+    # Emergency liquidation: the bot writes "circuit_breaker: <lock reason>".
+    "circuit_breaker:": "circuit_breaker_liquidation",
+    "emergency_circuit_breaker_liquidation": "circuit_breaker_liquidation",
 }
 
 
@@ -136,4 +139,44 @@ def compare_replay_to_audit(
     }
 
 
-__all__ = ["compare_replay_to_audit", "normalise_exit_reason"]
+def provenance_notes(
+    audit_records: Iterable[Mapping[str, Any]], replay_config_path: str | None
+) -> list[str]:
+    """What the audit trail says produced the run, and whether the replay matches.
+
+    Reads the ``run_started`` records (FEAT-68). A replay config whose file
+    hash differs from the run's means parity compares different settings.
+    """
+    from pumpfun_trading.ops.provenance import (
+        PROVENANCE_RECORD_TYPE,
+        file_sha256,
+        short_build_label,
+    )
+
+    runs = [
+        dict(r.get("payload") or {})
+        for r in audit_records
+        if r.get("type") == PROVENANCE_RECORD_TYPE
+    ]
+    if not runs:
+        return ["audit trail has no run provenance (written before rc.4)"]
+    replay_hash = file_sha256(replay_config_path)
+    notes: list[str] = []
+    for run in runs:
+        run_hash = run.get("config_file_sha256")
+        notes.append(
+            f"run {run.get('started_at_utc') or '?'}: {short_build_label(run)}, "
+            f"{run.get('mode') or '?'}, config {run.get('config_path') or '-'} "
+            f"({str(run_hash or '-')[:12]})"
+        )
+        if run.get("git_dirty"):
+            notes.append("  built from a checkout with modified tracked files")
+        if replay_hash and run_hash and replay_hash != run_hash:
+            notes.append(
+                f"  replay config {replay_config_path} ({replay_hash[:12]}) differs "
+                "from the run's config file: parity compares different settings"
+            )
+    return notes
+
+
+__all__ = ["compare_replay_to_audit", "normalise_exit_reason", "provenance_notes"]
