@@ -148,6 +148,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-138** | Low | Costs / Fees | **RESOLVED** | Pump.fun's `fee_config` market-cap tiers are decoded from the IDL layout, read and cached for live quotes, and checked at startup against the modelled 125 bps |
 | **BUG-139** | Low | Slow lane / Data | **RESOLVED** | Sell quotes record `buy_gap_seconds` / `buy_gap_slots`; `round_trip_cost_summary` and `bars_in_sol` for the analysis; bars carry `currency` |
 | **BUG-140** | Medium | Exits / Concurrency | **RESOLVED** | Confirmed and fixed: a tier queued behind a slow sell of the same tier sold again; the sell now re-checks the tier under the mint lock |
+| **BUG-141** | Medium | Risk / Circuit breaker | **RESOLVED** | The profit ratchet floor followed today's **net** realized PnL, so profit given back through closed trades lowered the floor with it; it now follows the day's peak realized PnL |
 
 ---
 
@@ -1241,3 +1242,17 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Impact:** low if the retry queue or the trade lock already prevents it; not verified.
 * **Resolution:** confirmed by a test: with the first tier-1 sell held in flight, a second tier-1 decision queued on the per-mint sell lock and, once the lock was free, sold the tier again (both calls returned `True`). `_sell_token_locked` now re-checks the position after taking the lock (`_tier_already_executed`: `tier_1_executed`, `tier_2_executed`, `executed_pre_grad_tranches`) and skips a tier that is already sold. A failed sell still clears its pending latch (BUG-42), so a genuine retry of the same tier still runs. The 60 s `PENDING_EXIT_TTL_SECONDS` is unchanged; the re-check makes its length irrelevant to correctness.
 * **Verification:** `regression("BUG-140")` tests in `unit/bot/test_run.py`: two concurrent tier-1 sells with the first one slow give `[True, False]`, one executor call and 500,000 tokens left (`[True, True]` without the fix); `_tier_already_executed` covers both tiers, pre-graduation tranches and untiered exits.
+
+---
+
+## 25. rc.4 Pre-Flight Findings (2026-10-22)
+
+Found while building the rc.4 pre-flight items (FEAT-66 to FEAT-69) on `rc4/implementation`.
+
+### BUG-141: Ratchet Floor Falls With Closed Losses [RESOLVED]
+* **Location:** `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.effective_baseline_sol`, `record_realized_trade`)
+* **Description:** the BUG-127 floor is starting equity + `profit_ratchet_ratio` × today's realized PnL, and realized PnL is net: a closed loss after a win lowers it. Starting at 1.0 SOL, +0.2 SOL realized sets the floor at 1.1 SOL; a closed −0.15 SOL trade moves it to 1.025 SOL, so equity at 1.05 SOL (75% of the profit gone, 12.5% off the peak) still buys. With positions held for minutes, the profit is almost always given back through closed trades, so the floor only ever caught losses on positions still open. Found writing the FEAT-66 replay test: a win followed by a closed loss never tripped the floor.
+* **Impact:** medium: RISK.md §3A says the fraction of realized profit is ratcheted "permanently", and BUG-127 was fixed so that half of a winning day is kept; neither held for the usual way a day turns. Paper capture configs (`profit_ratchet_ratio: 0.0`) are unaffected; `configs/canary.json` (0.50) is.
+* **Resolution:** the tracker keeps `peak_realized_daily_pnl_sol`, the highest realized PnL so far today, updated by `record_realized_trade`, reset with the day at the 00:00 UTC rollover and on the hard-lock auto-unlock, written to and read from the status file (a status file without it starts from today's realized PnL). `effective_baseline_sol` uses the peak, so the floor only moves up during a day; the lock reason shows the peak and the current figure. Behaviour change: on a day that wins and then loses through closed trades, new buys stop at the floor instead of trading on.
+* **Verification:** `regression("BUG-141")` tests in `unit/bot/test_risk.py`: +0.2 then −0.15 realized keeps the floor at 1.1 SOL and halts buys at 1.05 SOL (1.025 SOL before the fix); the peak survives `to_dict` / `from_dict`, a legacy status file starts from today's PnL, and the rollover clears it. The replay breaker (FEAT-66) uses the same tracker.
+
