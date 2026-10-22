@@ -21,8 +21,8 @@ from pumpfun_trading.sdk.curve import (
     INITIAL_VIRTUAL_TOKEN_RAW,
     TOTAL_TOKEN_SUPPLY_RAW,
     calculate_buy_tokens_out,
-    calculate_market_cap_sol,
     calculate_sell_sol_out,
+    market_cap_sol_from_reserves,
 )
 from pumpfun_trading.sdk.execution import (
     PUMP_DEFAULT_FEE_BPS,
@@ -189,7 +189,7 @@ class OrderExecutor:
         """Curve market cap now against the signal's, as a share (``0.08`` = +8%)."""
         if reserves is None or not signal_market_cap_sol or signal_market_cap_sol <= 0:
             return None
-        current = calculate_market_cap_sol(reserves[0], reserves[1])
+        current = market_cap_sol_from_reserves(reserves[0], reserves[1])
         if current <= 0:
             return None
         return float(current) / float(signal_market_cap_sol) - 1.0
@@ -471,7 +471,7 @@ class OrderExecutor:
             # The curve the paper fill is priced from, before the penalty; the
             # runtime records it so replay fills read the same curve.
             fill_curve_mc = (
-                calculate_market_cap_sol(reserves[0], reserves[1])
+                market_cap_sol_from_reserves(reserves[0], reserves[1])
                 if reserves is not None
                 else None
             )
@@ -501,7 +501,7 @@ class OrderExecutor:
                 # Paper entries are priced from the same curve as exits (BUG-104),
                 # worsened by the configured latency penalty.
                 metadata["entry_market_cap_sol"] = (
-                    calculate_market_cap_sol(reserves[0], reserves[1])
+                    market_cap_sol_from_reserves(reserves[0], reserves[1])
                     * 10_000
                     / (10_000 - penalty_bps)
                 )

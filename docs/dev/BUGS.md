@@ -1214,11 +1214,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Resolution:** new `TradingBot._open_positions_exit_value()`: spot open value × `_paper_exit_factor()` (the round-trip Pump.fun fee and `paper_exit_slippage_bps`, the same model a paper sell is priced with). Every place that feeds the equity tracker uses it: the buy-time equity guard, the health-loop breaker check, `evaluate_portfolio_circuit_breaker`, the status snapshot drawdown and the daily summary. `calculate_total_open_value()` itself is unchanged, so displays and exposure limits still use spot. RISK.md §2D describes it.
 * **Verification:** `regression("BUG-136")` test in `unit/bot/test_run.py`: a 0.50 SOL position is valued at 0.50 × fee factor × 0.99, and 0.36 SOL cash plus that position trips a 15% limit that spot valuation (−14%) would not.
 
-### BUG-137: Fragile Market-Cap Units And Fallback [OPEN]
+### BUG-137: Fragile Market-Cap Units And Fallback [RESOLVED]
 * **Location:** `pumpfun_trading/sdk/curve.py` (`calculate_market_cap_sol` ~L86–108), `pumpfun_trading/bot/run.py` (`entry_market_cap=float(market_cap_sol or 30.0)` ~L1956)
 * **Description:** `calculate_market_cap_sol` treats any reserve of at least 1,000,000 as lamports, while `total_supply` defaults to raw units, so a caller passing token reserves in whole tokens would be off by 10^6. The `or 30.0` fallback is the virtual SOL reserve, not a market cap (about 27.96 SOL at launch).
 * **Impact:** low: current callers pass consistent units.
-* **Suggested fix:** take explicit units (lamports and raw token units only) and use the launch market cap constant for the fallback, or refuse to open a position with no market cap.
+* **Resolution:** new `sdk.curve.market_cap_sol_from_reserves(virtual_sol_lamports, virtual_token_raw)` with explicit units (no lamport guessing), used by every executor call that prices on-chain reserves (entry drift, paper fill and paper entry market cap). `calculate_market_cap_sol` keeps its heuristic for back-compat, with the pitfall documented. New `LAUNCH_MARKET_CAP_SOL` (≈27.96 SOL, the market cap of a fresh curve) replaces the `or 30.0` fallbacks in `_buy_token` (entry market cap and the replay snapshot). `PositionManager.record_buy`'s own `or 30.0` is handled by BUG-131 (an unknown entry stays 0).
+* **Verification:** `regression("BUG-137")` tests in `unit/sdk/test_curve.py` (launch reserves give 27.96 SOL; 500,000 lamports stay lamports where the guessing helper reads 500,000 SOL; invalid reserves give 0) and `unit/bot/test_run.py` (a buy with no market cap records the launch market cap).
 
 ### BUG-138: Fixed Pump.fun Fee Not Checked Against The Current Schedule [OPEN]
 * **Location:** `pumpfun_trading/sdk/execution_types.py` (`PUMP_DEFAULT_FEE_BPS = 125`)
