@@ -7534,3 +7534,106 @@ async def test_graduation_backfill_loop_survives_errors_and_stops(
         side_effect=asyncio.CancelledError
     )
     await asyncio.wait_for(bot._run_graduation_backfill_loop(), timeout=2.0)
+
+
+# --- Run provenance (FEAT-68) -------------------------------------------------
+
+
+def _fake_provenance(*_: Any, **kwargs: Any) -> dict[str, Any]:
+    return {
+        "started_at": 1_792_022_400.0,
+        "started_at_utc": "2026-10-15T00:00:00Z",
+        "package_version": "0.3.0rc4",
+        "git_commit": "1234567890abcdef",
+        "git_dirty": False,
+        "mode": kwargs["mode"],
+        "config_path": kwargs.get("config_path"),
+        "config_sha256": "f" * 64,
+        "fee_model_bps": kwargs.get("modelled_fee_bps"),
+        "fee_launch_bps": None,
+        "fee_tiers": None,
+    }
+
+
+async def test_startup_stamps_status_audit_capture_and_alert(tmp_path: Path) -> None:
+    from pumpfun_trading.sdk.fee_config import FeeConfig, FeeTier, Fees
+
+    bot = _startable_bot(tmp_path)
+    bot.config_path = "configs/canary.json"
+    sent: list[str] = []
+    bot.alert_enabled = True
+    bot._send_alert = sent.append  # type: ignore[method-assign, assignment]
+    bot.geyser_client = _ListenGeyser([])  # type: ignore[assignment]
+    bot.rpc_pool = None
+    recorded: list[dict[str, Any]] = []
+    bot.replay_recorder = SimpleNamespace(  # type: ignore[assignment]
+        start=AsyncMock(),
+        close=AsyncMock(),
+        stop=AsyncMock(),
+        record_snapshot=recorded.append,
+        is_running=True,
+        records_written=0,
+        queue_size=0,
+    )
+    bot.execution.get_pump_fee_config = AsyncMock(  # type: ignore[method-assign]
+        return_value=FeeConfig(
+            bump=1,
+            admin="admin",
+            flat_fees=Fees(0, 0, 0),
+            fee_tiers=(FeeTier(0, Fees(0, 95, 30)),),
+            stable_fee_tiers=(),
+        )
+    )
+
+    with patch("pumpfun_trading.bot.run.collect_run_provenance", _fake_provenance):
+        await bot.start()
+
+    stamp = bot.run_provenance
+    assert stamp is not None
+    assert stamp["mode"] == "live"
+    assert stamp["config_path"] == "configs/canary.json"
+    assert stamp["fee_model_bps"] == 125
+    assert stamp["fee_launch_bps"] == 125
+    assert stamp["fee_tiers"][0]["bonding_curve_bps"] == 125
+    assert any(
+        m.startswith("bot started (") and "0.3.0rc4 @ 12345678" in m for m in sent
+    )
+    assert bot.get_status_snapshot()["run_provenance"]["config_sha256"] == "f" * 64
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["run_provenance"]["git_commit"] == "1234567890abcdef"
+    audit = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    started = [r for r in audit if r.get("type") == "run_started"]
+    assert started and started[0]["payload"]["git_commit"] == "1234567890abcdef"
+    (row,) = [r for r in recorded if r.get("event") == "run_provenance"]
+    assert row["fee_launch_bps"] == 125 and "mint" not in row
+
+
+async def test_provenance_failure_never_stops_the_bot(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, paper_trade=True)
+
+    def broken(*_: Any, **__: Any) -> dict[str, Any]:
+        raise RuntimeError("no git")
+
+    with patch("pumpfun_trading.bot.run.collect_run_provenance", broken):
+        await bot._collect_run_provenance()
+    assert bot.run_provenance is None
+    bot._record_run_provenance(125)  # nothing to record, no error
+    assert bot.get_status_snapshot()["run_provenance"] is None
+
+    with patch("pumpfun_trading.bot.run.collect_run_provenance", _fake_provenance):
+        await bot._collect_run_provenance()
+    assert bot.run_provenance is not None
+    assert bot.run_provenance["mode"] == "paper"
+    bot.event_logger = None  # type: ignore[assignment]
+    bot.replay_recorder = None
+    bot._record_run_provenance(None)
+    assert bot.run_provenance["fee_launch_bps"] is None
+    assert '"run_started"' in (tmp_path / "audit.jsonl").read_text()
+    bot.paper_trade = False
+    bot.dry_run = True
+    assert bot._run_mode() == "dry-run"
+    await bot.close()

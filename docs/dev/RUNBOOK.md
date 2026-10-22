@@ -46,6 +46,12 @@ All variables are documented in [`../ENVIRONMENTAL-VARIABLES.md`](../ENVIRONMENT
    Add `--paper-trade` for the paper pilot or `--dry-run` for a smoke test.
 3. Check the startup logs: logger initialized, configuration printed (mode `live` / `paper` / `dry-run` is what you expect), health state initialized, startup reconciliation finished.
 4. Confirm `data/bot_status.json` is created and shows the expected state and positions.
+   Check the run provenance stamp (FEAT-68) is the build and config you meant to run, and copy it into the release record:
+   ```bash
+   jq '.run_provenance | {package_version, git_commit, git_dirty, mode, config_path, config_file_sha256, fee_launch_bps, cost_env}' data/bot_status.json
+   sha256sum configs/<instance>.json     # must equal config_file_sha256
+   ```
+   `git_dirty: true` means the checkout the bot runs from has modified tracked files: stop and pin a clean tag before any run whose result will be used. `fee_launch_bps` other than 125 means the on-chain fee schedule changed (BUG-138); `null` means it could not be read.
 5. Confirm `data/audit_trail.jsonl` receives state and trade entries.
 
 ## 4. Normal runtime checks
@@ -228,7 +234,7 @@ In the first minutes check that `capture/bot.log` has "Successfully subscribed t
 
 From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json` with `entry_mode: "confirmed"` ([`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)). Copy both into the runtime `configs/` (keep the v0.2.x files as `*.v0.2.json` for rollback, §5.4). Each step starts only if the one before passed; record every result in `STRATEGY-PIVOT.md` §6.
 
-0. **Before a new run.** Archive the previous run folders (`runtime/archive/paper-<tag>/capture/` and `.../pilot/`; `run-paper.sh` refuses a non-empty folder), pin `runtime/pumpfun-trading` to the new tag and reinstall it into the runtime venv, and copy `configs/capture.json`, `configs/canary.json` and `configs/pregrad_pilot.json` into the runtime `configs/`.
+0. **Before a new run.** Archive the previous run folders (`runtime/archive/paper-<tag>/capture/` and `.../pilot/`; `run-paper.sh` refuses a non-empty folder), pin `runtime/pumpfun-trading` to the new tag and reinstall it into the runtime venv, and copy `configs/capture.json`, `configs/canary.json`, `configs/pregrad_pilot.json` and `configs/verdict_rules.json` into the runtime `configs/`. After each run starts, check its `run_provenance` in the status file (§3 step 4).
 1. **Capture (48 h from rc.3, paper).** Run `configs/capture.json` as in §6.2. One day was too few trades to tell a 0.0001 SOL-per-position edge from noise or to test the time-of-day effect ([`STRATEGY-PIVOT.md` §6.10](STRATEGY-PIVOT.md#610-v030-rc2-capture-and-pilot-momentum-no-go-stop-092-adopted-2026-10-21)). Checks while it runs:
    - dashboard `Watch list: N watched, S/20 subscribed`: N stays ≤ `watch_max_mints` (300) and S ≤ `watch_max_trade_subscriptions`;
    - `watch_list.stats` in `capture/bot_status.json`: `watched` and `promoted` grow, `poll_errors` stays near 0, `dropped_not_pump_fun` / `dropped_non_standard` are counted, not bought;

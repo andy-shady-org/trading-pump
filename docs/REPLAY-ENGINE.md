@@ -157,6 +157,8 @@ Lines up the replay trades with the audit trail per mint: entries in both / live
 
 Parity replays model the circuit breaker (above), so a paper run that halted shows the same halt in replay instead of a "live only" gap. The breaker also explains a "replay only" row: when replay trips where paper did not (or the other way round), compare the summary's `circuit_breaker.locks` with the `circuit_breaker` events in the paper run's `events.jsonl` before reading anything else. `--no-circuit-breaker --initial-cash 100` reproduces a replay from before rc.4.
 
+From rc.4 both sides carry a provenance stamp (FEAT-68): the capture starts with an `event: "run_provenance"` row and the audit trail with a `run_started` record (version, commit, config path and hashes, fee tiers, tip switches). The parity report prints the run's stamp first and warns when the `--config` file you replay with is not byte-identical to the one the run used, or when the run was built from a checkout with modified files. The replay summary lists a capture's stamps as `capture_runs`; the rows themselves are never market data.
+
 ## Command usage
 
 The replay feature is exposed through the dedicated `pumpfun-replay` CLI command:
