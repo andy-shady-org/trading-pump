@@ -1231,9 +1231,9 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Impact:** low: the cost estimate is unbiased but noisy (more so for BONK and WIF); SOL-denominated results need SOL's own USD bars, and the token list carries survivorship bias.
 * **Suggested fix:** analyse round-trip cost as a median over many samples per token and size; convert bars to SOL terms; note the pool choice in the analysis.
 
-### BUG-140: Possible Repeat Take-Profit After A Slow Sell (Unverified) [OPEN]
+### BUG-140: Repeat Take-Profit After A Slow Sell (Confirmed) [RESOLVED]
 * **Location:** `pumpfun_trading/strategies/exits.py` (`PENDING_EXIT_TTL_SECONDS = 60.0`, `is_exit_pending` / `mark_exit_pending`), exit retry queue in `pumpfun_trading/bot/run.py`
 * **Description:** a tier is marked pending for 60 s. A sell that runs through the Jito confirmation timeout (12 s), the RPC fallback and the retry queue's escalating attempts could take longer, after which the same tier can be emitted again while the first sell is still in flight.
 * **Impact:** low if the retry queue or the trade lock already prevents it; not verified.
-* **Suggested fix:** check whether an in-flight or queued sell blocks a repeat of its tier; if not, clear the pending mark only when the sell completes or is abandoned.
-* **Verification to add:** a test where the first tier-1 sell takes longer than 60 s must not produce a second tier-1 sell.
+* **Resolution:** confirmed by a test: with the first tier-1 sell held in flight, a second tier-1 decision queued on the per-mint sell lock and, once the lock was free, sold the tier again (both calls returned `True`). `_sell_token_locked` now re-checks the position after taking the lock (`_tier_already_executed`: `tier_1_executed`, `tier_2_executed`, `executed_pre_grad_tranches`) and skips a tier that is already sold. A failed sell still clears its pending latch (BUG-42), so a genuine retry of the same tier still runs. The 60 s `PENDING_EXIT_TTL_SECONDS` is unchanged; the re-check makes its length irrelevant to correctness.
+* **Verification:** `regression("BUG-140")` tests in `unit/bot/test_run.py`: two concurrent tier-1 sells with the first one slow give `[True, False]`, one executor call and 500,000 tokens left (`[True, True]` without the fix); `_tier_already_executed` covers both tiers, pre-graduation tranches and untiered exits.

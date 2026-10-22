@@ -2399,6 +2399,24 @@ class TradingBot:
             await self._unsubscribe_from_token_trades(None, mint)
         return sold
 
+    @staticmethod
+    def _tier_already_executed(
+        position: dict[str, Any], target_tier: int | str | None
+    ) -> bool:
+        """Whether a take-profit tier or pre-graduation tranche was already sold."""
+        if target_tier == 1:
+            return bool(position.get("tier_1_executed"))
+        if target_tier == 2:
+            return bool(position.get("tier_2_executed"))
+        if isinstance(target_tier, str) and target_tier.startswith("pre_grad_"):
+            try:
+                index = int(target_tier.rsplit("_", 1)[1]) - 1
+            except ValueError:
+                return False
+            executed = position.get("executed_pre_grad_tranches") or ()
+            return index in {int(i) for i in executed}
+        return False
+
     async def _sell_token_locked(
         self,
         mint: str,
@@ -2415,6 +2433,14 @@ class TradingBot:
             return False
 
         position = self.active_positions[mint]
+        if self._tier_already_executed(position, target_tier):
+            # A tier decision queued behind a slow sell of the same tier (its
+            # 60 s pending latch had expired) must not sell it again (BUG-140).
+            self._log(
+                f"Skipping repeat {target_tier} exit of {mint}: tier already sold",
+                level=logging.INFO,
+            )
+            return False
         pos_name = position.get("name") or mint
         pool_keys = self._exit_pool_keys(mint, position)
         use_pumpswap = False
