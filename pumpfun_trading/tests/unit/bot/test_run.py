@@ -1200,6 +1200,72 @@ async def test_breaker_values_open_positions_at_what_a_sell_returns(
     await bot.close()
 
 
+@pytest.mark.regression("BUG-140")
+async def test_tier_queued_behind_a_slow_sell_of_the_same_tier_is_not_sold_again(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    mint = "MintSlowTier111111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint, token_amount=1_000_000, cost_sol=0.02, entry_market_cap=30.0
+    )
+    bot.position_manager.update_price(mint, 45.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+
+    real_sell = bot.executor.execute_sell
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_sell(*args: Any, **kwargs: Any) -> ExecutionResult:
+        nonlocal calls
+        calls += 1
+        await release.wait()  # e.g. a Jito timeout, then the RPC fallback
+        return await real_sell(*args, **kwargs)
+
+    bot.executor.execute_sell = slow_sell  # type: ignore[method-assign]
+
+    def tier_1() -> Any:
+        return bot._sell_token(
+            mint,
+            sell_amount_tokens=500_000,
+            sell_fraction=0.5,
+            reason="take_profit_tier_1",
+            target_tier=1,
+        )
+
+    first = asyncio.create_task(tier_1())
+    await asyncio.sleep(0)
+    # The 60 s pending latch has expired, so the exit stack emits tier 1 again.
+    second = asyncio.create_task(tier_1())
+    await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.gather(first, second) == [True, False]
+    assert calls == 1
+    position = bot.active_positions[mint]
+    assert position["tier_1_executed"] is True
+    assert position["remaining_token_amount"] == 500_000
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-140")
+@pytest.mark.parametrize(
+    ("position", "tier", "expected"),
+    [
+        ({"tier_1_executed": True}, 1, True),
+        ({"tier_1_executed": False}, 1, False),
+        ({"tier_2_executed": True}, 2, True),
+        ({"executed_pre_grad_tranches": [0]}, "pre_grad_1", True),
+        ({"executed_pre_grad_tranches": [0]}, "pre_grad_2", False),
+        ({}, "pre_grad_x", False),
+        ({"tier_1_executed": True}, None, False),
+    ],
+)
+def test_tier_already_executed(
+    position: dict[str, Any], tier: Any, expected: bool
+) -> None:
+    assert TradingBot._tier_already_executed(position, tier) is expected
+
+
 @pytest.mark.regression("BUG-24", "BUG-25", "BUG-26", "BUG-27", "BUG-28")
 async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
     """
