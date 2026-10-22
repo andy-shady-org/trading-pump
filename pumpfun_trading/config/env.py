@@ -3,11 +3,86 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import base58
 from solders.keypair import Keypair
+
+# Names that earlier docs listed but no code reads (BUG-142), with what to use.
+UNREAD_ENV_VARS: dict[str, str] = {
+    "PUMPFUN_DRY_RUN": (
+        "it does NOT stop live trading; use pumpbot --dry-run or --paper-trade"
+    ),
+    "PUMPFUN_CONFIG_PATH": "use pumpbot --config <path>",
+    "PUMPFUN_CONFIG": "use pumpbot --config <path>",
+    "PUMPFUN_STRATEGY_PRESET": "use pumpbot --preset, or strategy_preset in the config",
+    "PUMPFUN_PRESET": "use pumpbot --preset, or strategy_preset in the config",
+    "PUMPFUN_BASE_BUY_SOL": "use buy_amount_sol in the config or --buy-amount-sol",
+    "PUMPFUN_BUY_AMOUNT_SOL": "use buy_amount_sol in the config or --buy-amount-sol",
+    "PUMPFUN_ALERT_WEBHOOK_URL": "use PUMPFUN_ALERT_DISCORD_WEBHOOK_URL",
+    "PUMPFUN_TELEGRAM_BOT_TOKEN": "use PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN",
+    "PUMPFUN_TELEGRAM_CHAT_ID": "use PUMPFUN_ALERT_TELEGRAM_CHAT_ID",
+    **dict.fromkeys(
+        (
+            "PUMPFUN_ANTI_RUG_ENABLED",
+            "PUMPFUN_COPY_TRADING_ENABLED",
+            "PUMPFUN_COPY_TRADING_SCALE_FACTOR",
+            "PUMPFUN_COPY_TRADING_SIZING_MODE",
+            "PUMPFUN_COPY_TRADING_WALLETS",
+            "PUMPFUN_DIAGNOSTIC_EVENTS_ENABLED",
+            "PUMPFUN_DISPLACEMENT_HURDLE_PCT",
+            "PUMPFUN_DISPLACEMENT_MIN_CONVICTION",
+            "PUMPFUN_EVENT_LOG_SUBSYSTEMS",
+            "PUMPFUN_MAX_CREATOR_HOLDING_PCT",
+            "PUMPFUN_MAX_DAILY_DRAWDOWN",
+            "PUMPFUN_MAX_GINI_COEFFICIENT",
+            "PUMPFUN_MAX_MARKET_CAP_SOL",
+            "PUMPFUN_MAX_POSITIONS",
+            "PUMPFUN_MAX_RISK_SCORE",
+            "PUMPFUN_MAX_TOTAL_EXPOSURE_SOL",
+            "PUMPFUN_MIN_HOLD_BEFORE_DISPLACEMENT",
+            "PUMPFUN_MIN_MARKET_CAP_SOL",
+            "PUMPFUN_MOMENTUM_ENABLED",
+            "PUMPFUN_MOMENTUM_MIN_BUY_RATIO",
+            "PUMPFUN_MOMENTUM_MIN_NET_INFLOW_SOL",
+            "PUMPFUN_MOMENTUM_MIN_UNIQUE_BUYERS",
+            "PUMPFUN_MOMENTUM_MIN_Z_SCORE",
+            "PUMPFUN_PRE_GRAD_ENTRY_PROGRESS",
+            "PUMPFUN_PRE_GRAD_MAX_ENTRY_PROGRESS",
+            "PUMPFUN_RAYDIUM_BUY_SOL",
+            "PUMPFUN_RAYDIUM_SLIPPAGE_BPS",
+            "PUMPFUN_RAYDIUM_SNIPE_ENABLED",
+            "PUMPFUN_RPC_ENDPOINTS",
+            "PUMPFUN_RPC_POOL_CONCURRENCY",
+            "PUMPFUN_RPC_POOL_ENABLED",
+            "PUMPFUN_STAGNANT_TIMEOUT",
+            "PUMPFUN_STOP_LOSS",
+            "PUMPFUN_TIER1_TP_FRACTION",
+            "PUMPFUN_TIER1_TP_MULT",
+            "PUMPFUN_TIER2_TP_FRACTION",
+            "PUMPFUN_TIER2_TP_MULT",
+            "PUMPFUN_TIERED_TP_ENABLED",
+            "PUMPFUN_TRAILING_ACTIVATION_PCT",
+            "PUMPFUN_TRAILING_DROP_PCT",
+            "PUMPFUN_TRAILING_STOP_ENABLED",
+        ),
+        "strategy settings are config keys; set the matching key in the config",
+    ),
+}
+
+
+def unread_env_warnings(env: Mapping[str, str] | None = None) -> list[str]:
+    """One warning per set variable that nothing reads (BUG-142).
+
+    Only names are reported, never values: some of these held webhook URLs.
+    """
+    source = os.environ if env is None else env
+    return [
+        f"{name} is set but not read: {hint}"
+        for name, hint in UNREAD_ENV_VARS.items()
+        if source.get(name, "").strip()
+    ]
 
 
 def get_env_bool(name: str, default: bool = False) -> bool:
@@ -247,5 +322,7 @@ __all__ = [
     "load_keypair_from_env",
     "mask_secret",
     "sanitize_env_for_logging",
+    "UNREAD_ENV_VARS",
+    "unread_env_warnings",
     "validate_required_runtime_env",
 ]

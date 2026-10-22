@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import base58
 import pytest
 from solders.keypair import Keypair
 
 from pumpfun_trading.config.env import (
+    UNREAD_ENV_VARS,
     resolve_bot_log_path,
     decode_keypair,
     get_env_bool,
@@ -16,6 +20,7 @@ from pumpfun_trading.config.env import (
     load_keypair_from_env,
     mask_secret,
     sanitize_env_for_logging,
+    unread_env_warnings,
     validate_required_runtime_env,
 )
 from pumpfun_trading.ops.logging import log_runtime_event, setup_structured_logging
@@ -213,3 +218,77 @@ def test_runtime_env_reports_bot_log_path(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", "data/bot.log")
 
     assert get_runtime_env()["PUMPFUN_BOT_LOG_PATH"] == "data/bot.log"
+
+
+# --- Documented variables must be read (BUG-142) -----------------------------
+
+REPO = Path(__file__).parents[4]
+
+
+def _source_text() -> str:
+    """The package source, without the UNREAD_ENV_VARS table itself."""
+    package = REPO / "pumpfun_trading"
+    env_py = package / "config" / "env.py"
+    head, rest = env_py.read_text(encoding="utf-8").split("UNREAD_ENV_VARS: dict", 1)
+    tail = rest.split("def unread_env_warnings", 1)[1]
+    others = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in package.rglob("*.py")
+        if "tests" not in path.relative_to(package).parts and path != env_py
+    )
+    return others + head + tail
+
+
+@pytest.mark.regression("BUG-142")
+def test_unread_variables_are_reported_by_name_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = {
+        "PUMPFUN_DRY_RUN": "true",
+        "PUMPFUN_STOP_LOSS": "0.9",
+        "PUMPFUN_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/1/SECRET",
+        "PUMPFUN_PRESET": "  ",  # blank: not set
+        "PUMPFUN_RPC_URL": "https://example.invalid",
+    }
+    warnings = unread_env_warnings(env)
+
+    assert [w.split(" ")[0] for w in warnings] == [
+        "PUMPFUN_DRY_RUN",
+        "PUMPFUN_ALERT_WEBHOOK_URL",
+        "PUMPFUN_STOP_LOSS",
+    ]
+    assert "does NOT stop live trading" in warnings[0]
+    assert not any("SECRET" in w for w in warnings)
+
+    monkeypatch.setenv("PUMPFUN_CONFIG_PATH", "configs/canary.json")
+    assert unread_env_warnings() == [
+        "PUMPFUN_CONFIG_PATH is set but not read: use pumpbot --config <path>"
+    ]
+
+
+@pytest.mark.regression("BUG-142")
+def test_unread_names_really_are_unread() -> None:
+    source = _source_text()
+    read = [n for n in UNREAD_ENV_VARS if re.search(rf"[\"']{n}[\"']", source)]
+    assert read == [], "now read by the code: drop them from UNREAD_ENV_VARS"
+
+
+@pytest.mark.regression("BUG-142")
+def test_every_variable_in_the_manual_matrix_is_read() -> None:
+    manual = (REPO / "docs" / "ENVIRONMENTAL-VARIABLES.md").read_text(encoding="utf-8")
+    matrix = manual.split("## 2.")[1].split("## 3.")[0]
+    documented = set(re.findall(r"\| \[`([A-Z][A-Z0-9_]+)`\]", matrix))
+    aliases = {
+        alias
+        for cell in re.findall(r"\]\([^)]*\) \| ([^|]+) \|", matrix)
+        for alias in re.findall(r"`([A-Z][A-Z0-9_]+)`", cell)
+    }
+    source = _source_text()
+    unread = sorted(
+        name
+        for name in documented | aliases
+        if name != "NO_COLOR" and not re.search(rf"[\"']{name}[\"']", source)
+    )
+    assert len(documented) > 40
+    assert unread == []
+    assert not (documented | aliases) & set(UNREAD_ENV_VARS)

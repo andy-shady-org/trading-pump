@@ -7637,3 +7637,26 @@ async def test_provenance_failure_never_stops_the_bot(tmp_path: Path) -> None:
     bot.dry_run = True
     assert bot._run_mode() == "dry-run"
     await bot.close()
+
+
+@pytest.mark.regression("BUG-142")
+def test_startup_warns_about_unread_environment_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot = make_bot(tmp_path)
+    sent: list[str] = []
+    bot.alert_enabled = True
+    bot._send_alert = sent.append  # type: ignore[method-assign, assignment]
+    assert bot._warn_unread_env_vars() == []
+
+    monkeypatch.setenv("PUMPFUN_DRY_RUN", "true")
+    monkeypatch.setenv("PUMPFUN_STOP_LOSS", "0.9")
+    warnings = bot._warn_unread_env_vars()
+
+    assert [w.split(" ")[0] for w in warnings] == [
+        "PUMPFUN_DRY_RUN",
+        "PUMPFUN_STOP_LOSS",
+    ]
+    # Only the dry-run one is alerted: it looks like a safety switch.
+    assert len(sent) == 1 and sent[0].startswith("PUMPFUN_DRY_RUN is set but not read")
+    assert any("PUMPFUN_STOP_LOSS" in e for e in bot._recent_events)

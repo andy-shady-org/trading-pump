@@ -134,8 +134,6 @@ Terminal operators configure the bot using a `.env` file in the project root or 
 | `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | **Required\*** | `wss://pumpportal.fun/api/data` | WebSocket streaming endpoint for event-driven market data ingestion. Keep it key-free. |
 | `PUMPFUN_STREAM_API_KEY` | — | **Yes** (PumpPortal trading) | `None` | PumpPortal API key, sent only when connecting to `pumpportal.fun`; never shown on the dashboard (BUG-118). |
 | `PUMPFUN_USE_JITO` | — | Optional | `true` | Enables private mempool bundle routing via Jito Block Engine to prevent sandwich attacks. |
-| `PUMPFUN_BASE_BUY_SOL` | `PUMPFUN_BUY_AMOUNT_SOL` | Optional | `0.1` | Base buy allocation per trade in SOL. |
-| `PUMPFUN_STRATEGY_PRESET` | `PUMPFUN_PRESET` | Optional | `balanced` | Preconfigured strategy profile: `conservative`, `balanced`, or `aggressive`. |
 | `PUMPFUN_DRAWDOWN_MODE` | — | Optional | `adaptive_ratchet` | Portfolio drawdown reference mode (`adaptive_ratchet`, `baseline`, `trailing_hwm`). |
 | `PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS` | — | Optional | `true` | Enables high-throughput asynchronous JSONL diagnostic event telemetry (FEAT-30). |
 | `PUMPFUN_LOG_MAX_BYTES` | — | Optional | `10485760` (10 MB) | Maximum size before application log rotates with automated gzip compression (FEAT-22). |
