@@ -1578,6 +1578,128 @@ def test_daily_rollover_releases_latched_breaker():
     assert tracker.starting_equity_sol == pytest.approx(0.5)
 
 
+def _utc(day: int, hour: int, minute: int = 0) -> datetime.datetime:
+    return datetime.datetime(2026, 10, day, hour, minute, tzinfo=datetime.timezone.utc)
+
+
+def _evaluate(
+    tracker: DailyEquityTracker,
+    when: datetime.datetime,
+    equity: float,
+    *,
+    hours: float = 24.0,
+    cumulative: float = 0.0,
+) -> tuple[bool, str]:
+    return tracker.evaluate_circuit_breaker(
+        max_daily_drawdown_pct=0.15,
+        emergency_hard_lock_hours=hours,
+        current_wallet_balance_sol=equity,
+        now_timestamp=when.timestamp(),
+        now_utc=when,
+        max_cumulative_drawdown_pct=cumulative,
+    )
+
+
+@pytest.mark.regression("BUG-128")
+def test_emergency_lock_outlasts_the_utc_rollover() -> None:
+    tracker = DailyEquityTracker()
+    tracker.initialize_or_rollover(1.0, 0.0, _utc(15, 9))
+    locked, reason = _evaluate(tracker, _utc(15, 23, 55), 0.80)
+    assert locked and "portfolio drawdown" in reason
+    assert tracker.circuit_breaker_action == CircuitBreakerAction.EMERGENCY_LIQUIDATE
+
+    # Ten minutes later it is a new UTC day: the day's baseline starts again,
+    # but the 24 h hard lock is still running.
+    locked, _ = _evaluate(tracker, _utc(16, 0, 5), 0.80)
+    assert locked is True
+    assert tracker.last_reset_date_utc == "2026-10-16"
+    assert tracker.starting_equity_sol == pytest.approx(0.80)
+    assert tracker.lockout_until(24.0) == pytest.approx(
+        _utc(15, 23, 55).timestamp() + 24 * 3600.0
+    )
+
+    # The lock ends when its 24 hours are up.
+    locked, _ = _evaluate(tracker, _utc(16, 23, 56), 0.80)
+    assert locked is False
+    assert tracker.circuit_breaker_engaged is False
+
+
+@pytest.mark.regression("BUG-128")
+def test_soft_halt_and_locks_without_a_hard_lock_still_end_at_midnight() -> None:
+    soft = DailyEquityTracker(starting_equity_sol=1.0)
+    soft.initialize_or_rollover(1.0, 0.0, _utc(15, 9))
+    assert _evaluate(soft, _utc(15, 22), 2.0)[0] is False
+    # 37.5% below the 2.0 SOL peak, still above the start: a soft halt.
+    locked, _ = _evaluate(soft, _utc(15, 23), 1.25)
+    assert locked
+    assert soft.circuit_breaker_action == CircuitBreakerAction.HALT_NEW_BUYS
+    locked, _ = _evaluate(soft, _utc(16, 0, 5), 1.25)
+    assert locked is False
+
+    no_hard_lock = DailyEquityTracker()
+    no_hard_lock.initialize_or_rollover(1.0, 0.0, _utc(15, 9))
+    assert _evaluate(no_hard_lock, _utc(15, 23, 55), 0.80, hours=0.0)[0]
+    assert _evaluate(no_hard_lock, _utc(16, 0, 5), 0.80, hours=0.0)[0] is False
+
+
+@pytest.mark.regression("BUG-128")
+def test_cumulative_cap_stops_losses_that_the_daily_limit_allows() -> None:
+    tracker = DailyEquityTracker()
+    tracker.initialize_or_rollover(1.0, 0.0, _utc(15, 9))
+    assert tracker.reference_equity_sol == pytest.approx(1.0)
+
+    # Day 1: -14%, inside the 15% daily limit.
+    assert _evaluate(tracker, _utc(15, 20), 0.86, cumulative=0.25)[0] is False
+    # Day 2 starts from 0.86: -14% again is inside the daily limit, but it is
+    # -26% from the 1.0 SOL reference.
+    assert _evaluate(tracker, _utc(16, 9), 0.86, cumulative=0.25)[0] is False
+    locked, reason = _evaluate(tracker, _utc(16, 20), 0.74, cumulative=0.25)
+    assert locked
+    assert "cumulative loss 26.00%" in reason
+    assert tracker.cumulative_cap_hit is True
+    assert tracker.circuit_breaker_action == CircuitBreakerAction.EMERGENCY_LIQUIDATE
+
+    # The hard lock ending does not clear it while the loss is still there.
+    locked, reason = _evaluate(tracker, _utc(17, 20, 1), 0.74, cumulative=0.25)
+    assert locked and "cumulative loss" in reason
+
+    # Only an operator reset moves the reference.
+    tracker.reset_circuit_breaker(new_baseline_sol=0.74)
+    assert tracker.cumulative_cap_hit is False
+    assert tracker.reference_equity_sol == pytest.approx(0.74)
+    assert _evaluate(tracker, _utc(17, 21), 0.74, cumulative=0.25)[0] is False
+
+
+@pytest.mark.regression("BUG-128")
+def test_cumulative_cap_off_by_zero_and_withdrawals_are_not_losses() -> None:
+    tracker = DailyEquityTracker()
+    tracker.initialize_or_rollover(1.0, 0.0, _utc(15, 9))
+    assert _evaluate(tracker, _utc(15, 10), 0.86, cumulative=0.0)[0] is False
+
+    swept = DailyEquityTracker()
+    swept.initialize_or_rollover(1.0, 0.0, _utc(15, 9))
+    swept.record_withdrawal(0.5)
+    assert swept.reference_equity_sol == pytest.approx(0.5)
+    assert _evaluate(swept, _utc(15, 10), 0.5, cumulative=0.25)[0] is False
+
+
+@pytest.mark.regression("BUG-128")
+def test_cumulative_cap_state_survives_a_restart() -> None:
+    tracker = DailyEquityTracker(
+        reference_equity_sol=1.0,
+        cumulative_cap_hit=True,
+        emergency_hard_lock_hours=24.0,
+    )
+    restored = DailyEquityTracker.from_dict(tracker.to_dict())
+    assert restored.reference_equity_sol == pytest.approx(1.0)
+    assert restored.cumulative_cap_hit is True
+    assert restored.emergency_hard_lock_hours == pytest.approx(24.0)
+    # Snapshots written before BUG-128 have none of the new keys.
+    legacy = DailyEquityTracker.from_dict({"starting_equity_sol": 0.5})
+    assert legacy.reference_equity_sol == 0.0
+    assert legacy.cumulative_cap_hit is False
+
+
 def _risk_bot(**config):
     return SimpleNamespace(
         config=SimpleNamespace(**config), active_positions={}, _last_event=""

@@ -605,6 +605,19 @@ class TradingBot:
         if not self._operator_pause.resume(source=source):
             return False
         self._on_pause_change(f"buying resumed (via {source})")
+        tracker = getattr(self, "daily_equity_tracker", None)
+        if isinstance(tracker, DailyEquityTracker) and tracker.cumulative_cap_hit:
+            # Resuming after the cumulative loss cap is the operator's reset:
+            # the cap is measured again from the equity as it is now (BUG-128).
+            equity = float(self.wallet_balance_sol) + float(
+                self.position_manager.calculate_total_open_value()
+            )
+            tracker.reset_circuit_breaker(new_baseline_sol=equity)
+            self._risk_killed = False
+            self._record_event(
+                f"cumulative loss cap reset by the operator (reference: {equity:.4f} SOL)",
+                alert=True,
+            )
         return True
 
     def toggle_buying_pause(self, source: str = "SIGUSR1") -> bool:
@@ -1378,6 +1391,10 @@ class TradingBot:
                     )
 
                 self._risk_killed = True
+                if self.daily_equity_tracker.cumulative_cap_hit:
+                    # The cumulative cap stays until the operator resumes buying;
+                    # the pause survives restarts and lock expiry (BUG-128).
+                    self.pause_buying(reason="cumulative loss cap", source="risk")
                 # Count a trip once per lock, not on every check while locked (BUG-114).
                 locked_at = self.daily_equity_tracker.locked_at_timestamp
                 if locked_at != getattr(self, "_counted_breaker_lock_at", None):

@@ -5751,6 +5751,50 @@ async def test_breaker_trip_counted_once_and_lockout_reports_unlock_time(
     await restored.close()
 
 
+@pytest.mark.regression("BUG-128")
+async def test_cumulative_cap_pauses_buying_until_the_operator_resumes(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(
+        tmp_path,
+        max_daily_drawdown_pct=0.15,
+        max_cumulative_drawdown_pct=0.25,
+        emergency_hard_lock_hours=24.0,
+        auto_liquidate_on_circuit_breaker=False,
+    )
+    tracker = bot.daily_equity_tracker
+    tracker.reference_equity_sol = 1.0
+    tracker.starting_equity_sol = 0.86
+    tracker.peak_daily_equity_sol = 0.86
+    tracker.last_reset_date_utc = tracker.get_current_utc_date()
+    bot.wallet_balance_sol = 0.74
+
+    assert await bot._check_and_enforce_circuit_breaker() is True
+    assert tracker.cumulative_cap_hit is True
+    assert bot.buying_paused is True
+    assert bot._operator_pause.reason == "cumulative loss cap"
+    assert bot._should_buy("mint", 40.0) is False
+
+    # The pause survives a restart, like an operator pause.
+    bot._write_status_snapshot()
+    await bot.close()
+    restored = make_bot(
+        tmp_path, max_cumulative_drawdown_pct=0.25, emergency_hard_lock_hours=24.0
+    )
+    restored.safe_startup()
+    assert restored.buying_paused is True
+    assert restored.daily_equity_tracker.cumulative_cap_hit is True
+
+    # Resuming is the operator's reset: the cap is measured from here.
+    restored.wallet_balance_sol = 0.74
+    assert restored.resume_buying(source="SIGUSR1") is True
+    assert restored.daily_equity_tracker.cumulative_cap_hit is False
+    assert restored.daily_equity_tracker.circuit_breaker_engaged is False
+    assert restored.daily_equity_tracker.reference_equity_sol == pytest.approx(0.74)
+    assert await restored._check_and_enforce_circuit_breaker() is False
+    await restored.close()
+
+
 # --- Trade-feed circuit breaker (BUG-116) -----------------------------------------
 
 

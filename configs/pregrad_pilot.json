@@ -15,6 +15,7 @@
   "max_token_concentration_pct": 0.5,
   "max_loss_per_trade_sol": 0.02,
   "max_daily_drawdown_pct": 0.5,
+  "max_cumulative_drawdown_pct": 0.0,
   "max_entry_cost_share_pct": 0.10,
   "reserve_balance_sol": 0.15,
   "min_balance_sol": 0.1,

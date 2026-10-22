@@ -508,6 +508,9 @@ def resolve_strategy_config(
         max_token_concentration_pct=float(base["max_token_concentration_pct"]),
         max_loss_per_trade_sol=float(base["max_loss_per_trade_sol"]),
         max_daily_drawdown_pct=float(base["max_daily_drawdown_pct"]),
+        max_cumulative_drawdown_pct=float(
+            base.get("max_cumulative_drawdown_pct", 0.30)
+        ),
         reserve_balance_sol=float(base["reserve_balance_sol"]),
         health_check_timeout_seconds=int(base["health_check_timeout_seconds"]),
         emergency_hard_lock_hours=float(base.get("emergency_hard_lock_hours", 24.0)),
@@ -840,6 +843,10 @@ def resolve_strategy_config(
         )
     if not 0.0 <= config.profit_ratchet_ratio <= 1.0:
         raise ValueError("profit_ratchet_ratio must be between 0.0 and 1.0.")
+    if not 0.0 <= config.max_cumulative_drawdown_pct < 1.0:
+        raise ValueError(
+            "max_cumulative_drawdown_pct must be between 0.0 (off) and 1.0."
+        )
     if not 0.0 < config.profit_drawdown_tolerance_pct <= 1.0:
         raise ValueError("profit_drawdown_tolerance_pct must be between 0.0 and 1.0.")
     if config.log_rotation_type not in {"size", "time", "none"}:

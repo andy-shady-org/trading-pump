@@ -907,6 +907,7 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
 
 * **`drawdown_reference_mode`**: Circuit breaker policy mode (`"adaptive_ratchet"`, `"baseline"`, or `"trailing_hwm"`).
 * **`max_daily_drawdown_pct`**: Maximum drawdown from starting capital before engaging Stage 2 protection (e.g. `0.25` = 25%).
+* **`max_cumulative_drawdown_pct`**: Loss cap across days and locks, from a reference equity only the operator resets (default `0.30`; `0` = off). Breaching it liquidates and pauses buying until `SIGUSR1` resumes it (BUG-128).
 * **`profit_drawdown_tolerance_pct`**: Allowed trailing retracement on profits in the Profit Run Zone (e.g. `0.40` = 40%).
 * **`profit_ratchet_ratio`**: Fraction of realized gains permanently banked into guaranteed baseline floor (e.g. `0.50` = 50%).
 * **`auto_liquidate_on_circuit_breaker`**: Determines whether to execute global emergency market sells upon circuit breaker engagement.

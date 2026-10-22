@@ -33,6 +33,8 @@ class TradingBotConfig:
     max_token_concentration_pct: float = 0.35
     max_loss_per_trade_sol: float = 0.02
     max_daily_drawdown_pct: float = 0.2
+    # Loss cap across days and locks, from a reference the operator resets (BUG-128).
+    max_cumulative_drawdown_pct: float = 0.30
     reserve_balance_sol: float = 0.1
     health_check_timeout_seconds: int = 60
     emergency_hard_lock_hours: float = 24.0
@@ -299,6 +301,7 @@ class TradingBotConfig:
             "max_token_concentration_pct": self.max_token_concentration_pct,
             "max_loss_per_trade_sol": self.max_loss_per_trade_sol,
             "max_daily_drawdown_pct": self.max_daily_drawdown_pct,
+            "max_cumulative_drawdown_pct": self.max_cumulative_drawdown_pct,
             "reserve_balance_sol": self.reserve_balance_sol,
             "health_check_timeout_seconds": self.health_check_timeout_seconds,
             "emergency_hard_lock_hours": self.emergency_hard_lock_hours,
