@@ -1,6 +1,6 @@
 # rc.4 Hand-Off For Coding Agents
 
-A briefing for an AI coding agent (for example Junie in PyCharm) that picks up this repository after the 2026-10-22 work session. It explains what changed for v0.3.0-rc.4, where the code is, which rules apply and what is still open.
+A briefing for an AI coding agent (for example Junie in PyCharm) that picks up this repository after the 2026-10-22 work session. It explains what changed for v0.3.0-rc.4, where the code is, which rules apply and what is still open. All of it is on `main` (PR #37 `rc4/implementation`, PR #38 this file, merged 2026-10-22).
 
 **Read [`AGENTS.md`](../../AGENTS.md) first.** It is the binding rule set (Local Norms and Learnings Log). This file adds the context of the rc.4 changes only. When the two disagree, `AGENTS.md` wins, and this file should be fixed.
 
@@ -11,18 +11,19 @@ A briefing for an AI coding agent (for example Junie in PyCharm) that picks up t
 These come from the operator and are not negotiable:
 
 1. **Never touch the runtime directory** `/Users/andy/projects/git/trading/runtime`. The rc.3 72 h paper test runs there. Read nothing there unless the operator asks, and write nothing ever.
-2. **The working repo is live code.** `/Users/andy/projects/git/trading/pumpfun-trading` is installed editable into the venv `/Users/andy/projects/virtual_envs/other_venvs/pumpfun-trading`, and the running rc.3 bot imports from it. While rc.3 runs, **do not check out another branch, reset, stash or rebuild in that working tree**. Work in a separate worktree instead:
+2. **The working repo may be live code.** `/Users/andy/projects/git/trading/pumpfun-trading` is installed editable into the venv `/Users/andy/projects/virtual_envs/other_venvs/pumpfun-trading`. If the running rc.3 bot imports from it, the bot keeps the rc.3 code it loaded at startup, but a restart or a module imported for the first time would load the rc.4 code now on `main`. Until the operator says the rc.3 run is over:
+   - don't reinstall the venv;
+   - don't restart anything;
+   - don't switch branches, reset or stash in this working tree.
+
+   For branch work, use a worktree with its own venv:
    ```bash
-   git -C /Users/andy/projects/git/trading/pumpfun-trading worktree add ../pumpfun-trading-rc4 rc4/implementation
+   git -C /Users/andy/projects/git/trading/pumpfun-trading worktree add ../pumpfun-trading-wt -b <branch> main
+   python3.14 -m venv ../venv-wt && ../venv-wt/bin/pip install -e "../pumpfun-trading-wt[dev]"
    ```
-   Open `../pumpfun-trading-rc4` as the PyCharm project for rc.4 work and give it **its own venv**. The shared venv's editable install points at the working repo, so `pumpfun-*` commands there run `main`'s code, not the worktree's. Reinstalling it from the worktree would repoint the package under the running bot. For example:
-   ```bash
-   cd ../pumpfun-trading-rc4
-   python3.14 -m venv ../venv-rc4 && ../venv-rc4/bin/pip install -e ".[dev]"
-   ```
-   `nox` builds its own venvs, so `nox -s …` is safe in the worktree either way.
+   `nox` builds its own venvs, so `nox -s …` is safe in either tree.
 3. **Secrets.** `.envrc` holds `PUMPFUN_PRIVATE_KEY` and the provider keys. Never open, print, copy or commit it. Never write a raw provider URL anywhere (use `ops/redact.py`, `AGENTS.md` [SECURITY]).
-4. **Git.** Commit and push only when the operator asks. Never push without being asked. One branch per change, merged with `--no-ff` into the integration branch (`rc4/implementation`).
+4. **Git.** Commit and push only when the operator asks. Never push without being asked. One branch per change off `main`, merged with `--no-ff`. The operator pushes and opens the PRs.
 5. **Quality gate.** `nox -s format lint mypy tests package` must pass. Coverage stays ≥ 95% (statement + branch). Python 3.11–3.14 are all supported (`AGENTS.md` [TESTS] "Green On 3.14 Is Not Green On 3.11").
 
 ---
@@ -30,22 +31,25 @@ These come from the operator and are not negotiable:
 ## 2. Branch map
 
 ```
-main  25b4c56  Merge PR #36 (rc4/integration: BUG-127…140, see §3)
- └─ rc4/implementation   (created from main; the rc.4 pre-flight work below)
-     ├─ feat/replay-circuit-breaker        FEAT-66
-     ├─ fix/bug-141-ratchet-peak-realized  BUG-141
-     ├─ feat/audit-verdict                 FEAT-67
-     ├─ feat/run-provenance                FEAT-68
-     ├─ fix/bug-142-unread-env-vars        BUG-142
-     ├─ feat/risk-drills                   FEAT-69
-     ├─ fix/bug-143-test-event-log-leak    BUG-143
-     ├─ docs/rc4-gate-status               RELEASE-GATE §1, README
-     └─ docs/rc4-agent-handoff             this file
+main  77b937d  Merge PR #38 (docs/rc4-agent-handoff: this file)
+      94f6107  Merge PR #37 (rc4/implementation: the rc.4 pre-flight work below)
+      25b4c56  Merge PR #36 (rc4/integration: BUG-127…140, see §3)
+
+rc4/implementation was built from 25b4c56 with one --no-ff merge per branch:
+  feat/replay-circuit-breaker        FEAT-66
+  fix/bug-141-ratchet-peak-realized  BUG-141
+  feat/audit-verdict                 FEAT-67
+  feat/run-provenance                FEAT-68
+  fix/bug-142-unread-env-vars        BUG-142
+  feat/risk-drills                   FEAT-69
+  fix/bug-143-test-event-log-leak    BUG-143
+  docs/rc4-gate-status               RELEASE-GATE §1, README
+  docs/rc4-agent-handoff             this file
 ```
 
-Branches were built and merged one after another, each starting from the `rc4/implementation` tip of the time, so they merge without conflicts in this order. None of them has been pushed. The version in `pyproject.toml` is still `0.3.0rc3`: the bump to `0.3.0rc4` belongs on the release branch (`RELEASE-GATE.md` §6, CHANGELOG release record).
+Branches were built and merged one after another, each starting from the `rc4/implementation` tip of the time, so they merged without conflicts in this order. The branches can be deleted now that `main` has them. The version in `pyproject.toml` is still `0.3.0rc3`: the bump to `0.3.0rc4` belongs on the release branch (`RELEASE-GATE.md` §6, CHANGELOG release record).
 
-Gate status of `rc4/implementation`: ruff, black and mypy clean; **2,075 tests pass on 3.14 and 3.11, coverage 97.05%**. That run was on Linux with the venv's pinned package versions. Still to do: `nox -s tests` and `nox -s package` on the Mac, the CI matrix, `pumpfun-drill --report`.
+Gate status of the rc.4 code (same tree as `main` at `77b937d`): ruff, black and mypy clean; **2,075 tests pass on 3.14 and 3.11, coverage 97.05%**. That run was on Linux with the venv's pinned package versions. Still to do: `nox -s tests` and `nox -s package` on the Mac, the CI matrix, `pumpfun-drill --report`.
 
 ---
 
@@ -169,7 +173,7 @@ Full write-ups are in [`BUGS.md` §24](BUGS.md#24-code-review-risk-execution-and
   - `slow_tier_sell`: a tier sell past the 60 s latch is not repeated (BUG-140).
 - `run_drills(names=None, *, workdir=None) -> DrillReport`. A drill that raises counts as failed. A drill with no checks counts as failed too.
 - **Clock seam:** `TradingBot.clock` (default `time.time`), `now_timestamp()` and `_now_utc()`. `evaluate_portfolio_circuit_breaker(bot)` passes `bot.now_timestamp()` to the tracker when it returns a real number; a `MagicMock` bot falls back to wall time. `update_valuation` / `calculate_drawdown` calls in `bot/run.py` pass `now_utc`. **Use `bot.clock` to move time in tests and drills; never sleep.**
-- `cli/drill.py` provides `pumpfun-drill` (new console script in `pyproject.toml`) and `pumpfun ops drill` (`cli/main.py`), with `--only`, `--workdir`, `--report`, `--json` and `--list`. Exit code 1 on any failure. The `pumpfun-drill` console script exists only in a venv installed from rc.4 code (the worktree venv in §1). Without one, use `python -m pumpfun_trading.cli.main ops drill` from the worktree root.
+- `cli/drill.py` provides `pumpfun-drill` (new console script in `pyproject.toml`) and `pumpfun ops drill` (`cli/main.py`), with `--only`, `--workdir`, `--report`, `--json` and `--list`. Exit code 1 on any failure. The `pumpfun-drill` console script exists only in a venv installed (or reinstalled) from rc.4 code. Until the shared venv is reinstalled after the rc.3 run, use `python -m pumpfun_trading.cli.main ops drill` from the repo root.
 
 **Tests:** `tests/unit/ops/test_drills.py`, where `test_every_drill_passes_on_the_current_risk_code` is the regression guard for BUG-128/130/140. Also `tests/unit/cli/test_drill.py`, and the clock seam test in `tests/unit/bot/test_risk.py`.
 
@@ -234,7 +238,7 @@ Guards that fail when a rule is broken:
 
 ---
 
-## 8. How to verify (in the rc.4 worktree, with its own venv activated)
+## 8. How to verify (on `main`; while rc.3 runs, use a venv other than the shared one, or `nox`)
 
 ```bash
 nox -s format lint mypy tests package           # full gate; tests on every installed 3.11–3.14
@@ -251,7 +255,7 @@ None of these touch the runtime directory or the network. Don't point them at fi
 ## 9. Open work after rc.4
 
 1. Run the full gate on the Mac (`nox -s tests`, `nox -s package`) and in CI. Fix anything that differs from the Linux run.
-2. Release branch `release/v0.3.0rc4`: bump `pyproject.toml` to `0.3.0rc4` and turn `[Unreleased]` into `[0.3.0-rc.4]` with a release record (template in `RELEASE-GATE.md` §5, including the drill report, the provenance fields and the verdict rules hash). Tag only after the gate passes.
+2. Release branch `release/v0.3.0rc4` off `main`: bump `pyproject.toml` to `0.3.0rc4` and turn `[Unreleased]` into `[0.3.0-rc.4]` with a release record (template in `RELEASE-GATE.md` §5, including the drill report, the provenance fields and the verdict rules hash). Tag only after the gate passes.
 3. Before the next paper run: copy `configs/verdict_rules.json` into the runtime `configs/` (the operator does this), record its hash, then check the run's `run_provenance` in `bot_status.json` (`RUNBOOK.md` §3 step 4).
 4. Read out the rc.3 72 h runs when they finish (`RUNBOOK.md` §6.3), and judge them with `pumpfun-audit verdict` as evidence only. That rule was not pre-registered for rc.3.
 5. Still open from `TODO.md`:
