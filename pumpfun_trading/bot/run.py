@@ -112,7 +112,7 @@ from pumpfun_trading.execution.arbitrage import (
     AtomicArbitrageBuilder,
     AtomicArbitrageExecutor,
 )
-from pumpfun_trading.execution.executor import OrderExecutor
+from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
 from pumpfun_trading.execution.sell_pipeline import (
     estimate_sell_proceeds,
@@ -146,6 +146,7 @@ from pumpfun_trading.sdk.costs import (
     COST_SOURCE_TRANSACTION_META,
     TransactionCosts,
 )
+from pumpfun_trading.sdk.curve import TOTAL_TOKEN_SUPPLY_RAW
 from pumpfun_trading.sdk.execution import PUMP_DEFAULT_FEE_BPS, WSOL_MINT_STR
 from pumpfun_trading.strategies.observation import CurveObservationList
 from pumpfun_trading.strategies.regime import MarketRegimeTracker
@@ -2080,6 +2081,32 @@ class TradingBot:
         self._transition_to(TradingBotState.HOLDING, reason=f"buy_confirmed {mint}")
         return True
 
+    def _raydium_fill_market_cap(self, exec_res: ExecutionResult) -> float | None:
+        """Market cap at a live Raydium buy's average fill price (BUG-131).
+
+        SOL spent (the transaction's swap amount when read, else the order
+        size) over the tokens the balance delta shows. ``None`` in paper and
+        dry-run modes, or when the token amount is not a measured delta.
+        """
+        if self.dry_run:
+            return None
+        metadata = exec_res.metadata if isinstance(exec_res.metadata, dict) else {}
+        tokens = int(exec_res.token_amount or 0)
+        if tokens <= 0 or metadata.get("fill_source") != "balance_delta":
+            return None
+        costs = self._execution_costs(exec_res)
+        spent = float(exec_res.amount_sol or 0.0)
+        if (
+            costs is not None
+            and costs.source == COST_SOURCE_TRANSACTION_META
+            and costs.swap_sol
+            and costs.swap_sol > 0
+        ):
+            spent = float(costs.swap_sol)
+        if spent <= 0:
+            return None
+        return spent / tokens * TOTAL_TOKEN_SUPPLY_RAW
+
     async def _buy_raydium_token(
         self,
         mint: str,
@@ -2148,11 +2175,15 @@ class TradingBot:
 
         trade_id = self._next_trade_id()
         position_id = trade_id
+        raydium_entry_mc = self._raydium_fill_market_cap(exec_res)
         self.position_manager.record_buy(
             mint=mint,
             token_amount=exec_res.token_amount or (100_000_000 if self.dry_run else 0),
             cost_sol=buy_amount,
-            entry_market_cap=69.0,
+            # From the fill; 0 when it is unknown, so the first price the
+            # position sees becomes its entry (BUG-76) instead of a made-up
+            # 69 SOL, the "$69k" graduation figure read as SOL (BUG-131).
+            entry_market_cap=raydium_entry_mc or 0.0,
             name=position_name,
             buy_signature=exec_res.signature,
             reason=reason or "raydium_graduation_snipe",

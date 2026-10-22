@@ -160,13 +160,17 @@ def test_record_buy_derived_price_table_matches_fallback_chain(
     assert pos["buy_price"] == pytest.approx(expected_price)
 
 
+@pytest.mark.regression("BUG-131")
 def test_record_buy_blank_name_and_zero_market_cap_use_defaults() -> None:
     manager = _manager()
 
     pos = manager.record_buy(MINT, 10, 0.01, 0.0, name="   ", reason="")
 
     assert pos["name"] == MINT
-    assert pos["entry_market_cap"] == 30.0
+    # Unknown entry stays 0 (the first observed price becomes the entry, BUG-76);
+    # it used to become 30.0, the launch virtual SOL reserve, not a market cap.
+    assert pos["entry_market_cap"] == 0.0
+    assert pos["current_market_cap"] == 0.0
     assert pos["entry_reason"] == "entry"
 
 

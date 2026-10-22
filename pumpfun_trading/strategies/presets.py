@@ -53,7 +53,7 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "momentum_min_net_inflow_sol": 1.0,
         "momentum_baseline_window_seconds": 300,
         "momentum_max_token_age_seconds": 900,
-        "enable_raydium_migration_sniping": True,
+        "enable_raydium_migration_sniping": False,
         "raydium_pre_migration_sol_threshold": 82.0,
         "raydium_buy_amount_sol": 0.01,
         "raydium_slippage_bps": 300,
@@ -167,7 +167,7 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "momentum_min_net_inflow_sol": 0.5,
         "momentum_baseline_window_seconds": 300,
         "momentum_max_token_age_seconds": 1800,
-        "enable_raydium_migration_sniping": True,
+        "enable_raydium_migration_sniping": False,
         "raydium_pre_migration_sol_threshold": 80.0,
         "raydium_buy_amount_sol": 0.02,
         "raydium_slippage_bps": 500,
@@ -281,7 +281,7 @@ DEFAULT_PRESETS: dict[str, dict[str, Any]] = {
         "momentum_min_net_inflow_sol": 0.25,
         "momentum_baseline_window_seconds": 300,
         "momentum_max_token_age_seconds": 3600,
-        "enable_raydium_migration_sniping": True,
+        "enable_raydium_migration_sniping": False,
         "raydium_pre_migration_sol_threshold": 75.0,
         "raydium_buy_amount_sol": 0.05,
         "raydium_slippage_bps": 800,
@@ -659,7 +659,7 @@ def resolve_strategy_config(
             0.0, float(base.get("graduation_backfill_seconds", 30.0))
         ),
         enable_raydium_migration_sniping=bool(
-            base.get("enable_raydium_migration_sniping", True)
+            base.get("enable_raydium_migration_sniping", False)
         ),
         raydium_pre_migration_sol_threshold=float(
             base.get("raydium_pre_migration_sol_threshold", 80.0)

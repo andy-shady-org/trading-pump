@@ -507,7 +507,7 @@ When a token bonding curve achieves full capitalization ($\ge 85\text{ SOL}$ in 
 }
 ```
 
-* **`enable_raydium_migration_sniping`**: Enables automated Raydium AMM v4 pool sniping upon graduation.
+* **`enable_raydium_migration_sniping`**: Enables automated Raydium AMM v4 pool sniping upon graduation. Off by default in every preset since rc.4: Pump.fun migrates into PumpSwap, not Raydium (BUG-123, BUG-131). A position it opens takes its entry market cap from the fill, or from the first price it sees.
 * **`raydium_pre_migration_sol_threshold`**: Real SOL curve reserve threshold to begin staging graduation keys (default `80.0 SOL`).
 * **`raydium_buy_amount_sol`**: Trade allocation dedicated to Raydium post-migration buy.
 * **`raydium_slippage_bps`**: Allowed slippage basis points for the Raydium swap (e.g. `500` = 5.0%).
