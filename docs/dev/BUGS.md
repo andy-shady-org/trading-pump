@@ -1179,12 +1179,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Suggested fix:** take the entry market cap from the fill or pool state, or remove the Raydium sniping lane and default the flag to false.
 * **Verification to add:** a Raydium buy records the market cap derived from its fill.
 
-### BUG-132: Legacy Momentum Entry On The Geyser Path Ignores Entry Mode [OPEN]
+### BUG-132: Legacy Momentum Entry On The Geyser Path Ignores Entry Mode [RESOLVED]
 * **Location:** `pumpfun_trading/bot/handlers/trade.py` (`handle_trade_event_update`, "Momentum Spikes Evaluation" ~L177–232)
 * **Description:** the Geyser trade handler buys on `evaluate_momentum_signal` (`reason="momentum_spike"`) whenever `enable_momentum_signals` is true, without checking `entry_mode`. The momentum preset inherits `enable_momentum_signals: true` from conservative. The PumpPortal handler routes confirmed mode to `maybe_buy_confirmed_momentum`, but the Geyser one does not, and its call passes no `token_creation_timestamp`, so the age gate is skipped too.
 * **Impact:** medium, latent: no `momentum_spike` buy appears in the current captures (PumpPortal stream). Switching to Geyser in confirmed mode would open positions that bypass the age window, market-cap band and the FEAT-56/57/60 flow screens.
-* **Suggested fix:** in confirmed mode, route the Geyser path through `maybe_buy_confirmed_momentum` (or skip the legacy block), and pass the creation time.
-* **Verification to add:** a Geyser trade event in confirmed mode never produces a `momentum_spike` buy.
+* **Resolution:** in confirmed mode `handle_trade_event_update` (the Geyser path) now does what the PumpPortal path does: a trade on a watched, promoted mint goes to `maybe_buy_confirmed_momentum` (age window, market-cap band, flow screens, `_should_buy`, cost guard), and the legacy `momentum_spike` block is skipped. Launch mode keeps the legacy block unchanged (it still has no creation time for the age gate). Promotion needs the PumpPortal trade feed, so a Geyser-only deployment in confirmed mode buys nothing until FEAT-39 gives Geyser its own promotion path, which is the safe failure.
+* **Verification:** `regression("BUG-132")` tests in `unit/bot/handlers/test_trade.py`: in confirmed mode Geyser buys on an unwatched or unpromoted mint buy nothing and a promoted one goes to the confirmed pipeline, never the legacy spike; launch mode still evaluates the spike.
 
 ### BUG-133: Velocity Z-Score Is Capped And Biased For Young Tokens [OPEN]
 * **Location:** `pumpfun_trading/strategies/momentum.py` (`TokenOrderFlowTracker.get_velocity_z_score` ~L258–309)
