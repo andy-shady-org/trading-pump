@@ -1158,12 +1158,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Suggested fix:** make the lock last its full duration across the rollover (do not clear `circuit_breaker_engaged` in the rollover while the hard lock is running), and add a cumulative cap (for example a max loss from the all-time or session starting equity, persisted across restarts) that needs a manual reset.
 * **Verification to add:** a lock at 23:55 UTC stays engaged at 00:05 UTC; two losing days in a row trip the cumulative cap.
 
-### BUG-129: Live Entries Use The Signal Market Cap As Entry Price [OPEN]
+### BUG-129: Live Entries Use The Signal Market Cap As Entry Price [RESOLVED]
 * **Location:** `pumpfun_trading/execution/executor.py` (paper path sets `entry_market_cap_sol` ~L466–472; live path does not), `pumpfun_trading/bot/run.py` (`_buy_token` ~L1930–1956)
 * **Description:** `_buy_token` overrides the stream market cap with `exec_metadata["entry_market_cap_sol"]` only when it is present, and only the paper path sets it (BUG-104 / BUG-121 fixed paper). A live buy records the market cap of the signal, before screening, confirmation and the bot's own price impact. Exits measure `performance` against that value.
 * **Impact:** high once live: with an entry drift of a few percent, the stop-loss fires that much further below the real fill and take-profits fire early. Paper and replay results do not carry over to live.
-* **Suggested fix:** derive the live entry market cap from the fill (swap SOL from transaction meta and tokens received, or the curve read just after confirmation), and record both values so the drift is visible.
-* **Verification to add:** a live-mode executor test where the fill price differs from the signal; the position's `entry_market_cap` must follow the fill.
+* **Resolution:** the live buy path in `OrderExecutor.execute_buy` now sets `entry_market_cap_sol` like the paper path does, so `_buy_token` records the fill as the position's `entry_market_cap`. Source order (`entry_price_source`): `live_fill` (SOL paid into the curve from the transaction meta, less the protocol fee, over the tokens the balance delta shows, × total supply), else `post_fill_curve` (the curve read after the fill), else `signal` (unchanged behaviour). Positions also carry `signal_market_cap_sol`, so the entry drift is visible. Not yet checked against a real mainnet buy: confirm on the first Stage 1 canary trade that `entry_price_source` is `live_fill` and the entry market cap matches the transaction.
+* **Verification:** `regression("BUG-129")` tests in `unit/execution/test_executor.py` (0.10125 SOL for 3×10¹² raw tokens gives the 33.3 SOL fill market cap; without meta the post-fill curve, then the signal) and `unit/bot/test_run.py` (a live position's `entry_market_cap` is the fill's, with the source and signal recorded).
 
 ### BUG-130: Day Baseline Can Come From The Simulated Balance [OPEN]
 * **Location:** `pumpfun_trading/bot/run.py` (`self.wallet_balance_sol = self._initial_simulated_balance()` ~L322, `_check_and_enforce_circuit_breaker` ~L1341–1357), `pumpfun_trading/bot/risk.py` (`initialize_or_rollover`)
