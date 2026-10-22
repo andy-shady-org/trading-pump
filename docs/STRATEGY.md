@@ -925,6 +925,8 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
 
 To counteract parameter decay as market volatility regimes shift, `pumpfun-trading` integrates an automated multi-objective hyperparameter optimization engine (`pumpfun_trading/engines/optimizer.py`).
 
+Fitness is scored per **position** (its buy and every partial and full sell), with a per-trade Sharpe / Sortino (no √n factor, so a 70 % train split and a 30 % test split are on the same scale) and a Calmar ratio whose drawdown is floored at 1 % (BUG-135).
+
 ```
  Recorded Historical Market Dataset (.jsonl / .jsonl.gz)
                      │
