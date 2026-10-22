@@ -1219,11 +1219,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Impact:** low: current callers pass consistent units.
 * **Suggested fix:** take explicit units (lamports and raw token units only) and use the launch market cap constant for the fallback, or refuse to open a position with no market cap.
 
-### BUG-138: Fixed Pump.fun Fee Not Checked Against The Current Schedule [OPEN]
+### BUG-138: Fixed Pump.fun Fee Not Checked Against The Current Schedule [RESOLVED]
 * **Location:** `pumpfun_trading/sdk/execution_types.py` (`PUMP_DEFAULT_FEE_BPS = 125`)
 * **Description:** every modelled fee (paper, replay, cost guard) uses a flat 125 bps per side. Pump.fun's fees may now vary with market cap; this has not been verified.
 * **Impact:** low to medium depending on the real schedule: paper and replay costs would be off by the difference on every trade.
-* **Suggested fix:** confirm the current fee from the program's global/fee config accounts or a few confirmed transactions, and read it at runtime if it varies.
+* **Resolution:** Pump.fun's public docs (`pump-public-docs`, FEE_PROGRAM_README) confirm the fee has been tiered by market cap since 2025-09-01: each trade pays the protocol + creator bps of the `fee_config` tier its curve's market cap (`virtual_sol × mint_supply / virtual_token`, lamports) falls in. New `sdk/fee_config.py` decodes the `FeeConfig` account from the official `pump_fees` IDL layout (discriminator, `fee_tiers` / `stable_fee_tiers` of `{u128 threshold, Fees}`, optional `exotic_flat_fees`) and selects the tier as the published `calculateFeeTier` does. `PumpFunCurveMixin.get_pump_fee_config()` reads it (owner-checked, cached 10 min, last good config kept on a failed refresh) and `curve_fee_bps()` gives live buy/sell minimum-output quotes the curve's tier, falling back to `pump_fee_bps`. At startup `TradingBot._check_pump_fee_schedule()` logs the tiers and alerts if the launch-tier fee is not the 125 bps that paper, replay and the cost guard model (those keep `PUMP_DEFAULT_FEE_BPS`, so parity is unchanged). Not verified against the mainnet account from here (no RPC access): check the startup log on the next run, and pin the decoder to real account bytes in a test once captured.
+* **Verification:** `regression("BUG-138")` tests in `unit/sdk/test_fee_config.py` (IDL layout decode with and without `exotic_flat_fees`, malformed accounts rejected, tier boundaries, launch market cap 27.96 SOL, client read / cache / owner check / fallback) and `unit/bot/test_run.py` (startup check returns the launch-tier fee, alerts only when it is not 125 bps, `None` when unreadable).
 
 ### BUG-139: FEAT-65 Round-Trip Quotes Include Price Drift [OPEN]
 * **Location:** `pumpfun_trading/services/slow_lane.py` (`QuoteRecorder.sample_quotes`, `quote_row`, `backfill_bars`)
