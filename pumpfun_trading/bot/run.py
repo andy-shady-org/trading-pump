@@ -1980,10 +1980,17 @@ class TradingBot:
             if isinstance(exec_metadata, dict)
             else None
         )
+        signal_market_cap_sol = float(market_cap_sol or 0.0)
         if isinstance(curve_entry_mc, (int, float)) and curve_entry_mc > 0:
             # Paper fills are priced from the curve exits read, not the stream
-            # create event (BUG-104).
+            # create event (BUG-104); live fills from their own transaction
+            # (BUG-129), so stops and take-profits measure from the real entry.
             market_cap_sol = float(curve_entry_mc)
+        entry_price_source = (
+            exec_metadata.get("entry_price_source")
+            if isinstance(exec_metadata, dict)
+            else None
+        )
 
         trade_id = self._next_trade_id()
         position_id = trade_id
@@ -2010,6 +2017,14 @@ class TradingBot:
                 "position_id": position_id,
                 "trade_id": trade_id,
                 **({"strategy": strategy} if strategy else {}),
+                **(
+                    {
+                        "entry_price_source": str(entry_price_source),
+                        "signal_market_cap_sol": signal_market_cap_sol,
+                    }
+                    if entry_price_source
+                    else {}
+                ),
             },
         )
         if strategy:

@@ -6779,6 +6779,34 @@ def _buy_ready_bot(tmp_path: Path, **config: Any) -> TradingBot:
     return bot
 
 
+@pytest.mark.regression("BUG-129")
+async def test_live_position_is_measured_from_the_fill_not_the_signal(
+    tmp_path: Path,
+) -> None:
+    bot = _buy_ready_bot(tmp_path, dry_run=False)
+    assert bot.dry_run is False
+    bot.executor.execute_buy = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            signature="Sig",
+            mint=SAMPLE_PUMP_MINT,
+            is_buy=True,
+            amount_sol=0.02,
+            token_amount=1_000,
+            metadata={"entry_market_cap_sol": 48.6, "entry_price_source": "live_fill"},
+        )
+    )
+    bot._record_trade = MagicMock()  # type: ignore[method-assign]
+
+    assert await bot._buy_token(SAMPLE_PUMP_MINT, 45.0, strategy="momentum")
+    position = bot.position_manager.get_position(SAMPLE_PUMP_MINT)
+    assert position is not None
+    assert position["entry_market_cap"] == pytest.approx(48.6)
+    assert position["entry_price_source"] == "live_fill"
+    assert position["signal_market_cap_sol"] == pytest.approx(45.0)
+    await bot.close()
+
+
 async def test_momentum_buys_pass_the_drift_guard_to_the_executor(
     tmp_path: Path,
 ) -> None:

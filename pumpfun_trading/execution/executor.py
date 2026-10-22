@@ -19,6 +19,7 @@ from pumpfun_trading.sdk.costs import (
 from pumpfun_trading.sdk.curve import (
     INITIAL_VIRTUAL_SOL_LAMPORTS,
     INITIAL_VIRTUAL_TOKEN_RAW,
+    TOTAL_TOKEN_SUPPLY_RAW,
     calculate_buy_tokens_out,
     calculate_market_cap_sol,
     calculate_sell_sol_out,
@@ -277,6 +278,40 @@ class OrderExecutor:
             is_buy=is_buy,
             urgency=urgency,
         )
+
+    async def _live_entry_market_cap(
+        self,
+        mint: str,
+        acquired_tokens: int,
+        fill_source: str,
+        costs: TransactionCosts | None,
+    ) -> tuple[float | None, str]:
+        """Market cap of a live buy's average fill, and where it came from (BUG-129).
+
+        From the transaction: the SOL paid into the curve less the protocol fee,
+        over the tokens the balance delta shows. Otherwise the curve read right
+        after the fill. ``None`` leaves the caller on the signal's market cap.
+        """
+        swap_sol = costs.swap_sol if costs is not None else None
+        if (
+            fill_source == "balance_delta"
+            and acquired_tokens > 0
+            and costs is not None
+            and costs.source == COST_SOURCE_TRANSACTION_META
+            and swap_sol
+            and swap_sol > 0
+        ):
+            net_sol = float(swap_sol) * 10_000 / (10_000 + self._fee_bps())
+            return net_sol / acquired_tokens * TOTAL_TOKEN_SUPPLY_RAW, "live_fill"
+        try:
+            reserves = await self._fetch_curve_reserves(mint)
+        except Exception:
+            reserves = None
+        if reserves is not None:
+            market_cap = calculate_market_cap_sol(reserves[0], reserves[1])
+            if market_cap > 0:
+                return float(market_cap), "post_fill_curve"
+        return None, "signal"
 
     def _estimate_buy_tokens(
         self, amount_sol: float, reserves: tuple[int, int] | None
@@ -598,6 +633,20 @@ class OrderExecutor:
                 costs = self._model_costs(
                     is_buy=True, rent_lamports=rent, signature=signature
                 )
+            live_metadata: dict[str, Any] = {
+                "fill_source": fill_source,
+                "confirmed": bool(confirmed),
+                "requested_sol": amount_sol,
+            }
+            entry_mc, entry_source = await self._live_entry_market_cap(
+                mint, acquired_tokens, fill_source, costs
+            )
+            if entry_mc is not None:
+                # Exits measure the position from its own fill (BUG-129).
+                live_metadata["entry_market_cap_sol"] = entry_mc
+            live_metadata["entry_price_source"] = entry_source
+            if signal_market_cap_sol:
+                live_metadata["signal_market_cap_sol"] = float(signal_market_cap_sol)
             return ExecutionResult(
                 success=True,
                 signature=signature,
@@ -606,11 +655,7 @@ class OrderExecutor:
                 amount_sol=spent_sol,
                 token_amount=acquired_tokens,
                 reason=reason,
-                metadata={
-                    "fill_source": fill_source,
-                    "confirmed": bool(confirmed),
-                    "requested_sol": amount_sol,
-                },
+                metadata=live_metadata,
                 costs=costs,
             )
 
