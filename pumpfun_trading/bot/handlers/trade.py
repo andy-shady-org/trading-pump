@@ -175,6 +175,19 @@ async def handle_trade_event_update(bot: TradingBot, update: TradeEventUpdate) -
                     bot._record_event(f"bought copy-trade {mint[:8]}")
                     return
 
+    # Confirmed entries (FEAT-52) go through the same watch -> promote ->
+    # confirm pipeline as the PumpPortal path, with its age window, market-cap
+    # band and flow screens; the legacy spike below is for launch mode only
+    # (BUG-132).
+    if bot._entry_mode() == "confirmed":
+        if mint not in bot.active_positions:
+            entry = bot.order_flow_engine.get_watch(mint)
+            if entry is not None and entry.subscribed:
+                await bot._maybe_buy_confirmed_momentum(
+                    mint, current_market_cap, None, now=ts
+                )
+        return
+
     # Momentum Spikes Evaluation
     if (
         bot.config.enable_momentum_signals
