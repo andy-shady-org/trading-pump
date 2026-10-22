@@ -304,6 +304,7 @@ Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FE
      slow_lane/jupiter_quotes.jsonl | tail -n 30            # round-trip cost per token and size
    ```
    Many `status: 429` rows mean the keyless limit changed: raise `--request-gap` or `--quote-interval`. Edit the token list only between runs, and keep the edited file with the data.
+4. Reading the data (BUG-139). The sell leg is quoted a pacing gap after the buy leg, so each `round_trip_cost_bps` also holds the price move in between; sell rows carry `buy_gap_seconds` and `buy_gap_slots`. Judge costs on the distribution, `pumpfun_trading.services.slow_lane.round_trip_cost_summary(rows)` (median and quartiles per token and size), never on one row. Bars are USD (`currency: "usd"`) from each token's top pool as chosen when the backfill ran; `bars_in_sol(rows)` re-prices them against SOL's own bar, the baseline a SOL wallet has to beat.
 
 ## 7. Incident drills
 

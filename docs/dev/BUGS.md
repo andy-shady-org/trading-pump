@@ -1225,11 +1225,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Impact:** low to medium depending on the real schedule: paper and replay costs would be off by the difference on every trade.
 * **Suggested fix:** confirm the current fee from the program's global/fee config accounts or a few confirmed transactions, and read it at runtime if it varies.
 
-### BUG-139: FEAT-65 Round-Trip Quotes Include Price Drift [OPEN]
+### BUG-139: FEAT-65 Round-Trip Quotes Include Price Drift [RESOLVED]
 * **Location:** `pumpfun_trading/services/slow_lane.py` (`QuoteRecorder.sample_quotes`, `quote_row`, `backfill_bars`)
 * **Description:** the sell quote is requested about `DEFAULT_QUOTE_REQUEST_GAP_SECONDS` (2 s) after the buy quote, so `round_trip_cost_bps` includes the price move in between. Bars are USD prices from each token's top pool as chosen today.
 * **Impact:** low: the cost estimate is unbiased but noisy (more so for BONK and WIF); SOL-denominated results need SOL's own USD bars, and the token list carries survivorship bias.
-* **Suggested fix:** analyse round-trip cost as a median over many samples per token and size; convert bars to SOL terms; note the pool choice in the analysis.
+* **Resolution:** the drift cannot be removed without a second simultaneous quote (the keyless API allows ~5 requests per 10 s), so it is now measured and handled in the analysis. Sell rows carry `buy_gap_seconds` and `buy_gap_slots` (time and slots since their buy quote); bar rows carry `currency: "usd"`. New helpers in `services/slow_lane.py`: `round_trip_cost_summary(rows)` (median and quartiles of `round_trip_cost_bps` per token and size) and `bars_in_sol(rows)` (token bars divided by SOL's bar of the same timeframe and time, so results are measured against holding SOL). RUNBOOK §6.4 says how to read the data and notes the today-chosen top pool and survivorship. Rows recorded before this change have no gap fields; the helpers do not need them. The recorder running in the rc.3 runtime is unchanged until it is restarted on this code.
+* **Verification:** `regression("BUG-139")` tests in `unit/services/test_slow_lane.py`: sell rows record the gap and slot difference after their buy quote; the cost summary is per token and size and robust to one 300 bps outlier; `bars_in_sol` turns a −40% USD move into +20% against SOL and drops bars without a matching SOL bar.
 
 ### BUG-140: Possible Repeat Take-Profit After A Slow Sell (Unverified) [OPEN]
 * **Location:** `pumpfun_trading/strategies/exits.py` (`PENDING_EXIT_TTL_SECONDS = 60.0`, `is_exit_pending` / `mark_exit_pending`), exit retry queue in `pumpfun_trading/bot/run.py`

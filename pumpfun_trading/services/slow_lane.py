@@ -644,7 +644,13 @@ class QuoteRecorder:
         )
 
     async def _quote(
-        self, token: SlowLaneToken, side: str, size_sol: float, **kwargs: Any
+        self,
+        token: SlowLaneToken,
+        side: str,
+        size_sol: float,
+        *,
+        buy_row: Mapping[str, Any] | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any] | None:
         timing = {"started": 0.0, "ended": 0.0}
 
@@ -672,6 +678,16 @@ class QuoteRecorder:
             now=self._clock(),
             latency_ms=(timing["ended"] - timing["started"]) * 1000.0,
         )
+        if buy_row is not None:
+            # The sell leg is quoted after the pacing gap, so the round trip
+            # also holds the price move in between (BUG-139): record how long
+            # and how many slots, so the analysis can see and bound it.
+            row["buy_gap_seconds"] = round(
+                float(row["timestamp"]) - float(buy_row["timestamp"]), 3
+            )
+            buy_slot, sell_slot = buy_row.get("context_slot"), row.get("context_slot")
+            if isinstance(buy_slot, int) and isinstance(sell_slot, int):
+                row["buy_gap_slots"] = sell_slot - buy_slot
         for pool in row["pools"]:
             # Most recently quoted first, so the fee sample follows the routes.
             symbols = self._pool_symbols.pop(pool, set())
@@ -699,6 +715,7 @@ class QuoteRecorder:
                 token,
                 "sell",
                 size_sol,
+                buy_row=buy,
                 input_mint=token.mint,
                 output_mint=WSOL_MINT,
                 amount=int(buy["out_amount"]),
@@ -822,6 +839,9 @@ def bar_row(
         "pool": pool.get("address"),
         "pool_name": pool.get("name"),
         "timeframe": timeframe,
+        # GeckoTerminal prices in USD; divide by SOL's own bar for SOL terms
+        # (`bars_in_sol`, BUG-139).
+        "currency": "usd",
         "open": open_,
         "high": high,
         "low": low,
@@ -900,6 +920,69 @@ async def backfill_bars(
     return stats
 
 
+def round_trip_cost_summary(
+    rows: Iterable[Mapping[str, Any]],
+) -> dict[tuple[str, float], dict[str, float]]:
+    """Median and quartiles of ``round_trip_cost_bps`` per (symbol, size) (BUG-139).
+
+    One sample is unbiased but noisy (the two legs are quoted seconds apart),
+    so judge costs on the distribution, never on a single row.
+    """
+    samples: dict[tuple[str, float], list[float]] = {}
+    for row in rows:
+        if row.get("event") != QUOTE_EVENT or row.get("side") != "sell":
+            continue
+        cost = row.get("round_trip_cost_bps")
+        if not isinstance(cost, (int, float)):
+            continue
+        key = (str(row.get("symbol")), float(row.get("size_sol") or 0.0))
+        samples.setdefault(key, []).append(float(cost))
+    summary: dict[tuple[str, float], dict[str, float]] = {}
+    for key, values in sorted(samples.items()):
+        ordered = sorted(values)
+        if len(ordered) >= 2:
+            p25, median, p75 = statistics.quantiles(ordered, n=4, method="inclusive")
+        else:
+            p25 = median = p75 = ordered[0]
+        summary[key] = {
+            "samples": float(len(ordered)),
+            "median_bps": median,
+            "p25_bps": p25,
+            "p75_bps": p75,
+        }
+    return summary
+
+
+def bars_in_sol(
+    rows: Iterable[Mapping[str, Any]], *, sol_symbol: str = "SOL"
+) -> list[dict[str, Any]]:
+    """Token bars re-priced in SOL with SOL's bar of the same time (BUG-139).
+
+    The slow lane trades from a SOL wallet, so a strategy must beat holding
+    SOL; in USD, SOL's own trend would look like an edge. Bars without a SOL
+    bar for the same timeframe and timestamp are dropped.
+    """
+    bars = [r for r in rows if r.get("event") == BAR_EVENT]
+    sol_close = {
+        (r.get("timeframe"), float(r["timestamp"])): float(r["close"])
+        for r in bars
+        if r.get("symbol") == sol_symbol and float(r.get("close") or 0.0) > 0
+    }
+    out: list[dict[str, Any]] = []
+    for bar in bars:
+        if bar.get("symbol") == sol_symbol:
+            continue
+        sol = sol_close.get((bar.get("timeframe"), float(bar["timestamp"])))
+        if not sol:
+            continue
+        converted = dict(bar)
+        for field_name in ("open", "high", "low", "close"):
+            converted[field_name] = float(bar[field_name]) / sol
+        converted["currency"] = "sol"
+        out.append(converted)
+    return out
+
+
 __all__ = [
     "AiohttpJson",
     "BackfillStats",
@@ -913,11 +996,13 @@ __all__ = [
     "SlowLaneToken",
     "backfill_bars",
     "bar_row",
+    "bars_in_sol",
     "default_tokens",
     "fee_row",
     "load_token_list",
     "parse_sizes",
     "price_rows",
     "quote_row",
+    "round_trip_cost_summary",
     "rpc_url_from_env",
 ]

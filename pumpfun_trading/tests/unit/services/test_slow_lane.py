@@ -633,6 +633,7 @@ async def test_backfill_pages_back_de_duplicates_and_stops_at_the_history_limit(
         "pool": "Pool1",
         "pool_name": "Good",
         "timeframe": "day",
+        "currency": "usd",
         "open": 1.0,
         "high": 2.0,
         "low": 0.5,
@@ -677,3 +678,117 @@ async def test_backfill_stops_on_a_page_error_and_rejects_unknown_timeframes() -
         await slow_lane.backfill_bars(
             GeckoTerminalClient(http), Sink(), tokens=[JUP], timeframes=["week"]
         )
+
+
+# -- round-trip drift and SOL terms (BUG-139) ---------------------------------
+
+
+@pytest.mark.regression("BUG-139")
+async def test_sell_quotes_record_the_gap_after_their_buy_quote() -> None:
+    slots = iter([100, 104, 200, 203])
+
+    def quote(_url: str, params: Mapping[str, Any], _body: Any) -> Any:
+        row = (
+            _quote(6_000_000, ("Orca", "PoolA"))
+            if params["inputMint"] == slow_lane.WSOL_MINT
+            else _quote(19_900_000, ("Orca", "PoolA"))
+        )
+        row["contextSlot"] = next(slots)
+        return row
+
+    http = FakeHttp({"/price/v3": _prices, "/swap/v1/quote": quote})
+    sink = Sink()
+    clock = FakeClock()
+    recorder = QuoteRecorder(
+        JupiterClient(http),
+        sink,
+        tokens=[JUP],
+        sizes_sol=(0.02, 0.5),
+        sleep=clock.async_sleep,
+        clock=clock.time,
+        monotonic=clock.monotonic,
+    )
+    await recorder.run_cycle()
+    quotes = sink.events("quote")
+    buys = [q for q in quotes if q["side"] == "buy"]
+    sells = [q for q in quotes if q["side"] == "sell"]
+    assert all("buy_gap_seconds" not in q for q in buys)
+    for buy, sell in zip(buys, sells):
+        assert sell["buy_gap_seconds"] == pytest.approx(
+            sell["timestamp"] - buy["timestamp"], abs=1e-3
+        )
+        assert sell["buy_gap_seconds"] >= slow_lane.DEFAULT_QUOTE_REQUEST_GAP_SECONDS
+    assert [s["buy_gap_slots"] for s in sells] == [4, 3]
+
+
+@pytest.mark.regression("BUG-139")
+def test_round_trip_cost_summary_is_a_distribution_per_token_and_size() -> None:
+    rows = [
+        {
+            "event": "quote",
+            "side": "sell",
+            "symbol": "JUP",
+            "size_sol": 0.02,
+            "round_trip_cost_bps": c,
+        }
+        for c in (40.0, 60.0, 50.0, 300.0, 45.0)
+    ] + [
+        {
+            "event": "quote",
+            "side": "sell",
+            "symbol": "JUP",
+            "size_sol": 0.5,
+            "round_trip_cost_bps": 80.0,
+        },
+        {"event": "quote", "side": "buy", "symbol": "JUP", "size_sol": 0.02},
+        {"event": "quote_error", "symbol": "JUP", "size_sol": 0.02},
+        {
+            "event": "quote",
+            "side": "sell",
+            "symbol": "JUP",
+            "size_sol": 0.02,
+            "round_trip_cost_bps": None,
+        },
+    ]
+    summary = slow_lane.round_trip_cost_summary(rows)
+    small = summary[("JUP", 0.02)]
+    # One 300 bps outlier moves the median, not much else.
+    assert small["samples"] == 5 and small["median_bps"] == 50.0
+    assert small["p25_bps"] == 45.0 and small["p75_bps"] == 60.0
+    assert summary[("JUP", 0.5)] == {
+        "samples": 1.0,
+        "median_bps": 80.0,
+        "p25_bps": 80.0,
+        "p75_bps": 80.0,
+    }
+
+
+@pytest.mark.regression("BUG-139")
+def test_bars_in_sol_divide_by_sols_own_bar() -> None:
+    def bar(symbol: str, ts: float, close: float, timeframe: str = "day") -> dict:
+        return {
+            "event": "bar",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "timestamp": ts,
+            "currency": "usd",
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+        }
+
+    rows = [
+        bar("SOL", 1.0, 200.0),
+        bar("SOL", 2.0, 100.0),
+        bar("JUP", 1.0, 1.0),
+        bar("JUP", 2.0, 0.6),  # -40% in USD, +20% against SOL
+        bar("JUP", 3.0, 0.7),  # no SOL bar: dropped
+        bar("JUP", 1.0, 1.0, timeframe="hour"),  # no SOL hour bar: dropped
+    ]
+    converted = slow_lane.bars_in_sol(rows)
+    assert [(b["timestamp"], b["close"]) for b in converted] == [
+        (1.0, pytest.approx(0.005)),
+        (2.0, pytest.approx(0.006)),
+    ]
+    assert all(b["currency"] == "sol" for b in converted)
