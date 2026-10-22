@@ -24,13 +24,13 @@ Below is the dashboard rendered by `ui/dashboard.py` at 150 columns with two ope
 │ │ │ Stop loss                 85.00% ││ Daily PnL (net)      +0.0000 SOL ││ Health                       ok ││ API/WS health                ok │ │ │
 │ │ │ Max active                     1 ││ Daily PnL (gross)    +0.0000 SOL ││ Risk killed                  no ││ Trade feed                   ok │ │ │
 │ │ │ Min market cap          5.00 SOL ││ Costs today          +0.0000 SOL ││ Active positions              2 ││ Risk killed                  no │ │ │
-│ │ │ Dry run                      yes ││ Session net PnL      +0.0000 SOL ││ Last event      waiting for new ││ Stop requested               no │ │ │
-│ │ │ Paper trade                   no ││ Circuit breaker               ok ││                    token stream ││ Last status        initializing │ │ │
-│ │ │ Wallet value          0.2000 SOL ││ Reconciliation           not run ││ Status             initializing ││ Last event      waiting for new │ │ │
-│ │ │ Stagnant timeout          120.0s ││                                  ││ Last message           0.0s ago ││                    token stream │ │ │
-│ │ │ Max total exposure      0.25 SOL ││                                  ││ Stream URL      wss://pumpport… ││                                 │ │ │
-│ │ │ Max position size       0.05 SOL ││                                  ││ Audit log       data/audit_tr… ││                                 │ │ │
-│ │ │ Max loss / trade        0.02 SOL ││                                  ││ Last new token                - ││                                 │ │ │
+│ │ │ Dry run                      yes ││ Session net PnL      +0.0000 SOL ││ Status             initializing ││ Stop requested               no │ │ │
+│ │ │ Paper trade                   no ││ Circuit breaker               ok ││ Last message           0.0s ago ││ Last status        initializing │ │ │
+│ │ │ Wallet value          0.2000 SOL ││ Reconciliation           not run ││ Stream URL      wss://pumpport… ││ Last event      waiting for new │ │ │
+│ │ │ Stagnant timeout          120.0s ││                                  ││ Audit log       data/audit_tr… ││                    token stream │ │ │
+│ │ │ Max total exposure      0.25 SOL ││                                  ││ Last new token                - ││                                 │ │ │
+│ │ │ Max position size       0.05 SOL ││                                  ││                                 ││                                 │ │ │
+│ │ │ Max loss / trade        0.02 SOL ││                                  ││                                 ││                                 │ │ │
 │ │ │ Daily drawdown            20.00% ││                                  ││                                 ││                                 │ │ │
 │ │ ╰──────────────────────────────────╯╰──────────────────────────────────╯╰─────────────────────────────────╯╰─────────────────────────────────╯ │ │
 │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
@@ -107,7 +107,6 @@ Live risk state only; the configured limits above are in the Strategy panel.
 * **`Health`**: High-level health status (`ok` or `degraded`).
 * **`Risk killed`**: Immediate visual indicator if capital protection killed active execution (`yes` / `no`).
 * **`Active positions`**: Current count of open token positions managed by the bot.
-* **`Last event`**: Concise description of the most recent operational event (e.g. `quote received: SolCat`).
 * **`Status`**: Current operational status string (e.g. `monitoring`, `holding 2 positions`).
 * **`Last message`**: Time elapsed since the most recent stream payload arrived (e.g. `0.4s ago`).
 * **`Stream URL`**: Active WebSocket endpoint URL used for streaming market updates.
@@ -124,7 +123,7 @@ Live risk state only; the configured limits above are in the Strategy panel.
 * **`Risk killed`**: Internal kill-switch validation flag.
 * **`Stop requested`**: Displays `yes` if SIGINT / SIGTERM shutdown has been initiated.
 * **`Last status`**: Internal state machine status code.
-* **`Last event`**: Telemetry event string.
+* **`Last event`**: Concise description of the most recent operational event (e.g. `quote received: SolCat`). Shown here only, not in Bot Status.
 
 ---
 
