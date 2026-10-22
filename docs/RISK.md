@@ -129,6 +129,7 @@ Upon initialization or crash recovery, the bot queries the on-chain SPL Token ac
 1. **Holding Verification**: Verifies on-chain token balances against local state storage.
 2. **Ghost Position Purging**: Removes stale or phantom entries from local storage if on-chain balances are zero.
 3. **Valuation Resynchronization**: Fetches live bonding curve states for all surviving holdings, populating baseline entry costs and initializing peak price tracking for trailing stops.
+4. **Real Balance Before Baseline** (BUG-130): a live run sets the day's circuit-breaker baseline from its first successful on-chain balance read, never from the simulated start figure. Until that read succeeds the breaker is not evaluated and new buys stay blocked.
 
 ### B. Exit Retry Queue with Escalating Slippage (BUG-08)
 

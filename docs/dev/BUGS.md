@@ -1165,12 +1165,12 @@ Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or
 * **Suggested fix:** derive the live entry market cap from the fill (swap SOL from transaction meta and tokens received, or the curve read just after confirmation), and record both values so the drift is visible.
 * **Verification to add:** a live-mode executor test where the fill price differs from the signal; the position's `entry_market_cap` must follow the fill.
 
-### BUG-130: Day Baseline Can Come From The Simulated Balance [OPEN]
+### BUG-130: Day Baseline Can Come From The Simulated Balance [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`self.wallet_balance_sol = self._initial_simulated_balance()` ~L322, `_check_and_enforce_circuit_breaker` ~L1341–1357), `pumpfun_trading/bot/risk.py` (`initialize_or_rollover`)
 * **Description:** the bot starts every run with the simulated balance (reserve + 10 × buy size, or `paper_starting_balance_sol`) and does not fetch the real balance before the first breaker check. If that first `get_balance_sol` raises, the exception is logged at DEBUG and `evaluate_portfolio_circuit_breaker` still runs with the simulated figure, which sets `starting_equity_sol` for the whole UTC day.
 * **Impact:** high in live mode: a simulated figure above the real balance (for example 0.3 against 0.2 SOL) looks like a 33% loss on the next check and triggers `EMERGENCY_LIQUIDATE`; one below it loosens the limit all day.
-* **Suggested fix:** in live mode, fetch the balance at startup and refuse to trade (and skip breaker initialisation) until a real read succeeds; never initialise the baseline from a simulated or stale value.
-* **Verification to add:** a live-mode test where the first balance read fails must leave `starting_equity_sol` unset and buys blocked.
+* **Resolution:** `TradingBot` now tracks `_live_balance_confirmed`, set by every successful `get_balance_sol` read (equity guard, balance validation, breaker check, profit sweep). Until a live run has one, `_check_and_enforce_circuit_breaker` skips the evaluation, `get_status_snapshot` reports a zero drawdown without initialising the tracker, and `evaluate_portfolio_circuit_breaker` answers "locked: waiting for the first live wallet balance read" without touching it, so buys stay blocked and the day's baseline is taken from the chain. Paper and dry-run modes keep using the simulated wallet. RISK.md §5A notes it.
+* **Verification:** `regression("BUG-130")` tests in `unit/bot/test_run.py`: a live bot whose first balance read fails takes no lock and no baseline from the health loop, the status snapshot or the portfolio check, and the first real read sets the baseline; a paper bot still baselines on its simulated wallet.
 
 ### BUG-131: Raydium Migration Buys Use A Hard-Coded Entry Market Cap [OPEN]
 * **Location:** `pumpfun_trading/bot/run.py` (Raydium buy, `entry_market_cap=69.0` ~L2092)

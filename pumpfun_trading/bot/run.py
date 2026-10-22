@@ -320,6 +320,9 @@ class TradingBot:
 
         self.daily_equity_tracker = DailyEquityTracker()
         self.wallet_balance_sol = self._initial_simulated_balance()
+        # Live runs start from the simulated figure above until the first real
+        # balance read; the breaker must not baseline the day on it (BUG-130).
+        self._live_balance_confirmed = False
         self.screening_cache = ScreeningCache(
             default_ttl=float(self.config.screening_cache_ttl_seconds)
         )
@@ -1317,6 +1320,7 @@ class TradingBot:
         try:
             balance_sol = await self.execution.get_balance_sol()
             self.wallet_balance_sol = balance_sol
+            self._live_balance_confirmed = True
             open_val_sol = self.position_manager.calculate_total_open_value()
             self.daily_equity_tracker.update_valuation(balance_sol, open_val_sol)
 
@@ -1347,9 +1351,14 @@ class TradingBot:
         try:
             balance = await self.execution.get_balance_sol()
             self.wallet_balance_sol = balance
+            self._live_balance_confirmed = True
             return balance >= self.min_balance_sol
         except Exception:
             return False
+
+    def _equity_known(self) -> bool:
+        """Paper / dry-run equity is simulated; a live run needs one real balance read."""
+        return bool(self.dry_run or getattr(self, "_live_balance_confirmed", False))
 
     async def _check_and_enforce_circuit_breaker(self) -> bool:
         """Evaluates daily drawdown baseline and engages circuit breaker if breached."""
@@ -1357,6 +1366,7 @@ class TradingBot:
             if not self.dry_run:
                 balance_sol = await self.execution.get_balance_sol()
                 self.wallet_balance_sol = balance_sol
+                self._live_balance_confirmed = True
             open_val_sol = self.position_manager.calculate_total_open_value()
             self.daily_equity_tracker.update_valuation(
                 self.wallet_balance_sol, open_val_sol
@@ -1366,6 +1376,12 @@ class TradingBot:
                 f"Valuation check error during circuit breaker check: {exc}",
                 level=logging.DEBUG,
             )
+
+        if not self._equity_known():
+            # Never baseline the day on the simulated start balance (BUG-130);
+            # buys stay blocked by the equity guard until a read succeeds.
+            self._last_event = "circuit breaker waiting for the first wallet balance"
+            return False
 
         is_locked, reason = evaluate_portfolio_circuit_breaker(self)
 
@@ -1443,8 +1459,14 @@ class TradingBot:
     def get_status_snapshot(self) -> dict[str, Any]:
         """Returns a comprehensive structured snapshot of runtime status."""
         open_val = self.position_manager.calculate_total_open_value()
-        drawdown = self.daily_equity_tracker.calculate_drawdown(
-            self.wallet_balance_sol, open_val
+        # Reading the drawdown initialises the day's baseline, so not before
+        # the live balance is known (BUG-130).
+        drawdown = (
+            self.daily_equity_tracker.calculate_drawdown(
+                self.wallet_balance_sol, open_val
+            )
+            if self._equity_known()
+            else 0.0
         )
         return {
             "state": self.state.value,
@@ -3316,6 +3338,8 @@ class TradingBot:
                     if simulated
                     else float(await self.execution.get_balance_sol())
                 )
+                if not simulated:
+                    self._live_balance_confirmed = True
             except Exception as exc:
                 self._sweep_state.last_error = f"balance unavailable: {exc}"
                 self._log(f"Profit sweep skipped: {exc}", level=logging.WARNING)

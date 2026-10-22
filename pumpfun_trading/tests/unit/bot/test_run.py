@@ -5715,6 +5715,53 @@ async def test_position_refresh_interval_parsing(
     await bot.close()
 
 
+@pytest.mark.regression("BUG-130")
+async def test_live_breaker_never_baselines_on_the_simulated_balance(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, dry_run=False, reserve_balance_sol=0.1)
+    assert bot.dry_run is False
+    simulated = bot.wallet_balance_sol
+    bot.execution.get_balance_sol = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("rpc down")
+    )
+    tracker = bot.daily_equity_tracker
+
+    # The first read fails: no lock, no liquidation, and no baseline from the
+    # simulated start balance, from the health loop or the status snapshot.
+    assert await bot._check_and_enforce_circuit_breaker() is False
+    bot.get_status_snapshot()
+    assert tracker.starting_equity_sol == 0.0
+    assert tracker.last_reset_date_utc == ""
+    assert "waiting for the first wallet balance" in bot._last_event
+    from pumpfun_trading.bot.risk import evaluate_portfolio_circuit_breaker
+
+    locked, reason = evaluate_portfolio_circuit_breaker(bot)
+    assert locked and "first live wallet balance" in reason
+    assert tracker.starting_equity_sol == 0.0
+
+    # The first real read sets the day's baseline from the chain.
+    real = simulated * 0.66
+    bot.execution.get_balance_sol = AsyncMock(  # type: ignore[method-assign]
+        return_value=real
+    )
+    assert await bot._check_and_enforce_circuit_breaker() is False
+    assert tracker.starting_equity_sol == pytest.approx(real)
+    assert tracker.circuit_breaker_engaged is False
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-130")
+async def test_paper_breaker_still_uses_the_simulated_wallet(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    assert bot.dry_run is True
+    assert await bot._check_and_enforce_circuit_breaker() is False
+    assert bot.daily_equity_tracker.starting_equity_sol == pytest.approx(
+        bot.wallet_balance_sol
+    )
+    await bot.close()
+
+
 @pytest.mark.regression("BUG-114")
 async def test_breaker_trip_counted_once_and_lockout_reports_unlock_time(
     tmp_path: Path,

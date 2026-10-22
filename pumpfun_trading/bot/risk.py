@@ -509,6 +509,12 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
     tracker: DailyEquityTracker | None = getattr(bot, "daily_equity_tracker", None)
     if tracker is None or not isinstance(tracker, DailyEquityTracker):
         return False, ""
+    if not getattr(bot, "dry_run", True) and not getattr(
+        bot, "_live_balance_confirmed", True
+    ):
+        # The wallet figure is still the simulated start balance: block buys,
+        # but never let it set the day's baseline (BUG-130).
+        return True, "waiting for the first live wallet balance read"
 
     wallet_sol = float(getattr(bot, "wallet_balance_sol", 0.0) or 0.0)
     pos_mgr = getattr(bot, "position_manager", None)
