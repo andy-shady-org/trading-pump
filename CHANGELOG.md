@@ -17,7 +17,7 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - `pumpfun-replay --config` / `--preset` starts from the paper bot's wallet (`paper_starting_balance_sol`, else reserve + 10 buys) instead of 100 SOL when `--initial-cash` is not given, and runs the circuit breaker. Replays of `configs/canary.json` can now halt as paper would; `--no-circuit-breaker --initial-cash 100` reproduces earlier results. Sweeps, `--keep`, shadow tools and the optimizer are unchanged (FEAT-66).
 - New config key `max_cumulative_drawdown_pct` (default `0.30`, `0` = off; `0` in `configs/capture.json` and `configs/pregrad_pilot.json`): a loss cap across days and locks from a persisted reference equity. Breaching it liquidates and sets the operator pause; resuming with `SIGUSR1` resets it (BUG-128).
 - Emergency locks with `emergency_hard_lock_hours` > 0 now last their full duration across the 00:00 UTC rollover; soft halts and zero-hour locks still end at midnight (BUG-128).
-- The profit-run zone also halts new buys below the realized-profit ratchet floor (BUG-127).
+- The profit-run zone also halts new buys below the realized-profit ratchet floor (BUG-127). The floor follows the day's peak realized PnL, so a win given back through closed trades halts buys too (BUG-141).
 - `enable_raydium_migration_sniping` defaults to `false` in every preset (BUG-131).
 - Velocity z-score baseline excludes the current and pre-creation slices; presets with a z threshold need 90 s of trade history (BUG-133).
 - Dynamic slippage: impact term is the execution slippage (about half the old term) and the volatility term is fed from every curve read (BUG-134).
@@ -35,6 +35,7 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - Pump.fun market-cap fee tiers (`fee_config`) are read from chain for live quotes and checked at startup against the modelled 125 bps (BUG-138).
 - FEAT-65 sell quotes record their gap after the buy quote; cost-distribution and SOL-terms bar helpers (BUG-139).
 - A take-profit tier queued behind a slow sell of the same tier was sold twice (BUG-140).
+- The profit ratchet floor fell with closed losses after a win (BUG-141).
 
 ## [0.3.0-rc.3] - 2026-10-21
 

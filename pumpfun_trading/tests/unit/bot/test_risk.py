@@ -1985,3 +1985,60 @@ def test_lockout_until_reports_release_time(
     assert tracker.lockout_until(hours) == pytest.approx(locked_at + expected_offset)
     tracker.circuit_breaker_engaged = False
     assert tracker.lockout_until(hours) is None
+
+
+def _ratchet_tracker() -> DailyEquityTracker:
+    return DailyEquityTracker(
+        starting_equity_sol=1.0,
+        drawdown_reference_mode="adaptive_ratchet",
+        profit_ratchet_ratio=0.50,
+        profit_drawdown_tolerance_pct=0.35,
+    )
+
+
+@pytest.mark.regression("BUG-141")
+def test_ratchet_floor_holds_when_profit_is_given_back_by_closed_trades() -> None:
+    """+0.2 realized, then a closed -0.15: the floor stays at 1.1 SOL."""
+    tracker = _ratchet_tracker()
+    tracker.record_realized_trade(0.20)
+    tracker.record_realized_trade(-0.15)
+    assert tracker.realized_daily_pnl_sol == pytest.approx(0.05)
+    assert tracker.peak_realized_daily_pnl_sol == pytest.approx(0.20)
+    assert tracker.effective_baseline_sol == pytest.approx(1.10)
+
+    # Equity 1.05: 12.5% off the 1.2 peak, inside the 35% tolerance, above
+    # the start; only the ratchet floor stops new buys. Before BUG-141 the
+    # floor had fallen to 1.025 SOL with the net PnL.
+    locked, reason = tracker.evaluate_circuit_breaker(
+        max_daily_drawdown_pct=0.15,
+        emergency_hard_lock_hours=24.0,
+        current_wallet_balance_sol=1.05,
+    )
+    assert locked
+    assert tracker.circuit_breaker_action == CircuitBreakerAction.HALT_NEW_BUYS
+    assert "1.1000 SOL" in reason
+    assert "peak realized +0.2000 SOL, now +0.0500 SOL" in reason
+
+
+@pytest.mark.regression("BUG-141")
+def test_peak_realized_resets_with_the_day_and_survives_a_restart() -> None:
+    tracker = _ratchet_tracker()
+    tracker.record_realized_trade(0.20)
+    tracker.record_realized_trade(-0.15)
+
+    restored = DailyEquityTracker.from_dict(tracker.to_dict())
+    assert restored.peak_realized_daily_pnl_sol == pytest.approx(0.20)
+    assert restored.effective_baseline_sol == pytest.approx(1.10)
+
+    # A status file written before BUG-141 starts from today's realized PnL.
+    legacy = tracker.to_dict()
+    del legacy["peak_realized_daily_pnl_sol"]
+    assert DailyEquityTracker.from_dict(
+        legacy
+    ).peak_realized_daily_pnl_sol == pytest.approx(0.05)
+
+    day1 = datetime.datetime(2026, 10, 22, 12, tzinfo=datetime.timezone.utc)
+    tracker.initialize_or_rollover(1.05, now_utc=day1)
+    tracker.initialize_or_rollover(1.05, now_utc=day1 + datetime.timedelta(days=1))
+    assert tracker.peak_realized_daily_pnl_sol == 0.0
+    assert tracker.effective_baseline_sol == pytest.approx(1.05)

@@ -65,9 +65,9 @@ To guard against high-volatility market crashes while avoiding false-positive lo
 
 ### A. Realized Profit Ratchet & Dynamic Effective Baseline
 When positions close with net realized profit, a configurable fraction (`profit_ratchet_ratio`, default `0.50`) permanently ratchets the **Effective Equity Baseline Floor**:
-$$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Cumulative Realized PnL})$$
+$$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Peak Realized PnL Today})$$
 
-The realized PnL is today's (it resets at the 00:00 UTC rollover with the starting capital), net of fees, tips and rent.
+The realized PnL is today's (it resets at the 00:00 UTC rollover with the starting capital), net of fees, tips and rent. The floor uses the day's **peak** realized PnL (BUG-141), so it only moves up: +0.2 SOL realized and then a closed −0.15 SOL trade still leaves the floor at start + 0.1 SOL.
 
 ### B. Dual-Zone Risk Evaluation
 1. **Principal Protection Zone (`Current Equity < Starting Capital`)**:

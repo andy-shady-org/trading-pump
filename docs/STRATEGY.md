@@ -886,14 +886,14 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
 ### Mathematical Formulation & Dual-Zone Logic
 
 1. **Guaranteed Ratchet Baseline**:
-   $$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Realized PnL})$$
-   Where $\alpha = \text{profit\_ratchet\_ratio}$ (default `0.50`).
+   $$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Peak Realized PnL Today})$$
+   Where $\alpha = \text{profit\_ratchet\_ratio}$ (default `0.50`). The peak, so closed losses after a win do not lower the floor (BUG-141).
 2. **Principal Protection Zone (`Current Equity < Starting Capital`)**:
    * Evaluates maximum allowed loss against initial starting capital.
    * If total equity drops below $\text{Starting Capital} \times (1 - \text{max\_daily\_drawdown\_pct})$, trigger emergency circuit breaker.
 3. **Profit Run Zone (`Current Equity >= Starting Capital`)**:
    * Applies relaxed trailing drawdown tolerance (`profit_drawdown_tolerance_pct`, default `35% - 40%`) against peak equity.
-   * Halts new buys when equity falls below the ratchet floor (starting equity + `profit_ratchet_ratio` × today's realized profit, BUG-127).
+   * Halts new buys when equity falls below the ratchet floor (starting equity + `profit_ratchet_ratio` × today's peak realized profit, BUG-127 / BUG-141).
    * Prevents premature session lockouts when volatile moonbags retrace after multi-tier take-profits.
 4. **Tiered Two-Stage Action**:
    * **Stage 1 (`halt_new_buys`)**: Soft halt suppressing new buys while open positions exit orderly via trailing stops.
