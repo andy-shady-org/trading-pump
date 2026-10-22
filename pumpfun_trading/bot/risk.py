@@ -323,6 +323,25 @@ class DailyEquityTracker:
             )
             return True, self.lock_reason
 
+        # Realized-profit ratchet (BUG-127): `profit_ratchet_ratio` of today's
+        # realized profit is kept. The retracement check above is measured
+        # against the whole peak equity, so on its own it only fires once the
+        # profit is gone; the floor stops new buys first. Open positions keep
+        # exiting on their own rules (soft halt).
+        ratchet_floor = self.effective_baseline_sol
+        if current_equity < ratchet_floor:
+            self.circuit_breaker_engaged = True
+            self.circuit_breaker_action = CircuitBreakerAction.HALT_NEW_BUYS
+            self.locked_at_timestamp = now_timestamp
+            self.total_lock_count += 1
+            self.lock_reason = (
+                f"profit ratchet floor: equity {current_equity:.4f} SOL fell below "
+                f"{ratchet_floor:.4f} SOL (starting {self.starting_equity_sol:.4f} SOL "
+                f"+ {self.profit_ratchet_ratio:.0%} of realized "
+                f"{self.realized_daily_pnl_sol:+.4f} SOL)"
+            )
+            return True, self.lock_reason
+
         self.circuit_breaker_action = CircuitBreakerAction.NONE
         return False, ""
 

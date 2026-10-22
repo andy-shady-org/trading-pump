@@ -1144,12 +1144,12 @@ Found reading out the rc.2 momentum capture: `pumpfun-replay --compare-audit` pu
 
 Found by reading the code during the rc.3 / FEAT-65 72 h run; nothing was run or reproduced, and no code was changed. Line numbers are from the working copy on 2026-10-22 and may drift. BUG-127 to BUG-130 should be fixed before any live capital.
 
-### BUG-127: Adaptive Ratchet Never Protects Profit [OPEN]
+### BUG-127: Adaptive Ratchet Never Protects Profit [RESOLVED]
 * **Location:** `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.effective_baseline_sol` ~L48–61, `evaluate_circuit_breaker` profit-run zone ~L311–324)
 * **Description:** `effective_baseline_sol` (start + `profit_ratchet_ratio` × realized gain) is only written to status snapshots and the lock reason; no decision uses it. The profit-run zone halts buys when `peak_drawdown_pct` exceeds `profit_drawdown_tolerance_pct` (0.35), but `peak_drawdown_pct` is the drop as a share of **total** peak equity, not of the profit. Starting at 1.0 SOL with a peak of 1.1 SOL, the halt needs equity at 0.715 SOL, which is already below the start, so the principal zone (15%) is evaluated instead and the profit-run halt never fires.
 * **Impact:** high: RISK.md §3 promises that half of the day's realized profit is ratcheted into a floor; in practice a winning day can be given back in full before any protection applies.
-* **Suggested fix:** in the profit-run zone, halt new buys when current equity falls below `effective_baseline_sol`, and/or measure the retracement against `peak − start` (the profit) rather than the peak. Decide whether the ratchet uses daily or cumulative realized PnL and make RISK.md match.
-* **Verification to add:** a test where equity runs 1.0 → 1.2 → 1.08 with realized +0.2 must halt buys (floor 1.1 at ratio 0.5).
+* **Resolution:** in the profit-run zone `evaluate_circuit_breaker` now also engages `HALT_NEW_BUYS` when total equity falls below `effective_baseline_sol` (starting equity + `profit_ratchet_ratio` × today's realized net PnL), with a `profit ratchet floor` lock reason. The existing retracement check is unchanged and runs first. Nothing is liquidated: open positions keep their own exits. RISK.md §3 and STRATEGY.md now describe both checks. Behaviour change: the second case of `test_pixpad_parabolic_runner_scenario` (start 0.20, realized +0.1616, equity 0.2572 below the 0.2808 floor) now halts new buys instead of trading on.
+* **Verification:** `regression("BUG-127")` tests in `unit/bot/test_risk.py`: 1.0 → 1.2 → 1.08 SOL with +0.2 realized halts buys at the 1.1 SOL floor; equity above the floor and losing days are not halted; `baseline` mode has no floor.
 
 ### BUG-128: Daily Loss Lock Ends At UTC Midnight And Has No Cumulative Cap [OPEN]
 * **Location:** `pumpfun_trading/bot/risk.py` (`initialize_or_rollover` ~L91–102, `lockout_until` ~L105–123, auto-unlock in `evaluate_circuit_breaker` ~L222–241)
