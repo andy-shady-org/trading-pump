@@ -115,6 +115,8 @@ kill -USR1 "$(jq .pid data/bot_status.json)"   # or: systemctl kill -s USR1 pump
 
 While paused the bot opens nothing (no buys, no capital rotation) but keeps managing every open position: exits, the exit retry queue and the circuit breaker run as normal. The dashboard shows `Buying: PAUSED (reason, minutes)`; `bot_status.json` carries `buying_paused` and `operator_pause`; each change is an `operator_pause` audit record and an alert. The pause **survives restarts** (a supervisor restart never resumes buying by itself); send `SIGUSR1` again to resume. Use it before maintenance, when an alert needs investigating, or to let positions run off before a stop.
 
+**Cumulative loss cap (BUG-128).** When the loss from the reference equity passes `max_cumulative_drawdown_pct`, the bot liquidates (if `auto_liquidate_on_circuit_breaker`) and sets this pause itself (reason `cumulative loss cap`). Find out why before resuming: resuming with `SIGUSR1` resets the cap, so it is measured again from the equity at that moment.
+
 **Alerts an unattended operator gets** (provider from §2; delivery never blocks trading, BUG-110):
 
 | Alert | When | Config |
@@ -201,6 +203,7 @@ A paper run whose only job is to record trade flow with the funded API key, so t
 | `paper_trade` | `true` | `false` (set by `--paper-trade`) | The file can never trade live by accident |
 | `paper_starting_balance_sol` | `2.0` | default (0.25) | A 0.25 SOL paper wallet hits the breaker within hours |
 | `max_daily_drawdown_pct` | `0.5` | `0.10` | Keep recording all day |
+| `max_cumulative_drawdown_pct` | `0.0` (off) | default (0.30) | Keep recording across days (BUG-128) |
 | `max_active_positions` / `max_total_exposure_sol` | `5` / `0.05` | `2` / `0.03` | More tokens with trade data per hour |
 | `stagnant_timeout_seconds` | `120` | `45` | Trade data past 45 s, so replay can compare both timeouts |
 
