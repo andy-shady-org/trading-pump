@@ -111,7 +111,7 @@ Done: the phase 1 scorer, `pumpfun-replay --wallet-scores` ([`DONE.md`](DONE.md#
 
 ### FEAT-65 Slow Lane: Phase 0 Data (contingency, record-only)
 Done: the keyless quote / fee recorder and the bar backfill (`pumpfun-recorder --jupiter-quotes` / `--backfill-bars`, rc.3; [`DONE.md`](DONE.md#feat-65-slow-lane-phase-0-data-contingency-record-only); how to run it: [`RUNBOOK.md` §6.4](RUNBOOK.md#64-slow-lane-data-recorder-feat-65-phase-0-from-rc3)). The lane itself starts only if the rc.3 Pump.fun lanes are NO-GO too ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)).
-- [ ] If FEAT-65 goes ahead: choose a bar source with more than 6 months of history (e.g. a free CoinGecko demo key) before building the backtester
+- [ ] Walk-forward test of the §6.12 trend rules on the Binance history (`pumpfun-recorder --backfill-bars --bar-source binance`, 2020–2026), in SOL terms with the measured costs, against a random-entry baseline and on at least two unseen periods; only if it passes, build the FEAT-65 backtester and lane
 
 ## Phase 5: Platform Refactor (required before the Web UI)
 
