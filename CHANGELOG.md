@@ -8,7 +8,13 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22)); one branch per bug, merged on `rc4/integration`. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change. The rc.4 pre-flight work follows on `rc4/implementation`, one branch per item: the circuit breaker in replay (FEAT-66), the pre-registered paper verdict (FEAT-67), the run provenance stamp (FEAT-68) and the scripted risk drills (FEAT-69).
+## [0.3.0-rc.4] - 2026-10-23
+
+Fourth release candidate of v0.3.0 (PRs #36–#43 and this release branch): a **tooling and risk release**. It ships the fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22); one branch per bug, merged on `rc4/integration`) and the rc.4 pre-flight work (`rc4/implementation`, one branch per item): the circuit breaker in replay (FEAT-66), the pre-registered paper verdict (FEAT-67), the run provenance stamp (FEAT-68), the scripted risk drills (FEAT-69) and the bugs they found (BUG-141 to BUG-143, [`BUGS.md` §25](docs/dev/BUGS.md#25-rc4-pre-flight-findings-2026-10-22)). After the rc.3 interim read-out it also fixes the over-eager ratchet floor (BUG-144) and adds Binance bars to the FEAT-65 recorder. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change.
+
+This is a **pre-release for paper testing only**, like rc.1 to rc.3. It must not run on a funded wallet.
+
+The v0.3.0-rc.3 interim read-out (45.5 h) is a **NO-GO** for both Pump.fun lanes: momentum −0.179 SOL over 127 closed positions (14% profitable, both halves and every UTC day negative, bootstrap 90% interval of the mean per position [−0.0021, −0.0010] SOL), pre-graduation 0 trades, and what-ifs on discovered near-graduation curves and screen-rejected movers lose 6–14% per trade. Pump.fun strategy work stops here; no Stage 0 runs on these lanes. The FEAT-65 slow lane passes on costs (a 0.1 SOL round trip costs about 0.1–0.5%) but shows no edge on six months of bars ([`STRATEGY-PIVOT.md` §6.11–6.12](docs/dev/STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)).
 
 ### Added
 - `pumpfun-replay` models the bot's circuit breaker in live-fidelity replays and parity checks: daily limit, profit ratchet floor, cumulative cap, hard lock and emergency liquidation on the data clock; summary block `circuit_breaker`, `entry_rejections.circuit_breaker`; `--no-circuit-breaker` turns it off (FEAT-66).
@@ -45,6 +51,32 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - The profit ratchet floor halted buying for the rest of the day after a trivial win and a tiny dip: +0.011 SOL realized on a 2 SOL wallet, then 0.0007 SOL under the floor (BUG-144).
 - 51 documented environment variables were never read, `PUMPFUN_DRY_RUN` among them; they are gone from the manuals and `pumpbot` warns at startup when one is set (BUG-142).
 - The test suite wrote `events.jsonl` into the working directory and one test posted a real webhook past the DNS guard; event logs now go to the test's temp dir, proxy variables are removed and the DNS guard covers the whole session (BUG-143).
+- Test `test_compare_audit_prints_provenance_and_replay_skips_the_stamp` failed on macOS: the long `tmp_path` (`/private/var/folders/...`) made Rich wrap the provenance note across lines. The test now compares whitespace-normalised output (test-only change; found by the first Mac gate run).
+
+### Known issues
+- The momentum and pre-graduation lanes are NO-GO (see above). rc.4 is not a Stage 0 build for them.
+- `configs/canary.json` behaves differently from rc.3: the ratchet floor is enforced (BUG-127) from the day's peak realized PnL (BUG-141) once the gain reaches `profit_ratchet_min_gain_pct` (BUG-144), and the cumulative cap is on. Replays of it start from the paper wallet with the breaker on (FEAT-66), so they are not comparable with pre-rc.4 replays unless run with `--no-circuit-breaker --initial-cash 100`.
+- `PUMPFUN_DRY_RUN` and the other 50 names in `UNREAD_ENV_VARS` are still not read: they only trigger a startup warning (BUG-142). Use `paper_trade` / `--dry-run`.
+- Not built: refusing to start on a dirty checkout or on a config that differs from the release record (FEAT-68), and scripted versions of the process-level drills (FEAT-69); the manual drills (RUNBOOK §7.2) are still to run on the paper deployment.
+- Mainnet checks still open for the first canary trades: BUG-129 (`entry_price_source: live_fill`), BUG-138 (fee tiers) and the BUG-123 PumpSwap sell, which has still not landed a transaction built by this code.
+- The `pumpfun-drill` console script exists only in a venv installed from rc.4; until the shared venv is reinstalled after the rc.3 runs, use `python -m pumpfun_trading.cli.main ops drill`.
+
+### Release record – v0.3.0-rc.4 (2026-10-23)
+- Commit: the release commit on `release/v0.3.0rc4` (this record, `pyproject.toml` → `0.3.0rc4`, the macOS test fix); the rest is the code of `2c78974` (merge of PR #43, `docs/rc3-interim-readout` → `main`). The `v0.3.0rc4` tag goes on the merge of this branch into `main`, after CI passes.
+- Merged since v0.3.0-rc.3: PR #36 (`rc4/integration`, BUG-127…140), #37 (`rc4/implementation`, FEAT-66…69, BUG-141…143), #38 (rc.4 agent hand-off), #39 (TUI duplicate `Last event`), #40 (BUG-144), #41 (`rc4/implementation` re-merge of the hand-off branch, no code), #42 (FEAT-65 Binance bars), #43 (rc.3 interim read-out)
+- Release gate: PASS on macOS (`nox -s format lint mypy tests package`: tests on 3.12, 3.13 and 3.14; 3.11 not installed on the Mac, so 3.11 in CI and in the earlier Linux run)
+- Tests: 2,092 collected, all passed on 3.12, 3.13 and 3.14; coverage 97.06% (statement + branch); golden replay unchanged
+- Replay parity: on the rc.3 capture the first parity run with the breaker on showed a false 93-position gap, because the rc.3 paper bot did not enforce the ratchet floor (BUG-127) and the floor armed on a trivial gain (BUG-144); re-run `--compare-audit` on the first rc.4 paper capture
+- Scripted drills (FEAT-69): `pumpfun ops drill --report` PASS, 4 of 4 (`cumulative_cap`, `midnight_lock`, `balance_rpc_down`, `slow_tier_sell`) on 2026-10-23
+- Paper verdict (FEAT-67): `configs/verdict_rules.json` rules sha256 `0a9217ce71b1e16fe87f83eed5708f12b2410414c7e54177daa802c95aea14c0` (file sha256 `c61725222a875f76257c585209bde4007173b52c29e8254e21d171b387d26a1c`); to be recorded at the start of the next paper run. The rc.3 runs were judged with it as evidence only (not pre-registered): NO-GO
+- Run provenance (FEAT-68): to be checked in `bot_status.json` → `run_provenance` of the first rc.4 run (`git_dirty: false`, `config_file_sha256`, `fee_launch_bps`; RUNBOOK §3 step 4)
+- Money path changed (ratchet floor and cumulative cap enforced, emergency locks across midnight, live entries from the fill, breaker at exit value, fee tiers from chain), so no earlier Stage 0 result carries over
+- Runtime settings: `configs/capture.json` and `configs/pregrad_pilot.json` turn off the cumulative cap and the ratchet (`max_cumulative_drawdown_pct: 0.0`, `profit_ratchet_ratio: 0.0`); `configs/canary.json` keeps the defaults; copy `configs/verdict_rules.json` into the runtime `configs/` before the next paper run and do not edit it once the run starts
+- Next: let the rc.3 72 h runs finish (2026-10-24) and archive them; reinstall the shared venv and pin `runtime/pumpfun-trading` to `v0.3.0rc4` only after that; FEAT-65 walk-forward test on the Binance bars with a random-entry baseline before any slow-lane code ([`STRATEGY-PIVOT.md` §6.12](docs/dev/STRATEGY-PIVOT.md#612-feat-65-slow-lane-phase-0-read-out-costs-pass-no-edge-shown-2026-10-23))
+- RUNBOOK §7 drills: scripted drills PASS; manual drills (§7.2) not yet run
+- Capital stage after this release: 0 (paper only)
+- Stage 0 paper pilot: not started on this build
+- Sign-off: –
 
 ## [0.3.0-rc.3] - 2026-10-21
 
@@ -461,7 +493,8 @@ First tagged build (`v0.0.1-alpha` points at the same commit). Baseline for the 
 - Capital stage after this release: 0
 - Sign-off: –
 
-[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc3...HEAD
+[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc4...HEAD
+[0.3.0-rc.4]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc3...v0.3.0rc4
 [0.3.0-rc.3]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc2...v0.3.0rc3
 [0.3.0-rc.2]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc1...v0.3.0rc2
 [0.3.0-rc.1]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.2.3...v0.3.0rc1

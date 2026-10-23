@@ -89,6 +89,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 - **[RISK] Size Risk Triggers To The Account:** the ratchet floor armed on any gain, so +0.5% realized and a 0.04% dip halted a whole day (BUG-144). Give every risk trigger a minimum it must clear relative to the account, and replay it on a real capture before shipping.
 - **[DOCS] A Documented Variable Must Be Read:** the env manual listed `PUMPFUN_DRY_RUN` and 50 other names no code reads (BUG-142). Never document a variable, alias or default without grepping the code for it; `unit/config/test_env.py` checks the §2 matrix. Don't wire up a long-documented name silently either: warn when it is set, then decide.
 - **[TESTS] Proxies And Threads Bypass The DNS Guard:** a test posted a real Discord alert: `urllib` sent it to the local `HTTPS_PROXY`, and the alert worker thread ran after the per-test guard was undone (BUG-143). Keep every file a bot writes inside `tmp_path`, capture alerts in tests, and never rely on DNS blocking alone for a client that honours proxy variables.
+- **[TESTS] Paths Wrap On The Mac:** a parity test passed on Linux and failed on macOS, where `tmp_path` (`/private/var/folders/...`) made Rich wrap the line it asserted on. Never assert a phrase in Rich output that also prints a path; normalise whitespace (`" ".join(text.split())`) first.
 
 ## Project Overview
 
