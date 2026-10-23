@@ -34,7 +34,7 @@ This document lists candidate features and architectural enhancements for `pumpf
 | FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled |
 | FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P3 | not scheduled |
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
-| FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | P3 | phase 0 data recorder in rc.3; the lane only if rc.3 is NO-GO |
+| FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | P3 | phase 0 read out 2026-10-23: costs pass (0–37 bps), no edge shown on 6 months of bars; next: a walk-forward test on the Binance history (`--bar-source binance`, back to 2020) |
 | FEAT-10 | Web Control Dashboard (umbrella, re-scoped to FEAT-31…37) | Required | P1 | 32–35 |
 | FEAT-31 | Bot Agent API & typed event stream | Required | P1 | 32 |
 | FEAT-32 | FastAPI control plane (REST/WSS, auth, RBAC, OpenAPI) | Required | P1 | 32 |

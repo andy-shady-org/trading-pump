@@ -8,8 +8,8 @@ Open work only. Finished phases, sprints and items are archived in [`DONE.md`](D
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | rc.3 48 h capture and pilot (momentum is NO-GO on rc.2; stop 0.92 and BUG-126 ship) with the FEAT-65 quote recorder alongside, then the screen-sample and pre-graduation discovery work | [Sprint 24G](#sprint-24g-momentum-confirmation-entry--exit-tuning-feat-52), [24H](#sprint-24h-pre-graduation-lane-via-the-rpc-poller-feat-53), [FEAT-65 data](#feat-65-slow-lane-phase-0-data-contingency-record-only) |
-| **Next** | Stage 0 on the lane that passes, then the Stage 1 canary at 0.02 SOL; tip experiment; drills | [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd), [24E](#sprint-24e-branch--strategy-pivot-documentation), [24D](#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110) |
+| **Now** | rc.4 release (tooling and risk fixes: FEAT-66…69, BUG-141…144); the FEAT-65 slow-lane read-out. Both Pump.fun lanes are NO-GO on rc.3 ([`STRATEGY-PIVOT.md` §6.11](STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)) | [FEAT-65 data](#feat-65-slow-lane-phase-0-data-contingency-record-only), [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
+| **Next** | Decide FEAT-65 on its recorded costs; Stage 0 only for a lane that passes the replay go / no-go (none on Pump.fun today); drills | [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd), [24D](#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110) |
 | **Then** | Smart-wallet evidence (24I), Phase 5 runtime and platform sprints (28c–31) | [Sprint 24I](#sprint-24i-smart-wallet-discovery--reviewed-watch-list-feat-54), [Phase 5](#phase-5-platform-refactor-required-before-the-web-ui) |
 | **Later** | Phase 6 Hosted Web UI, only after the funding gate | [Phase 6](#phase-6-hosted-web-ui-replaces-sprint-16) |
 
@@ -76,18 +76,12 @@ Done: branch, `STRATEGY-PIVOT.md`, FEAT / STRATEGY / RELEASE-GATE / CHANGELOG / 
 - [ ] Tip experiment on paper/landing: 0 / 25k / 50k lamports, shared and split by side (`PUMPFUN_JITO_ENTRY_TIP_LAMPORTS` / `PUMPFUN_JITO_EXIT_TIP_LAMPORTS`; e.g. entry 0, exit 25k / 50k). Tips were 83% of the separately listed costs at 0.01 SOL
 
 ### Sprint 24G: Momentum Confirmation Entry & Exit Tuning (FEAT-52)
-Done: entry and exits, replay support, v0.2.3 tuning, rc.1 NO-GO, BUG-121/122, drift guard, stop-loss sweep, capture-rule tooling, market regime, FEAT-55/56/57/58 inputs, curve polls in captures, rc.3 inputs (FEAT-59/60/61), the read-out tooling, the rc.2 read-out (**NO-GO**), BUG-126, `stop_loss` 0.92, and recording of the reject sample and stop crossings ([`DONE.md`](DONE.md#sprint-24g-momentum-confirmation-entry--exit-tuning-feat-52)).
-- [ ] rc.3 capture, **48 h**, `configs/capture.json`: `--compare-audit` (with BUG-126 the same-exit gap should be within ±0.002), `pnl --group-by hour` against the rc.2 day, and the eight shadow variants (`buyers6`, `drift5` / `drift10`, `feat56_diversity`, FEAT-61, trade pullback) against a random cut per half; gate only what holds on rc.2 **and** rc.3
-- [ ] Screen as an experiment, read-out: on the rc.3 capture, compare the `reject_sample` curves (by `reject_reasons`) with the watched ones: growth past the promotion threshold, peak real SOL, graduation. Relax a cap (top-5 holders, creator holding) only if its rejects do better than the passes on rc.3 **and** a later capture; the sample records curves only, so trade-flow rules can't be judged on it (on rc.2 the caps rejected 116 of 119 coins that later graduated organically)
-- [ ] Stop overshoot, the fix: read `exit_metrics` on the rc.3 stop exits (`trade_feed_cross_ratio` vs `refresh_cross_ratio` vs `fill_ratio`, `*_lead_seconds`); if the trade feed crosses first by a material margin, trigger stops on it, with paper and replay modelling the same trigger (rc.2 median stop proceeds 80.3% of entry against an 85% stop)
-- [ ] A shorter signal-to-fill latency is the only entry idea not yet tried; decide after the rc.3 read-out whether it is worth FEAT-39
+Done: entry and exits, replay support, v0.2.3 tuning, rc.1 NO-GO, BUG-121/122, drift guard, stop-loss sweep, capture-rule tooling, market regime, FEAT-55/56/57/58 inputs, curve polls in captures, rc.3 inputs (FEAT-59/60/61), the read-out tooling, the rc.2 read-out (**NO-GO**), BUG-126, `stop_loss` 0.92, recording of the reject sample and stop crossings, and the rc.3 read-out ([`DONE.md`](DONE.md#sprint-24g-momentum-confirmation-entry--exit-tuning-feat-52)). **Closed 2026-10-23: the momentum lane is NO-GO** ([`STRATEGY-PIVOT.md` §6.11](STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)); no open items, the acceptance below was not met.
 - **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
 
 ### Sprint 24H: Pre-Graduation Lane via the RPC Poller (FEAT-53)
-Done: entry helper on both transports, polled acceleration, PumpSwap exit (BUG-123), quote-mint refusal (BUG-124), near-graduation set, graduation backfill, BUG-125, RUNBOOK §6.3, recording of discovered curves ([`DONE.md`](DONE.md#sprint-24h-pre-graduation-lane-via-the-rpc-poller-feat-53)).
+Done: entry helper on both transports, polled acceleration, PumpSwap exit (BUG-123), quote-mint refusal (BUG-124), near-graduation set, graduation backfill, BUG-125, RUNBOOK §6.3, recording of discovered curves, and the rc.3 discovery read-out ([`DONE.md`](DONE.md#sprint-24h-pre-graduation-lane-via-the-rpc-poller-feat-53)). **The lane is NO-GO on the rc.3 data** (§6.11); the items below stay open only for the end of the 72 h control run.
 - [ ] One live PumpSwap sell at the smallest size before any lane relies on it with real capital (the instruction is pinned to mainnet accounts, but no transaction from this code has landed yet)
-- [ ] Discovery for the lane, the entry: after the rc.3 pilot read-out, replay the lane on the `discovery` curves (count, progress at entry, net per position against a random cut); only if it holds, let the lane buy from them (screening still applies) and pilot that for 72 h. rc.3 records them only, so the pilot stays a control (on rc.2 the pilot saw 5 near-graduation curves in 24 h while 105 coins graduated more than 10 min after launch)
-- [ ] A stop suited to coins near graduation (both rc.2 pilot entries hit the 0.85 stop at ~80% progress); judge on a pilot capture, not by default
 - [ ] 72 h paper pilot of the pre-graduation lane (rc.3 runs it unchanged as a control); Stage 1 canary
 - **Acceptance:** lane positive in a 72 h paper pilot; Stage 1: ≥ 100 trades, net > 0, reconciled
 
@@ -117,9 +111,7 @@ Done: the phase 1 scorer, `pumpfun-replay --wallet-scores` ([`DONE.md`](DONE.md#
 
 ### FEAT-65 Slow Lane: Phase 0 Data (contingency, record-only)
 Done: the keyless quote / fee recorder and the bar backfill (`pumpfun-recorder --jupiter-quotes` / `--backfill-bars`, rc.3; [`DONE.md`](DONE.md#feat-65-slow-lane-phase-0-data-contingency-record-only); how to run it: [`RUNBOOK.md` §6.4](RUNBOOK.md#64-slow-lane-data-recorder-feat-65-phase-0-from-rc3)). The lane itself starts only if the rc.3 Pump.fun lanes are NO-GO too ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)).
-- [ ] Run the quote recorder next to the rc.3 runs and keep it running until the rc.3 verdict; run `--backfill-bars` once, then monthly (the public history covers about 6 months)
-- [ ] At the rc.3 verdict, read out: median and p90 `round_trip_cost_bps` per token and size, how often `price_impact_pct` or the route changes, `nonzero_p50` / `nonzero_p90` priority fees, and the share of `quote_error` rows; record it in `STRATEGY-PIVOT.md` §6 as the cost side of the FEAT-65 go / no-go
-- [ ] If FEAT-65 goes ahead: choose a bar source with more than 6 months of history (e.g. a free CoinGecko demo key) before building the backtester
+- [ ] Walk-forward test of the §6.12 trend rules on the Binance history (`pumpfun-recorder --backfill-bars --bar-source binance`, 2020–2026), in SOL terms with the measured costs, against a random-entry baseline and on at least two unseen periods; only if it passes, build the FEAT-65 backtester and lane
 
 ## Phase 5: Platform Refactor (required before the Web UI)
 
