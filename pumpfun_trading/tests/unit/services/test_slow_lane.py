@@ -14,6 +14,7 @@ from aiohttp.test_utils import TestServer
 from pumpfun_trading.services import slow_lane
 from pumpfun_trading.services.slow_lane import (
     AiohttpJson,
+    BinanceClient,
     GeckoTerminalClient,
     HttpStatusError,
     JupiterClient,
@@ -138,6 +139,8 @@ def test_load_token_list_accepts_a_bare_list_and_defaults_the_symbol(
         ({"tokens": [{"symbol": "X"}]}, "needs a 'mint'"),
         ({"tokens": ["M"]}, "needs a 'mint'"),
         ({"tokens": [{"mint": "M"}, {"mint": "M"}]}, "duplicate"),
+        ({"tokens": [{"mint": "M", "binance": 5}]}, "'binance' must be"),
+        ({"tokens": [{"mint": "M", "binance": " "}]}, "'binance' must be"),
     ],
 )
 def test_load_token_list_rejects_bad_files(
@@ -147,6 +150,27 @@ def test_load_token_list_rejects_bad_files(
     path.write_text(json.dumps(content))
     with pytest.raises(ValueError, match=message):
         slow_lane.load_token_list(path)
+
+
+def test_token_list_binance_pairs(tmp_path: Path) -> None:
+    path = tmp_path / "tokens.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tokens": [
+                    {"symbol": "Sol", "mint": "M1"},
+                    {"symbol": "WIF", "mint": "M2", "binance": " wifusdc "},
+                    {"symbol": "mSOL", "mint": "M3", "binance": None},
+                    {"symbol": "X", "mint": "M4", "binance": False},
+                ]
+            }
+        )
+    )
+    tokens = slow_lane.load_token_list(path)
+    assert [t.binance_pair() for t in tokens] == ["SOLUSDT", "WIFUSDC", None, None]
+    defaults = {t.symbol: t.binance_pair() for t in slow_lane.default_tokens()}
+    assert defaults["JUP"] == "JUPUSDT" and defaults["SOL"] == "SOLUSDT"
+    assert [s for s, pair in defaults.items() if pair is None] == ["mSOL", "jitoSOL"]
 
 
 def test_parse_sizes() -> None:
@@ -792,3 +816,196 @@ def test_bars_in_sol_divide_by_sols_own_bar() -> None:
         (2.0, pytest.approx(0.006)),
     ]
     assert all(b["currency"] == "sol" for b in converted)
+
+
+# -- Binance klines ------------------------------------------------------------
+
+
+def _kline(open_s: int, close: float = 1.5, span_ms: int = 999) -> list[Any]:
+    open_ms = open_s * 1000
+    return [
+        open_ms,
+        "1.0",
+        "2.0",
+        "0.5",
+        str(close),
+        "10",
+        open_ms + span_ms,
+        "15.5",
+        7,
+        "5",
+        "7.5",
+        "0",
+    ]
+
+
+async def test_binance_client_klines_params_and_filtering() -> None:
+    http = FakeHttp(
+        {"/api/v3/klines": lambda *_: [_kline(1), [1, 2, 3], "x", _kline(2)]}
+    )
+    client = BinanceClient(http, base_url="https://bn.example/")
+    klines = await client.klines("SOLUSDT", interval="1d", start_ms=5)
+    assert [k[0] for k in klines] == [1000, 2000]
+    url, params, _, _ = http.calls[0]
+    assert url == "https://bn.example/api/v3/klines"
+    assert params == {
+        "symbol": "SOLUSDT",
+        "interval": "1d",
+        "startTime": 5,
+        "limit": slow_lane.BINANCE_BARS_PER_PAGE,
+    }
+    http.routes["/api/v3/klines"] = lambda *_: {"code": -1121}
+    assert await client.klines("X", interval="1h", start_ms=0) == []
+
+
+async def test_binance_backfill_pages_forward_and_handles_missing_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(slow_lane, "BINANCE_BARS_PER_PAGE", 2)
+    epoch = slow_lane.BINANCE_EPOCH_MS
+    sol_day = {
+        epoch: [_kline(100), _kline(200)],
+        200_001: [_kline(300), _kline(400)],  # 400 is still open: dropped
+        400_001: [],
+    }
+
+    def klines(_url: str, params: Mapping[str, Any], _body: Any) -> Any:
+        pair, start = params["symbol"], params["startTime"]
+        if pair == "NOPEUSDT":
+            raise HttpStatusError(400, "Invalid symbol.")
+        if pair == "SOLUSDT":
+            return sol_day[start] if params["interval"] == "1d" else []
+        if pair == "LATEUSDT":
+            if start != epoch:
+                raise HttpStatusError(400, "bad request")
+            return [_kline(1), _kline(2)]
+        if pair == "FLAKYUSDT":
+            raise RuntimeError("reset by peer")
+        # RAYUSDT: always a full page of new bars, so max_pages ends it.
+        first = (start - epoch) // 1000 + 1 if start != epoch else 1
+        return [_kline(first), _kline(first + 1)]
+
+    http = FakeHttp({"/api/v3/klines": klines})
+    sink = Sink()
+    clock = FakeClock()
+    tokens = [
+        SOL,
+        SlowLaneToken("NOPE", "M2"),
+        SlowLaneToken("mSOL", "M3", binance_skip=True),
+        SlowLaneToken("OVR", "M4", binance="rayusdt"),
+        SlowLaneToken("LATE", "M5"),
+        SlowLaneToken("FLAKY", "M6"),
+    ]
+    stats = await slow_lane.backfill_binance_bars(
+        BinanceClient(http),
+        sink,
+        tokens=tokens,
+        max_pages=3,
+        sleep=clock.async_sleep,
+        monotonic=clock.monotonic,
+        wall_clock=lambda: 400.5,
+    )
+    sol = [r for r in sink.rows if r["symbol"] == "SOL"]
+    assert [r["timestamp"] for r in sol] == [100.0, 200.0, 300.0]
+    assert sol[0] == {
+        "timestamp": 100.0,
+        "event": "bar",
+        "venue": "binance",
+        "symbol": "SOL",
+        "mint": slow_lane.WSOL_MINT,
+        "pair": "SOLUSDT",
+        "timeframe": "day",
+        "currency": "usd",
+        "quote_asset": "USDT",
+        "open": 1.0,
+        "high": 2.0,
+        "low": 0.5,
+        "close": 1.5,
+        "volume_usd": 15.5,
+        "trades": 7,
+    }
+    assert {r["pair"] for r in sink.rows if r["symbol"] == "OVR"} == {"RAYUSDT"}
+    nope_calls = [c for c in http.calls if c[1]["symbol"] == "NOPEUSDT"]
+    assert len(nope_calls) == 1  # a missing pair is not retried per timeframe
+    assert stats.tokens == 6 and stats.skipped == 1 and stats.pairs_missing == 1
+    assert stats.page_limited == 2  # RAYUSDT day and hour
+    assert stats.errors == 4  # LATE day + hour (page 2), FLAKY day + hour
+    assert "NOPE: no Binance pair NOPEUSDT" in stats.failures
+    assert stats.blocked_status is None
+    assert set(clock.sleeps) == {slow_lane.DEFAULT_BINANCE_REQUEST_GAP_SECONDS}
+
+
+async def test_binance_backfill_stops_when_the_host_is_blocked() -> None:
+    def klines(_url: str, params: Mapping[str, Any], _body: Any) -> Any:
+        assert params["startTime"] == 1_704_067_200_000
+        raise HttpStatusError(451, "restricted location")
+
+    http = FakeHttp({"/api/v3/klines": klines})
+    clock = FakeClock()
+    stats = await slow_lane.backfill_binance_bars(
+        BinanceClient(http),
+        Sink(),
+        tokens=[SOL, JUP],
+        since=1_704_067_200.0,
+        sleep=clock.async_sleep,
+        monotonic=clock.monotonic,
+    )
+    assert stats.blocked_status == 451
+    assert stats.requests == 1 and stats.errors == 1 and stats.tokens == 1
+    with pytest.raises(ValueError, match="timeframe"):
+        await slow_lane.backfill_binance_bars(
+            BinanceClient(http), Sink(), tokens=[SOL], timeframes=["week"]
+        )
+
+
+async def test_geckoterminal_backfill_counts_the_page_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(slow_lane, "BARS_PER_PAGE", 1)
+
+    def ohlcv(_url: str, params: Mapping[str, Any], _body: Any) -> Any:
+        ts = params.get("before_timestamp", 1000) - 1
+        return {"data": {"attributes": {"ohlcv_list": [[ts, 1, 2, 0.5, 1.5, 10]]}}}
+
+    http = FakeHttp(
+        {
+            "/tokens/": lambda *_: {"data": [{"attributes": {"address": "P"}}]},
+            "/ohlcv/": ohlcv,
+        }
+    )
+    clock = FakeClock()
+    stats = await slow_lane.backfill_bars(
+        GeckoTerminalClient(http),
+        Sink(),
+        tokens=[JUP],
+        timeframes=["day"],
+        max_pages=2,
+        sleep=clock.async_sleep,
+        monotonic=clock.monotonic,
+    )
+    assert stats.bars == 2 and stats.page_limited == 1
+
+
+def test_bars_in_sol_never_mixes_venues() -> None:
+    def bar(venue: str, symbol: str, close: float) -> dict:
+        return {
+            "event": "bar",
+            "venue": venue,
+            "symbol": symbol,
+            "timeframe": "day",
+            "timestamp": 1.0,
+            "currency": "usd",
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+        }
+
+    rows = [
+        bar("binance", "SOL", 200.0),
+        bar("geckoterminal", "SOL", 100.0),
+        bar("binance", "JUP", 1.0),
+        bar("geckoterminal", "JUP", 1.0),
+    ]
+    by_venue = {b["venue"]: b["close"] for b in slow_lane.bars_in_sol(rows)}
+    assert by_venue == {"binance": 0.005, "geckoterminal": 0.01}

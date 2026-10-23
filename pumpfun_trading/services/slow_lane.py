@@ -8,11 +8,14 @@ Two collectors, both run by ``pumpfun-recorder`` as their own process, next to
   network's recent priority fees. A quote is only valid when it is taken, so
   this is the one dataset that cannot be fetched later.
 * :func:`backfill_bars` downloads daily / hourly OHLCV bars from GeckoTerminal
-  for the same list (history that can be fetched at any time).
+  for the same list (history that can be fetched at any time, but the public
+  API keeps only about 6 months).
+* :func:`backfill_binance_bars` downloads the same bars from Binance's public
+  spot klines (``<SYMBOL>USDT``), which go back to each pair's listing.
 
 Nothing here signs, sends or trades. Rows are tagged with ``venue`` and go to
 their own JSONL files, away from the Pump.fun captures the replay tools read.
-Both public APIs are used keyless and rate-limited; an optional
+All public APIs are used keyless and rate-limited; an optional
 ``PUMPFUN_JUPITER_API_KEY`` moves the quotes to the keyed host and is sent as a
 header only, never as part of a URL (BUG-118).
 """
@@ -40,10 +43,14 @@ LAMPORTS_PER_SOL = 1_000_000_000
 JUPITER_LITE_URL = "https://lite-api.jup.ag"
 JUPITER_KEYED_URL = "https://api.jup.ag"
 GECKOTERMINAL_URL = "https://api.geckoterminal.com/api/v2"
+# Binance's market-data-only host; same /api/v3 klines as api.binance.com.
+BINANCE_URL = "https://data-api.binance.vision"
 JUPITER_API_KEY_ENV = "PUMPFUN_JUPITER_API_KEY"
 
 QUOTE_VENUE = "jupiter"
 BAR_VENUE = "geckoterminal"
+BINANCE_VENUE = "binance"
+BAR_SOURCES = (BAR_VENUE, BINANCE_VENUE)
 FEE_VENUE = "solana"
 QUOTE_EVENT = "quote"
 QUOTE_ERROR_EVENT = "quote_error"
@@ -60,6 +67,8 @@ DEFAULT_SLIPPAGE_BPS = 50
 # GeckoTerminal's public API refused the 5th request at a 2.5 s gap.
 DEFAULT_QUOTE_REQUEST_GAP_SECONDS = 2.0
 DEFAULT_BAR_REQUEST_GAP_SECONDS = 6.0
+# A klines call weighs 2 of Binance's 6,000 per minute per IP.
+DEFAULT_BINANCE_REQUEST_GAP_SECONDS = 0.5
 DEFAULT_QUOTE_INTERVAL_SECONDS = 300.0
 DEFAULT_FEE_INTERVAL_SECONDS = 300.0
 # Pools per fee sample (one RPC call each, on the operator's own RPC).
@@ -73,6 +82,17 @@ RATE_LIMIT_FALLBACK_WAIT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 3
 BAR_TIMEFRAMES = ("day", "hour", "minute")
 BARS_PER_PAGE = 1000
+DEFAULT_BAR_MAX_PAGES = 6
+# Binance pages forward from the listing: 100 pages of hourly bars is 11 years.
+DEFAULT_BINANCE_MAX_PAGES = 100
+BINANCE_BARS_PER_PAGE = 1000
+BINANCE_QUOTE_ASSET = "USDT"
+BINANCE_INTERVALS = {"day": "1d", "hour": "1h", "minute": "1m"}
+# 2017-07-14 UTC, before Binance's first spot pair: start of a full download.
+BINANCE_EPOCH_MS = 1_500_000_000_000
+# HTTP answers that refuse every later request too (403 WAF, 418 IP ban,
+# 451 restricted region), so the Binance backfill stops at the first one.
+BINANCE_BLOCKED_STATUSES = frozenset({403, 418, 451})
 
 # Reviewed default list (configs/slow_lane_tokens.json is the editable copy).
 # SOL gets bars only, since it is the quote currency; USDC stands in for it.
@@ -89,6 +109,8 @@ DEFAULT_TOKENS: tuple[tuple[str, str], ...] = (
     ("mSOL", "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"),
     ("jitoSOL", "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"),
 )
+# No Binance spot pair: the Binance backfill skips these (``"binance": null``).
+DEFAULT_BINANCE_SKIP = frozenset({"mSOL", "jitoSOL"})
 
 Sleep = Callable[[float], Awaitable[None]]
 Clock = Callable[[], float]
@@ -246,14 +268,46 @@ async def _paced(
 class SlowLaneToken:
     symbol: str
     mint: str
+    # Binance spot pair; ``None`` means ``<SYMBOL>USDT``.
+    binance: str | None = None
+    # No Binance pair: the Binance backfill skips the token.
+    binance_skip: bool = False
+
+    def binance_pair(self) -> str | None:
+        if self.binance_skip:
+            return None
+        return (self.binance or f"{self.symbol}{BINANCE_QUOTE_ASSET}").upper()
 
 
 def default_tokens() -> list[SlowLaneToken]:
-    return [SlowLaneToken(symbol, mint) for symbol, mint in DEFAULT_TOKENS]
+    return [
+        SlowLaneToken(symbol, mint, binance_skip=symbol in DEFAULT_BINANCE_SKIP)
+        for symbol, mint in DEFAULT_TOKENS
+    ]
+
+
+def _binance_field(
+    path: str | Path, entry: Mapping[str, Any]
+) -> tuple[str | None, bool]:
+    """``(pair, skip)`` from a token entry's optional ``"binance"`` key."""
+    if "binance" not in entry:
+        return None, False
+    value = entry["binance"]
+    if value is None or value is False:
+        return None, True
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"{path}: 'binance' must be a pair such as \"SOLUSDT\", or null to skip."
+        )
+    return value.strip().upper(), False
 
 
 def load_token_list(path: str | Path | None) -> list[SlowLaneToken]:
-    """Read ``{"tokens": [{"symbol", "mint"}]}``; ``None`` gives the default list."""
+    """Read ``{"tokens": [{"symbol", "mint", "binance"?}]}``; ``None`` gives the default list.
+
+    ``"binance"`` is optional: a pair such as ``"SOLUSDT"`` overrides the
+    default ``<SYMBOL>USDT``, and ``null`` skips the token on Binance.
+    """
     if path is None:
         return default_tokens()
     raw = json.loads(Path(path).read_text())
@@ -269,7 +323,15 @@ def load_token_list(path: str | Path | None) -> list[SlowLaneToken]:
         if mint in seen:
             raise ValueError(f"{path}: duplicate mint {mint}.")
         seen.add(mint)
-        tokens.append(SlowLaneToken(str(entry.get("symbol") or mint[:6]), mint))
+        pair, skip = _binance_field(path, entry)
+        tokens.append(
+            SlowLaneToken(
+                str(entry.get("symbol") or mint[:6]),
+                mint,
+                binance=pair,
+                binance_skip=skip,
+            )
+        )
     return tokens
 
 
@@ -390,6 +452,40 @@ class GeckoTerminalClient:
         attrs = (data or {}).get("attributes") or {}
         bars = attrs.get("ohlcv_list") or []
         return [list(b) for b in bars if isinstance(b, list) and len(b) >= 6]
+
+
+class BinanceClient:
+    """Public Binance spot klines (no key; the market-data host by default)."""
+
+    def __init__(self, http: JsonHttp, *, base_url: str = BINANCE_URL) -> None:
+        self.http = http
+        self.base_url = base_url.rstrip("/")
+
+    async def klines(
+        self,
+        pair: str,
+        *,
+        interval: str,
+        start_ms: int,
+        limit: int = BINANCE_BARS_PER_PAGE,
+    ) -> list[list[Any]]:
+        """Up to ``limit`` klines opening at or after ``start_ms``, oldest first.
+
+        Each is ``[open_ms, open, high, low, close, volume, close_ms,
+        quote_volume, trades, ...]`` with prices as strings.
+        """
+        payload = await self.http.get_json(
+            f"{self.base_url}/api/v3/klines",
+            params={
+                "symbol": pair,
+                "interval": interval,
+                "startTime": int(start_ms),
+                "limit": int(limit),
+            },
+        )
+        if not isinstance(payload, list):
+            return []
+        return [list(k) for k in payload if isinstance(k, list) and len(k) >= 8]
 
 
 def _float(value: Any) -> float | None:
@@ -814,6 +910,14 @@ class BackfillStats:
     errors: int = 0
     # Paging stopped at the public API's history limit (it answers 401).
     history_limited: int = 0
+    # Paging stopped at --bar-max-pages with more bars left to fetch.
+    page_limited: int = 0
+    # Binance: the pair does not exist (HTTP 400 on the first page).
+    pairs_missing: int = 0
+    # Binance: tokens marked ``"binance": null`` in the token list.
+    skipped: int = 0
+    # Binance refused the host (403 / 418 / 451); nothing more was requested.
+    blocked_status: int | None = None
     failures: list[str] = field(default_factory=list)
 
     def fail(self, what: str, exc: Exception) -> None:
@@ -856,7 +960,7 @@ async def backfill_bars(
     *,
     tokens: Sequence[SlowLaneToken],
     timeframes: Sequence[str] = ("day", "hour"),
-    max_pages: int = 6,
+    max_pages: int = DEFAULT_BAR_MAX_PAGES,
     request_gap_seconds: float = DEFAULT_BAR_REQUEST_GAP_SECONDS,
     sleep: Sleep = asyncio.sleep,
     monotonic: Clock = time.monotonic,
@@ -917,6 +1021,116 @@ async def backfill_bars(
                 if len(page) < BARS_PER_PAGE or not fresh:
                     break
                 before = int(min(float(b[0]) for b in page))
+            else:
+                stats.page_limited += 1
+    return stats
+
+
+def binance_bar_row(
+    kline: Sequence[Any],
+    *,
+    token: SlowLaneToken,
+    pair: str,
+    timeframe: str,
+) -> dict[str, Any]:
+    return {
+        "timestamp": float(kline[0]) / 1000.0,
+        "event": BAR_EVENT,
+        "venue": BINANCE_VENUE,
+        "symbol": token.symbol,
+        "mint": token.mint,
+        "pair": pair,
+        "timeframe": timeframe,
+        # USDT pairs, taken as USD; `bars_in_sol` re-prices them in SOL.
+        "currency": "usd",
+        "quote_asset": BINANCE_QUOTE_ASSET,
+        "open": float(kline[1]),
+        "high": float(kline[2]),
+        "low": float(kline[3]),
+        "close": float(kline[4]),
+        # Quote-asset (USDT) volume, comparable to GeckoTerminal's volume_usd.
+        "volume_usd": float(kline[7]),
+        "trades": int(kline[8]) if len(kline) > 8 else None,
+    }
+
+
+async def backfill_binance_bars(
+    binance: BinanceClient,
+    sink: RowSink,
+    *,
+    tokens: Sequence[SlowLaneToken],
+    timeframes: Sequence[str] = ("day", "hour"),
+    max_pages: int = DEFAULT_BINANCE_MAX_PAGES,
+    since: float | None = None,
+    request_gap_seconds: float = DEFAULT_BINANCE_REQUEST_GAP_SECONDS,
+    sleep: Sleep = asyncio.sleep,
+    monotonic: Clock = time.monotonic,
+    wall_clock: Clock = time.time,
+) -> BackfillStats:
+    """Page Binance klines forward from ``since`` (default: each pair's listing).
+
+    Only closed bars are written: the bar still forming at download time is
+    dropped. A missing pair is counted and skipped; a blocked host (403 / 418 /
+    451) stops the whole run, since every later request would fail too.
+    """
+    for timeframe in timeframes:
+        if timeframe not in BINANCE_INTERVALS:
+            raise ValueError(f"unknown bar timeframe {timeframe!r}.")
+    pacer = RequestPacer(request_gap_seconds, sleep=sleep, clock=monotonic)
+    stats = BackfillStats()
+    now_ms = int(wall_clock() * 1000)
+    first_ms = BINANCE_EPOCH_MS if since is None else int(float(since) * 1000)
+    for token in tokens:
+        stats.tokens += 1
+        pair = token.binance_pair()
+        if pair is None:
+            stats.skipped += 1
+            continue
+        for timeframe in timeframes:
+            interval = BINANCE_INTERVALS[timeframe]
+            seen: set[int] = set()
+            start = first_ms
+            missing = False
+            for page_index in range(max(1, int(max_pages))):
+                try:
+                    stats.requests += 1
+                    page = await _paced(
+                        pacer,
+                        lambda: binance.klines(pair, interval=interval, start_ms=start),
+                        sleep,
+                    )
+                except HttpStatusError as exc:
+                    if exc.status in BINANCE_BLOCKED_STATUSES:
+                        stats.blocked_status = exc.status
+                        stats.fail(f"{token.symbol} {timeframe}", exc)
+                        return stats
+                    if exc.status == 400 and page_index == 0:
+                        missing = True
+                        stats.pairs_missing += 1
+                        stats.failures.append(f"{token.symbol}: no Binance pair {pair}")
+                    else:
+                        stats.fail(f"{token.symbol} {timeframe}", exc)
+                    break
+                except Exception as exc:
+                    stats.fail(f"{token.symbol} {timeframe}", exc)
+                    break
+                closed = [k for k in page if int(k[6]) < now_ms]
+                fresh = [k for k in closed if int(k[0]) not in seen]
+                for kline in fresh:
+                    seen.add(int(kline[0]))
+                    sink.record_snapshot(
+                        binance_bar_row(
+                            kline, token=token, pair=pair, timeframe=timeframe
+                        )
+                    )
+                    stats.bars += 1
+                if len(page) < BINANCE_BARS_PER_PAGE or not fresh:
+                    break
+                start = max(int(k[0]) for k in page) + 1
+            else:
+                stats.page_limited += 1
+            if missing:
+                break
     return stats
 
 
@@ -960,11 +1174,12 @@ def bars_in_sol(
 
     The slow lane trades from a SOL wallet, so a strategy must beat holding
     SOL; in USD, SOL's own trend would look like an edge. Bars without a SOL
-    bar for the same timeframe and timestamp are dropped.
+    bar from the same venue, timeframe and timestamp are dropped, so a file
+    mixing GeckoTerminal and Binance rows never divides one by the other.
     """
     bars = [r for r in rows if r.get("event") == BAR_EVENT]
     sol_close = {
-        (r.get("timeframe"), float(r["timestamp"])): float(r["close"])
+        (r.get("venue"), r.get("timeframe"), float(r["timestamp"])): float(r["close"])
         for r in bars
         if r.get("symbol") == sol_symbol and float(r.get("close") or 0.0) > 0
     }
@@ -972,7 +1187,9 @@ def bars_in_sol(
     for bar in bars:
         if bar.get("symbol") == sol_symbol:
             continue
-        sol = sol_close.get((bar.get("timeframe"), float(bar["timestamp"])))
+        sol = sol_close.get(
+            (bar.get("venue"), bar.get("timeframe"), float(bar["timestamp"]))
+        )
         if not sol:
             continue
         converted = dict(bar)
@@ -986,6 +1203,7 @@ def bars_in_sol(
 __all__ = [
     "AiohttpJson",
     "BackfillStats",
+    "BinanceClient",
     "GeckoTerminalClient",
     "HttpStatusError",
     "JupiterClient",
@@ -995,7 +1213,9 @@ __all__ = [
     "SLOW_LANE_EVENTS",
     "SlowLaneToken",
     "backfill_bars",
+    "backfill_binance_bars",
     "bar_row",
+    "binance_bar_row",
     "bars_in_sol",
     "default_tokens",
     "fee_row",

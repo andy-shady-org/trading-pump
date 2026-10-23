@@ -792,12 +792,21 @@ class _SlowLaneHttp:
     def __init__(self, *_: Any, **__: Any) -> None:
         self.closed = False
         self.urls: list[str] = []
+        self.params: list[Any] = []
         _SlowLaneHttp.instances.append(self)
 
     async def get_json(
         self, url: str, *, params: Any = None, headers: Any = None
     ) -> Any:
         self.urls.append(url)
+        self.params.append(params)
+        if "/api/v3/klines" in url:
+            pair = params["symbol"]
+            if pair == "GONEUSDT":
+                raise record_cli.slow_lane.HttpStatusError(400, "Invalid symbol.")
+            if pair == "BLOCKUSDT":
+                raise record_cli.slow_lane.HttpStatusError(451, "restricted")
+            return [[86_400_000, "1", "2", "0.5", "1.5", "9", 172_799_999, "13", 3]]
         if "/price/v3" in url:
             return {"JUPmint": {"usdPrice": 0.3, "liquidity": 1e6, "decimals": 6}}
         if "/swap/v1/quote" in url:
@@ -907,4 +916,142 @@ def test_record_cli_backfill_bars_reports_failures(
     text = output.export_text()
     assert "Bar Backfill Summary" in text
     assert "JUP hour: hour bars down" in text
-    assert "Pools missing" in text
+    assert "Pools missing" in text and "Page limit reached" in text
+    assert "Host: https://api.geckoterminal.com" in text
+
+
+def test_record_cli_backfill_bars_from_binance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    _SlowLaneHttp.instances.clear()
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    monkeypatch.chdir(tmp_path)
+    args = build_record_parser().parse_args(
+        [
+            "--backfill-bars",
+            "--bar-source",
+            "binance",
+            "--tokens",
+            _token_file(tmp_path),
+            "--bar-timeframes",
+            "day",
+            "--bar-since",
+            "2024-01-01",
+            "--request-gap",
+            "0",
+        ]
+    )
+    run_record_cli(args)
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / record_cli.DEFAULT_BINANCE_BARS_OUTPUT)
+        .read_text()
+        .splitlines()
+    ]
+    assert [(r["symbol"], r["venue"], r["pair"], r["timestamp"]) for r in rows] == [
+        ("JUP", "binance", "JUPUSDT", 86_400.0)
+    ]
+    assert not (tmp_path / record_cli.DEFAULT_BARS_OUTPUT).exists()
+    http = _SlowLaneHttp.instances[0]
+    assert http.urls[0] == f"{record_cli.slow_lane.BINANCE_URL}/api/v3/klines"
+    assert http.params[0]["startTime"] == 1_704_067_200_000 and http.closed
+    text = output.export_text()
+    assert "Binance Bar Backfill" in text and "Since: 2024-01-01" in text
+    assert "Pairs missing" in text and "GONE: no Binance pair GONEUSDT" in text
+    assert "Max pages: 100" in text and "Pools missing" not in text
+
+
+def test_record_cli_backfill_writes_one_unrotated_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    """A full Binance download is ~100 MB: it must not rotate at 50 MB."""
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    policies: list[Any] = []
+    real = record_cli.ReplayRecorder
+
+    def recorder(**kwargs: Any) -> Any:
+        policies.append(kwargs.get("policy"))
+        return real(**kwargs)
+
+    monkeypatch.setattr(record_cli, "ReplayRecorder", recorder)
+    out = tmp_path / "bars.jsonl"
+    args = build_record_parser().parse_args(
+        [
+            "--backfill-bars",
+            "--bar-source",
+            "binance",
+            "--tokens",
+            _token_file(tmp_path),
+            "--request-gap",
+            "0",
+            "-o",
+            str(out),
+        ]
+    )
+    run_record_cli(args)
+    assert policies == [record_cli.BACKFILL_RETENTION]
+    assert policies[0].max_bytes == 0  # RotatedFileSink never rotates
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["bars.jsonl", "tokens.json"]
+
+
+def test_record_cli_binance_page_limit_and_blocked_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    _SlowLaneHttp.instances.clear()
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    monkeypatch.setattr(record_cli.slow_lane, "BINANCE_BARS_PER_PAGE", 1)
+    # No --request-gap: the Binance default applies (zeroed to keep this fast).
+    monkeypatch.setattr(
+        record_cli.slow_lane, "DEFAULT_BINANCE_REQUEST_GAP_SECONDS", 0.0
+    )
+    tokens = tmp_path / "tokens.json"
+    tokens.write_text(
+        json.dumps(
+            {
+                "tokens": [
+                    {"symbol": "JUP", "mint": "JUPmint"},
+                    {"symbol": "BLOCK", "mint": "Blocked"},
+                ]
+            }
+        )
+    )
+    out = tmp_path / "b.jsonl"
+    args = build_record_parser().parse_args(
+        [
+            "--backfill-bars",
+            "--bar-source",
+            "binance",
+            "--bar-base-url",
+            "https://api.binance.example",
+            "--tokens",
+            str(tokens),
+            "--bar-timeframes",
+            "day",
+            "--bar-max-pages",
+            "1",
+            "-o",
+            str(out),
+        ]
+    )
+    run_record_cli(args)
+    assert _SlowLaneHttp.instances[0].urls[-1].startswith("https://api.binance.example")
+    text = output.export_text()
+    assert "Since: listing" in text and "raise it to fetch the rest" in text
+    assert "Binance refused this host (HTTP 451" in text
+
+
+def test_record_cli_bar_since_needs_binance_and_a_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    args = build_record_parser().parse_args(
+        ["--backfill-bars", "--bar-since", "2024-01-01", "-o", str(tmp_path / "x")]
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_record_cli(args)
+    assert exc.value.code == 2
+    assert "--bar-since needs --bar-source binance" in output.export_text()
+    with pytest.raises(SystemExit):
+        build_record_parser().parse_args(["--bar-since", "01/01/2024"])
+    assert record_cli.utc_date("2024-01-01") == 1_704_067_200.0

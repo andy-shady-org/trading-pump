@@ -81,7 +81,7 @@ pumpfun record [OPTIONS]
 
 | Flag | Short | Type | Default | Description |
 | :--- | :---: | :---: | :---: | :--- |
-| `--output` | `-o` | String | `market_replay.jsonl` | Destination file path for the recorded `.jsonl` replay dataset (`slow_lane/jupiter_quotes.jsonl` with `--jupiter-quotes`, `slow_lane/bars.jsonl` with `--backfill-bars`). |
+| `--output` | `-o` | String | `market_replay.jsonl` | Destination file path for the recorded `.jsonl` replay dataset (`slow_lane/jupiter_quotes.jsonl` with `--jupiter-quotes`, `slow_lane/bars.jsonl` with `--backfill-bars`, `slow_lane/binance_bars.jsonl` with `--backfill-bars --bar-source binance`). |
 | `--duration` | `-d` | Float | `None` (Infinite) | Maximum recording duration in seconds before automatically stopping. |
 | `--limit` | `-l` | Integer | `None` (Infinite) | Maximum number of market snapshot records to capture before stopping. |
 | `--geyser-endpoint` | — | URL | `None` (Env) | Yellowstone Geyser gRPC streaming endpoint (overrides `PUMPFUN_GEYSER_ENDPOINT`). |
@@ -91,14 +91,17 @@ pumpfun record [OPTIONS]
 | `--synthetic-steps`| — | Integer | `60` | Number of price update steps generated in synthetic scenarios. |
 | `--from-mint` | — | Base58 | `None` | Exports historical trades for a specific token mint via Pump.fun REST API. |
 | `--jupiter-quotes` | — | Flag | `false` | FEAT-65 phase 0 (record-only): samples Jupiter buy / sell quotes, prices and priority fees for a token list until `--duration` or SIGINT / SIGTERM. Keyless (`lite-api.jup.ag`); `PUMPFUN_JUPITER_API_KEY` switches to `api.jup.ag`. |
-| `--backfill-bars` | — | Flag | `false` | FEAT-65 phase 0: downloads daily / hourly OHLCV bars from GeckoTerminal's public API for the token list, then exits. |
-| `--tokens` | — | File Path | built-in list | Token list JSON `{"tokens": [{"symbol", "mint"}]}`; the built-in list is `configs/slow_lane_tokens.json`. SOL is the quote currency, so it gets bars but no quotes. |
+| `--backfill-bars` | — | Flag | `false` | FEAT-65 phase 0: downloads daily / hourly OHLCV bars for the token list from the `--bar-source` provider, then exits. |
+| `--tokens` | — | File Path | built-in list | Token list JSON `{"tokens": [{"symbol", "mint", "binance"?}]}`; the built-in list is `configs/slow_lane_tokens.json`. SOL is the quote currency, so it gets bars but no quotes. The optional `binance` key sets the Binance spot pair (default `<SYMBOL>USDT`); `null` skips the token with `--bar-source binance` (mSOL, jitoSOL). |
 | `--quote-interval` | — | Float | `300` | Seconds between quote cycles. |
 | `--quote-sizes` | — | String | `0.02,0.1,0.5` | Quote sizes in SOL; each size is quoted as a buy and as a sell of the bought tokens (a round trip). |
-| `--request-gap` | — | Float | `2` (quotes), `6` (bars) | Minimum seconds between API requests (keyless rate limits). |
+| `--request-gap` | — | Float | `2` (quotes), `6` (GeckoTerminal bars), `0.5` (Binance bars) | Minimum seconds between API requests (keyless rate limits). |
 | `--no-fee-samples` | — | Flag | `false` | Skip `getRecentPrioritizationFees` samples (taken by default when `PUMPFUN_RPC_URL` / `PUMPFUN_RPC_URLS` is set). |
 | `--bar-timeframes` | — | String | `day,hour` | Bar timeframes: `day`, `hour`, `minute`. |
-| `--bar-max-pages` | — | Integer | `6` | Pages of 1,000 bars per token and timeframe (paging also stops at the public history limit). |
+| `--bar-source` | — | Choice | `geckoterminal` | Bar provider for `--backfill-bars`. `geckoterminal`: each token's top Solana pool, newest first, about 6 months on the public API. `binance`: public spot klines for `<SYMBOL>USDT` (USDT taken as USD), oldest first from the pair's listing, keyless (`data-api.binance.vision`); rows `venue: "binance"`. |
+| `--bar-base-url` | — | URL | source default | Bar API host override, e.g. `https://api.binance.com` when the market-data host is blocked on your network. |
+| `--bar-max-pages` | — | Integer | `6` (GeckoTerminal), `100` (Binance) | Pages of 1,000 bars per token and timeframe (GeckoTerminal also stops at its public history limit). `Page limit reached` in the summary means bars were left: raise it. |
+| `--bar-since` | — | Date | listing | Binance only: first bar date, `YYYY-MM-DD` UTC (e.g. to top up a file, or to fetch only recent `minute` bars). |
 
 ### Execution Examples & Recipes
 
@@ -152,6 +155,8 @@ Sample Jupiter round-trip quotes, prices and priority fees every 5 minutes, and 
 ```bash
 pumpfun-recorder --jupiter-quotes --tokens configs/slow_lane_tokens.json -o runtime/slow_lane/jupiter_quotes.jsonl
 pumpfun-recorder --backfill-bars --tokens configs/slow_lane_tokens.json -o runtime/slow_lane/bars.jsonl
+# Multi-year daily / hourly history (each pair since its listing; about 3 min and one ~100 MB file for the default list):
+pumpfun-recorder --backfill-bars --bar-source binance --tokens configs/slow_lane_tokens.json -o runtime/slow_lane/binance_bars.jsonl
 ```
 
 ---

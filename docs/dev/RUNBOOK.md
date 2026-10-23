@@ -310,6 +310,13 @@ Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FE
    pumpfun-recorder --backfill-bars --tokens configs/slow_lane_tokens.json -o slow_lane/bars.jsonl
    ```
    The public API serves about 6 months; re-run it monthly into a new file to extend the series and de-duplicate on `mint`, `timeframe`, `timestamp` when reading.
+
+   For a multi-year history use Binance's public spot klines (keyless; each `<SYMBOL>USDT` pair from its listing; for the default list about 3 min, 315,000 bars, one ~100 MB file):
+   ```bash
+   pumpfun-recorder --backfill-bars --bar-source binance --tokens configs/slow_lane_tokens.json \
+     -o slow_lane/binance_bars.jsonl
+   ```
+   Expect SOL from August 2020, RAY from August 2021, JTO and BONK from late 2023, JUP, PYTH and WIF from early 2024, ORCA from December 2024. mSOL and jitoSOL have no Binance pair (`"binance": null` in the token list); a token without a pair shows as `Pairs missing` and is skipped. Binance prices are the centralised-exchange market in USDT, not the Solana pool a swap would fill in: use them for the trend signal and keep the Jupiter quotes for costs. Keep the two venues in separate files (`bars_in_sol` only divides bars of the same `venue`). If the run stops with `Binance refused this host` (HTTP 451 = restricted region, 403 = firewall, 418 = IP ban after rate limiting), try another network or `--bar-base-url https://api.binance.com` (which itself answers 451 in some regions, e.g. the US); after a 418, wait before retrying. A few missing hours (SOL 10, RAY 3 since listing) are Binance's own trading outages, not download errors. Top up later with `--bar-since YYYY-MM-DD` into a new file. A backfill always writes one file: unlike the quote recorder, it does not rotate at 50 MB.
 3. Health checks while it runs: rows keep arriving, and errors stay rare.
    ```bash
    tail -n 1 slow_lane/jupiter_quotes.jsonl | jq '{timestamp, event, symbol}'
@@ -318,7 +325,7 @@ Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FE
      slow_lane/jupiter_quotes.jsonl | tail -n 30            # round-trip cost per token and size
    ```
    Many `status: 429` rows mean the keyless limit changed: raise `--request-gap` or `--quote-interval`. Edit the token list only between runs, and keep the edited file with the data.
-4. Reading the data (BUG-139). The sell leg is quoted a pacing gap after the buy leg, so each `round_trip_cost_bps` also holds the price move in between; sell rows carry `buy_gap_seconds` and `buy_gap_slots`. Judge costs on the distribution, `pumpfun_trading.services.slow_lane.round_trip_cost_summary(rows)` (median and quartiles per token and size), never on one row. Bars are USD (`currency: "usd"`) from each token's top pool as chosen when the backfill ran; `bars_in_sol(rows)` re-prices them against SOL's own bar, the baseline a SOL wallet has to beat.
+4. Reading the data (BUG-139). The sell leg is quoted a pacing gap after the buy leg, so each `round_trip_cost_bps` also holds the price move in between; sell rows carry `buy_gap_seconds` and `buy_gap_slots`. Judge costs on the distribution, `pumpfun_trading.services.slow_lane.round_trip_cost_summary(rows)` (median and quartiles per token and size), never on one row. Bars are USD (`currency: "usd"`): GeckoTerminal's from each token's top pool as chosen when the backfill ran, Binance's from the `<SYMBOL>USDT` pair (`quote_asset: "USDT"`, closed bars only); `bars_in_sol(rows)` re-prices them against SOL's own bar from the same venue, the baseline a SOL wallet has to beat.
 
 ## 7. Incident drills
 
