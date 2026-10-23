@@ -111,8 +111,6 @@ Done: the phase 1 scorer, `pumpfun-replay --wallet-scores` ([`DONE.md`](DONE.md#
 
 ### FEAT-65 Slow Lane: Phase 0 Data (contingency, record-only)
 Done: the keyless quote / fee recorder and the bar backfill (`pumpfun-recorder --jupiter-quotes` / `--backfill-bars`, rc.3; [`DONE.md`](DONE.md#feat-65-slow-lane-phase-0-data-contingency-record-only); how to run it: [`RUNBOOK.md` §6.4](RUNBOOK.md#64-slow-lane-data-recorder-feat-65-phase-0-from-rc3)). The lane itself starts only if the rc.3 Pump.fun lanes are NO-GO too ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)).
-- [ ] Run the quote recorder next to the rc.3 runs and keep it running until the rc.3 verdict; run `--backfill-bars` once, then monthly (the public history covers about 6 months)
-- [ ] At the rc.3 verdict, read out: median and p90 `round_trip_cost_bps` per token and size, how often `price_impact_pct` or the route changes, `nonzero_p50` / `nonzero_p90` priority fees, and the share of `quote_error` rows; record it in `STRATEGY-PIVOT.md` §6 as the cost side of the FEAT-65 go / no-go
 - [ ] If FEAT-65 goes ahead: choose a bar source with more than 6 months of history (e.g. a free CoinGecko demo key) before building the backtester
 
 ## Phase 5: Platform Refactor (required before the Web UI)
