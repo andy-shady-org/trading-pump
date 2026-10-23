@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from pumpfun_trading.engines.generators import (
 )
 from pumpfun_trading.ops.logging import get_configured_console
 from pumpfun_trading.ops.redact import redact_url
+from pumpfun_trading.ops.retention import RetentionPolicy
 from pumpfun_trading.services import slow_lane
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
@@ -37,6 +39,28 @@ console = get_configured_console()
 # FEAT-65 rows live in their own directory, never next to a Pump.fun capture.
 DEFAULT_QUOTES_OUTPUT = "slow_lane/jupiter_quotes.jsonl"
 DEFAULT_BARS_OUTPUT = "slow_lane/bars.jsonl"
+# A one-off backfill is one file: the recorder's 50 MB rotation would move the
+# oldest bars into a `.1.gz` part (a full Binance download is about 100 MB).
+BACKFILL_RETENTION = RetentionPolicy(
+    max_bytes=0, max_files=1, max_age_days=0, compress_archives=False
+)
+# Binance bars get their own file, so the two venues' rows never mix.
+DEFAULT_BINANCE_BARS_OUTPUT = "slow_lane/binance_bars.jsonl"
+BAR_SOURCE_LABELS = {
+    slow_lane.BAR_VENUE: "GeckoTerminal",
+    slow_lane.BINANCE_VENUE: "Binance",
+}
+
+
+def utc_date(text: str) -> float:
+    """``YYYY-MM-DD`` (UTC midnight) as epoch seconds, for ``--bar-since``."""
+    try:
+        day = datetime.strptime(text, "%Y-%m-%d")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected a UTC date as YYYY-MM-DD, got {text!r}"
+        ) from exc
+    return day.replace(tzinfo=timezone.utc).timestamp()
 
 
 def build_record_parser(
@@ -61,7 +85,8 @@ def build_record_parser(
         help=(
             "Destination path for the .jsonl dataset (default: market_replay.jsonl; "
             f"{DEFAULT_QUOTES_OUTPUT} with --jupiter-quotes; "
-            f"{DEFAULT_BARS_OUTPUT} with --backfill-bars)"
+            f"{DEFAULT_BARS_OUTPUT} with --backfill-bars; "
+            f"{DEFAULT_BINANCE_BARS_OUTPUT} with --bar-source binance)"
         ),
     )
     parser.add_argument(
@@ -138,7 +163,7 @@ def build_record_parser(
     slow.add_argument(
         "--backfill-bars",
         action="store_true",
-        help="Download OHLCV bars from GeckoTerminal for the token list, then exit",
+        help="Download OHLCV bars for the token list (source: --bar-source), then exit",
     )
     slow.add_argument(
         "--tokens",
@@ -165,7 +190,8 @@ def build_record_parser(
         default=None,
         help="Minimum seconds between API requests (default: "
         f"{slow_lane.DEFAULT_QUOTE_REQUEST_GAP_SECONDS:g} for quotes, "
-        f"{slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS:g} for bars)",
+        f"{slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS:g} for GeckoTerminal bars, "
+        f"{slow_lane.DEFAULT_BINANCE_REQUEST_GAP_SECONDS:g} for Binance bars)",
     )
     slow.add_argument(
         "--no-fee-samples",
@@ -180,10 +206,36 @@ def build_record_parser(
         help="Comma-separated bar timeframes: day, hour, minute (default: %(default)s)",
     )
     slow.add_argument(
+        "--bar-source",
+        choices=slow_lane.BAR_SOURCES,
+        default=slow_lane.BAR_VENUE,
+        help="Bar provider for --backfill-bars: geckoterminal (top Solana pool, "
+        "about 6 months public) or binance (<SYMBOL>USDT spot klines since "
+        "listing) (default: %(default)s)",
+    )
+    slow.add_argument(
+        "--bar-base-url",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="Bar API host override (default: "
+        f"{slow_lane.GECKOTERMINAL_URL} or {slow_lane.BINANCE_URL}; e.g. "
+        "https://api.binance.com when the market-data host is blocked)",
+    )
+    slow.add_argument(
         "--bar-max-pages",
         type=int,
-        default=6,
-        help="Pages of 1,000 bars per token and timeframe (default: %(default)s)",
+        default=None,
+        help="Pages of 1,000 bars per token and timeframe (default: "
+        f"{slow_lane.DEFAULT_BAR_MAX_PAGES} for GeckoTerminal, "
+        f"{slow_lane.DEFAULT_BINANCE_MAX_PAGES} for Binance)",
+    )
+    slow.add_argument(
+        "--bar-since",
+        type=utc_date,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Binance only: first bar date, UTC (default: each pair's listing)",
     )
     return parser
 
@@ -303,53 +355,120 @@ async def run_jupiter_quotes(args: argparse.Namespace, output_path: Path) -> Non
 
 async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None:
     """FEAT-65 phase 0: one-off OHLCV download for the token list."""
+    source = getattr(args, "bar_source", None) or slow_lane.BAR_VENUE
+    binance = source == slow_lane.BINANCE_VENUE
+    since = getattr(args, "bar_since", None)
+    if since is not None and not binance:
+        console.print(
+            "[red]--bar-since needs --bar-source binance "
+            "(GeckoTerminal pages back from today).[/red]"
+        )
+        raise SystemExit(2)
     tokens = slow_lane.load_token_list(getattr(args, "tokens", None))
     timeframes = [t.strip() for t in str(args.bar_timeframes).split(",") if t.strip()]
     gap = getattr(args, "request_gap", None)
+    max_pages = getattr(args, "bar_max_pages", None)
+    if max_pages is None:
+        max_pages = (
+            slow_lane.DEFAULT_BINANCE_MAX_PAGES
+            if binance
+            else slow_lane.DEFAULT_BAR_MAX_PAGES
+        )
+    if gap is None:
+        gap = (
+            slow_lane.DEFAULT_BINANCE_REQUEST_GAP_SECONDS
+            if binance
+            else slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS
+        )
+    base_url = getattr(args, "bar_base_url", None) or (
+        slow_lane.BINANCE_URL if binance else slow_lane.GECKOTERMINAL_URL
+    )
     http = slow_lane.AiohttpJson()
     recorder = ReplayRecorder(
         output_path=output_path,
         batch_size=max(args.batch_size, 500),
         flush_interval_seconds=args.flush_interval,
+        policy=BACKFILL_RETENTION,
+    )
+    since_text = (
+        datetime.fromtimestamp(since, tz=timezone.utc).strftime("%Y-%m-%d")
+        if since is not None
+        else "listing"
     )
     console.print(
         Panel(
-            f"[bold cyan]GeckoTerminal Bar Backfill (FEAT-65)[/bold cyan]\n"
+            f"[bold cyan]{BAR_SOURCE_LABELS[source]} Bar Backfill (FEAT-65)[/bold cyan]\n"
             f"Tokens: [yellow]{len(tokens)}[/yellow] | "
             f"Timeframes: [yellow]{', '.join(timeframes)}[/yellow] | "
-            f"Max pages: [yellow]{args.bar_max_pages}[/yellow]\n"
+            f"Max pages: [yellow]{max_pages}[/yellow]"
+            + (f" | Since: [yellow]{since_text}[/yellow]" if binance else "")
+            + f"\nHost: [magenta]{redact_url(base_url)}[/magenta]\n"
             f"Output: [magenta]{output_path}[/magenta]",
             title="Slow-lane data",
         )
     )
     await recorder.start()
     try:
-        stats = await slow_lane.backfill_bars(
-            slow_lane.GeckoTerminalClient(http),
-            recorder,
-            tokens=tokens,
-            timeframes=timeframes,
-            max_pages=args.bar_max_pages,
-            request_gap_seconds=(
-                slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS if gap is None else gap
-            ),
-        )
+        if binance:
+            stats = await slow_lane.backfill_binance_bars(
+                slow_lane.BinanceClient(http, base_url=base_url),
+                recorder,
+                tokens=tokens,
+                timeframes=timeframes,
+                max_pages=max_pages,
+                since=since,
+                request_gap_seconds=gap,
+            )
+        else:
+            stats = await slow_lane.backfill_bars(
+                slow_lane.GeckoTerminalClient(http, base_url=base_url),
+                recorder,
+                tokens=tokens,
+                timeframes=timeframes,
+                max_pages=max_pages,
+                request_gap_seconds=gap,
+            )
     finally:
         await recorder.close()
         await http.close()
+    source_rows = (
+        [
+            ("Pairs missing", str(stats.pairs_missing)),
+            ("Skipped (no Binance pair)", str(stats.skipped)),
+        ]
+        if binance
+        else [("Pools missing", str(stats.pools_missing))]
+    )
     _summary(
         "Bar Backfill Summary",
         [
             ("Tokens", str(stats.tokens)),
-            ("Pools missing", str(stats.pools_missing)),
+            *source_rows,
             ("Bars", str(stats.bars)),
             ("Requests", str(stats.requests)),
-            ("History limit reached", str(stats.history_limited)),
+            *(
+                []
+                if binance
+                else [("History limit reached", str(stats.history_limited))]
+            ),
+            ("Page limit reached", str(stats.page_limited)),
             ("Errors", str(stats.errors)),
             *(("Failed", failure) for failure in stats.failures),
             ("Output File", str(output_path.resolve())),
         ],
     )
+    if stats.page_limited:
+        console.print(
+            "[yellow]Some series hit --bar-max-pages with bars left; "
+            "raise it to fetch the rest.[/yellow]"
+        )
+    if stats.blocked_status is not None:
+        console.print(
+            f"[red]Binance refused this host (HTTP {stats.blocked_status}: "
+            "403 = firewall, 418 = IP ban after rate limiting, 451 = restricted "
+            "region); the run stopped. Try another network or --bar-base-url "
+            "(RUNBOOK §6.4).[/red]"
+        )
 
 
 def run_record_cli(args: argparse.Namespace) -> None:
@@ -363,7 +482,12 @@ def run_record_cli(args: argparse.Namespace) -> None:
             pass
         return
     if getattr(args, "backfill_bars", False):
-        asyncio.run(run_backfill_bars(args, Path(output or DEFAULT_BARS_OUTPUT)))
+        default_bars = (
+            DEFAULT_BINANCE_BARS_OUTPUT
+            if getattr(args, "bar_source", None) == slow_lane.BINANCE_VENUE
+            else DEFAULT_BARS_OUTPUT
+        )
+        asyncio.run(run_backfill_bars(args, Path(output or default_bars)))
         return
     output_path = Path(output or "market_replay.jsonl")
 
