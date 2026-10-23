@@ -2068,3 +2068,69 @@ def test_portfolio_breaker_uses_the_bot_clock_when_it_has_one() -> None:
     bot.now_timestamp = lambda: "soon"
     evaluate_portfolio_circuit_breaker(bot)
     assert other.last_reset_date_utc == DailyEquityTracker.get_current_utc_date()
+
+
+@pytest.mark.regression("BUG-144")
+def test_ratchet_floor_ignores_trivial_gains_and_arms_past_the_minimum() -> None:
+    """The rc.3 case: +0.0107 SOL realized on 2 SOL halted the whole day."""
+
+    def tracker(min_gain: float) -> DailyEquityTracker:
+        t = DailyEquityTracker(
+            starting_equity_sol=2.0,
+            drawdown_reference_mode="adaptive_ratchet",
+            profit_ratchet_ratio=0.60,
+            profit_drawdown_tolerance_pct=0.45,
+        )
+        t.record_realized_trade(0.0107)
+        t.record_realized_trade(-0.0026)
+        return t
+
+    def check(t: DailyEquityTracker, equity: float, min_gain: float) -> bool:
+        locked, _ = t.evaluate_circuit_breaker(
+            max_daily_drawdown_pct=0.5,
+            emergency_hard_lock_hours=24.0,
+            current_wallet_balance_sol=equity,
+            profit_ratchet_min_gain_pct=min_gain,
+        )
+        return locked
+
+    # Before the fix (0 = arm on any gain): a 0.0007 SOL dip halts buying.
+    assert check(tracker(0.0), 2.0057, 0.0) is True
+    # 0.54% of the starting equity is below the 2% minimum: no floor.
+    small = tracker(0.02)
+    assert check(small, 2.0057, 0.02) is False
+    assert small.effective_baseline_sol == pytest.approx(2.0)
+
+    # Past the minimum (+0.06 SOL = 3%) the floor arms at start + 60% of the peak.
+    small.record_realized_trade(0.06)
+    assert small.effective_baseline_sol == pytest.approx(2.0 + 0.6 * 0.0681)
+    assert check(small, 2.03, 0.02) is True
+    assert small.circuit_breaker_action == CircuitBreakerAction.HALT_NEW_BUYS
+
+
+@pytest.mark.regression("BUG-144")
+def test_ratchet_min_gain_survives_a_restart_and_comes_from_the_config() -> None:
+    from types import SimpleNamespace as NS
+
+    from pumpfun_trading.bot.risk import evaluate_portfolio_circuit_breaker
+
+    tracker = DailyEquityTracker(profit_ratchet_min_gain_pct=0.05)
+    restored = DailyEquityTracker.from_dict(tracker.to_dict())
+    assert restored.profit_ratchet_min_gain_pct == 0.05
+    legacy = tracker.to_dict()
+    del legacy["profit_ratchet_min_gain_pct"]
+    assert DailyEquityTracker.from_dict(legacy).profit_ratchet_min_gain_pct == 0.0
+
+    bot = NS(
+        daily_equity_tracker=DailyEquityTracker(),
+        dry_run=True,
+        wallet_balance_sol=1.0,
+        active_positions={},
+        config=NS(max_daily_drawdown_pct=0.15, profit_ratchet_min_gain_pct=0.03),
+    )
+    evaluate_portfolio_circuit_breaker(bot)
+    assert bot.daily_equity_tracker.profit_ratchet_min_gain_pct == 0.03
+    # A config without the key (or a mock) leaves the tracker's value alone.
+    bot.config = NS(max_daily_drawdown_pct=0.15, profit_ratchet_min_gain_pct=True)
+    evaluate_portfolio_circuit_breaker(bot)
+    assert bot.daily_equity_tracker.profit_ratchet_min_gain_pct == 0.03

@@ -67,7 +67,7 @@ To guard against high-volatility market crashes while avoiding false-positive lo
 When positions close with net realized profit, a configurable fraction (`profit_ratchet_ratio`, default `0.50`) permanently ratchets the **Effective Equity Baseline Floor**:
 $$\text{Baseline}_{\text{effective}} = \text{Starting Capital} + \alpha \times \max(0, \text{Peak Realized PnL Today})$$
 
-The realized PnL is today's (it resets at the 00:00 UTC rollover with the starting capital), net of fees, tips and rent. The floor uses the day's **peak** realized PnL (BUG-141), so it only moves up: +0.2 SOL realized and then a closed −0.15 SOL trade still leaves the floor at start + 0.1 SOL.
+The realized PnL is today's (it resets at the 00:00 UTC rollover with the starting capital), net of fees, tips and rent. The floor uses the day's **peak** realized PnL (BUG-141), so it only moves up: +0.2 SOL realized and then a closed −0.15 SOL trade still leaves the floor at start + 0.1 SOL. It arms only once that peak reaches `profit_ratchet_min_gain_pct` (default `0.02`) of the day's starting equity (BUG-144); below that the floor is the starting equity, so a +0.01 SOL win on a 2 SOL wallet cannot halt the rest of the day.
 
 ### B. Dual-Zone Risk Evaluation
 1. **Principal Protection Zone (`Current Equity < Starting Capital`)**:
@@ -156,6 +156,7 @@ When network congestion or sudden volatility causes a sell transaction to fail:
 | `emergency_hard_lock_hours` | `24` | Hours | Length of an emergency lock, across the 00:00 UTC rollover; `0` ends it at the rollover. |
 | `drawdown_reference_mode` | `"adaptive_ratchet"` | String | Reference mode (`"adaptive_ratchet"`, `"baseline"`, `"trailing_hwm"`). |
 | `profit_ratchet_ratio` | `0.50` | Float | Fraction of realized profits ratcheted into guaranteed baseline floor. |
+| `profit_ratchet_min_gain_pct` | `0.02` | Float | The floor arms only once the day's peak realized gain reaches this share of the day's starting equity (`0` = on any gain; BUG-144). |
 | `profit_drawdown_tolerance_pct` | `35.0` | Percent | Retracement tolerance from peak equity in Profit Run Zone. |
 | `seen_mint_cooldown_seconds` | `300` | Seconds | Cooldown before re-evaluating a previously closed token. |
 | `max_slippage_bps` | `250` | Basis Points | Maximum allowable slippage (`250` = 2.5%). |

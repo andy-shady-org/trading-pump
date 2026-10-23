@@ -893,7 +893,7 @@ To eliminate false-positive circuit breaker lockouts after large profitable runs
    * If total equity drops below $\text{Starting Capital} \times (1 - \text{max\_daily\_drawdown\_pct})$, trigger emergency circuit breaker.
 3. **Profit Run Zone (`Current Equity >= Starting Capital`)**:
    * Applies relaxed trailing drawdown tolerance (`profit_drawdown_tolerance_pct`, default `35% - 40%`) against peak equity.
-   * Halts new buys when equity falls below the ratchet floor (starting equity + `profit_ratchet_ratio` × today's peak realized profit, BUG-127 / BUG-141).
+   * Halts new buys when equity falls below the ratchet floor (starting equity + `profit_ratchet_ratio` × today's peak realized profit, BUG-127 / BUG-141), once that peak is at least `profit_ratchet_min_gain_pct` (2%) of the starting equity (BUG-144).
    * Prevents premature session lockouts when volatile moonbags retrace after multi-tier take-profits.
 4. **Tiered Two-Stage Action**:
    * **Stage 1 (`halt_new_buys`)**: Soft halt suppressing new buys while open positions exit orderly via trailing stops.

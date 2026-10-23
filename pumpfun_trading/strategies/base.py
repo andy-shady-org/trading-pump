@@ -205,6 +205,9 @@ class TradingBotConfig:
     replay_log_path: str | None = None
     drawdown_reference_mode: str = "adaptive_ratchet"
     profit_ratchet_ratio: float = 0.50
+    # The ratchet floor arms only once the day's peak realized gain is at
+    # least this share of the day's starting equity (BUG-144); 0 = always.
+    profit_ratchet_min_gain_pct: float = 0.02
     profit_drawdown_tolerance_pct: float = 0.35
     enable_diagnostic_events: bool = True
     event_log_path: str = "events.jsonl"
@@ -407,6 +410,7 @@ class TradingBotConfig:
             "replay_log_path": self.replay_log_path,
             "drawdown_reference_mode": self.drawdown_reference_mode,
             "profit_ratchet_ratio": self.profit_ratchet_ratio,
+            "profit_ratchet_min_gain_pct": self.profit_ratchet_min_gain_pct,
             "profit_drawdown_tolerance_pct": self.profit_drawdown_tolerance_pct,
             "enable_diagnostic_events": self.enable_diagnostic_events,
             "event_log_path": self.event_log_path,

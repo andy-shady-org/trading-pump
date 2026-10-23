@@ -650,3 +650,20 @@ def test_invalid_momentum_band_fails_fast_in_confirmed_mode(
         resolve_strategy_config("momentum", overrides=override)
     # The band is not validated for launch entries.
     resolve_strategy_config("momentum", overrides={**override, "entry_mode": "launch"})
+
+
+@pytest.mark.regression("BUG-144")
+def test_profit_ratchet_min_gain_default_and_bounds(tmp_path: Path) -> None:
+    assert resolve_strategy_config("momentum").profit_ratchet_min_gain_pct == 0.02
+    path = tmp_path / "cfg.json"
+    path.write_text(
+        json.dumps(
+            {"strategy_preset": "momentum", "profit_ratchet_min_gain_pct": 0.05}
+        ),
+        encoding="utf-8",
+    )
+    assert TradingBotConfig.from_file(path).profit_ratchet_min_gain_pct == 0.05
+    with pytest.raises(ValueError, match="profit_ratchet_min_gain_pct"):
+        resolve_strategy_config(
+            "balanced", overrides={"profit_ratchet_min_gain_pct": 1.5}
+        )

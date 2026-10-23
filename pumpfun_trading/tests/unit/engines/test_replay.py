@@ -1833,3 +1833,29 @@ def test_render_summary_shows_circuit_breaker_row() -> None:
     out = buf.getvalue()
     assert "circuit_breaker" in out
     assert "trips=2" in out and "refused_buys=4" in out
+
+
+@pytest.mark.regression("BUG-144")
+def test_replay_breaker_ignores_a_trivial_win_before_the_ratchet_arms() -> None:
+    # +0.002 realized on a 1 SOL wallet (0.2%), then an open position marked
+    # down 0.0015: under the old floor (start + 50% of 0.002) that halted buys.
+    snaps = [
+        _snap(MINT_A, 1.0, 0.0, buy=True),
+        _snap(MINT_A, 1.2, 5.0, sell_signal=True),
+        _snap(MINT_B, 1.0, 10.0, buy=True),
+        _snap(MINT_B, 0.85, 20.0),
+        _snap(MINT_C, 1.0, 30.0, buy=True),
+    ]
+    armed_always = _breaker_engine(
+        cash=1.0,
+        stop_loss=0.3,
+        profit_ratchet_ratio=0.5,
+        profit_ratchet_min_gain_pct=0.0,
+    ).run(snaps)
+    assert armed_always["circuit_breaker"]["refused_buys"] == 1
+
+    default = _breaker_engine(cash=1.0, stop_loss=0.3, profit_ratchet_ratio=0.5).run(
+        snaps
+    )
+    assert default["circuit_breaker"]["trips"] == 0
+    assert default["buy_count"] == 3
