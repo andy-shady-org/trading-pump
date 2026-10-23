@@ -384,6 +384,7 @@ def test_compare_audit_prints_provenance_and_replay_skips_the_stamp(
     ):
         replay_cli.run_replay_cli(_args(capture, audit, config=str(config_file)))
 
-    text = console.export_text()
+    # tmp_path is long on macOS (/private/var/folders/...), so Rich wraps the note.
+    text = " ".join(console.export_text().split())
     assert "run 2026-10-15T00:00:00Z: 0.3.0rc4 @ abcdef12" in text
     assert "parity compares different settings" in text
