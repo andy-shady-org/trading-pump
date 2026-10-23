@@ -151,6 +151,7 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-141** | Medium | Risk / Circuit breaker | **RESOLVED** | The profit ratchet floor followed today's **net** realized PnL, so profit given back through closed trades lowered the floor with it; it now follows the day's peak realized PnL |
 | **BUG-142** | Medium | Docs / Config | **RESOLVED** | `ENVIRONMENTAL-VARIABLES.md`, `USER-GUIDE.md` and `STRATEGY.md` listed 51 environment variables no code reads, `PUMPFUN_DRY_RUN` among them; removed from the manuals, warned about at startup (`PUMPFUN_DRY_RUN` alerted), and a test keeps the manual's variable table in line with the code |
 | **BUG-143** | Low | Tests / Isolation | **RESOLVED** | The suite wrote every test bot's diagnostic events to `events.jsonl` in the working directory, and a test posted a real Discord webhook from an alert worker thread, past the DNS guard (through an HTTPS proxy, or after the per-test guard was undone) |
+| **BUG-144** | Medium | Risk / Circuit breaker | **RESOLVED** | The profit ratchet floor armed on any realized gain, so a +0.011 SOL win on a 2 SOL wallet and a 0.0007 SOL dip halted buying for the rest of the UTC day; new `profit_ratchet_min_gain_pct` (default 0.02) arms it only past a minimum gain |
 
 ---
 
@@ -1271,4 +1272,16 @@ Found while building the rc.4 pre-flight items (FEAT-66 to FEAT-69) on `rc4/impl
 * **Impact:** low: a stray file in the checkout, and a test that could post to a real webhook URL from a developer's or CI machine. No secrets were involved (the URL is a placeholder).
 * **Resolution:** `conftest.py` points `PUMPFUN_EVENT_LOG_PATH` into each test's `tmp_path`; removes `HTTP(S)_PROXY` / `ALL_PROXY` (both cases) in every test so requests go through the DNS guard; and installs the guard for the whole session in `pytest_configure`, so a background thread that outlives its test is still blocked. The test now captures its alerts instead of sending them. `test_event_logger_from_env` clears the new variable to test the config path.
 * **Verification:** `regression("BUG-143")` test in `unit/bot/test_factory.py`: a test bot's event log is under `tmp_path`, no proxy variable is set and resolving `discord.com` raises. A full run leaves no `events.jsonl` or `bot.log` in the working directory, and a socket spy over the whole suite shows connections only to local test servers.
+
+### BUG-144: Ratchet Floor Arms On Trivial Gains [RESOLVED]
+* **Location:** `pumpfun_trading/bot/risk.py` (`DailyEquityTracker.effective_baseline_sol`, `evaluate_circuit_breaker`, `evaluate_portfolio_circuit_breaker`), `pumpfun_trading/strategies/base.py` / `presets.py`, `pumpfun_trading/engines/replay.py`
+* **Description:** found replaying the rc.3 capture with the rc.4 breaker (STRATEGY-PIVOT §6.11). The floor is start + `profit_ratchet_ratio` × the day's peak realized gain, and it applied from the first lamport of profit. With the momentum preset's ratio 0.60, +0.0107 SOL realized on a 2 SOL wallet set the floor 0.0064 SOL above the start; an open position marked 0.0007 SOL below it halted new buys for the rest of the UTC day. That happened twice in 45 h and refused 719 replayed buys.
+* **Impact:** medium: `configs/canary.json` takes the preset's ratio, so a Stage 0 or Stage 1 run would sit halted most of each day after its first small win. The floor is meant to protect a winning day, not a rounding error.
+* **Resolution:** new config key `profit_ratchet_min_gain_pct` (default `0.02`, validated to 0–1, in the resolver). The tracker keeps it (persisted, `0` for status files written before), and `effective_baseline_sol` returns the starting equity until the day's peak realized gain reaches that share of the starting equity. Once armed, the floor works as in BUG-127 / BUG-141. The bot's breaker and the replay breaker pass the config value. `configs/capture.json` and `configs/pregrad_pilot.json` keep the ratchet off (`profit_ratchet_ratio: 0.0`).
+* **Verification:** `regression("BUG-144")` tests in:
+  * `unit/bot/test_risk.py`: the rc.3 case halts with `0` and not with `0.02`; +3% arms the floor at start + 60% of the peak; the value survives `to_dict` / `from_dict`; the bot's breaker takes it from the config.
+  * `unit/strategies/test_presets.py`: default 0.02, read from a config file, bounds.
+  * `unit/engines/test_replay.py`: a 0.2% win no longer refuses a buy.
+
+  Re-run on the rc.3 capture with the breaker on: 0 trips, 123 positions, −0.197 SOL, the same as the replay without the breaker.
 

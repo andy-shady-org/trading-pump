@@ -17,6 +17,7 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - `pumpfun-drill` / `pumpfun ops drill`: four scripted risk drills on a paper bot with a simulated clock, no network and a throwaway key (cumulative cap with restart and `SIGUSR1` reset, emergency lock across midnight, live start with the balance RPC down, slow tier sell); `--report` JSON, exit code 1 on failure. `TradingBot.clock` drives the breaker checks (FEAT-69).
 
 ### Changed
+- New config key `profit_ratchet_min_gain_pct` (default `0.02`, `0` = old behaviour): the profit ratchet floor arms only once the day's peak realized gain reaches that share of the starting equity (BUG-144).
 - Terminal UI: `Last event` is shown only in the Health Check panel; the duplicate row in Bot Status is gone (panel heights unchanged).
 - `pumpfun-replay --config` / `--preset` starts from the paper bot's wallet (`paper_starting_balance_sol`, else reserve + 10 buys) instead of 100 SOL when `--initial-cash` is not given, and runs the circuit breaker. Replays of `configs/canary.json` can now halt as paper would; `--no-circuit-breaker --initial-cash 100` reproduces earlier results. Sweeps, `--keep`, shadow tools and the optimizer are unchanged (FEAT-66).
 - New config key `max_cumulative_drawdown_pct` (default `0.30`, `0` = off; `0` in `configs/capture.json` and `configs/pregrad_pilot.json`): a loss cap across days and locks from a persisted reference equity. Breaching it liquidates and sets the operator pause; resuming with `SIGUSR1` resets it (BUG-128).
@@ -40,6 +41,7 @@ Fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs
 - FEAT-65 sell quotes record their gap after the buy quote; cost-distribution and SOL-terms bar helpers (BUG-139).
 - A take-profit tier queued behind a slow sell of the same tier was sold twice (BUG-140).
 - The profit ratchet floor fell with closed losses after a win (BUG-141).
+- The profit ratchet floor halted buying for the rest of the day after a trivial win and a tiny dip: +0.011 SOL realized on a 2 SOL wallet, then 0.0007 SOL under the floor (BUG-144).
 - 51 documented environment variables were never read, `PUMPFUN_DRY_RUN` among them; they are gone from the manuals and `pumpbot` warns at startup when one is set (BUG-142).
 - The test suite wrote `events.jsonl` into the working directory and one test posted a real webhook past the DNS guard; event logs now go to the test's temp dir, proxy variables are removed and the DNS guard covers the whole session (BUG-143).
 

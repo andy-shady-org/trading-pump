@@ -29,6 +29,9 @@ class DailyEquityTracker:
     realized_daily_pnl_sol: float = 0.0
     drawdown_reference_mode: str = "adaptive_ratchet"
     profit_ratchet_ratio: float = 0.50
+    # Peak realized gain, as a share of starting equity, that arms the
+    # ratchet floor (BUG-144). 0 arms it on any gain.
+    profit_ratchet_min_gain_pct: float = 0.0
     profit_drawdown_tolerance_pct: float = 0.35
     circuit_breaker_action: CircuitBreakerAction = CircuitBreakerAction.NONE
     last_reset_date_utc: str = ""
@@ -60,8 +63,10 @@ class DailyEquityTracker:
         Calculates the ratcheted baseline equity floor:
         Starting Capital + profit_ratchet_ratio * max(0, peak realized PnL today).
         The peak, not the current realized PnL, so closed losses after a win
-        do not lower the floor (BUG-141). Guaranteed >= starting_equity_sol
-        and >= 0.0.
+        do not lower the floor (BUG-141). The floor stays at the starting
+        equity until that peak reaches ``profit_ratchet_min_gain_pct`` of it,
+        so a trivial win cannot halt the day (BUG-144). Guaranteed
+        >= starting_equity_sol and >= 0.0.
         """
         if self.drawdown_reference_mode == "adaptive_ratchet":
             realized_gain = max(
@@ -69,6 +74,9 @@ class DailyEquityTracker:
                 float(self.peak_realized_daily_pnl_sol),
                 float(self.realized_daily_pnl_sol),
             )
+            min_gain = max(0.0, float(self.profit_ratchet_min_gain_pct or 0.0))
+            if realized_gain < min_gain * max(0.0, self.starting_equity_sol):
+                return max(0.0, self.starting_equity_sol)
             ratchet = (
                 self.starting_equity_sol
                 + float(self.profit_ratchet_ratio) * realized_gain
@@ -252,6 +260,7 @@ class DailyEquityTracker:
         profit_ratchet_ratio: float | None = None,
         profit_drawdown_tolerance_pct: float | None = None,
         max_cumulative_drawdown_pct: float | None = None,
+        profit_ratchet_min_gain_pct: float | None = None,
     ) -> tuple[bool, str]:
         """
         Evaluates portfolio drawdown against threshold using dual-zone risk mechanics.
@@ -269,6 +278,8 @@ class DailyEquityTracker:
             self.drawdown_reference_mode = drawdown_reference_mode
         if profit_ratchet_ratio is not None:
             self.profit_ratchet_ratio = profit_ratchet_ratio
+        if profit_ratchet_min_gain_pct is not None:
+            self.profit_ratchet_min_gain_pct = float(profit_ratchet_min_gain_pct)
         if profit_drawdown_tolerance_pct is not None:
             self.profit_drawdown_tolerance_pct = profit_drawdown_tolerance_pct
 
@@ -465,6 +476,7 @@ class DailyEquityTracker:
             "effective_baseline_sol": self.effective_baseline_sol,
             "drawdown_reference_mode": self.drawdown_reference_mode,
             "profit_ratchet_ratio": self.profit_ratchet_ratio,
+            "profit_ratchet_min_gain_pct": self.profit_ratchet_min_gain_pct,
             "profit_drawdown_tolerance_pct": self.profit_drawdown_tolerance_pct,
             "circuit_breaker_action": (
                 self.circuit_breaker_action.value
@@ -500,6 +512,9 @@ class DailyEquityTracker:
                 data.get("drawdown_reference_mode", "adaptive_ratchet")
             ),
             profit_ratchet_ratio=float(data.get("profit_ratchet_ratio", 0.50)),
+            profit_ratchet_min_gain_pct=float(
+                data.get("profit_ratchet_min_gain_pct", 0.0) or 0.0
+            ),
             profit_drawdown_tolerance_pct=float(
                 data.get("profit_drawdown_tolerance_pct", 0.35)
             ),
@@ -579,6 +594,11 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
     lock_hours = float(getattr(cfg, "emergency_hard_lock_hours", 24.0))
     mode = getattr(cfg, "drawdown_reference_mode", None)
     ratchet_ratio = getattr(cfg, "profit_ratchet_ratio", None)
+    ratchet_min_gain = getattr(cfg, "profit_ratchet_min_gain_pct", None)
+    if not isinstance(ratchet_min_gain, (int, float)) or isinstance(
+        ratchet_min_gain, bool
+    ):
+        ratchet_min_gain = None
     profit_tolerance = getattr(cfg, "profit_drawdown_tolerance_pct", None)
     cumulative_cap = float(getattr(cfg, "max_cumulative_drawdown_pct", 0.0) or 0.0)
 
@@ -602,6 +622,7 @@ def evaluate_portfolio_circuit_breaker(bot: Any) -> tuple[bool, str]:
         profit_ratchet_ratio=ratchet_ratio,
         profit_drawdown_tolerance_pct=profit_tolerance,
         max_cumulative_drawdown_pct=cumulative_cap,
+        profit_ratchet_min_gain_pct=ratchet_min_gain,
     )
     if is_locked and reason:
         bot._last_event = f"circuit breaker: {reason}"

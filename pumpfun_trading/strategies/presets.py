@@ -706,6 +706,9 @@ def resolve_strategy_config(
             base.get("drawdown_reference_mode", "adaptive_ratchet")
         ),
         profit_ratchet_ratio=float(base.get("profit_ratchet_ratio", 0.50)),
+        profit_ratchet_min_gain_pct=float(
+            base.get("profit_ratchet_min_gain_pct", 0.02)
+        ),
         profit_drawdown_tolerance_pct=float(
             base.get("profit_drawdown_tolerance_pct", 0.35)
         ),
@@ -843,6 +846,8 @@ def resolve_strategy_config(
         )
     if not 0.0 <= config.profit_ratchet_ratio <= 1.0:
         raise ValueError("profit_ratchet_ratio must be between 0.0 and 1.0.")
+    if not 0.0 <= config.profit_ratchet_min_gain_pct <= 1.0:
+        raise ValueError("profit_ratchet_min_gain_pct must be between 0.0 and 1.0.")
     if not 0.0 <= config.max_cumulative_drawdown_pct < 1.0:
         raise ValueError(
             "max_cumulative_drawdown_pct must be between 0.0 (off) and 1.0."

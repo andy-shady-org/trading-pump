@@ -855,6 +855,9 @@ class PaperTradingEngine:
             max_cumulative_drawdown_pct=float(
                 getattr(cfg, "max_cumulative_drawdown_pct", 0.0) or 0.0
             ),
+            profit_ratchet_min_gain_pct=float(
+                getattr(cfg, "profit_ratchet_min_gain_pct", 0.0) or 0.0
+            ),
         )
 
     def _note_breaker_trip(
