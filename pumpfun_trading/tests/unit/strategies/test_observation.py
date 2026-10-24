@@ -6,13 +6,17 @@ import pytest
 
 from pumpfun_trading.strategies.observation import (
     DISCOVERY_SOURCE,
+    LAUNCH_SAMPLE_SOURCE,
     OBSERVATION_END_EVENT,
     OBSERVATION_START_EVENT,
+    POST_EXIT_SOURCE,
     REJECT_SAMPLE_SOURCE,
     SOL_QUOTE_MINT,
     CurveObservationList,
     discovery_candidates,
+    in_launch_sample,
     in_reject_sample,
+    in_sample,
     is_record_only_row,
 )
 
@@ -136,3 +140,30 @@ def test_discovery_candidates_keep_pump_sol_curves_inside_the_band() -> None:
     ) == [("w", pytest.approx(1_792_569_078.0))]
     assert discovery_candidates("oops", min_real_sol=40.0, max_real_sol=85.0) == []
     assert discovery_candidates({}, min_real_sol=40.0, max_real_sol=85.0) == []
+
+
+def test_rc5_launch_sample_and_post_exit_polls_are_record_only() -> None:
+    assert is_record_only_row({"event": "curve_poll", "source": LAUNCH_SAMPLE_SOURCE})
+    assert is_record_only_row({"event": "curve_poll", "source": POST_EXIT_SOURCE})
+
+
+def test_launch_sample_is_deterministic_and_independent_of_the_reject_sample() -> None:
+    mints = [f"mint{i}pump" for i in range(5000)]
+    launch = {m for m in mints if in_launch_sample(m, 0.2)}
+    reject = {m for m in mints if in_reject_sample(m, 0.2)}
+    assert 0.17 < len(launch) / len(mints) < 0.23
+    assert launch == {m for m in mints if in_launch_sample(m, 0.2)}
+    # Salted: the two samples overlap about as two independent 20% draws (4%).
+    assert 0.02 < len(launch & reject) / len(mints) < 0.06
+    # The reject sample is the unsalted rc.3 draw, unchanged.
+    assert reject == {m for m in mints if in_sample(m, 0.2)}
+    assert not in_launch_sample(mints[0], 0.0) and in_launch_sample(mints[0], 1.0)
+
+
+def test_entry_tags_are_kept_and_exported() -> None:
+    book = _book(source=POST_EXIT_SOURCE)
+    entry = book.add("M", now=1.0, tags={"exit_reason": "stop_loss_hit"})
+    assert entry is not None and entry.tags == {"exit_reason": "stop_loss_hit"}
+    assert entry.to_dict()["tags"] == {"exit_reason": "stop_loss_hit"}
+    plain = book.add("N", now=1.0)
+    assert plain is not None and plain.to_dict()["tags"] == {}

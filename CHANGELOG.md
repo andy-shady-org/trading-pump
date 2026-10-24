@@ -8,6 +8,39 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+## [0.3.0-rc.5] - 2026-10-24
+
+Fifth release candidate of v0.3.0 (this release branch, off `main` at the v0.3.0-rc.4 merge): a **data release**. rc.3 recorded a price path for only 6,571 of its 47,523 launches (13.8%), the coins its screen passed or the 20% of rejects it sampled, and stopped watching every coin at the moment it was sold. So the ideas raised after the rc.3 read-out (buy at launch with the screen off, hold through a first-minute dip, take +10% before the fall) could not be tested on the capture. rc.5 records a sample of all launches from creation and follows every closed position after its sell (FEAT-72). Nothing changes what the bot buys or sells; the new rows are record-only and replay skips them.
+
+This is a **pre-release for paper testing only**, like rc.1 to rc.4. It must not run on a funded wallet.
+
+### Added
+- Launch sample (FEAT-72): `launch_sample_pct` (0 = off), `launch_sample_max_mints` (300), `launch_sample_ttl_seconds` (900), `launch_sample_poll_interval_seconds` (5). A salted, deterministic share of every standard Pump.fun launch is polled from its create event as `curve_poll` rows with `source: "launch_sample"`, before screening and every entry gate, in both entry modes; `observation_start` carries `created_at`, `market_cap_sol`, `entry_mode` and the create event's `creator`, `creator_buy_sol`, `creator_buy_tokens`, `symbol` and `name`.
+- Post-exit tracking (FEAT-72): `post_exit_observation_seconds` (0 = off), `post_exit_max_mints` (100), `post_exit_poll_interval_seconds` (2). Every fully closed position keeps being polled as `source: "post_exit"` rows tagged with `exit_reason`, `entry_market_cap_sol` and `exit_market_cap_sol`; `observation_start` adds `strategy` and `held_seconds`.
+- Both hooks run inside the buy and sell paths, so they catch, count (`observation_hook_errors`) and log their own failures and never raise into trading.
+- `watch_list.launch_sample` / `watch_list.post_exit` in `bot_status.json`, counters `launch_sampled` and `post_exit_observed`; `jq` recipes in [`RUNBOOK.md` §6.3](docs/dev/RUNBOOK.md); [`FEATURES.md` §42](docs/FEATURES.md#42-launch-sample-and-post-exit-tracking-feat-72-rc5).
+
+### Changed
+- `configs/capture.json` samples 20% of launches and follows each closed position for 15 minutes; `configs/pregrad_pilot.json` follows its closed positions (the launch sample runs once per capture + pilot pair).
+- The record-only observation task also runs in `launch` entry mode when a rc.5 list is on (the rc.3 reject sample and discovery scan stay confirmed-mode only), and polls at the shortest interval of the lists that are on (at least 1 s).
+- A mint in several observation lists is read once per poll and written once per list; before, only the first list got a row (no rc.3 data was lost: discovery already skipped reject-sampled mints).
+
+### Known issues
+- The trades of sampled and exited coins (buyer wallets, sizes, timing) are still not recorded, only their curve state (FEAT-72 **Not built**).
+- Capture volume: at rc.3's ~1,050 launches an hour, a 20% sample adds about 38,000 rows an hour (~0.9 M a day); post-exit adds up to 450 rows per closed position at the 2 s interval, about 0.5 GB a day for a busy launch-mode run. The default replay retention (`PUMPFUN_REPLAY_BACKUP_COUNT` 10 × `PUMPFUN_REPLAY_MAX_BYTES` 50 MB) holds only about a day of that before rotation deletes the oldest part; set `PUMPFUN_REPLAY_BACKUP_COUNT` to 40 or more (the runtime `.envrc` uses 40) and archive each run as it ends. RPC load: about one extra `getMultipleAccounts` call every 2 s (100 accounts per call).
+- The momentum and pre-graduation lanes are NO-GO (rc.3, [`STRATEGY-PIVOT.md` §6.11](docs/dev/STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)); rc.5 is not a Stage 0 build. Everything listed under rc.4's known issues still applies.
+
+### Release record – v0.3.0-rc.5 (2026-10-24)
+- Commit: the release commit on `release/v0.3.0rc5` (FEAT-72, configs, docs, `pyproject.toml` → `0.3.0rc5`), branched from `fe87c61` (merge of PR #44, `release/v0.3.0rc4` → `main`)
+- Release gate: PASS on Linux (`nox -s format lint mypy tests package`: tests on 3.11, 3.12, 3.13 and 3.14); the wheel `pumpfun_trading-0.3.0rc5-py3-none-any.whl` ships 119 files, no tests, private classifier
+- Tests: 2,112 collected (20 new for FEAT-72), all passed on 3.11–3.14; coverage 97.02–97.09% (statement + branch)
+- Replay parity: new rows are record-only (`RECORD_ONLY_POLL_SOURCES`), so replay of a capture is unchanged; golden replay unchanged
+- Paper verdict (FEAT-67): `configs/verdict_rules.json` unchanged from rc.4 (rules sha256 `0a9217ce71b1e16fe87f83eed5708f12b2410414c7e54177daa802c95aea14c0`)
+- First run on this build: the 24 h launch-mode A/B in the runtime folder (configs outside the repo, see [`TODO.md`](docs/dev/TODO.md#rc5-data-launch-sample-and-post-exit-tracking-feat-72)); run `run-paper.sh` with `EXPECTED_VERSION=0.3.0rc5`
+- Capital stage after this release: 0 (paper only)
+- Stage 0 paper pilot: not started on this build
+- Sign-off: –
+
 ## [0.3.0-rc.4] - 2026-10-23
 
 Fourth release candidate of v0.3.0 (PRs #36–#43 and this release branch): a **tooling and risk release**. It ships the fixes from the 2026-10-22 code review (BUG-127 to BUG-140, [`BUGS.md` §24](docs/dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22); one branch per bug, merged on `rc4/integration`) and the rc.4 pre-flight work (`rc4/implementation`, one branch per item): the circuit breaker in replay (FEAT-66), the pre-registered paper verdict (FEAT-67), the run provenance stamp (FEAT-68), the scripted risk drills (FEAT-69) and the bugs they found (BUG-141 to BUG-143, [`BUGS.md` §25](docs/dev/BUGS.md#25-rc4-pre-flight-findings-2026-10-22)). After the rc.3 interim read-out it also fixes the over-eager ratchet floor (BUG-144) and adds Binance bars to the FEAT-65 recorder. Nothing here changes a confirmed-momentum buy decision on paper; the risk engine, live pricing and tooling change.
@@ -493,7 +526,8 @@ First tagged build (`v0.0.1-alpha` points at the same commit). Baseline for the 
 - Capital stage after this release: 0
 - Sign-off: –
 
-[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc4...HEAD
+[Unreleased]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc5...HEAD
+[0.3.0-rc.5]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc4...v0.3.0rc5
 [0.3.0-rc.4]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc3...v0.3.0rc4
 [0.3.0-rc.3]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc2...v0.3.0rc3
 [0.3.0-rc.2]: https://github.com/andy-shady-org/pumpfun-trading/compare/v0.3.0rc1...v0.3.0rc2

@@ -210,7 +210,7 @@ Full entries are in [`BUGS.md` §25](BUGS.md#25-rc4-pre-flight-findings-2026-10-
 - **[DOCS] A Documented Variable Must Be Read:** grep the code before documenting a variable, alias or default. Don't silently wire up a long-documented name; warn first.
 - **[TESTS] Proxies And Threads Bypass The DNS Guard:** keep every file a bot writes inside `tmp_path`, and capture alerts in tests (`bot._send_alert = sent.append`).
 - `pumpfun-drill` entry in the command surface: drive time through `TradingBot.clock`.
-- `docs/FEATURES.md` now runs §1–41 (§38 FEAT-66, §39 FEAT-67, §40 FEAT-68, §41 FEAT-69). The next free FEAT-ID is **FEAT-70**; the next free bug ID is **BUG-144**.
+- `docs/FEATURES.md` now runs §1–41 (§38 FEAT-66, §39 FEAT-67, §40 FEAT-68, §41 FEAT-69). The next free FEAT-ID is **FEAT-73**: FEAT-72 is the rc.5 launch sample and post-exit tracking, and FEAT-70 / FEAT-71 are taken by the funding-carry and BTC / ETH trend write-ups on the unmerged branches `docs/funding-carry-test` and `docs/btc-eth-trend-test`. The next free bug ID is **BUG-145**.
 
 Guards that fail when a rule is broken:
 - `tests/unit/test_suite_layout.py`: every source module needs `tests/unit/<pkg>/test_<module>.py`; every RESOLVED bug needs a `@pytest.mark.regression("BUG-xx")` test; every regression tag must name a bug that exists in `BUGS.md`.

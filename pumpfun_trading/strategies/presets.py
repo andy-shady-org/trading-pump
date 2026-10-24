@@ -615,6 +615,19 @@ def resolve_strategy_config(
         graduation_discovery_ttl_seconds=float(
             base.get("graduation_discovery_ttl_seconds", 7200.0)
         ),
+        launch_sample_pct=float(base.get("launch_sample_pct", 0.0)),
+        launch_sample_max_mints=int(base.get("launch_sample_max_mints", 300)),
+        launch_sample_ttl_seconds=float(base.get("launch_sample_ttl_seconds", 900.0)),
+        launch_sample_poll_interval_seconds=float(
+            base.get("launch_sample_poll_interval_seconds", 5.0)
+        ),
+        post_exit_observation_seconds=float(
+            base.get("post_exit_observation_seconds", 0.0)
+        ),
+        post_exit_max_mints=int(base.get("post_exit_max_mints", 100)),
+        post_exit_poll_interval_seconds=float(
+            base.get("post_exit_poll_interval_seconds", 2.0)
+        ),
         observation_poll_interval_seconds=float(
             base.get("observation_poll_interval_seconds", 5.0)
         ),
@@ -931,7 +944,7 @@ def _validate_entry_pipeline(config: TradingBotConfig) -> None:
 
 
 def _validate_observations(config: TradingBotConfig) -> None:
-    """Record-only observation lists (rc.3) must stay bounded."""
+    """Record-only observation lists (rc.3, rc.5) must stay bounded."""
     from pumpfun_trading.strategies.graduation import GRADUATION_REAL_SOL
 
     if not 0.0 <= config.screen_reject_sample_pct <= 1.0:
@@ -960,6 +973,20 @@ def _validate_observations(config: TradingBotConfig) -> None:
         raise ValueError("graduation_discovery_ttl_seconds must be greater than zero.")
     if config.observation_poll_interval_seconds < 1.0:
         raise ValueError("observation_poll_interval_seconds must be at least 1.")
+    if not 0.0 <= config.launch_sample_pct <= 1.0:
+        raise ValueError("launch_sample_pct must be between 0 and 1.")
+    if config.launch_sample_max_mints < 0:
+        raise ValueError("launch_sample_max_mints must not be negative.")
+    if config.launch_sample_ttl_seconds <= 0:
+        raise ValueError("launch_sample_ttl_seconds must be greater than zero.")
+    if config.launch_sample_poll_interval_seconds < 1.0:
+        raise ValueError("launch_sample_poll_interval_seconds must be at least 1.")
+    if config.post_exit_observation_seconds < 0:
+        raise ValueError("post_exit_observation_seconds must not be negative.")
+    if config.post_exit_max_mints < 0:
+        raise ValueError("post_exit_max_mints must not be negative.")
+    if config.post_exit_poll_interval_seconds < 1.0:
+        raise ValueError("post_exit_poll_interval_seconds must be at least 1.")
 
 
 __all__ = [

@@ -48,6 +48,7 @@ from pumpfun_trading.bot.enrichment import (
 from pumpfun_trading.bot.event_router import EventRouter
 from pumpfun_trading.bot.handlers import curve as curve_handlers
 from pumpfun_trading.bot.handlers import new_token as new_token_handlers
+from pumpfun_trading.bot.handlers import observe as observe_handlers
 from pumpfun_trading.bot.handlers import raydium as raydium_handlers
 from pumpfun_trading.bot.handlers import trade as trade_handlers
 from pumpfun_trading.bot.handlers import watch as watch_handlers
@@ -204,6 +205,8 @@ class TradingBot:
     # rc.3 record-only observations, created lazily (bot/handlers/observe.py).
     _reject_sample_list: CurveObservationList
     _discovery_list: CurveObservationList
+    _launch_sample_list: CurveObservationList
+    _post_exit_list: CurveObservationList
     _discovery_scanned_at: float
 
     def __init__(
@@ -2718,7 +2721,7 @@ class TradingBot:
             else None
         )
 
-        self.position_manager.record_sell(
+        fully_closed, _ = self.position_manager.record_sell(
             mint=mint,
             sold_tokens=tokens_to_sell,
             proceeds_sol=sell_p,
@@ -2726,6 +2729,9 @@ class TradingBot:
             is_partial=is_partial,
         )
         self.active_positions = self.position_manager.get_all_positions()
+        if fully_closed:
+            # rc.5 (FEAT-72): keep polling the coin after the exit (record-only).
+            observe_handlers.start_post_exit(self, mint, position, reason=reason)
         if self.dry_run or self.paper_trade:
             self.wallet_balance_sol = max(
                 0.0, float(self.wallet_balance_sol) + float(sell_p)

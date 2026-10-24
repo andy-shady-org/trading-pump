@@ -487,6 +487,13 @@ def test_entry_mode_defaults_to_launch_and_loads_watch_keys() -> None:
         ({"graduation_discovery_max_mints": -1}, "graduation_discovery_max"),
         ({"graduation_discovery_ttl_seconds": 0}, "graduation_discovery_ttl"),
         ({"observation_poll_interval_seconds": 0.5}, "observation_poll"),
+        ({"launch_sample_pct": -0.1}, "launch_sample_pct"),
+        ({"launch_sample_max_mints": -1}, "launch_sample_max_mints"),
+        ({"launch_sample_ttl_seconds": 0}, "launch_sample_ttl_seconds"),
+        ({"launch_sample_poll_interval_seconds": 0.5}, "launch_sample_poll"),
+        ({"post_exit_observation_seconds": -1}, "post_exit_observation_seconds"),
+        ({"post_exit_max_mints": -1}, "post_exit_max_mints"),
+        ({"post_exit_poll_interval_seconds": 0.5}, "post_exit_poll"),
     ],
 )
 def test_invalid_watch_settings_fail_fast(
@@ -543,6 +550,10 @@ def test_capture_config_records_curves_near_graduation_and_shadow_variants() -> 
     assert config.screen_reject_sample_pct == 0.2
     assert config.record_stop_crossings is True
     assert config.graduation_discovery_scan_seconds == 0.0
+    # rc.5 (FEAT-72): a fifth of all launches from creation, and every closed
+    # position for 15 minutes after the sell (record-only).
+    assert config.launch_sample_pct == 0.2
+    assert config.post_exit_observation_seconds == 900.0
 
 
 def test_record_only_observations_are_off_by_default() -> None:
@@ -550,11 +561,34 @@ def test_record_only_observations_are_off_by_default() -> None:
     assert config.screen_reject_sample_pct == 0.0
     assert config.graduation_discovery_scan_seconds == 0.0
     assert config.record_stop_crossings is False
+    assert config.launch_sample_pct == 0.0
+    assert config.post_exit_observation_seconds == 0.0
     data = TradingBotConfig.from_dict(
-        {"screen_reject_sample_pct": 0.3, "record_stop_crossings": True}
+        {
+            "screen_reject_sample_pct": 0.3,
+            "record_stop_crossings": True,
+            "launch_sample_pct": 0.25,
+            "launch_sample_max_mints": 50,
+            "launch_sample_ttl_seconds": 600.0,
+            "launch_sample_poll_interval_seconds": 3.0,
+            "post_exit_observation_seconds": 300.0,
+            "post_exit_max_mints": 20,
+            "post_exit_poll_interval_seconds": 1.0,
+        }
     ).to_dict()
     assert data["screen_reject_sample_pct"] == 0.3
     assert data["record_stop_crossings"] is True
+    assert (
+        data["launch_sample_pct"],
+        data["launch_sample_max_mints"],
+        data["launch_sample_ttl_seconds"],
+        data["launch_sample_poll_interval_seconds"],
+    ) == (0.25, 50, 600.0, 3.0)
+    assert (
+        data["post_exit_observation_seconds"],
+        data["post_exit_max_mints"],
+        data["post_exit_poll_interval_seconds"],
+    ) == (300.0, 20, 1.0)
 
 
 def test_pre_graduation_pilot_config_isolates_the_lane() -> None:
@@ -581,6 +615,10 @@ def test_pre_graduation_pilot_config_isolates_the_lane() -> None:
     assert config.graduation_discovery_min_real_sol == 40.0
     assert config.screen_reject_sample_pct == 0.0
     assert config.record_stop_crossings is True
+    # rc.5: the pilot follows its closed positions; the launch sample runs in
+    # the capture instance only, so a pair of runs records it once.
+    assert config.post_exit_observation_seconds == 900.0
+    assert config.launch_sample_pct == 0.0
 
 
 def test_momentum_preset_uses_confirmed_entries_at_canary_size() -> None:

@@ -136,6 +136,10 @@ async def handle_new_token_event(
             )
         return
 
+    # rc.5 (FEAT-72): a sample of every standard launch, before any screening
+    # or entry gate, so the capture is not shaped by what the bot would buy.
+    observe.maybe_sample_launch(bot, mint, data, current_market_cap)
+
     confirmed = bot._entry_mode() == "confirmed"
     async with bot._trade_lock:
         if mint in bot.active_positions or bot._is_recently_seen(mint):
