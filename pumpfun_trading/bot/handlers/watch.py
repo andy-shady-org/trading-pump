@@ -48,8 +48,13 @@ def watch_list_status(bot: TradingBot) -> dict[str, Any]:
 
 
 async def run_watch_poll_loop(bot: TradingBot) -> None:
-    """Batch-polls watched curves in its own task (confirmed mode only)."""
+    """Batch-polls watched curves in its own task (confirmed mode only).
+
+    Launch mode has no watch list, but its record-only observations (launch
+    sample, post-exit, rc.5) still run here."""
     if bot._entry_mode() != "confirmed":
+        if observe.observations_enabled(bot):
+            await observe.run_observation_loop(bot)
         return
     interval = max(0.1, float(bot.config.watch_poll_interval_seconds))
     # Record-only observations poll in their own task, so a slow API scan or

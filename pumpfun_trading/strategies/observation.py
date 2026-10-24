@@ -1,6 +1,6 @@
-"""Record-only curve observation lists (rc.3).
+"""Record-only curve observation lists (rc.3, rc.5).
 
-Two experiments need curves the watch list never sees, without changing what
+Experiments that need curves the watch list never sees, without changing what
 the bot buys:
 
 * ``reject_sample``: a deterministic share of the launches the screen rejects
@@ -10,6 +10,13 @@ the bot buys:
   reserve is already past ``graduation_discovery_min_real_sol``, regardless of
   screening or the watch TTL, so the pre-graduation lane can be judged on
   more than the few screened coins that live that long.
+* ``launch_sample`` (rc.5, FEAT-72): a deterministic share of *every* standard
+  Pump.fun launch (``launch_sample_pct``), polled from its create event whether
+  it is screened, watched, bought or not, in both entry modes, so a capture
+  shows what launches do without the screen's selection.
+* ``post_exit`` (rc.5, FEAT-72): every position the bot fully closes, polled
+  for ``post_exit_observation_seconds`` after the sell, so a capture shows
+  whether a coin recovered after a stop or ran on after a take-profit.
 
 Entries here are polled and written to the capture only. They are never
 promoted to a trade subscription, never evaluated by the shadow book and never
@@ -26,7 +33,13 @@ from typing import Any, Iterable, Mapping
 # and the shadow scan skip them, so a capture with them replays like one without.
 REJECT_SAMPLE_SOURCE = "reject_sample"
 DISCOVERY_SOURCE = "discovery"
-RECORD_ONLY_POLL_SOURCES = frozenset({REJECT_SAMPLE_SOURCE, DISCOVERY_SOURCE})
+LAUNCH_SAMPLE_SOURCE = "launch_sample"
+POST_EXIT_SOURCE = "post_exit"
+RECORD_ONLY_POLL_SOURCES = frozenset(
+    {REJECT_SAMPLE_SOURCE, DISCOVERY_SOURCE, LAUNCH_SAMPLE_SOURCE, POST_EXIT_SOURCE}
+)
+# Salt for the launch sample, so it is drawn independently of the reject sample.
+LAUNCH_SAMPLE_SALT = "launch_sample:"
 # Capture rows written when an observation starts and ends.
 OBSERVATION_START_EVENT = "observation_start"
 OBSERVATION_END_EVENT = "observation_end"
@@ -46,16 +59,26 @@ def is_record_only_row(row: Mapping[str, Any]) -> bool:
     return event == "curve_poll" and row.get("source") in RECORD_ONLY_POLL_SOURCES
 
 
-def in_reject_sample(mint: str, share: float) -> bool:
+def in_sample(mint: str, share: float, *, salt: str = "") -> bool:
     """Deterministic sample: the same mint is always in or out for a given
-    share, so two runs (and a re-read of a capture) agree."""
+    share and salt, so two runs (and a re-read of a capture) agree."""
     if share <= 0.0:
         return False
     if share >= 1.0:
         return True
-    digest = hashlib.sha256(mint.encode("utf-8")).digest()
+    digest = hashlib.sha256((salt + mint).encode("utf-8")).digest()
     bucket = int.from_bytes(digest[:8], "big") / float(1 << 64)
     return bucket < share
+
+
+def in_reject_sample(mint: str, share: float) -> bool:
+    """The rc.3 reject sample (unsalted, unchanged since rc.3)."""
+    return in_sample(mint, share)
+
+
+def in_launch_sample(mint: str, share: float) -> bool:
+    """The rc.5 launch sample, drawn independently of the reject sample."""
+    return in_sample(mint, share, salt=LAUNCH_SAMPLE_SALT)
 
 
 @dataclass(slots=True)
@@ -67,6 +90,9 @@ class ObservedCurve:
     added_at: float
     created_at: float | None = None
     reasons: tuple[str, ...] = ()
+    # Fields copied onto every curve_poll row of this entry (post-exit: the
+    # position it followed).
+    tags: dict[str, Any] = field(default_factory=dict)
     last_polled_at: float = 0.0
     polls: int = 0
     first_real_sol: float | None = None
@@ -84,6 +110,7 @@ class ObservedCurve:
             "first_real_sol": self.first_real_sol,
             "last_real_sol": self.last_real_sol,
             "peak_real_sol": round(self.peak_real_sol, 9),
+            "tags": dict(self.tags),
         }
 
 
@@ -125,6 +152,7 @@ class CurveObservationList:
         now: float,
         created_at: float | None = None,
         reasons: Iterable[str] = (),
+        tags: Mapping[str, Any] | None = None,
     ) -> ObservedCurve | None:
         """Start observing ``mint``; ``None`` when already observed or full
         (a full list never evicts, so an observation always runs its course)."""
@@ -139,6 +167,7 @@ class CurveObservationList:
             added_at=float(now),
             created_at=None if created_at is None else float(created_at),
             reasons=tuple(str(r) for r in reasons),
+            tags=dict(tags or {}),
         )
         self._entries[mint] = entry
         self._count("added")
@@ -237,14 +266,19 @@ def discovery_candidates(
 
 __all__ = [
     "DISCOVERY_SOURCE",
+    "LAUNCH_SAMPLE_SALT",
+    "LAUNCH_SAMPLE_SOURCE",
     "OBSERVATION_END_EVENT",
     "OBSERVATION_EVENTS",
     "OBSERVATION_START_EVENT",
+    "POST_EXIT_SOURCE",
     "RECORD_ONLY_POLL_SOURCES",
     "REJECT_SAMPLE_SOURCE",
     "CurveObservationList",
     "ObservedCurve",
     "discovery_candidates",
+    "in_launch_sample",
     "in_reject_sample",
+    "in_sample",
     "is_record_only_row",
 ]

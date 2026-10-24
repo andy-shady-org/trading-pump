@@ -8,8 +8,8 @@ Open work only. Finished phases, sprints and items are archived in [`DONE.md`](D
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | rc.4 release (tooling and risk fixes: FEAT-66…69, BUG-141…144); the FEAT-65 slow-lane read-out. Both Pump.fun lanes are NO-GO on rc.3 ([`STRATEGY-PIVOT.md` §6.11](STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)) | [FEAT-65 data](#feat-65-slow-lane-phase-0-data-contingency-record-only), [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
-| **Next** | Decide FEAT-65 on its recorded costs; Stage 0 only for a lane that passes the replay go / no-go (none on Pump.fun today); drills | [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd), [24D](#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110) |
+| **Now** | rc.5 data release (FEAT-72: a sample of all launches from creation, and every closed position followed after its sell) and the 24 h launch-mode A/B on it; momentum and pre-graduation are NO-GO on rc.3 ([`STRATEGY-PIVOT.md` §6.11](STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)) | [rc.5 data](#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
+| **Next** | Read out the launch A/B and the launch sample; Stage 0 only for a lane that passes the replay go / no-go (none on Pump.fun today); drills | [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd), [24D](#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110) |
 | **Then** | Smart-wallet evidence (24I), Phase 5 runtime and platform sprints (28c–31) | [Sprint 24I](#sprint-24i-smart-wallet-discovery--reviewed-watch-list-feat-54), [Phase 5](#phase-5-platform-refactor-required-before-the-web-ui) |
 | **Later** | Phase 6 Hosted Web UI, only after the funding gate | [Phase 6](#phase-6-hosted-web-ui-replaces-sprint-16) |
 
@@ -112,6 +112,12 @@ Done: the phase 1 scorer, `pumpfun-replay --wallet-scores` ([`DONE.md`](DONE.md#
 ### FEAT-65 Slow Lane: Phase 0 Data (contingency, record-only)
 Done: the keyless quote / fee recorder and the bar backfill (`pumpfun-recorder --jupiter-quotes` / `--backfill-bars`, rc.3; [`DONE.md`](DONE.md#feat-65-slow-lane-phase-0-data-contingency-record-only); how to run it: [`RUNBOOK.md` §6.4](RUNBOOK.md#64-slow-lane-data-recorder-feat-65-phase-0-from-rc3)). The lane itself starts only if the rc.3 Pump.fun lanes are NO-GO too ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)).
 - [ ] Walk-forward test of the §6.12 trend rules on the Binance history (`pumpfun-recorder --backfill-bars --bar-source binance`, 2020–2026), in SOL terms with the measured costs, against a random-entry baseline and on at least two unseen periods; only if it passes, build the FEAT-65 backtester and lane
+
+### rc.5 Data: Launch Sample And Post-Exit Tracking (FEAT-72)
+Done: the record-only launch sample and post-exit tracking ([`DONE.md`](DONE.md#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [`FEATURES.md` §42](../FEATURES.md#42-launch-sample-and-post-exit-tracking-feat-72-rc5)).
+- [ ] 24 h launch-mode paper A/B on rc.5 (runtime `configs/launch_fast_exit.json` and `configs/launch_hold_stop.json`, anti-rug screen off, all out at 1.10×, stop 0.80 from the start vs held 90 s with a 0.40 floor), with `post_exit_observation_seconds: 900` in both and `launch_sample_pct: 0.2` in run A (the draw is deterministic, so one copy is enough): `pumpfun-audit verdict --rules configs/verdict_rules.json` per run, per-trade net A vs B, and from the `post_exit` rows how many stopped or stalled coins came back above their exit within 15 minutes
+- [ ] Launch-sample read-out: share of all launches that reach 1.1 / 1.3 / 1.5× and when, by creator buy size, by screen verdict and by UTC hour; what a buy at launch earns after costs with the A / B exits; record it in `STRATEGY-PIVOT.md` §6
+- [ ] Trade data for sampled launches (buyer wallets, sizes, timing) only if the curve read-out shows a rule worth testing that needs it (a PumpPortal trade subscription per sampled mint)
 
 ## Phase 5: Platform Refactor (required before the Web UI)
 

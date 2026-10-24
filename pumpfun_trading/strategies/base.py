@@ -132,6 +132,19 @@ class TradingBotConfig:
     graduation_discovery_min_real_sol: float = 40.0
     graduation_discovery_max_mints: int = 100
     graduation_discovery_ttl_seconds: float = 7200.0
+    # rc.5 (FEAT-72): share (0-1) of all standard Pump.fun launches polled from
+    # their create event as ``launch_sample`` (0 = off), in either entry mode,
+    # whether they are screened, watched, bought or not.
+    launch_sample_pct: float = 0.0
+    launch_sample_max_mints: int = 300
+    launch_sample_ttl_seconds: float = 900.0
+    launch_sample_poll_interval_seconds: float = 5.0
+    # rc.5 (FEAT-72): seconds to keep polling a coin as ``post_exit`` after the
+    # bot fully closed its position (0 = off), so a capture shows what the coin
+    # did after the stop or take-profit.
+    post_exit_observation_seconds: float = 0.0
+    post_exit_max_mints: int = 100
+    post_exit_poll_interval_seconds: float = 2.0
     observation_poll_interval_seconds: float = 5.0
     # Record where a held position's price first crossed ``stop_loss`` on the
     # trade feed and on the curve refresh, next to the price the exit sold
@@ -364,6 +377,13 @@ class TradingBotConfig:
             "graduation_discovery_min_real_sol": self.graduation_discovery_min_real_sol,
             "graduation_discovery_max_mints": self.graduation_discovery_max_mints,
             "graduation_discovery_ttl_seconds": self.graduation_discovery_ttl_seconds,
+            "launch_sample_pct": self.launch_sample_pct,
+            "launch_sample_max_mints": self.launch_sample_max_mints,
+            "launch_sample_ttl_seconds": self.launch_sample_ttl_seconds,
+            "launch_sample_poll_interval_seconds": self.launch_sample_poll_interval_seconds,
+            "post_exit_observation_seconds": self.post_exit_observation_seconds,
+            "post_exit_max_mints": self.post_exit_max_mints,
+            "post_exit_poll_interval_seconds": self.post_exit_poll_interval_seconds,
             "observation_poll_interval_seconds": self.observation_poll_interval_seconds,
             "record_stop_crossings": self.record_stop_crossings,
             "shadow_variants": [dict(v) for v in self.shadow_variants],

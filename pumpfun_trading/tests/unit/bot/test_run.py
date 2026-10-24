@@ -1166,6 +1166,36 @@ async def test_paper_sell_pays_the_exit_haircut(
     await bot.close()
 
 
+async def test_full_exit_starts_a_post_exit_observation_partial_does_not(
+    tmp_path: Path,
+) -> None:
+    """rc.5 (FEAT-72): the coin is followed after the position closes."""
+    from pumpfun_trading.bot.handlers import observe
+
+    bot = make_bot(tmp_path, post_exit_observation_seconds=900.0)
+    bot.replay_recorder = MagicMock()
+    bot.replay_recorder.close = AsyncMock()
+    mint = "MintPostExit11111111111111111111111111111111"
+    bot.position_manager.record_buy(
+        mint=mint, token_amount=1_000_000, cost_sol=0.02, entry_market_cap=30.0
+    )
+    bot.position_manager.update_price(mint, 36.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    book = observe.post_exit_list(bot)
+    assert book is not None
+
+    assert await bot._sell_token(mint, sell_fraction=0.5, reason="take_profit_tier_1")
+    assert mint not in book  # partial: still held, nothing to follow yet
+
+    assert await bot._sell_token(mint, reason="trailing_stop_hit (drawdown 15%)")
+    entry = book.get(mint)
+    assert entry is not None
+    assert entry.tags["exit_reason"].startswith("trailing_stop_hit")
+    assert entry.tags["entry_market_cap_sol"] == 30.0
+    assert entry.tags["exit_market_cap_sol"] == 36.0
+    await bot.close()
+
+
 @pytest.mark.regression("BUG-136")
 async def test_breaker_values_open_positions_at_what_a_sell_returns(
     tmp_path: Path,

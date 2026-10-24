@@ -846,6 +846,11 @@ Open items and the sprint table are in [`TODO.md`](TODO.md#phase-4c-strategy-piv
 - [x] At the rc.3 verdict, read out: median and p90 `round_trip_cost_bps` per token and size, how often `price_impact_pct` or the route changes, `nonzero_p50` / `nonzero_p90` priority fees, and the share of `quote_error` rows; record it in `STRATEGY-PIVOT.md` §6 as the cost side of the FEAT-65 go / no-go *(done 2026-10-23: median round trip 0–37 bps per token and size, p90 ≤ 52 bps; impact p90 < 0.5%; priority fees 0 in the median slot; 2 quote errors in 33,836 (§6.12))*
 - [x] If FEAT-65 goes ahead: choose a bar source with more than 6 months of history before building the backtester *(done 2026-10-23: Binance public spot klines, `pumpfun-recorder --backfill-bars --bar-source binance`, back to each pair's listing (SOL 2020-08); a free CoinGecko demo key was first suggested but its OHLC history is limited to 365 days too ([`STRATEGY-PIVOT.md` §6.12](STRATEGY-PIVOT.md#612-feat-65-slow-lane-phase-0-read-out-costs-pass-no-edge-shown-2026-10-23)))*
 
+### rc.5 Data: Launch Sample And Post-Exit Tracking (FEAT-72)
+- [x] Launch sample: `launch_sample_pct` (0.2 in `configs/capture.json`) polls a salted, deterministic share of every standard Pump.fun launch from its create event as `curve_poll` rows with `source: "launch_sample"`, before screening and every entry gate, in both entry modes; `observation_start` carries the create event's creator, creator buy and names *(tests: `unit/strategies/test_observation.py`, `unit/bot/handlers/test_observe.py`, `unit/strategies/test_presets.py`)* (v0.3.0-rc.5)
+- [x] Post-exit tracking: `post_exit_observation_seconds` (900 in `configs/capture.json` and `configs/pregrad_pilot.json`) keeps polling each fully closed position as `source: "post_exit"` rows tagged with the exit reason and the entry / exit market cap *(tests: `unit/bot/handlers/test_observe.py`, `unit/bot/test_run.py`)* (v0.3.0-rc.5)
+- [x] Observation task runs in launch mode when an rc.5 list is on, polls at the shortest list interval, and reads a mint in several lists once with one row per list *(tests: `unit/bot/handlers/test_observe.py`)* (v0.3.0-rc.5)
+
 ## Phase 5: Platform Refactor (required before the Web UI)
 
 Open sprints (28c–31) and the findings table are in [`TODO.md`](TODO.md#phase-5-platform-refactor-required-before-the-web-ui).

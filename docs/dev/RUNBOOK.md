@@ -276,6 +276,13 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
           | {mint, cause, first_real_sol, peak_real_sol}' pilot/full_capture.jsonl  # discovered curves (join pilot/ as above)
    jq -c 'select(.type=="trade") | .payload | select(.exit_metrics)
           | {mint, reason, exit_metrics}' capture/audit_trail.jsonl   # stop crossings vs fills
+   # rc.5 record-only inputs (FEAT-72): all launches and what happened after each exit
+   jq -c 'select(.event=="observation_start" and .source=="launch_sample")
+          | {mint, created_at, creator, creator_buy_sol}' $C          # sampled launches
+   jq -c 'select(.event=="curve_poll" and .source=="launch_sample")
+          | {mint, timestamp, market_cap_sol}' $C                     # ... their curves from creation
+   jq -c 'select(.event=="curve_poll" and .source=="post_exit")
+          | {mint, timestamp, market_cap_sol, exit_market_cap_sol, exit_reason}' $C  # after each sell
    ```
    Compare the sample's `peak_real_sol` and `cause: "complete"` share per rejection reason with the watched mints' (`curve_poll` rows with `source: "watch"`); a cap is worth relaxing only if its rejects do better on this capture **and** the next. For the stops, compare `trade_feed_cross_ratio`, `refresh_cross_ratio` and `fill_ratio` on `stop_loss` exits: a trade-feed trigger is worth building only if the feed crosses first and materially above the fill. While the runs are up, `watch_list.reject_sample`, `watch_list.discovery` and the `discovery_scan_errors` / `observation_poll_errors` counters in `bot_status.json` should look sane (lists below their caps, errors near 0); a rising `discovery_scan_errors` means the Pump.fun API query changed.
    A variant or rule counts only if it beats the random cut in both halves, on this capture **and** the one before; set the tip variables as for the capture, and record every result in `STRATEGY-PIVOT.md` §6. `--compare-audit` agrees only when the config sets `paper_exit_slippage_bps` (BUG-126): on trails written before rc.3 paper sells took no slippage, so replay comes out about 1% per exit below paper.
