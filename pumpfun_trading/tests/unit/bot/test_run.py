@@ -7864,7 +7864,7 @@ def test_bot_stream_pings_and_reconnects_after_the_health_timeout(
 ) -> None:
     bot = make_bot(tmp_path, health_check_timeout_seconds=45)
     assert bot.stream_heartbeat_seconds == 20.0
-    assert bot.stream_idle_timeout_seconds == 45.0
+    assert bot.stream_idle_timeout_seconds == 90.0  # twice the health timeout
     bot.config = replace(bot.config, stream_heartbeat_seconds=0.0)
     assert bot.stream_heartbeat_seconds is None
 
@@ -7886,3 +7886,77 @@ def test_repeated_exit_decisions_log_at_info_once_a_minute(tmp_path: Path) -> No
         clock[0] += 61.0
         bot._exit_log_level("fresh", "stop_loss")
     assert len(bot._exit_logged_at) < 2_100
+
+
+@pytest.mark.regression("BUG-152", "BUG-153")
+async def test_failed_paper_tier_sell_is_retried_as_the_same_exit(
+    tmp_path: Path,
+) -> None:
+    # A retried sell recorded the error ("sell_exec_failed: …") as its exit
+    # reason and sold everything, even when the sell that failed was a tier.
+    bot = make_bot(tmp_path)
+    _hold_position(bot)
+    curves = FakeCurves(default_market_cap=60.0)
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("RPC endpoint rate limited (HTTP 429)")
+    )
+    sold = await bot._sell_token(
+        MINT, sell_fraction=0.5, reason="take_profit_tier_1", target_tier=1
+    )
+    assert sold is False
+    assert MINT in bot.active_positions
+    entry = bot._exit_retry_queue[MINT]
+    assert entry["reason"].startswith("sell_exec_failed: curve_unreadable")
+    assert entry["exit_reason"] == "take_profit_tier_1"
+    assert entry["target_tier"] == 1 and entry["sell_fraction"] == 0.5
+    status = bot.get_status_snapshot()["exit_retry_queue"][MINT]
+    assert status["exit_reason"] == "take_profit_tier_1" and status["target_tier"] == 1
+
+    # The RPC answers again: the retry sells the same tier, under its own name.
+    curves.install(bot)
+    entry["next_retry_at"] = 0.0
+    await bot._process_exit_retry_queue()
+    assert MINT not in bot._exit_retry_queue
+    position = bot.active_positions[MINT]
+    assert position["tier_1_executed"] is True
+    sell = [t for t in _audit_trades(tmp_path) if t["action"] != "buy"][-1]
+    assert sell["action"] == "partial_sell"
+    assert sell["reason"] == "take_profit_tier_1"
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-153")
+async def test_retry_entries_without_an_exit_reason_and_sold_tiers(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    _hold_position(bot)
+    FakeCurves().install(bot)
+    sells: list[dict[str, Any]] = []
+
+    async def record_sell(mint: str, **kwargs: Any) -> bool:
+        sells.append(kwargs)
+        return False
+
+    bot._sell_token = record_sell  # type: ignore[method-assign]
+    # Restored from an older status file: no exit reason, so a plain retry.
+    bot._exit_retry_queue[MINT] = {
+        "reason": "sell_exec_failed: x",
+        "next_retry_at": 0.0,
+    }
+    await bot._process_exit_retry_queue()
+    assert sells[-1]["reason"] == "retry_exit"
+    assert sells[-1]["sell_fraction"] == 1.0 and sells[-1]["target_tier"] is None
+
+    # A tier sold since by another path is dropped without a sell.
+    bot.active_positions[MINT]["tier_1_executed"] = True
+    bot._exit_retry_queue[MINT] = {
+        "reason": "sell_exec_failed: x",
+        "exit_reason": "take_profit_tier_1",
+        "target_tier": 1,
+        "next_retry_at": 0.0,
+    }
+    await bot._process_exit_retry_queue()
+    assert MINT not in bot._exit_retry_queue
+    assert len(sells) == 1
+    await bot.close()
