@@ -5,8 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from pumpfun_trading.bot.enrichment import TokenScreeningVerdict
 from pumpfun_trading.bot.handlers import new_token
+from pumpfun_trading.sdk.curve import COMPLETE_CURVE_MARKET_CAP_SOL
 from pumpfun_trading.tests.support.constants import SAMPLE_PUMP_MINT
 from pumpfun_trading.tests.support.factories import make_bot
 
@@ -61,3 +64,38 @@ async def test_bot_methods_delegate_to_new_token_handlers(tmp_path: Path) -> Non
     with patch.object(new_token, "watch_token", watch):
         bot._watch_token(SAMPLE_PUMP_MINT, data, 30.0, verdict)
     watch.assert_called_once_with(bot, SAMPLE_PUMP_MINT, data, 30.0, verdict)
+
+
+@pytest.mark.regression("BUG-146")
+async def test_launch_complete_at_creation_is_never_bought(tmp_path: Path) -> None:
+    # rc.5 bought 26 coins whose creator filled the whole curve in the create
+    # transaction (410.88 SOL), then "sold" them at 9x on the fresh pool.
+    bot = make_bot(tmp_path, enable_anti_rug_filters=False, require_trade_feed=False)
+    bot._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    await new_token.handle_new_token_event(
+        bot,
+        {"mint": SAMPLE_PUMP_MINT, "pool": "pump", "marketCapSol": 410.8801681200643},
+    )
+    bot._buy_token.assert_not_awaited()
+    assert bot._last_event == f"complete_at_create {SAMPLE_PUMP_MINT[:8]}"
+    assert bot._entry_refusals == {"complete_at_create": 1}
+    assert bot._is_recently_seen(SAMPLE_PUMP_MINT)
+    assert bot.get_status_snapshot()["entry_refusals"] == {"complete_at_create": 1}
+
+
+@pytest.mark.regression("BUG-146")
+async def test_launch_short_of_a_full_curve_is_still_screened(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, enable_anti_rug_filters=False, require_trade_feed=False)
+    bot._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    await new_token.handle_new_token_event(
+        bot, {"mint": SAMPLE_PUMP_MINT, "pool": "pump", "marketCapSol": 374.8}
+    )
+    bot._buy_token.assert_awaited_once()
+
+
+def test_complete_at_create_threshold() -> None:
+    assert COMPLETE_CURVE_MARKET_CAP_SOL == pytest.approx(410.88, abs=0.01)
+    assert new_token.complete_at_create(COMPLETE_CURVE_MARKET_CAP_SOL)
+    assert new_token.complete_at_create(407.0)
+    assert not new_token.complete_at_create(406.0)
+    assert not new_token.complete_at_create(27.96)

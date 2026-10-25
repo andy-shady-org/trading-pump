@@ -295,6 +295,12 @@ async def test_cost_capture_is_bounded_and_ignores_foreign_types() -> None:
 
 async def test_order_executor_dry_run():
     exec_client = MagicMock()
+    exec_client.get_bonding_curve_state = AsyncMock(
+        return_value={
+            "virtual_token_reserves": 1_073_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+        }
+    )
     executor = OrderExecutor(exec_client, dry_run=True)
 
     buy_res = await executor.execute_buy("Mint111", 0.1, reason="dry_buy")
@@ -303,6 +309,10 @@ async def test_order_executor_dry_run():
     assert buy_res.mint == "Mint111"
     assert buy_res.is_buy
 
+    # A curve without reserves gives the paper sell no quote.
+    exec_client.get_bonding_curve_state = AsyncMock(
+        return_value={"virtual_sol_reserves": 0, "virtual_token_reserves": 0}
+    )
     sell_res = await executor.execute_sell("Mint111", 500_000, reason="dry_sell")
     assert sell_res.success
     assert sell_res.dry_run
@@ -684,14 +694,82 @@ async def test_execute_buy_dry_run_reports_curve_entry_market_cap() -> None:
     assert result.metadata["entry_market_cap_sol"] == pytest.approx(30.0)
 
 
-async def test_execute_buy_dry_run_without_curve_has_no_entry_market_cap() -> None:
-    client = _client(get_bonding_curve_state=AsyncMock(side_effect=RuntimeError("x")))
+@pytest.mark.regression("BUG-145")
+async def test_execute_buy_dry_run_without_curve_is_refused() -> None:
+    # The rc.5 run filled 407 of 1,402 paper buys at the fresh-launch curve
+    # when the read failed; a live buy cannot be built without the curve.
+    client = _client(get_bonding_curve_state=AsyncMock(side_effect=RuntimeError("429")))
     executor = _executor(client)
 
     result = await executor.execute_buy(MINT, 0.01, dry_run=True)
 
-    assert result.success
-    assert "entry_market_cap_sol" not in result.metadata
+    assert not result.success
+    assert result.dry_run
+    assert result.token_amount == 0
+    assert result.error == "curve_unreadable: no curve read at the signal"
+
+
+@pytest.mark.regression("BUG-145")
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_execute_buy_on_a_complete_curve_is_refused(dry_run: bool) -> None:
+    complete = {
+        "virtual_token_reserves": 279_900_000_000_000,
+        "virtual_sol_reserves": 115_005_359_056,
+        "complete": True,
+    }
+    client = _client(get_bonding_curve_state=AsyncMock(return_value=complete))
+    executor = _executor(client)
+
+    result = await executor.execute_buy(MINT, 0.01, dry_run=dry_run)
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.startswith("curve_complete")
+    client.buy.assert_not_awaited()
+
+
+@pytest.mark.regression("BUG-145")
+async def test_execute_buy_dry_run_refuses_a_curve_that_completes_during_the_delay() -> (
+    None
+):
+    curves = [
+        {
+            "virtual_token_reserves": 1_000_000_000_000_000,
+            "virtual_sol_reserves": 30_000_000_000,
+        },
+        {
+            "virtual_token_reserves": 279_900_000_000_000,
+            "virtual_sol_reserves": 115_000_000_000,
+            "complete": True,
+        },
+    ]
+    client = _client(get_bonding_curve_state=AsyncMock(side_effect=curves))
+    executor = _executor(client, paper_entry_delay_seconds=1.5)
+
+    with patch("pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()):
+        result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    assert not result.success
+    assert result.error is not None and result.error.startswith("curve_complete")
+
+
+@pytest.mark.regression("BUG-145")
+async def test_execute_buy_dry_run_with_zero_token_quote_is_refused() -> None:
+    # Reserves so small that 0.01 SOL buys nothing: never invent a fill.
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            return_value={
+                "virtual_token_reserves": 1,
+                "virtual_sol_reserves": 30_000_000_000,
+            }
+        )
+    )
+    executor = _executor(client)
+
+    result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    assert not result.success
+    assert result.error == "curve_unreadable: no curve read at the fill"
 
 
 async def test_execute_sell_non_standard_curve_still_sells_without_quote() -> None:
@@ -795,7 +873,8 @@ async def test_execute_buy_dry_run_curve_turning_non_standard_after_delay_refuse
     assert result.error.startswith("non_standard_curve")
 
 
-async def test_execute_buy_dry_run_without_curve_skips_the_delay() -> None:
+@pytest.mark.regression("BUG-145")
+async def test_execute_buy_dry_run_without_curve_is_refused_before_the_delay() -> None:
     client = _client(get_bonding_curve_state=AsyncMock(side_effect=RuntimeError("x")))
     executor = _executor(client, paper_entry_delay_seconds=2.0)
 
@@ -804,8 +883,31 @@ async def test_execute_buy_dry_run_without_curve_skips_the_delay() -> None:
     ) as sleep:
         result = await executor.execute_buy(MINT, 0.01, dry_run=True)
 
-    assert result.success
+    assert not result.success
     sleep.assert_not_awaited()
+
+
+@pytest.mark.regression("BUG-145")
+async def test_execute_buy_dry_run_refused_when_the_fill_read_fails() -> None:
+    # The read after the latency delay used to fall back to the first one.
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=[
+                {
+                    "virtual_token_reserves": 1_000_000_000_000_000,
+                    "virtual_sol_reserves": 30_000_000_000,
+                },
+                RuntimeError("HTTP 429"),
+            ]
+        )
+    )
+    executor = _executor(client, paper_entry_delay_seconds=2.0)
+
+    with patch("pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()):
+        result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+
+    assert not result.success
+    assert result.error == "curve_unreadable: no curve read at the fill"
 
 
 # --- Momentum entry drift guard ---------------------------------------------------
@@ -1029,3 +1131,31 @@ async def test_pumpswap_live_sell_failures() -> None:
     res = await executor.execute_pumpswap_sell(MINT, TOKENS, close_token_account=True)
     assert res.error == "pumpswap_sell_confirmation_failed"
     assert MINT in executor._close_disabled_mints
+
+
+@pytest.mark.regression("BUG-152")
+async def test_paper_sell_without_a_curve_read_fails_like_a_live_one() -> None:
+    # rc.5 made 92 + 87 paper sells after the RPC died; none could have sold live.
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=RuntimeError("RPC endpoint rate limited (HTTP 429)")
+        )
+    )
+    executor = _executor(client)
+
+    result = await executor.execute_sell(MINT, TOKENS, reason="stop_loss", dry_run=True)
+
+    assert not result.success
+    assert result.dry_run
+    assert result.error == "curve_unreadable: RPC endpoint rate limited (HTTP 429)"
+    client.sell.assert_not_awaited()
+
+
+@pytest.mark.regression("BUG-152")
+async def test_paper_sell_with_an_unparseable_address_is_not_a_read_failure() -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(side_effect=ValueError("Invalid Base58"))
+    )
+    executor = _executor(client)
+    result = await executor.execute_sell(MINT, TOKENS, reason="stop_loss", dry_run=True)
+    assert result.success

@@ -26,6 +26,7 @@ from pumpfun_trading.sdk.curve import (
 )
 from pumpfun_trading.sdk.execution import (
     PUMP_DEFAULT_FEE_BPS,
+    CurveCompleteError,
     MayhemModeCurveError,
     NonStandardCurveError,
     NotPumpFunCurveError,
@@ -142,7 +143,11 @@ class OrderExecutor:
         return fee if isinstance(fee, int) else PUMP_DEFAULT_FEE_BPS
 
     async def _fetch_curve_reserves(
-        self, mint: str, *, reject_non_standard: bool = False
+        self,
+        mint: str,
+        *,
+        reject_non_standard: bool = False,
+        read_errors: list[str] | None = None,
     ) -> tuple[int, int] | None:
         """Returns live ``(virtual_sol_lamports, virtual_token_raw)`` or ``None``.
 
@@ -150,7 +155,11 @@ class OrderExecutor:
         :class:`NonStandardCurveError` (BUG-104), a mayhem-mode curve raises
         :class:`MayhemModeCurveError` unless ``skip_mayhem_mode`` is off, and a mint without a curve owned
         by the Pump.fun program raises :class:`NotPumpFunCurveError` (BUG-108),
-        instead of returning ``None``.
+        and a complete curve raises :class:`CurveCompleteError` (BUG-145),
+        instead of returning ``None``. A read that failed (RPC error, timeout)
+        (``RuntimeError``, ``TimeoutError``, ``OSError``) is appended to
+        ``read_errors`` when given, so a caller can tell it from a curve that
+        answered without reserves (BUG-152).
         """
         if self.execution is None:
             return None
@@ -162,15 +171,25 @@ class OrderExecutor:
                 and state.get("is_mayhem_mode") is True
             ):
                 raise MayhemModeCurveError(f"curve of {mint} is in mayhem mode")
+            if reject_non_standard and state.get("complete") is True:
+                # Graduated (often in the create transaction itself): the
+                # program refuses buys, so neither paper nor live may fill.
+                raise CurveCompleteError(f"curve of {mint} is complete")
             v_sol = int(state.get("virtual_sol_reserves", 0))
             v_token = int(state.get("virtual_token_reserves", 0))
-        except (NonStandardCurveError, NotPumpFunCurveError) as exc:
+        except (NonStandardCurveError, NotPumpFunCurveError, CurveCompleteError) as exc:
             if reject_non_standard:
                 raise
             logger.debug("Curve reserves unavailable for %s: %s", mint, exc)
             return None
         except Exception as exc:
             logger.debug("Curve reserves unavailable for %s: %s", mint, exc)
+            if read_errors is not None and isinstance(
+                exc, (RuntimeError, TimeoutError, OSError)
+            ):
+                # The RPC did not answer (the client wraps every request
+                # failure in RuntimeError); a bad address is not a read error.
+                read_errors.append(str(exc) or type(exc).__name__)
             return None
         if v_sol <= 0 or v_token <= 0:
             return None
@@ -237,6 +256,8 @@ class OrderExecutor:
         logger.warning("Skipping buy of %s: %s", mint, exc)
         if isinstance(exc, NotPumpFunCurveError):
             kind = "not_pump_fun"
+        elif isinstance(exc, CurveCompleteError):
+            kind = "curve_complete"
         elif isinstance(exc, MayhemModeCurveError):
             kind = "mayhem_mode"
         else:
@@ -249,6 +270,31 @@ class OrderExecutor:
             reason=reason,
             error=f"{kind}: {exc}",
             dry_run=dry_run,
+        )
+
+    @staticmethod
+    def _unpriced_buy(
+        mint: str, amount_sol: float, reason: str, stage: str
+    ) -> ExecutionResult:
+        """A paper buy refused because the curve could not be read (BUG-145).
+
+        ``stage`` is ``signal`` (first read) or ``fill`` (the read after
+        ``paper_entry_delay_seconds``).
+        """
+        logger.warning(
+            "Skipping paper buy of %s: no curve read at the %s; a live buy "
+            "would fail too",
+            mint,
+            stage,
+        )
+        return ExecutionResult(
+            success=False,
+            mint=mint,
+            is_buy=True,
+            amount_sol=amount_sol,
+            reason=reason,
+            error=f"curve_unreadable: no curve read at the {stage}",
+            dry_run=True,
         )
 
     def _resolve_dynamic_slippage(
@@ -432,7 +478,7 @@ class OrderExecutor:
 
         try:
             reserves = await self._fetch_curve_reserves(mint, reject_non_standard=True)
-        except (NonStandardCurveError, NotPumpFunCurveError) as exc:
+        except (NonStandardCurveError, NotPumpFunCurveError, CurveCompleteError) as exc:
             return self._refused_buy(mint, amount_sol, reason, exc, is_dry_run)
         resolved_slippage = slippage_bps
         dynamic_params: DynamicSlippageResult | None = None
@@ -456,25 +502,31 @@ class OrderExecutor:
                 resolved_slippage,
                 urgency,
             )
+            if reserves is None:
+                # A live buy reads the curve to build its transaction, so it
+                # fails without one; never fill paper at the fresh-launch
+                # curve instead (BUG-145).
+                return self._unpriced_buy(mint, amount_sol, reason, "signal")
             delay = float(getattr(self.config, "paper_entry_delay_seconds", 0.0) or 0.0)
-            if delay > 0 and reserves is not None:
+            if delay > 0:
                 # A live buy lands after screening and confirmation; price the
                 # paper fill from the curve as it is then, not at the signal.
                 await asyncio.sleep(delay)
                 try:
-                    reserves = (
-                        await self._fetch_curve_reserves(mint, reject_non_standard=True)
-                        or reserves
+                    reserves = await self._fetch_curve_reserves(
+                        mint, reject_non_standard=True
                     )
-                except (NonStandardCurveError, NotPumpFunCurveError) as exc:
+                except (
+                    NonStandardCurveError,
+                    NotPumpFunCurveError,
+                    CurveCompleteError,
+                ) as exc:
                     return self._refused_buy(mint, amount_sol, reason, exc, True)
+                if reserves is None:
+                    return self._unpriced_buy(mint, amount_sol, reason, "fill")
             # The curve the paper fill is priced from, before the penalty; the
             # runtime records it so replay fills read the same curve.
-            fill_curve_mc = (
-                market_cap_sol_from_reserves(reserves[0], reserves[1])
-                if reserves is not None
-                else None
-            )
+            fill_curve_mc = market_cap_sol_from_reserves(reserves[0], reserves[1])
             drift = self._entry_drift(reserves, signal_market_cap_sol)
             if drift_limit > 0 and drift is not None and drift > drift_limit:
                 return self._drift_refused_buy(
@@ -489,22 +541,18 @@ class OrderExecutor:
             penalty_bps = self._paper_entry_slippage_bps()
             simulated_token_amount = self._estimate_buy_tokens(amount_sol, reserves)
             if simulated_token_amount <= 0:
-                simulated_token_amount = 100_000_000
+                return self._unpriced_buy(mint, amount_sol, reason, "fill")
             simulated_token_amount = (
                 simulated_token_amount * (10_000 - penalty_bps) // 10_000
             )
 
             dry_signature = f"dry_run_buy_{mint[:8]}_{int(time.time())}"
-            metadata: dict[str, Any] = {}
-            if reserves is not None:
-                metadata["fill_curve_market_cap_sol"] = fill_curve_mc
+            metadata: dict[str, Any] = {
+                "fill_curve_market_cap_sol": fill_curve_mc,
                 # Paper entries are priced from the same curve as exits (BUG-104),
                 # worsened by the configured latency penalty.
-                metadata["entry_market_cap_sol"] = (
-                    market_cap_sol_from_reserves(reserves[0], reserves[1])
-                    * 10_000
-                    / (10_000 - penalty_bps)
-                )
+                "entry_market_cap_sol": fill_curve_mc * 10_000 / (10_000 - penalty_bps),
+            }
             if penalty_bps or delay > 0:
                 metadata["paper_entry_slippage_bps"] = penalty_bps
                 metadata["paper_entry_delay_seconds"] = delay
@@ -687,7 +735,27 @@ class OrderExecutor:
         ):
             effective_urgency = "emergency"
 
-        reserves = await self._fetch_curve_reserves(mint)
+        read_errors: list[str] = []
+        reserves = await self._fetch_curve_reserves(mint, read_errors=read_errors)
+        if is_dry_run and read_errors:
+            # A live sell reads the curve to build its transaction and fails
+            # without it; a paper sell must fail too and go to the retry
+            # queue, not sell at the last trade price (BUG-152).
+            logger.warning(
+                "Paper sell of %s refused: curve read failed (%s); a live sell "
+                "would fail too",
+                mint,
+                read_errors[0][:200],
+            )
+            return ExecutionResult(
+                success=False,
+                mint=mint,
+                is_buy=False,
+                token_amount=token_amount,
+                reason=reason,
+                dry_run=True,
+                error=f"curve_unreadable: {read_errors[0][:200]}",
+            )
         expected_lamports = self._estimate_sell_lamports(token_amount, reserves)
         resolved_slippage = slippage_bps
         if resolved_slippage is None and getattr(

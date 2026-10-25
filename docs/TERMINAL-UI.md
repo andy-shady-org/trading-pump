@@ -134,7 +134,7 @@ A real-time table tracking all active open bonding curve positions:
 * **`Name`**: Token display name (truncated to 18 characters for clean visual alignment).
 * **`Mint`**: Truncated Base58 Solana mint address (e.g. `7EYnh...`).
 * **`Entry MC`**: Bonding curve market capitalization in SOL at the moment of entry.
-* **`Current MC`**: Latest mark-to-market bonding curve market cap in SOL.
+* **`Current MC`**: Latest mark-to-market bonding curve market cap in SOL; for a coin that graduated, its PumpSwap pool's market cap. `(stale)` after the value means the pool could not be read and the figure is the last known one (BUG-147).
 * **`Cost / Spend`**: Total SOL capital committed to acquiring the position.
 * **`Token Amount`**: Quantity of remaining token units held, formatted with metric suffixes (`2.45M`, `850.00K`, `1.20B`).
 * **`Unit Token Price`**: Current price per token unit in SOL or micro-SOL (`µSOL` for values $< 0.001\text{ SOL}$).

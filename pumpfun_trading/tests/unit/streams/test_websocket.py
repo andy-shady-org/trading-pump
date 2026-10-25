@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+import pytest
 
 from pumpfun_trading.streams import websocket as ws_module
 from pumpfun_trading.streams.websocket import (
@@ -247,3 +248,100 @@ async def test_stop_request_between_messages_ends_without_reconnect() -> None:
         await run_websocket_stream(host)
     assert host.messages == [{"n": 1}]
     assert ("ended", None) not in host.calls
+
+
+class SilentSocket(FakeSocket):
+    """Delivers its messages, then nothing: a half-open connection."""
+
+    async def __anext__(self) -> Any:
+        if self._messages:
+            return self._messages.pop(0)
+        await asyncio.Event().wait()  # never set
+        raise AssertionError("unreachable")
+
+
+@pytest.mark.regression("BUG-150")
+async def test_silent_stream_is_dropped_and_reconnected() -> None:
+    # The archived rc.5 run sat on a half-open PumpPortal socket for ~3 h:
+    # `async for msg in ws` waited for ever and only a restart helped.
+    host = RecordingHost(stop_after_connections=2)
+    host.stream_heartbeat_seconds = 20.0  # type: ignore[attr-defined]
+    host.stream_idle_timeout_seconds = 0.05  # type: ignore[attr-defined]
+    session = _session_for(SilentSocket([_text({"mint": "A"})]), FakeSocket([]))
+    with (
+        patch.object(ws_module.aiohttp, "ClientSession", return_value=session),
+        patch.object(ws_module.asyncio, "sleep", AsyncMock()),
+    ):
+        await asyncio.wait_for(run_websocket_stream(host), timeout=5.0)
+
+    assert host.messages == [{"mint": "A"}]
+    assert host.connections == 2
+    errors = [arg for name, arg in host.calls if name == "error"]
+    assert errors == [
+        "No WebSocket message for 0.05s: the connection is stale; reconnecting"
+    ]
+    # The socket is pinged, so a dead peer is also noticed between messages.
+    for call in session.ws_connect.call_args_list:
+        assert call.kwargs == {"heartbeat": 20.0}
+
+
+@pytest.mark.regression("BUG-150")
+async def test_write_to_a_closing_socket_reconnects_quietly() -> None:
+    host = RecordingHost(stop_after_connections=2)
+    calls = 0
+
+    async def send_fails(data: Any, ws: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionResetError("Cannot write to closing transport")
+
+    host.on_stream_message = send_fails  # type: ignore[method-assign]
+    session = _session_for(FakeSocket([_text({"n": 1})]), FakeSocket([]))
+    sleep = AsyncMock()
+    with (
+        patch.object(ws_module.aiohttp, "ClientSession", return_value=session),
+        patch.object(ws_module.asyncio, "sleep", sleep),
+    ):
+        await run_websocket_stream(host)
+
+    assert host.connections == 2
+    assert ("exception", 1.0) not in host.calls  # not reported as a fault
+    assert (
+        "log",
+        "WebSocket closed while sending (Cannot write to closing transport); reconnecting.",
+    ) in host.calls
+    assert host.calls.count(("ended", None)) == 2
+    assert [c.args[0] for c in sleep.await_args_list] == [1.0, 1.0]
+
+
+@pytest.mark.regression("BUG-150")
+async def test_closing_socket_after_a_stop_request_does_not_reconnect() -> None:
+    host = RecordingHost(stop_after_connections=99)
+
+    async def stop_and_fail(data: Any, ws: Any) -> None:
+        host._stop_after = 0
+        raise ConnectionResetError("Cannot write to closing transport")
+
+    host.on_stream_message = stop_and_fail  # type: ignore[method-assign]
+    session = _session_for(FakeSocket([_text({"n": 1})]))
+    with patch.object(ws_module.aiohttp, "ClientSession", return_value=session):
+        await run_websocket_stream(host)
+    assert ("ended", None) not in host.calls
+
+    # Cancelled during the reconnect wait after a reset: stops cleanly.
+    host = RecordingHost(stop_after_connections=99)
+
+    async def fail(data: Any, ws: Any) -> None:
+        raise ConnectionResetError("closing")
+
+    host.on_stream_message = fail  # type: ignore[method-assign]
+    session = _session_for(FakeSocket([_text({"n": 1})]))
+    with (
+        patch.object(ws_module.aiohttp, "ClientSession", return_value=session),
+        patch.object(
+            ws_module.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError)
+        ),
+    ):
+        await run_websocket_stream(host)
+    assert host.closed == 1

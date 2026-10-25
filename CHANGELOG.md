@@ -8,6 +8,33 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+Fixes from the rc.5 launch-mode paper run (BUG-145 to BUG-153, [`BUGS.md` §26](docs/dev/BUGS.md#26-rc5-paper-run-findings-2026-10-25); branch `fix/runtime-rpc-outage`). Both rc.5 A/B runs are void: 29% of their paper buys were filled at an invented price when the curve read failed, which made all of the reported profit, and the last hour ran with no working RPC.
+
+### Fixed
+- Paper buys no longer fill without a curve read: a failed read at the signal or after `paper_entry_delay_seconds`, a zero-token quote or a complete curve refuses the buy (`curve_unreadable`, `curve_complete`), as it would refuse a live one; the fresh-launch fallback is gone (BUG-145).
+- Launches whose create event already shows a full curve (410.88 SOL market cap: the creator bought it all in the create transaction) are skipped in both entry modes (`complete_at_create`), and live-fidelity replay skips them too (BUG-146).
+- A held coin that migrated is valued and exited from its PumpSwap pool only, never from PumpPortal trade messages; while the pool can't be read the position is flagged `price_stale` and shown as `… SOL (stale)` in the terminal UI (BUG-147).
+- A failed PumpSwap pool read backs off (2 s doubling to 60 s, no RPC call while waiting) and is logged as a warning with its cause; "graduated while held" is logged; a repeated exit decision logs at INFO once a minute (BUG-148).
+- No buys while every RPC endpoint's breaker is open (BUG-149).
+- The PumpPortal socket is pinged (`stream_heartbeat_seconds`) and reconnected after twice `health_check_timeout_seconds` (120 s) without a message, instead of waiting on a half-open connection for hours; "Cannot write to closing transport" reconnects quietly (BUG-150).
+- The RPC pool sends nothing to an open endpoint: requests fail at once (`RpcPoolUnavailableError`) until the cooldown ends, which now starts at 1 s and doubles per opening up to `rpc_pool_circuit_breaker_cooldown_seconds`, with one half-open probe at a time; failed transaction simulations no longer open the breaker; a 429 error keeps the provider's reason with keys masked (BUG-151).
+- Paper sells whose curve read fails are refused and go to the exit retry queue, as a live sell would (BUG-152).
+- A retried sell repeats the exit that failed (reason, tier, fraction) instead of recording the error text as its reason and selling everything (BUG-153).
+- Held positions are refreshed with one `getMultipleAccounts` per pass instead of one call per position, and record-only observation polls wait while the RPC is rate limited (BUG-151).
+
+### Added
+- Config key `stream_heartbeat_seconds` (default `20`, `0` = no pings) (BUG-150).
+- `bot_status.json`: `entry_refusals` (refused entries by cause: `curve_unreadable`, `curve_complete`, `complete_at_create`, `rpc_unavailable`, …); `rpc_pool_telemetry.rejected_requests` and `requests_by_method`, and per endpoint `open_streak` and `last_rate_limited_time`; positions `price_stale` / `price_stale_since`; watch stats `position_refresh_errors` and `observation_polls_deferred`; exit retry entries `exit_reason`, `sell_fraction`, `sell_amount_tokens` and `target_tier` (BUG-145 to BUG-153).
+- A startup warning when the RPC pool has a single endpoint (BUG-151); [`RUNBOOK.md` §5.8](docs/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151) on RPC capacity and outages.
+- Test support: `FakeCurves` and `standard_curve` (`tests/support/fakes.py`) give a paper bot curve reads.
+
+### Known issues
+- Replay cannot see an RPC outage: on a capture where paper buys were refused (`entry_refusals.curve_unreadable` / `rpc_unavailable`), replay can still buy those signals, so `--compare-audit` shows them as replay-only fills.
+
+### Changed
+- `PUMPFUN_RPC_URLS` documentation: when set, the pool uses only those endpoints (list the primary first).
+- Golden replay: the scenarios give the bot a curve that follows the stream's market cap; the open position in `position_cap_and_unheld_trades` now holds the curve's 329,113,500,516 tokens instead of the fresh-launch fallback's 353,134,762,944. Every ledger row is unchanged.
+
 ## [0.3.0-rc.5] - 2026-10-24
 
 Fifth release candidate of v0.3.0 (this release branch, off `main` at the v0.3.0-rc.4 merge): a **data release**. rc.3 recorded a price path for only 6,571 of its 47,523 launches (13.8%), the coins its screen passed or the 20% of rejects it sampled, and stopped watching every coin at the moment it was sold. So the ideas raised after the rc.3 read-out (buy at launch with the screen off, hold through a first-minute dip, take +10% before the fall) could not be tested on the capture. rc.5 records a sample of all launches from creation and follows every closed position after its sell (FEAT-72). Nothing changes what the bot buys or sells; the new rows are record-only and replay skips them.

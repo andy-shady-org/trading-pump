@@ -1859,3 +1859,35 @@ def test_replay_breaker_ignores_a_trivial_win_before_the_ratchet_arms() -> None:
     )
     assert default["circuit_breaker"]["trips"] == 0
     assert default["buy_count"] == 3
+
+
+@pytest.mark.regression("BUG-146")
+def test_launch_replay_skips_coins_complete_at_creation() -> None:
+    # Replay mirrors the bot: a create event at the full-curve market cap is
+    # never bought.
+    engine = PaperTradingEngine(
+        initial_cash=1.0,
+        fee_bps=0,
+        slippage_bps=0,
+        strategy_config=_config(),
+        live_fidelity=True,
+        entry_mode="signals",
+    )
+    snaps = []
+    for mint, mc in (
+        (MINT_A, 30.0),
+        ("FullCurve1111111111111111111111111111pump", 410.88),
+    ):
+        snaps.append(
+            {
+                "timestamp": 1.0,
+                "mint": mint,
+                "market_cap_sol": mc,
+                "price": mc / 1e9,
+                "signal": "buy",
+            }
+        )
+    summary = engine.run(snaps)
+    buys = [t for t in summary["trades"] if t["action"] == "buy"]
+    assert [t["mint"] for t in buys] == [MINT_A]
+    assert summary["entry_rejections"].get("complete_at_create") == 1

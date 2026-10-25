@@ -192,6 +192,11 @@ from pumpfun_trading.ui.dashboard import build_dashboard
 # Mints bought before; persisted in the status file and capped so the snapshot
 # stays small (~2k new buys a day in the Stage 0 paper run) (BUG-109).
 TRADED_MINTS_LIMIT = 10_000
+# A repeated exit decision of one type and mint is logged at INFO once per
+# this many seconds, at DEBUG in between (BUG-148).
+EXIT_LOG_REPEAT_SECONDS = 60.0
+# The stream reconnects after this many health timeouts without a message.
+STREAM_IDLE_TIMEOUT_FACTOR = 2.0
 
 
 class TradingBot:
@@ -360,6 +365,9 @@ class TradingBot:
         # Stream tokens rejected as not Pump.fun launches, by reason (BUG-108).
         self._non_pump_rejections: dict[str, int] = {}
         self._mayhem_rejections = 0
+        # Entries refused before or at the fill, by cause: launches complete at
+        # creation, unreadable or complete curves, no healthy RPC (BUG-145/146/149).
+        self._entry_refusals: dict[str, int] = {}
         self.console = get_configured_console(file=sys.stdout)
 
         self.geyser_endpoint = geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
@@ -517,6 +525,11 @@ class TradingBot:
         self._sell_locks: dict[str, asyncio.Lock] = {}
         self._migrating_mints: set[str] = set()
         self._raydium_exit_pools: dict[str, RaydiumPoolKeys] = {}
+        # PumpSwap pool reads of migrated coins: last error and backoff per
+        # mint (BUG-148), and when each repeated exit was last logged.
+        self._pool_read_errors: dict[str, str] = {}
+        self._pool_retry: dict[str, dict[str, Any]] = {}
+        self._exit_logged_at: dict[tuple[str, str], float] = {}
         self._config = self.config
         sweep_problems = validate_sweep_config(
             self.config, self.execution.get_wallet_pubkey()
@@ -1589,6 +1602,10 @@ class TradingBot:
                     "retries": entry.get("retries", 1),
                     "retry_count": entry.get("retry_count", 1),
                     "slippage_bps": entry.get("slippage_bps"),
+                    "exit_reason": entry.get("exit_reason"),
+                    "sell_fraction": entry.get("sell_fraction", 1.0),
+                    "sell_amount_tokens": entry.get("sell_amount_tokens"),
+                    "target_tier": entry.get("target_tier"),
                 }
                 for mint, entry in self._exit_retry_queue.items()
             },
@@ -1597,6 +1614,7 @@ class TradingBot:
             "traded_mints": dict(self._traded_mints),
             "non_pump_rejections": dict(self._non_pump_rejections),
             "mayhem_rejections": int(getattr(self, "_mayhem_rejections", 0)),
+            "entry_refusals": dict(getattr(self, "_entry_refusals", {})),
             "watch_list": self.watch_list_status(),
             "market_regime": self._market_regime().snapshot(),
             "trade_ledger": list(self._trade_ledger),
@@ -1736,6 +1754,12 @@ class TradingBot:
             return False
         if not self._health_ok_for_trading():
             return False
+        if not self._rpc_available_for_buys():
+            # Without a working RPC a live buy cannot be built and a position
+            # cannot be priced or sold; paper bought on anyway (BUG-149).
+            self._last_event = "buy blocked: no healthy RPC endpoint"
+            self._count_entry_refusal("rpc_unavailable")
+            return False
         if (
             getattr(self.config, "require_trade_feed", True) is True
             and not self.trade_feed_available()
@@ -1775,6 +1799,25 @@ class TradingBot:
         ):
             return False
         return self._buy_attempts.get(mint, 0) < self.max_buy_attempts_per_mint
+
+    def _rpc_available_for_buys(self) -> bool:
+        """False while every RPC endpoint's circuit breaker is open (BUG-149).
+
+        Half-open endpoints count as available, so buying resumes with the
+        first probe after the cooldown. No pool (disabled) means no check.
+        """
+        pool = getattr(self, "rpc_pool", None)
+        if not isinstance(pool, RpcConnectionPool) or not pool.endpoint_count:
+            return True
+        return bool(pool.get_healthy_endpoints())
+
+    def _count_entry_refusal(self, error: str) -> None:
+        """Count a refused entry by its cause (the error text before ``:``)."""
+        key = error.split(":", 1)[0].strip()[:40] or "buy_failed"
+        refusals = getattr(self, "_entry_refusals", None)
+        if refusals is None:
+            refusals = self._entry_refusals = {}
+        refusals[key] = refusals.get(key, 0) + 1
 
     def _entry_cost_share_ok(self, entry_sol: float) -> bool:
         """Cost guard (FEAT-52): fixed round-trip costs from the same model as
@@ -1996,6 +2039,7 @@ class TradingBot:
 
         if not exec_res.success:
             self._last_buy_error = exec_res.error
+            self._count_entry_refusal(str(exec_res.error or "buy_failed"))
             self._buy_attempts[mint] = self._buy_attempts.get(mint, 0) + 1
             self._transition_to(
                 TradingBotState.MONITORING,
@@ -2351,7 +2395,30 @@ class TradingBot:
             )
         return False
 
-    def _enqueue_exit_retry(self, mint: str, reason: str = "") -> None:
+    def _enqueue_exit_retry(
+        self,
+        mint: str,
+        reason: str = "",
+        *,
+        exit_reason: str | None = None,
+        sell_fraction: float = 1.0,
+        sell_amount_tokens: int | None = None,
+        target_tier: int | str | None = None,
+    ) -> None:
+        """Queue a failed sell for retry.
+
+        ``reason`` is why it failed (shown in the status and events); the
+        ``exit_reason``, ``sell_fraction``, ``sell_amount_tokens`` and
+        ``target_tier`` of the sell that failed are kept so the retry repeats
+        that exit instead of recording the error as its reason or turning a
+        tier sell into a full one (BUG-153). The latest failed sell wins.
+        """
+        exit_fields: dict[str, Any] = {
+            "exit_reason": exit_reason,
+            "sell_fraction": sell_fraction,
+            "sell_amount_tokens": sell_amount_tokens,
+            "target_tier": target_tier,
+        }
         if mint not in self._exit_retry_queue:
             retry_count = 1
             slippage = self.base_exit_slippage_bps + 500
@@ -2363,6 +2430,7 @@ class TradingBot:
                 "next_retry_at": time.monotonic() + 2.0,
                 "reason": reason,
                 "slippage_bps": slippage,
+                **exit_fields,
             }
             self._record_event(f"exit retry #1: {mint[:8]} ({reason})", alert=False)
         else:
@@ -2380,6 +2448,7 @@ class TradingBot:
                 return
             entry["last_attempt"] = time.monotonic()
             entry["reason"] = reason
+            entry.update(exit_fields)
             entry["slippage_bps"] = min(
                 self.max_exit_slippage_bps,
                 self.base_exit_slippage_bps + (entry["retry_count"] * 500),
@@ -2394,9 +2463,24 @@ class TradingBot:
         now = time.monotonic()
         for mint, entry in list(self._exit_retry_queue.items()):
             if entry.get("next_retry_at", 0) <= now:
+                target_tier = entry.get("target_tier")
+                position = self.active_positions.get(mint)
+                if position is not None and self._tier_already_executed(
+                    position, target_tier
+                ):
+                    # Sold since by another path: nothing left to retry.
+                    self._exit_retry_queue.pop(mint, None)
+                    continue
+                amount = entry.get("sell_amount_tokens")
                 success = await self._sell_token(
                     mint,
-                    reason=entry.get("reason", "retry_exit"),
+                    sell_amount_tokens=int(amount) if amount else None,
+                    sell_fraction=float(entry.get("sell_fraction") or 1.0),
+                    # The exit that failed, never the error text (BUG-153); an
+                    # entry restored from an older status file has no exit
+                    # reason and is recorded as a plain retry.
+                    reason=str(entry.get("exit_reason") or "retry_exit"),
+                    target_tier=target_tier,
                     slippage_bps=entry.get("slippage_bps"),
                     retry_count=entry.get("retry_count", 1),
                 )
@@ -2576,14 +2660,19 @@ class TradingBot:
         if pool_keys is None and mint in self._migrating_mints:
             # The curve is complete and takes no sells (BUG-44). Pump.fun
             # migrates into PumpSwap, not Raydium, so exit there (BUG-123).
-            pool_mc = (
-                await self._pumpswap_exit_market_cap(mint)
-                if bool(getattr(self.config, "enable_pumpswap_exit", True))
-                else None
-            )
-            if pool_mc is None:
+            if not bool(getattr(self.config, "enable_pumpswap_exit", True)):
                 self._last_event = f"awaiting pool {mint[:8]}"
                 return False
+            now = float(self.clock())
+            if not raydium_handlers.pool_read_due(self, mint, now):
+                # Backing off after a failed read: no RPC call (BUG-151).
+                self._last_event = f"awaiting pool {mint[:8]}"
+                return False
+            pool_mc = await self._pumpswap_exit_market_cap(mint)
+            if pool_mc is None:
+                raydium_handlers.note_pool_unavailable(self, mint, position, now)
+                return False
+            raydium_handlers.note_pool_read(self, mint, position)
             # Paper proceeds scale with market cap: price from the pool.
             position["current_market_cap"] = pool_mc
             position["peak_market_cap"] = max(
@@ -2608,7 +2697,14 @@ class TradingBot:
                     f"Unable to fetch token balance for {mint}: {exc}",
                     level=logging.WARNING,
                 )
-                self._enqueue_exit_retry(mint, reason=f"balance_fetch_error: {exc}")
+                self._enqueue_exit_retry(
+                    mint,
+                    reason=f"balance_fetch_error: {exc}",
+                    exit_reason=reason,
+                    sell_fraction=sell_fraction,
+                    sell_amount_tokens=sell_amount_tokens,
+                    target_tier=target_tier,
+                )
                 self._transition_to(
                     TradingBotState.HOLDING, reason=f"sell_balance_failed {mint}"
                 )
@@ -2686,7 +2782,14 @@ class TradingBot:
             )
 
         if not exec_res.success:
-            self._enqueue_exit_retry(mint, reason=f"sell_exec_failed: {exec_res.error}")
+            self._enqueue_exit_retry(
+                mint,
+                reason=f"sell_exec_failed: {exec_res.error}",
+                exit_reason=reason,
+                sell_fraction=sell_fraction,
+                sell_amount_tokens=sell_amount_tokens,
+                target_tier=target_tier,
+            )
             self._transition_to(TradingBotState.HOLDING, reason=f"sell_failed {mint}")
             return False
 
@@ -2800,6 +2903,24 @@ class TradingBot:
             )
         return True
 
+    def _exit_log_level(self, mint: str, exit_type: str) -> int:
+        """INFO for the first decision of an exit type per minute, DEBUG after."""
+        logged = getattr(self, "_exit_logged_at", None)
+        if logged is None:
+            logged = self._exit_logged_at = {}
+        now = time.monotonic()
+        key = (mint, exit_type)
+        last = logged.get(key)
+        if last is not None and now - last < EXIT_LOG_REPEAT_SECONDS:
+            return logging.DEBUG
+        logged[key] = now
+        if len(logged) > 2_000:
+            for old in [
+                k for k, t in logged.items() if now - t >= EXIT_LOG_REPEAT_SECONDS
+            ]:
+                logged.pop(old, None)
+        return logging.INFO
+
     async def _evaluate_and_execute_exit(
         self, mint: str, current_market_cap: float, websocket: Any = None
     ) -> bool:
@@ -2821,14 +2942,19 @@ class TradingBot:
         if not exit_decision:
             return False
 
+        # An exit that keeps failing is re-decided on every price update: log
+        # it once a minute, not every second (BUG-148).
+        level = self._exit_log_level(mint, str(exit_decision.exit_type))
         self._log(
-            f"Monitoring {mint[:8]}... | current MC {current_market_cap:.2f} SOL | performance {performance:.2%} (peak {peak_ratio:.2f}x)"
+            f"Monitoring {mint[:8]}... | current MC {current_market_cap:.2f} SOL | performance {performance:.2%} (peak {peak_ratio:.2f}x)",
+            level=level,
         )
         self._last_event = f"tracking {mint[:8]}... ({performance:.2%})"
 
         if exit_decision.action == ExitAction.PARTIAL_EXIT:
             self._log(
-                f"Partial exit triggered for {mint} ({exit_decision.exit_type}): {exit_decision.reason}"
+                f"Partial exit triggered for {mint} ({exit_decision.exit_type}): {exit_decision.reason}",
+                level=level,
             )
             self._last_event = f"partial exit {mint[:8]} ({exit_decision.exit_type})"
             sold = await self._sell_token(
@@ -2842,7 +2968,8 @@ class TradingBot:
 
         if exit_decision.action == ExitAction.FULL_EXIT:
             self._log(
-                f"Exit triggered for {mint} ({exit_decision.exit_type}): {exit_decision.reason}"
+                f"Exit triggered for {mint} ({exit_decision.exit_type}): {exit_decision.reason}",
+                level=level,
             )
             self._last_event = f"{exit_decision.exit_type} {mint[:8]}"
             sold = await self._sell_token(
@@ -3233,6 +3360,24 @@ class TradingBot:
 
     def stream_stop_requested(self) -> bool:
         return bool(self._stop_requested)
+
+    @property
+    def stream_heartbeat_seconds(self) -> float | None:
+        """Ping the PumpPortal socket so a dead connection closes (BUG-150);
+        ``stream_heartbeat_seconds`` 0 turns the pings off."""
+        value = float(getattr(self.config, "stream_heartbeat_seconds", 0.0) or 0.0)
+        return value if value > 0 else None
+
+    @property
+    def stream_idle_timeout_seconds(self) -> float:
+        """Reconnect after twice the health timeout without a message (120 s
+        by default): the health timeout used to pause trading only, for
+        hours (BUG-150). Twice, because the create feed went quiet for 61 s
+        once in the 13.85 h rc.5 run, and the pings catch a dead socket in
+        about 30 s anyway."""
+        return STREAM_IDLE_TIMEOUT_FACTOR * float(
+            self.config.health_check_timeout_seconds
+        )
 
     def stream_connect_url(self) -> str:
         return self._stream_connect_url()
@@ -3648,6 +3793,21 @@ class TradingBot:
             )
         return launch_bps
 
+    def _warn_single_rpc_endpoint(self) -> bool:
+        """Warn when one RPC endpoint carries every read (BUG-151)."""
+        pool = self.rpc_pool
+        if not isinstance(pool, RpcConnectionPool) or pool.endpoint_count != 1:
+            return False
+        label = pool.endpoints[0].label
+        message = (
+            f"One RPC endpoint configured ({label}): when it rate limits, buys "
+            "stop and positions can't be priced or sold. Give each bot its own "
+            "key and add fallbacks with PUMPFUN_RPC_URLS (BUG-151)."
+        )
+        self._log(message, level=logging.WARNING)
+        self._record_event(message, alert=False)
+        return True
+
     def _warn_unread_env_vars(self) -> list[str]:
         """Flag documented-but-unread variables; PUMPFUN_DRY_RUN is alerted (BUG-142)."""
         warnings = unread_env_warnings()
@@ -3708,6 +3868,7 @@ class TradingBot:
             await self.event_logger.start()
         if self.rpc_pool:
             await self.rpc_pool.start_health_loop()
+            self._warn_single_rpc_endpoint()
         if self.replay_recorder is not None:
             await self.replay_recorder.start()
 

@@ -87,3 +87,7 @@ class MayhemModeCurveError(NonStandardCurveError):
 
 class NotPumpFunCurveError(CurveStateUnavailableError):
     """The mint has no bonding curve owned by the Pump.fun program (BUG-108)."""
+
+
+class CurveCompleteError(CurveStateUnavailableError):
+    """The curve is complete (graduated) and takes no more buys (BUG-145)."""

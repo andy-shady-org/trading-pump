@@ -299,82 +299,117 @@ async def maybe_buy_pre_graduation(
     return False
 
 
+async def read_held_curves(
+    bot: TradingBot, mints: list[str]
+) -> dict[str, dict[str, Any] | None]:
+    """Curves of the held, not-migrating mints: one ``getMultipleAccounts``.
+
+    The refresh used to read each held curve with its own ``getAccountInfo``
+    every second, up to 10 calls a second per bot (BUG-151). A mint the batch
+    rejects (missing, not Pump.fun, non-standard) or a failed batch maps to
+    ``None``, which keeps the last price, as a failed single read did. An
+    execution client without a batch read is read mint by mint.
+    """
+    if not mints:
+        return {}
+    batch = getattr(bot.execution, "get_bonding_curve_states", None)
+    states: Any = None
+    if batch is not None:
+        try:
+            states = await batch(mints, rejected={})
+        except (TypeError, AttributeError):
+            states = None
+        except Exception:
+            bot._count_watch("position_refresh_errors")
+            return dict.fromkeys(mints)
+    if isinstance(states, dict):
+        return {m: states.get(m) for m in mints}
+    curves: dict[str, dict[str, Any] | None] = {}
+    for mint in mints:
+        try:
+            curve = await bot.execution.get_bonding_curve_state(mint)
+        except Exception:
+            curve = None
+        curves[mint] = curve if isinstance(curve, dict) else None
+    return curves
+
+
+async def _evaluate_at_last_price(bot: TradingBot, mint: str) -> None:
+    """No fresh curve: run the exit rules on the position's last known price."""
+    pos = bot.active_positions.get(mint, {})
+    curr_mc = float(
+        pos.get("current_market_cap", 0.0) or pos.get("entry_market_cap", 0.0) or 0.0
+    )
+    if curr_mc > 0.0:
+        await bot._evaluate_and_execute_exit(mint, curr_mc)
+
+
 async def refresh_active_positions_market_caps(bot: TradingBot) -> None:
     """Periodically refresh active position market caps from on-chain bonding curve states."""
     if not bot.active_positions:
         return
-    for mint in list(bot.active_positions.keys()):
+    held = list(bot.active_positions.keys())
+    curves = await read_held_curves(
+        bot, [m for m in held if m not in bot._migrating_mints]
+    )
+    for mint in held:
+        curve = curves.get(mint)
+        if curve is None and mint not in bot._migrating_mints:
+            try:
+                await _evaluate_at_last_price(bot, mint)
+            except Exception:
+                pass
+            continue
         try:
-            if mint in bot._migrating_mints:
+            if mint in bot._migrating_mints or curve is None:
                 await bot._exit_graduated_position(mint)
                 continue
-            curve = await bot.execution.get_bonding_curve_state(mint)
-            if isinstance(curve, dict) and curve.get("complete") is True:
+            if curve.get("complete") is True:
                 # Graduated while held: the curve has no reserves left to
                 # price or sell against (BUG-123).
                 await bot._exit_graduated_position(mint)
                 continue
-            mc = 0.0
-            if isinstance(curve, dict):
-                mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
-                bot._feed_slippage_estimator(
-                    mint,
-                    int(curve.get("virtual_sol_reserves", 0) or 0),
-                    int(curve.get("virtual_token_reserves", 0) or 0),
+            mc = float(curve.get("market_cap_sol", 0.0) or 0.0)
+            bot._feed_slippage_estimator(
+                mint,
+                int(curve.get("virtual_sol_reserves", 0) or 0),
+                int(curve.get("virtual_token_reserves", 0) or 0),
+            )
+            if mc <= 0.0:
+                vt = int(curve.get("virtual_token_reserves", 0))
+                vs = int(curve.get("virtual_sol_reserves", 0))
+                if vt > 0 and vs > 0:
+                    mc = (vs / 1_000_000_000.0) * (1_000_000_000.0 / (vt / 1_000_000.0))
+            # Paper exits price from this read: record it so replay
+            # exits see the same curve.
+            bot._record_curve_poll(
+                mint,
+                mc,
+                ts=time.time(),
+                source="position",
+                real_sol=int(curve.get("real_sol_reserves", 0) or 0) / 1e9,
+                virtual_sol=int(curve.get("virtual_sol_reserves", 0) or 0) / 1e9,
+            )
+            if bot._entry_mode() == "confirmed" and mc > 0.0:
+                # Keep curve progress fresh for held mints so the
+                # pre-graduation tranches sell before migration (FEAT-53).
+                bot.graduation_engine.update_bonding_curve(
+                    mint=mint,
+                    bonding_curve="",
+                    real_sol_reserves=int(curve.get("real_sol_reserves", 0) or 0)
+                    / 1_000_000_000.0,
+                    virtual_sol_reserves=int(curve.get("virtual_sol_reserves", 0) or 0)
+                    / 1_000_000_000.0,
+                    market_cap_sol=mc,
+                    complete=bool(curve.get("complete", False)),
                 )
-                if mc <= 0.0:
-                    vt = int(curve.get("virtual_token_reserves", 0))
-                    vs = int(curve.get("virtual_sol_reserves", 0))
-                    if vt > 0 and vs > 0:
-                        mc = (vs / 1_000_000_000.0) * (
-                            1_000_000_000.0 / (vt / 1_000_000.0)
-                        )
-                # Paper exits price from this read: record it so replay
-                # exits see the same curve.
-                bot._record_curve_poll(
-                    mint,
-                    mc,
-                    ts=time.time(),
-                    source="position",
-                    real_sol=int(curve.get("real_sol_reserves", 0) or 0) / 1e9,
-                    virtual_sol=int(curve.get("virtual_sol_reserves", 0) or 0) / 1e9,
-                )
-                if bot._entry_mode() == "confirmed" and mc > 0.0:
-                    # Keep curve progress fresh for held mints so the
-                    # pre-graduation tranches sell before migration (FEAT-53).
-                    bot.graduation_engine.update_bonding_curve(
-                        mint=mint,
-                        bonding_curve="",
-                        real_sol_reserves=int(curve.get("real_sol_reserves", 0) or 0)
-                        / 1_000_000_000.0,
-                        virtual_sol_reserves=int(
-                            curve.get("virtual_sol_reserves", 0) or 0
-                        )
-                        / 1_000_000_000.0,
-                        market_cap_sol=mc,
-                        complete=bool(curve.get("complete", False)),
-                    )
             if mc > 0.0:
                 note_stop_crossing(bot, mint, mc, source="refresh")
                 await bot._evaluate_and_execute_exit(mint, mc)
             else:
-                pos = bot.active_positions.get(mint, {})
-                curr_mc = float(
-                    pos.get("current_market_cap", 0.0)
-                    or pos.get("entry_market_cap", 0.0)
-                    or 0.0
-                )
-                if curr_mc > 0.0:
-                    await bot._evaluate_and_execute_exit(mint, curr_mc)
+                await _evaluate_at_last_price(bot, mint)
         except Exception:
             try:
-                pos = bot.active_positions.get(mint, {})
-                curr_mc = float(
-                    pos.get("current_market_cap", 0.0)
-                    or pos.get("entry_market_cap", 0.0)
-                    or 0.0
-                )
-                if curr_mc > 0.0:
-                    await bot._evaluate_and_execute_exit(mint, curr_mc)
+                await _evaluate_at_last_price(bot, mint)
             except Exception:
                 pass

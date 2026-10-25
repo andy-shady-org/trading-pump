@@ -329,6 +329,7 @@ def build_dashboard(bot: Any) -> Panel:
                 reason = str(
                     position.get("entry_reason") or position.get("reason") or "watch"
                 )
+                stale = bool(position.get("price_stale"))
             else:
                 name = str(getattr(position, "name", mint) or mint)
                 entry = float(getattr(position, "entry_market_cap", 0.0) or 0.0)
@@ -363,6 +364,7 @@ def build_dashboard(bot: Any) -> Panel:
                     or getattr(position, "reason", None)
                     or "watch"
                 )
+                stale = bool(getattr(position, "price_stale", False))
 
             if unit_price > 0:
                 if unit_price < 0.001:
@@ -390,7 +392,9 @@ def build_dashboard(bot: Any) -> Panel:
                 name[:18],
                 mint[:8] + "...",
                 f"{entry:.2f} SOL",
-                f"{current:.2f} SOL",
+                # A migrated coin whose pool can't be read: last price, not
+                # a live one (BUG-147).
+                f"{current:.2f} SOL (stale)" if stale else f"{current:.2f} SOL",
                 f"{cost:.4f} SOL",
                 tokens_str,
                 unit_price_str,

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from pumpfun_trading.bot.strategy import ArbitrageOpportunity, RaydiumPoolKeys
 from pumpfun_trading.ops.events import EventCategory
@@ -240,18 +240,97 @@ async def evaluate_and_execute_arbitrage(
                 )
 
 
+# Waits between PumpSwap pool reads of one migrated coin after a failure:
+# doubling from the first value to the cap (BUG-148, BUG-151).
+POOL_RETRY_FIRST_SECONDS = 2.0
+POOL_RETRY_MAX_SECONDS = 60.0
+
+
+def _pool_errors(bot: TradingBot) -> dict[str, str]:
+    errors: dict[str, str] | None = getattr(bot, "_pool_read_errors", None)
+    if errors is None:
+        errors = bot._pool_read_errors = {}
+    return errors
+
+
 async def pumpswap_exit_market_cap(bot: TradingBot, mint: str) -> float | None:
-    """Market cap of a migrated coin's PumpSwap pool; ``None`` while it is missing."""
+    """Market cap of a migrated coin's PumpSwap pool; ``None`` while it is missing.
+
+    Why a read failed is kept in ``bot._pool_read_errors`` for the warning
+    :func:`note_pool_unavailable` logs (BUG-148).
+    """
     getter = getattr(bot.execution, "get_pumpswap_market_state", None)
     if getter is None:
+        _pool_errors(bot)[mint] = "no PumpSwap client"
         return None
     try:
         state = await asyncio.wait_for(getter(mint), timeout=5.0)
         mc = float(state.get("market_cap_sol", 0.0) or 0.0)
     except Exception as exc:
-        bot._log(f"PumpSwap pool for {mint[:8]} not ready: {exc}", level=logging.DEBUG)
+        reason = str(exc) or type(exc).__name__
+        _pool_errors(bot)[mint] = reason[:200]
+        bot._log(
+            f"PumpSwap pool for {mint[:8]} not ready: {reason}", level=logging.DEBUG
+        )
         return None
-    return mc if mc > 0.0 else None
+    if mc <= 0.0:
+        _pool_errors(bot)[mint] = "pool has no price"
+        return None
+    _pool_errors(bot).pop(mint, None)
+    return mc
+
+
+def pool_read_due(bot: TradingBot, mint: str, now: float) -> bool:
+    """Whether a migrated coin's pool may be read again (after a failure's wait)."""
+    retry = getattr(bot, "_pool_retry", {}).get(mint)
+    return retry is None or now >= float(retry["next_at"])
+
+
+def note_pool_unavailable(
+    bot: TradingBot, mint: str, position: dict[str, Any], now: float
+) -> None:
+    """A migrated coin's pool could not be read: back off, flag the price stale.
+
+    The wait doubles from ``POOL_RETRY_FIRST_SECONDS`` to
+    ``POOL_RETRY_MAX_SECONDS``; a warning names the cause on the first
+    failure and then at 2, 4, 8, ... failures, so a dead RPC is visible in
+    ``bot.log`` without a line every second (BUG-148).
+    """
+    retries: dict[str, dict[str, Any]] | None = getattr(bot, "_pool_retry", None)
+    if retries is None:
+        retries = bot._pool_retry = {}
+    entry = retries.setdefault(mint, {"failures": 0, "next_at": now})
+    entry["failures"] = int(entry["failures"]) + 1
+    failures = int(entry["failures"])
+    wait = min(POOL_RETRY_MAX_SECONDS, POOL_RETRY_FIRST_SECONDS * 2 ** (failures - 1))
+    entry["next_at"] = now + wait
+    if not position.get("price_stale"):
+        position["price_stale"] = True
+        position["price_stale_since"] = time.time()
+    bot._last_event = f"awaiting pool {mint[:8]}"
+    if failures & (failures - 1) == 0:
+        error = _pool_errors(bot).get(mint, "unknown error")
+        bot._log(
+            f"PumpSwap pool for {mint[:8]} unreadable ({failures} tries): {error}; "
+            f"the position's value is stale and its exit waits; next try in "
+            f"{wait:.0f}s",
+            level=logging.WARNING,
+        )
+        if failures == 1:
+            bot._record_event(f"awaiting pool {mint[:8]}: {error[:120]}", alert=False)
+
+
+def note_pool_read(bot: TradingBot, mint: str, position: dict[str, Any]) -> None:
+    """A pool read worked: clear the backoff and the stale flag."""
+    entry = getattr(bot, "_pool_retry", {}).pop(mint, None)
+    if position.pop("price_stale", None) or entry is not None:
+        position.pop("price_stale_since", None)
+        if entry is not None:
+            bot._log(
+                f"PumpSwap pool for {mint[:8]} readable again after "
+                f"{entry['failures']} failed tries",
+                level=logging.INFO,
+            )
 
 
 async def exit_graduated_position(bot: TradingBot, mint: str) -> bool:
@@ -270,6 +349,10 @@ async def exit_graduated_position(bot: TradingBot, mint: str) -> bool:
             mint=mint, bonding_curve="", timestamp=time.time()
         )
         bot._record_event(f"graduated while held {mint[:8]}", alert=False)
+        bot._log(
+            f"Held coin {mint} graduated: exiting through its PumpSwap pool",
+            level=logging.INFO,
+        )
     return await bot._sell_token(mint, reason="bonding_curve_graduated")
 
 
