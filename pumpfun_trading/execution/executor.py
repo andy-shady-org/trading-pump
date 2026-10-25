@@ -143,7 +143,11 @@ class OrderExecutor:
         return fee if isinstance(fee, int) else PUMP_DEFAULT_FEE_BPS
 
     async def _fetch_curve_reserves(
-        self, mint: str, *, reject_non_standard: bool = False
+        self,
+        mint: str,
+        *,
+        reject_non_standard: bool = False,
+        read_errors: list[str] | None = None,
     ) -> tuple[int, int] | None:
         """Returns live ``(virtual_sol_lamports, virtual_token_raw)`` or ``None``.
 
@@ -152,7 +156,10 @@ class OrderExecutor:
         :class:`MayhemModeCurveError` unless ``skip_mayhem_mode`` is off, and a mint without a curve owned
         by the Pump.fun program raises :class:`NotPumpFunCurveError` (BUG-108),
         and a complete curve raises :class:`CurveCompleteError` (BUG-145),
-        instead of returning ``None``.
+        instead of returning ``None``. A read that failed (RPC error, timeout)
+        (``RuntimeError``, ``TimeoutError``, ``OSError``) is appended to
+        ``read_errors`` when given, so a caller can tell it from a curve that
+        answered without reserves (BUG-152).
         """
         if self.execution is None:
             return None
@@ -177,6 +184,12 @@ class OrderExecutor:
             return None
         except Exception as exc:
             logger.debug("Curve reserves unavailable for %s: %s", mint, exc)
+            if read_errors is not None and isinstance(
+                exc, (RuntimeError, TimeoutError, OSError)
+            ):
+                # The RPC did not answer (the client wraps every request
+                # failure in RuntimeError); a bad address is not a read error.
+                read_errors.append(str(exc) or type(exc).__name__)
             return None
         if v_sol <= 0 or v_token <= 0:
             return None
@@ -722,7 +735,27 @@ class OrderExecutor:
         ):
             effective_urgency = "emergency"
 
-        reserves = await self._fetch_curve_reserves(mint)
+        read_errors: list[str] = []
+        reserves = await self._fetch_curve_reserves(mint, read_errors=read_errors)
+        if is_dry_run and read_errors:
+            # A live sell reads the curve to build its transaction and fails
+            # without it; a paper sell must fail too and go to the retry
+            # queue, not sell at the last trade price (BUG-152).
+            logger.warning(
+                "Paper sell of %s refused: curve read failed (%s); a live sell "
+                "would fail too",
+                mint,
+                read_errors[0][:200],
+            )
+            return ExecutionResult(
+                success=False,
+                mint=mint,
+                is_buy=False,
+                token_amount=token_amount,
+                reason=reason,
+                dry_run=True,
+                error=f"curve_unreadable: {read_errors[0][:200]}",
+            )
         expected_lamports = self._estimate_sell_lamports(token_amount, reserves)
         resolved_slippage = slippage_bps
         if resolved_slippage is None and getattr(

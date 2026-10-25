@@ -309,8 +309,10 @@ async def test_order_executor_dry_run():
     assert buy_res.mint == "Mint111"
     assert buy_res.is_buy
 
-    # Without a curve the paper sell has no quote.
-    exec_client.get_bonding_curve_state = AsyncMock(side_effect=RuntimeError("down"))
+    # A curve without reserves gives the paper sell no quote.
+    exec_client.get_bonding_curve_state = AsyncMock(
+        return_value={"virtual_sol_reserves": 0, "virtual_token_reserves": 0}
+    )
     sell_res = await executor.execute_sell("Mint111", 500_000, reason="dry_sell")
     assert sell_res.success
     assert sell_res.dry_run
@@ -1129,3 +1131,31 @@ async def test_pumpswap_live_sell_failures() -> None:
     res = await executor.execute_pumpswap_sell(MINT, TOKENS, close_token_account=True)
     assert res.error == "pumpswap_sell_confirmation_failed"
     assert MINT in executor._close_disabled_mints
+
+
+@pytest.mark.regression("BUG-152")
+async def test_paper_sell_without_a_curve_read_fails_like_a_live_one() -> None:
+    # rc.5 made 92 + 87 paper sells after the RPC died; none could have sold live.
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=RuntimeError("RPC endpoint rate limited (HTTP 429)")
+        )
+    )
+    executor = _executor(client)
+
+    result = await executor.execute_sell(MINT, TOKENS, reason="stop_loss", dry_run=True)
+
+    assert not result.success
+    assert result.dry_run
+    assert result.error == "curve_unreadable: RPC endpoint rate limited (HTTP 429)"
+    client.sell.assert_not_awaited()
+
+
+@pytest.mark.regression("BUG-152")
+async def test_paper_sell_with_an_unparseable_address_is_not_a_read_failure() -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(side_effect=ValueError("Invalid Base58"))
+    )
+    executor = _executor(client)
+    result = await executor.execute_sell(MINT, TOKENS, reason="stop_loss", dry_run=True)
+    assert result.success

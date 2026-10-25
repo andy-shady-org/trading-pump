@@ -411,6 +411,7 @@ async def test_geyser_tiered_and_trailing_exits(tmp_path):
         bot_status_path=str(tmp_path / "status.json"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
     )
+    FakeCurves().install(bot)  # paper sells read the curve (BUG-152)
 
     bot.active_positions[SAMPLE_MINT] = {
         "name": "Moonshot",
