@@ -195,6 +195,8 @@ TRADED_MINTS_LIMIT = 10_000
 # A repeated exit decision of one type and mint is logged at INFO once per
 # this many seconds, at DEBUG in between (BUG-148).
 EXIT_LOG_REPEAT_SECONDS = 60.0
+# The stream reconnects after this many health timeouts without a message.
+STREAM_IDLE_TIMEOUT_FACTOR = 2.0
 
 
 class TradingBot:
@@ -1600,6 +1602,10 @@ class TradingBot:
                     "retries": entry.get("retries", 1),
                     "retry_count": entry.get("retry_count", 1),
                     "slippage_bps": entry.get("slippage_bps"),
+                    "exit_reason": entry.get("exit_reason"),
+                    "sell_fraction": entry.get("sell_fraction", 1.0),
+                    "sell_amount_tokens": entry.get("sell_amount_tokens"),
+                    "target_tier": entry.get("target_tier"),
                 }
                 for mint, entry in self._exit_retry_queue.items()
             },
@@ -2389,7 +2395,30 @@ class TradingBot:
             )
         return False
 
-    def _enqueue_exit_retry(self, mint: str, reason: str = "") -> None:
+    def _enqueue_exit_retry(
+        self,
+        mint: str,
+        reason: str = "",
+        *,
+        exit_reason: str | None = None,
+        sell_fraction: float = 1.0,
+        sell_amount_tokens: int | None = None,
+        target_tier: int | str | None = None,
+    ) -> None:
+        """Queue a failed sell for retry.
+
+        ``reason`` is why it failed (shown in the status and events); the
+        ``exit_reason``, ``sell_fraction``, ``sell_amount_tokens`` and
+        ``target_tier`` of the sell that failed are kept so the retry repeats
+        that exit instead of recording the error as its reason or turning a
+        tier sell into a full one (BUG-153). The latest failed sell wins.
+        """
+        exit_fields: dict[str, Any] = {
+            "exit_reason": exit_reason,
+            "sell_fraction": sell_fraction,
+            "sell_amount_tokens": sell_amount_tokens,
+            "target_tier": target_tier,
+        }
         if mint not in self._exit_retry_queue:
             retry_count = 1
             slippage = self.base_exit_slippage_bps + 500
@@ -2401,6 +2430,7 @@ class TradingBot:
                 "next_retry_at": time.monotonic() + 2.0,
                 "reason": reason,
                 "slippage_bps": slippage,
+                **exit_fields,
             }
             self._record_event(f"exit retry #1: {mint[:8]} ({reason})", alert=False)
         else:
@@ -2418,6 +2448,7 @@ class TradingBot:
                 return
             entry["last_attempt"] = time.monotonic()
             entry["reason"] = reason
+            entry.update(exit_fields)
             entry["slippage_bps"] = min(
                 self.max_exit_slippage_bps,
                 self.base_exit_slippage_bps + (entry["retry_count"] * 500),
@@ -2432,9 +2463,24 @@ class TradingBot:
         now = time.monotonic()
         for mint, entry in list(self._exit_retry_queue.items()):
             if entry.get("next_retry_at", 0) <= now:
+                target_tier = entry.get("target_tier")
+                position = self.active_positions.get(mint)
+                if position is not None and self._tier_already_executed(
+                    position, target_tier
+                ):
+                    # Sold since by another path: nothing left to retry.
+                    self._exit_retry_queue.pop(mint, None)
+                    continue
+                amount = entry.get("sell_amount_tokens")
                 success = await self._sell_token(
                     mint,
-                    reason=entry.get("reason", "retry_exit"),
+                    sell_amount_tokens=int(amount) if amount else None,
+                    sell_fraction=float(entry.get("sell_fraction") or 1.0),
+                    # The exit that failed, never the error text (BUG-153); an
+                    # entry restored from an older status file has no exit
+                    # reason and is recorded as a plain retry.
+                    reason=str(entry.get("exit_reason") or "retry_exit"),
+                    target_tier=target_tier,
                     slippage_bps=entry.get("slippage_bps"),
                     retry_count=entry.get("retry_count", 1),
                 )
@@ -2651,7 +2697,14 @@ class TradingBot:
                     f"Unable to fetch token balance for {mint}: {exc}",
                     level=logging.WARNING,
                 )
-                self._enqueue_exit_retry(mint, reason=f"balance_fetch_error: {exc}")
+                self._enqueue_exit_retry(
+                    mint,
+                    reason=f"balance_fetch_error: {exc}",
+                    exit_reason=reason,
+                    sell_fraction=sell_fraction,
+                    sell_amount_tokens=sell_amount_tokens,
+                    target_tier=target_tier,
+                )
                 self._transition_to(
                     TradingBotState.HOLDING, reason=f"sell_balance_failed {mint}"
                 )
@@ -2729,7 +2782,14 @@ class TradingBot:
             )
 
         if not exec_res.success:
-            self._enqueue_exit_retry(mint, reason=f"sell_exec_failed: {exec_res.error}")
+            self._enqueue_exit_retry(
+                mint,
+                reason=f"sell_exec_failed: {exec_res.error}",
+                exit_reason=reason,
+                sell_fraction=sell_fraction,
+                sell_amount_tokens=sell_amount_tokens,
+                target_tier=target_tier,
+            )
             self._transition_to(TradingBotState.HOLDING, reason=f"sell_failed {mint}")
             return False
 
@@ -3310,9 +3370,14 @@ class TradingBot:
 
     @property
     def stream_idle_timeout_seconds(self) -> float:
-        """Reconnect after this long without a message: the health timeout
-        used to pause trading only, for hours (BUG-150)."""
-        return float(self.config.health_check_timeout_seconds)
+        """Reconnect after twice the health timeout without a message (120 s
+        by default): the health timeout used to pause trading only, for
+        hours (BUG-150). Twice, because the create feed went quiet for 61 s
+        once in the 13.85 h rc.5 run, and the pings catch a dead socket in
+        about 30 s anyway."""
+        return STREAM_IDLE_TIMEOUT_FACTOR * float(
+            self.config.health_check_timeout_seconds
+        )
 
     def stream_connect_url(self) -> str:
         return self._stream_connect_url()
