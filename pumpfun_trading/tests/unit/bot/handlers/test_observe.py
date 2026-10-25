@@ -610,3 +610,26 @@ async def test_record_only_hooks_never_raise_into_trading(tmp_path: Path) -> Non
         },
     )
     bot._should_buy.assert_called_once()
+
+
+@pytest.mark.regression("BUG-151")
+async def test_record_only_polls_wait_while_the_rpc_is_rate_limited(
+    tmp_path: Path,
+) -> None:
+    # Record-only reads competed with the reads that price and sell positions.
+    bot = _bot(tmp_path, graduation_discovery_scan_seconds=0.0)
+    sample = observe.reject_sample_list(bot)
+    assert sample is not None
+    sample.add("A", now=time.time())
+    bot.execution.get_bonding_curve_states = AsyncMock(return_value={"A": _curve(1.0)})
+    endpoint = bot.rpc_pool.endpoints[0]
+    endpoint.last_rate_limited_time = time.time()
+
+    await observe.poll_observations(bot)
+
+    bot.execution.get_bonding_curve_states.assert_not_awaited()
+    assert bot._watch_stats["observation_polls_deferred"] == 1
+
+    endpoint.last_rate_limited_time = time.time() - 31.0
+    await observe.poll_observations(bot)
+    bot.execution.get_bonding_curve_states.assert_awaited_once()

@@ -127,7 +127,7 @@ The table below summarizes every supported environment variable, its recognized 
 * **Type:** String (Comma-separated URLs)
 * **Required:** Optional
 * **Default:** `None`
-* **Description:** Comma-separated list of secondary/failover Solana RPC endpoints. Loaded into `RpcConnectionPool` to provide seamless round-robin load distribution and automatic error recovery during node rate-limiting.
+* **Description:** Comma-separated list of Solana RPC endpoints for `RpcConnectionPool` (read routing by latency, failover when one rate limits or fails). When set (and `rpc_endpoints` is not set in the config), the pool uses **only** these endpoints, so list the primary first and add the fallbacks after it; `PUMPFUN_RPC_URL` is then not part of the pool. Give each bot its own key: two bots on one key share its rate limit, and a single endpoint is warned about at startup (BUG-151, [`RUNBOOK.md` §5.8](dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)).
 * **Example:** `PUMPFUN_RPC_URLS="https://rpc1.triton.one/?api-key=KEY,https://rpc2.helius.xyz/?api-key=KEY"`
 
 ---

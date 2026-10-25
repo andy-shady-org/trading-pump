@@ -10,6 +10,7 @@ from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.streams.geyser import BondingCurveStateUpdate
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.fakes import FakeCurves
 
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 SAMPLE_MINT_TOXIC = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
@@ -33,13 +34,16 @@ def bot(tmp_path):
         require_pump_mint_suffix=False,
         dry_run=True,
     )
-    return TradingBot(
+    bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
         config=config,
         bot_status_path=str(tmp_path / "status.json"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
     )
+    # Paper buys read the curve (BUG-145).
+    FakeCurves(default_market_cap=30.0).install(bot)
+    return bot
 
 
 async def test_bot_enrich_and_screen_clean_token(bot):

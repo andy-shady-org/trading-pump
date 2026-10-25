@@ -15,6 +15,7 @@ from pumpfun_trading.bot.enrichment import TokenScreeningVerdict
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.tests.support.constants import SAMPLE_PUMP_MINT
 from pumpfun_trading.tests.support.factories import make_bot
+from pumpfun_trading.tests.support.fakes import FakeCurves
 
 CREATOR = "CreatorWallet1111111111111111111111111111111"
 
@@ -70,6 +71,8 @@ def _confirmed_bot(tmp_path: Path, **overrides: Any) -> TradingBot:
     )
     bot._active_ws = MagicMock(spec=["send_json"])
     bot._active_ws.send_json = AsyncMock()
+    # Paper buys read the curve (BUG-145).
+    bot._test_curves = FakeCurves().install(bot)  # type: ignore[attr-defined]
     return bot
 
 
@@ -119,6 +122,9 @@ async def test_confirmed_entry_watches_promotes_confirms_and_buys_once(
 
     bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
         return_value={SAMPLE_PUMP_MINT: _curve(10.0)}
+    )
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        return_value=_curve(10.0)
     )
     await bot._poll_watch_list()
     assert _sent_methods(bot) == [("subscribeTokenTrade", [SAMPLE_PUMP_MINT])]
@@ -170,6 +176,7 @@ async def test_stop_exit_records_where_each_price_source_crossed_the_stop(
     )
     bot.order_flow_engine.mark_watch_subscribed(SAMPLE_PUMP_MINT)
     mc = 50.0
+    bot._test_curves.at(SAMPLE_PUMP_MINT, mc)  # type: ignore[attr-defined]
     for i in range(1, 6):
         await _trade(bot, user=f"Buyer{i}", sol=0.5, ts=now - 10 + i, mc=mc)
     assert SAMPLE_PUMP_MINT in bot.active_positions

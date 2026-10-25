@@ -39,6 +39,28 @@ CURVE_OFFSET_TOLERANCE: float = 0.01
 LAUNCH_MARKET_CAP_SOL: float = (INITIAL_VIRTUAL_SOL_LAMPORTS / 1_000_000_000.0) * (
     TOTAL_TOKEN_SUPPLY_RAW / INITIAL_VIRTUAL_TOKEN_RAW
 )
+# Tokens a standard curve sells before it completes (793.1 M of the 1 B supply).
+INITIAL_REAL_TOKEN_RAW: int = 793_100_000_000_000
+# Market cap of a standard curve with every real token sold: about 410.88 SOL
+# (115.0 SOL virtual over 279.9 M virtual tokens). A create event at this
+# market cap is a coin whose creator bought the whole curve in the create
+# transaction; it graduated before anyone else could buy (BUG-146).
+COMPLETE_CURVE_MARKET_CAP_SOL: float = (
+    INITIAL_VIRTUAL_SOL_LAMPORTS
+    * INITIAL_VIRTUAL_TOKEN_RAW
+    / (INITIAL_VIRTUAL_TOKEN_RAW - INITIAL_REAL_TOKEN_RAW)
+    / 1_000_000_000.0
+) * (TOTAL_TOKEN_SUPPLY_RAW / (INITIAL_VIRTUAL_TOKEN_RAW - INITIAL_REAL_TOKEN_RAW))
+# A create event at (or within the curve tolerance of) the full-curve market
+# cap graduated in its own transaction: nothing is left to buy (BUG-146).
+COMPLETE_AT_CREATE_MARKET_CAP_SOL: float = COMPLETE_CURVE_MARKET_CAP_SOL * (
+    1.0 - CURVE_OFFSET_TOLERANCE
+)
+
+
+def complete_at_create(market_cap_sol: float) -> bool:
+    """Whether a create event's market cap shows a curve already sold out."""
+    return float(market_cap_sol or 0.0) >= COMPLETE_AT_CREATE_MARKET_CAP_SOL
 
 
 def curve_reserve_anomaly(

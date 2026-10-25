@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,6 +17,7 @@ from pumpfun_trading.sdk.curve import (
 )
 from pumpfun_trading.strategies.presets import resolve_strategy_config
 from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.fakes import standard_curve
 
 
 def test_curve_volatility_estimator_math():
@@ -180,6 +181,8 @@ async def test_order_executor_dynamic_slippage():
         max_slippage_bps=600,
     )
     mock_client = MagicMock()
+    # Paper buys need a curve read (BUG-145).
+    mock_client.get_bonding_curve_state = AsyncMock(return_value=standard_curve())
     executor = OrderExecutor(mock_client, config=config, dry_run=True)
 
     mint = "TestToken11111111111111111111111111111111111"

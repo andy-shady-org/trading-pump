@@ -14,6 +14,7 @@ from rich.table import Table
 
 from pumpfun_trading.bot.risk import CircuitBreakerAction, DailyEquityTracker
 from pumpfun_trading.ops.provenance import PROVENANCE_EVENT
+from pumpfun_trading.sdk.curve import complete_at_create
 from pumpfun_trading.engines.costs import ReplayCostModel
 from pumpfun_trading.strategies.arbitrage import CrossVenueDisparityMonitor
 from pumpfun_trading.strategies.base import TradingBotConfig
@@ -437,6 +438,20 @@ class PaperTradingEngine:
             and "reason" in snapshot
             and "user" not in snapshot
         )
+
+    def _skips_complete_launch(
+        self, snapshot: dict[str, Any], entry_rejections: dict[str, int]
+    ) -> bool:
+        """A live-fidelity launch buy the bot refuses: the create event already
+        shows a full curve (BUG-146). Counted in ``entry_rejections``."""
+        if not self.live_fidelity or not self._is_new_token(snapshot):
+            return False
+        if not complete_at_create(float(snapshot.get("market_cap_sol") or 0.0)):
+            return False
+        entry_rejections["complete_at_create"] = (
+            entry_rejections.get("complete_at_create", 0) + 1
+        )
+        return True
 
     @staticmethod
     def _is_new_token(snapshot: dict[str, Any]) -> bool:
@@ -1506,6 +1521,11 @@ class PaperTradingEngine:
                     )
                 )
                 and len(positions) < self.max_positions
+                and not (
+                    not confirmed
+                    and not mirror_live_entries
+                    and self._skips_complete_launch(snapshot, entry_rejections)
+                )
             ):
                 if tracker is not None and not breaker_locked:
                     # The bot re-checks the breaker in its equity guard (FEAT-66).

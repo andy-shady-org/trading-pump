@@ -21,6 +21,8 @@ class TradingBotConfig:
     min_sell_balance: int = 1
     recent_token_ttl_seconds: int = 600
     reconnect_delay_seconds: float = 2.0
+    # WebSocket ping interval; 0 = no pings, only the idle reconnect (BUG-150).
+    stream_heartbeat_seconds: float = 20.0
     dry_run: bool = False
     paper_trade: bool = False
     verbose: bool = True
@@ -306,6 +308,7 @@ class TradingBotConfig:
             "min_sell_balance": self.min_sell_balance,
             "recent_token_ttl_seconds": self.recent_token_ttl_seconds,
             "reconnect_delay_seconds": self.reconnect_delay_seconds,
+            "stream_heartbeat_seconds": self.stream_heartbeat_seconds,
             "dry_run": self.dry_run,
             "paper_trade": self.paper_trade,
             "verbose": self.verbose,

@@ -166,6 +166,31 @@ PumpPortal meters token-trade data against the API key's linked wallet (0.01 SOL
 jq '.trade_feed_breaker' data/bot_status.json
 ```
 
+### 5.8 RPC and stream outages (BUG-145 to BUG-151)
+
+Every price, paper fill and sell goes through the RPC pool. In the rc.5 launch-mode run two bots shared one Helius key; the key stopped answering at 07:01 UTC and both bots carried on blind for an hour (§26 of [`BUGS.md`](BUGS.md#26-rc5-paper-run-findings-2026-10-25)). What the bot does now when the RPC fails:
+
+- **The breaker stops traffic.** An endpoint that rate limits (HTTP 429) or fails three times in a row gets no requests for 1 s, then 2, 4 … up to `rpc_pool_circuit_breaker_cooldown_seconds` (60 s) while it keeps failing, with one probe request when each wait ends. Requests made meanwhile fail at once without being sent (`RpcPoolUnavailableError`, counted as `rejected_requests`).
+- **No buys** while every endpoint is open (`last_event` "buy blocked: no healthy RPC endpoint", `entry_refusals.rpc_unavailable`). Exits keep trying.
+- **No invented paper fills.** A paper buy whose curve read fails is refused (`curve_unreadable`), as a live buy would be. A coin whose create event already shows a full curve (410.88 SOL market cap) is never bought (`complete_at_create`), and a complete curve at the fill is refused (`curve_complete`).
+- **Graduated positions** are priced from their PumpSwap pool only. While the pool can't be read the position is marked `price_stale` (dashboard `… SOL (stale)`), the read is retried after 2 s doubling to 60 s, and `bot.log` gets a warning naming the cause (`PumpSwap pool for … unreadable (n tries): …`).
+- **Record-only polls** (launch sample, post-exit, reject sample, discovery) wait while no endpoint is open or for 30 s after any rate limit (`watch_list.stats.observation_polls_deferred`).
+- **Stream silence**: the PumpPortal socket is pinged every `stream_heartbeat_seconds` (20 s; 0 = off) and dropped and reconnected after `health_check_timeout_seconds` (60 s) without a message (`No WebSocket message for 60s: the connection is stale; reconnecting`). "Cannot write to closing transport" is logged at INFO and reconnects like a remote close. Neither needs a restart any more.
+
+**Capacity.** Give **each bot its own RPC key**, and add at least one fallback endpoint: `PUMPFUN_RPC_URLS="<primary>,<fallback>"` ([`ENVIRONMENTAL-VARIABLES.md`](../ENVIRONMENTAL-VARIABLES.md)). Startup warns when a bot has a single endpoint. Launch mode holds up to `max_active_positions` coins; the refresh reads them all in one call per `position_refresh_seconds`, and each graduated coin adds two calls per pool read. Check the provider plan's request-per-second and monthly credit limits against `requests_by_method` over a few minutes before a long run.
+
+```bash
+# Endpoint health, the cause of the last failures and which calls carry the load
+jq '.rpc_pool_telemetry | {healthy_endpoints, rejected_requests, requests_by_method,
+    endpoints: [.endpoints[] | {label, state, rate_limited_count, consecutive_failures,
+    open_streak, last_success_time, last_rate_limited_time}]}' data/bot_status.json
+# Entries refused, by cause
+jq '.entry_refusals' data/bot_status.json
+grep -E "unreadable|rate limited|One RPC endpoint|connection is stale" data/bot.log | tail
+```
+
+**When it happens:** data recorded while `healthy_endpoints` is 0 is not a valid paper sample; note the window when archiving and leave it out of the verdict. If a 429 body says the plan's credits are used up (`max usage reached` or similar), the key will not recover by waiting: switch the bot to another key and restart.
+
 ## 6. Paper pilot procedure
 
 Stage 0 of the live capital gate. Exit criteria: [`RELEASE-GATE.md` §3.2](RELEASE-GATE.md#32-stage-0--paper-pilot-exit-criteria).

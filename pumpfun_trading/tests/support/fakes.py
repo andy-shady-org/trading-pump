@@ -10,6 +10,7 @@ e.g. ``client.rpc_pool = FakeRpc()``.
 from __future__ import annotations
 
 import asyncio
+import math
 import types
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -17,6 +18,12 @@ from typing import Any
 
 import pytest
 
+from pumpfun_trading.sdk.curve import (
+    INITIAL_REAL_TOKEN_RAW,
+    INITIAL_VIRTUAL_SOL_LAMPORTS,
+    INITIAL_VIRTUAL_TOKEN_RAW,
+    TOTAL_TOKEN_SUPPLY_RAW,
+)
 from pumpfun_trading.sdk.jito import JITO_TIP_ACCOUNTS, JitoBundleStatus, JitoTipFloor
 
 _REAL_ASYNC_SLEEP = asyncio.sleep
@@ -149,6 +156,90 @@ class FakeRpc:
 
     async def close(self) -> None:
         self.closed = True
+
+
+def standard_curve(
+    market_cap_sol: float | None = None, *, complete: bool = False
+) -> dict[str, Any]:
+    """A decoded standard Pump.fun curve at ``market_cap_sol`` (a fresh launch
+    when ``None``), shaped like ``get_bonding_curve_state``'s answer.
+
+    The reserves keep the standard invariant (30 SOL x 1.073 B tokens), so the
+    curve passes the BUG-104 checks and a buy quote on it is realistic.
+    """
+    k = INITIAL_VIRTUAL_SOL_LAMPORTS * INITIAL_VIRTUAL_TOKEN_RAW
+    if market_cap_sol is None or market_cap_sol <= 0:
+        v_sol, v_token = INITIAL_VIRTUAL_SOL_LAMPORTS, INITIAL_VIRTUAL_TOKEN_RAW
+    else:
+        # A whole number of tokens (1e6 raw units each) keeps the market cap
+        # exact: v_sol = market cap x whole tokens.
+        whole_tokens = round(math.sqrt(k * 1_000_000.0 / market_cap_sol) / 1_000_000.0)
+        v_token = whole_tokens * 1_000_000
+        v_sol = round(market_cap_sol * whole_tokens)
+    sold = INITIAL_VIRTUAL_TOKEN_RAW - v_token
+    return {
+        "virtual_token_reserves": v_token,
+        "virtual_sol_reserves": v_sol,
+        "real_token_reserves": max(0, INITIAL_REAL_TOKEN_RAW - sold),
+        "real_sol_reserves": max(0, v_sol - INITIAL_VIRTUAL_SOL_LAMPORTS),
+        "token_total_supply": TOTAL_TOKEN_SUPPLY_RAW,
+        "complete": complete,
+        "market_cap_sol": (v_sol / 1e9) * (TOTAL_TOKEN_SUPPLY_RAW / v_token),
+        "is_mayhem_mode": False,
+    }
+
+
+class FakeCurves:
+    """Curve reads for a bot or executor that has no RPC (BUG-145).
+
+    Paper buys need a curve read, as live buys do, so a test that buys sets
+    the market cap each mint's curve answers with (:meth:`at`); other mints
+    answer with ``default_market_cap`` (a fresh launch when ``None``).
+    :meth:`install` puts both curve reads on an execution client.
+    """
+
+    def __init__(self, default_market_cap: float | None = None) -> None:
+        self.default_market_cap = default_market_cap
+        self.market_caps: dict[str, float] = {}
+        self.complete: set[str] = set()
+        self.reads: list[str] = []
+
+    def at(
+        self, mint: str, market_cap_sol: float, *, complete: bool = False
+    ) -> FakeCurves:
+        self.market_caps[mint] = market_cap_sol
+        if complete:
+            self.complete.add(mint)
+        else:
+            self.complete.discard(mint)
+        return self
+
+    def curve(self, mint: str) -> dict[str, Any]:
+        return standard_curve(
+            self.market_caps.get(mint, self.default_market_cap),
+            complete=mint in self.complete,
+        )
+
+    async def get_bonding_curve_state(self, mint: str) -> dict[str, Any]:
+        self.reads.append(mint)
+        return self.curve(mint)
+
+    async def get_bonding_curve_states(
+        self,
+        mints: Sequence[str],
+        *,
+        rejected: dict[str, str] | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, dict[str, Any]]:
+        self.reads.extend(mints)
+        return {mint: self.curve(mint) for mint in mints}
+
+    def install(self, target: Any) -> FakeCurves:
+        """Answer the curve reads of ``target`` (a bot or an execution client)."""
+        execution = getattr(target, "execution", target)
+        execution.get_bonding_curve_state = self.get_bonding_curve_state
+        execution.get_bonding_curve_states = self.get_bonding_curve_states
+        return self
 
 
 @dataclass

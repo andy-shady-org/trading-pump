@@ -86,7 +86,8 @@ async def handle_trade_event_update(bot: TradingBot, update: TradeEventUpdate) -
         )
 
     if mint in bot.active_positions:
-        if current_market_cap <= 0:
+        if current_market_cap <= 0 or mint in bot._migrating_mints:
+            # A migrated coin is priced from its PumpSwap pool only (BUG-147).
             return
         note_stop_crossing(bot, mint, current_market_cap, source="trade_feed")
 
@@ -348,6 +349,11 @@ async def handle_trade_update(
         )
 
     bot._evaluate_shadow_variants(mint, current_market_cap, now=ts)
+    if mint in bot.active_positions and mint in bot._migrating_mints:
+        # After migration PumpPortal's trade market cap is not on the curve's
+        # basis (3,600 SOL shown for a pool worth 18): value and exit the coin
+        # from its PumpSwap pool only, on the position refresh (BUG-147).
+        return
     if mint in bot.active_positions:
         bot._note_follow_on_buy(mint, is_buy, sol_amount, user, ts)
         # The trade message's own price, before any curve re-read (rc.3).

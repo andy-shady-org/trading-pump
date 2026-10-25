@@ -12,6 +12,7 @@ from pumpfun_trading.bot.strategy import (
 from pumpfun_trading.streams.geyser import TradeEventUpdate
 from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
 from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.fakes import FakeCurves
 
 SAMPLE_MINT = "So11111111111111111111111111111111111111112"
 COPY_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
@@ -55,13 +56,16 @@ def bot(tmp_path):
         copy_trading_require_anti_rug_screen=False,
         dry_run=True,
     )
-    return TradingBot(
+    bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url="https://api.mainnet-beta.solana.com",
         config=config,
         bot_status_path=str(tmp_path / "status.json"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
     )
+    # Paper buys read the curve (BUG-145).
+    FakeCurves().install(bot)
+    return bot
 
 
 async def test_geyser_trade_event_copy_trade_buy_trigger(bot):

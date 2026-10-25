@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from pumpfun_trading.infra.rpc_pool import (
     RpcConnectionPool,
     RpcEndpoint,
     RpcPoolConfig,
+    RpcPoolUnavailableError,
 )
 from pumpfun_trading.sdk.execution import PumpFunExecutionClient
 
@@ -788,3 +790,188 @@ async def test_rpc_pool_request_and_broadcast_errors():
     assert is_healthy is True
 
     await pool.close()
+
+
+# --- BUG-151: a breaker that actually stops traffic -------------------------------
+
+
+def _scripted_pool(*statuses: int, endpoints: int = 1, **config: Any) -> tuple:
+    """A pool whose POSTs answer with ``statuses`` in order (200 = a result)."""
+    urls = [f"https://rpc{i}.invalid/?api-key={KEY}" for i in range(endpoints)]
+    pool = RpcConnectionPool(
+        endpoints=urls, config=RpcPoolConfig(endpoints=tuple(urls), **config)
+    )
+    answers = list(statuses)
+    posts: list[str] = []
+
+    class Ctx:
+        def __init__(self, url: str) -> None:
+            posts.append(url)
+            status = answers.pop(0) if len(answers) > 1 else answers[0]
+            self.resp = MagicMock()
+            self.resp.status = status
+            body = (
+                json.dumps({"jsonrpc": "2.0", "id": 1, "result": 7})
+                if status == 200
+                else f"max usage reached for api-key={KEY}"
+            )
+            self.resp.text = AsyncMock(return_value=body)
+
+        async def __aenter__(self):
+            return self.resp
+
+        async def __aexit__(self, *exc):
+            return None
+
+    session = MagicMock()
+    session.closed = False
+    session.close = AsyncMock()
+    session.post = MagicMock(side_effect=lambda url, **_k: Ctx(url))
+    pool._session = session
+    return pool, posts
+
+
+@pytest.mark.regression("BUG-151")
+async def test_open_breaker_fails_fast_without_sending() -> None:
+    # rc.5: with its only endpoint open, the pool still sent every request
+    # to it (28,789 failures in a row), so the rate limit never lifted.
+    pool, posts = _scripted_pool(429)
+    with patch("pumpfun_trading.infra.rpc_pool.asyncio.sleep", AsyncMock()):
+        with pytest.raises(RuntimeError, match="HTTP 429"):
+            await pool.request({"method": "getAccountInfo"}, max_retries=3)
+    assert len(posts) == 1  # the retries saw no available endpoint
+
+    for _ in range(50):
+        with pytest.raises(RpcPoolUnavailableError, match="circuit breaker is open"):
+            await pool.request({"method": "getAccountInfo"})
+    assert len(posts) == 1
+    telemetry = pool.get_telemetry()
+    assert telemetry["rejected_requests"] == 50
+    assert telemetry["requests_by_method"] == {"getAccountInfo": 51}
+
+
+@pytest.mark.regression("BUG-151")
+async def test_rate_limit_error_names_the_cause_without_the_key() -> None:
+    pool, _ = _scripted_pool(429)
+    with pytest.raises(RuntimeError) as err:
+        await pool.request({"method": "getSlot"}, max_retries=0)
+    assert "max usage reached" in str(err.value)
+    assert KEY not in str(err.value)
+
+
+@pytest.mark.regression("BUG-151")
+def test_cooldown_doubles_per_opening_and_resets_on_success() -> None:
+    ep = RpcEndpoint(url="https://rpc.invalid")
+    waits = []
+    for _ in range(9):
+        with patch("pumpfun_trading.infra.rpc_pool.time.time", return_value=1000.0):
+            ep.record_failure(
+                "429", cooldown_seconds=60.0, initial_cooldown_seconds=1.0
+            )
+        waits.append(ep.cooldown_until - 1000.0)
+    assert waits == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+    assert ep.last_rate_limited_time == 1000.0
+    ep.record_success(0.05)
+    assert ep.open_streak == 0
+    # Without an initial wait every opening waits the full cooldown, as before.
+    ep.record_failure("429", cooldown_seconds=60.0)
+    assert ep.cooldown_until - (ep.last_error_time or 0.0) == pytest.approx(60.0)
+
+
+@pytest.mark.regression("BUG-151")
+async def test_half_open_endpoint_takes_one_probe_at_a_time() -> None:
+    pool, posts = _scripted_pool(200)
+    ep = pool.endpoints[0]
+    ep.state = CircuitState.HALF_OPEN
+    gate = asyncio.Event()
+    original = pool._send
+
+    async def slow_send(*args, **kwargs):
+        await gate.wait()
+        return await original(*args, **kwargs)
+
+    with patch.object(pool, "_send", slow_send):
+        probe = asyncio.create_task(pool.request({"method": "getSlot"}))
+        await asyncio.sleep(0)
+        assert ep.probe_in_flight is True
+        assert not ep.is_available()
+        with pytest.raises(RpcPoolUnavailableError):
+            await pool.request({"method": "getSlot"})
+        gate.set()
+        assert (await probe)["result"] == 7
+    assert ep.state == CircuitState.HEALTHY
+    assert ep.probe_in_flight is False
+
+
+@pytest.mark.regression("BUG-151")
+async def test_cancelled_probe_frees_the_endpoint() -> None:
+    pool, _ = _scripted_pool(200)
+    ep = pool.endpoints[0]
+    ep.state = CircuitState.HALF_OPEN
+
+    async def hang(*_a, **_k):
+        await asyncio.Event().wait()
+
+    with patch.object(pool, "_send", hang):
+        task = asyncio.create_task(pool.request({"method": "getSlot"}))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert ep.probe_in_flight is False and ep.is_available()
+
+
+@pytest.mark.regression("BUG-151")
+async def test_pool_backs_off_then_recovers_after_the_cooldown() -> None:
+    pool, posts = _scripted_pool(429, 200, circuit_breaker_initial_cooldown_seconds=1.0)
+    clock = [1000.0]
+    with patch(
+        "pumpfun_trading.infra.rpc_pool.time.time", side_effect=lambda: clock[0]
+    ):
+        with pytest.raises(RuntimeError):
+            await pool.request({"method": "getSlot"}, max_retries=0)
+        with pytest.raises(RpcPoolUnavailableError, match=r"next probe in 1\.0s"):
+            await pool.request({"method": "getSlot"})
+        clock[0] += 1.0
+        assert (await pool.request({"method": "getSlot"}))["result"] == 7
+    assert len(posts) == 2
+    assert pool.endpoints[0].state == CircuitState.HEALTHY
+
+
+@pytest.mark.regression("BUG-151")
+def test_under_pressure_after_a_recent_rate_limit() -> None:
+    pool = RpcConnectionPool(endpoints=["https://a.invalid", "https://b.invalid"])
+    assert pool.under_pressure(30.0) is False
+    a, b = pool.endpoints
+    a.last_rate_limited_time = 1000.0
+    assert pool.under_pressure(30.0, now=1010.0) is True
+    assert pool.under_pressure(30.0, now=1031.0) is False
+    for ep in (a, b):
+        ep.state = CircuitState.OPEN
+        ep.cooldown_until = 2000.0
+    assert pool.under_pressure(30.0, now=1100.0) is True
+
+
+@pytest.mark.regression("BUG-151")
+async def test_failed_simulation_does_not_open_the_breaker() -> None:
+    # A transaction's own error must not stop every read for a cooldown.
+    pool = _pool_with_responses(
+        *[
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {"code": -32002, "message": "slippage"},
+            }
+            for _ in range(4)
+        ]
+    )
+    for _ in range(4):
+        with pytest.raises(RuntimeError):
+            await pool.broadcast_transaction("dHg=", max_concurrency=1)
+    assert all(ep.state == CircuitState.HEALTHY for ep in pool.endpoints)
+
+
+def test_pool_config_round_trips_the_initial_cooldown() -> None:
+    cfg = RpcPoolConfig.from_dict({"circuit_breaker_initial_cooldown_seconds": 0.5})
+    assert cfg.circuit_breaker_initial_cooldown_seconds == 0.5
+    assert cfg.to_dict()["circuit_breaker_initial_cooldown_seconds"] == 0.5

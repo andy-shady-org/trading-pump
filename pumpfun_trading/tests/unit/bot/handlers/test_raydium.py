@@ -95,3 +95,26 @@ async def test_bot_methods_delegate_to_raydium_handlers(
         "_graduation_backfill_pass",
     ):
         assert result == "result"
+
+
+@pytest.mark.regression("BUG-148")
+async def test_pool_helpers_work_on_a_bare_bot() -> None:
+    from types import SimpleNamespace
+
+    from pumpfun_trading.bot.handlers import raydium as handlers
+
+    logged: list[str] = []
+    bot = SimpleNamespace(
+        execution=SimpleNamespace(),
+        _log=lambda message, level=0: logged.append(message),
+        _record_event=lambda *_a, **_k: None,
+        _last_event="",
+    )
+    assert await handlers.pumpswap_exit_market_cap(bot, "MintA") is None  # type: ignore[arg-type]
+    assert bot._pool_read_errors == {"MintA": "no PumpSwap client"}
+    position: dict = {}
+    handlers.note_pool_unavailable(bot, "MintA", position, now=100.0)  # type: ignore[arg-type]
+    assert bot._pool_retry["MintA"]["next_at"] == 102.0
+    assert not handlers.pool_read_due(bot, "MintA", 101.0)  # type: ignore[arg-type]
+    assert handlers.pool_read_due(bot, "MintA", 102.0)  # type: ignore[arg-type]
+    assert "no PumpSwap client" in logged[0]

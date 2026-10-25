@@ -27,6 +27,7 @@ from pumpfun_trading.bot.enrichment import TokenScreeningVerdict
 from pumpfun_trading.bot.event_router import EventRouter
 from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.position_manager import PositionManager
+from pumpfun_trading.bot import run as run_module
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.execution.executor import ExecutionResult, OrderExecutor
 from pumpfun_trading.execution.liquidator import OrderLiquidator
@@ -48,6 +49,7 @@ from pumpfun_trading.strategies.exits import ExitAction
 from pumpfun_trading.strategies.graduation import PRE_GRADUATION_MIN_POLLED_SAMPLES
 from pumpfun_trading.strategies.momentum import MomentumSignal
 from pumpfun_trading.strategies.shadow import ShadowSignal, ShadowVariant
+from pumpfun_trading.infra.rpc_pool import CircuitState, RpcConnectionPool
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -66,6 +68,7 @@ from pumpfun_trading.tests.support.factories import (
     make_position,
 )
 from pumpfun_trading.tests.support.payloads import STANDARD_CURVE_RESERVES
+from pumpfun_trading.tests.support.fakes import FakeClock, FakeCurves
 
 MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 TOKENS = 350_000_000_000
@@ -248,7 +251,7 @@ class _FakeSession:
     async def __aexit__(self, *_exc: object) -> None:
         return None
 
-    def ws_connect(self, _url: str) -> _FakeWsContext:
+    def ws_connect(self, _url: str, **_kwargs: Any) -> _FakeWsContext:
         return _FakeWsContext(self._ws)
 
 
@@ -916,6 +919,7 @@ async def test_trading_bot_atomic_displacement(tmp_path):
         dry_run=True,
         verbose=False,
     )
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
 
     now = time.time()
     # 1. Establish initial stagnant position
@@ -1321,6 +1325,7 @@ async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
         audit_log_path=str(audit_file),
         replay_log_path=str(replay_file),
     )
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
     await bot.replay_recorder.start()
 
     mint = "TorqRigsPump111111111111111111111111111111111"
@@ -1384,6 +1389,10 @@ async def test_bugs_24_to_28_comprehensive_validation(tmp_path):
         for line in replay_file.read_text(encoding="utf-8").strip().splitlines()
         if line.strip()
     ]
+    # The paper fill's curve read is recorded too, so replay prices from it.
+    fill_reads = [r for r in replay_lines if r.get("event") == "curve_poll"]
+    assert [r["source"] for r in fill_reads] == ["entry_fill"]
+    replay_lines = [r for r in replay_lines if r.get("event") != "curve_poll"]
     assert len(replay_lines) == 3
     assert replay_lines[0]["signal"] == "buy"
     assert replay_lines[0]["is_buy"] is True
@@ -1449,6 +1458,7 @@ def base_bot(tmp_path):
         audit_log_path=str(audit_file),
         log_file=str(log_file),
     )
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
     return bot
 
 
@@ -1722,6 +1732,7 @@ async def test_bot_buy_metric_and_reserve_price_refresh(tmp_path):
         paper_trade=True,
         bot_status_path=str(tmp_path / "status.json"),
     )
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
 
     # 1. Verify single buy increments buys metric by exactly 1
     assert bot._metrics.get("buys", 0) == 0
@@ -1743,8 +1754,8 @@ async def test_bot_buy_metric_and_reserve_price_refresh(tmp_path):
     assert pos["current_market_cap"] == 35.0
 
     # 3. Verify _refresh_active_positions_market_caps polls bonding curve
-    bot.execution.get_bonding_curve_state = AsyncMock(
-        return_value={"market_cap_sol": 38.5}
+    bot.execution.get_bonding_curve_states = AsyncMock(
+        return_value={"MintMetricTest1": {"market_cap_sol": 38.5}}
     )
     await bot._refresh_active_positions_market_caps()
     assert bot.active_positions["MintMetricTest1"]["current_market_cap"] == 38.5
@@ -1926,7 +1937,7 @@ def _make_bot(
         reconnect_delay_seconds=1.0,
         verbose=verbose,
     )
-    return TradingBot(
+    bot = TradingBot(
         private_key_b58=SAMPLE_PRIVATE_KEY,
         rpc_url=TEST_RPC,
         config=config,
@@ -1935,6 +1946,10 @@ def _make_bot(
         verbose=verbose,
         **kwargs,
     )
+    # Paper buys read the curve (BUG-145); tests that need a failing or
+    # specific curve replace these reads.
+    FakeCurves(default_market_cap=30.0).install(bot)
+    return bot
 
 
 @pytest.mark.regression("BUG-07")
@@ -2422,6 +2437,7 @@ async def test_bot_run_all_missing_branches(tmp_path):
         dry_run=True,
         bot_status_path=str(tmp_path / "status.json"),
     )
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
 
     # validate_mint_address errors
     with pytest.raises(ValueError, match="Mint address is required"):
@@ -2713,6 +2729,7 @@ async def test_bot_run_additional_coverage_boost(tmp_path):
         bot_status_path=str(tmp_path / "status.json"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
     )
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
 
     # 1. _record_latency_ms branch where latency_ms is not yet dict
     bot._metrics.pop("latency_ms", None)
@@ -2757,17 +2774,19 @@ async def test_bot_run_additional_coverage_boost(tmp_path):
         "entry_market_cap": 27.96,
         "current_market_cap": 27.96,
     }
-    bot.execution.get_bonding_curve_state = AsyncMock(
+    bot.execution.get_bonding_curve_states = AsyncMock(
         return_value={
-            "virtual_token_reserves": 1_000_000_000_000_000,
-            "virtual_sol_reserves": 40_000_000_000,
+            "MintReserveNew": {
+                "virtual_token_reserves": 1_000_000_000_000_000,
+                "virtual_sol_reserves": 40_000_000_000,
+            }
         }
     )
     await bot._refresh_active_positions_market_caps()
     assert bot.active_positions["MintReserveNew"]["current_market_cap"] == 40.0
 
     # 7. _refresh_active_positions_market_caps with exception handling
-    bot.execution.get_bonding_curve_state = AsyncMock(
+    bot.execution.get_bonding_curve_states = AsyncMock(
         side_effect=RuntimeError("RPC down")
     )
     await bot._refresh_active_positions_market_caps()
@@ -3072,6 +3091,7 @@ async def test_trading_bot_facade_and_lifecycle(tmp_path):
             rpc_url="https://api.mainnet-beta.solana.com",
             config=cfg,
         )
+        FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
 
     assert bot.state == TradingBotState.IDLE
     metrics = bot._metrics_snapshot()
@@ -3276,6 +3296,7 @@ async def test_bot_raydium_and_trade_updates_deep():
         rpc_url="https://api.mainnet-beta.solana.com",
         config=cfg,
     )
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
     pool_keys = make_pool_keys(unique=False)
 
     # 1. _buy_raydium_token when _should_buy is False
@@ -3774,7 +3795,7 @@ async def test_final_coverage_push():
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-        def ws_connect(self, url):
+        def ws_connect(self, url, **_kwargs):
             return self.ws_ctx
 
     ws_messages = [
@@ -5354,8 +5375,9 @@ async def test_pause_buying_keeps_managing_open_positions(tmp_path: Path) -> Non
     bot = make_bot(tmp_path)
     bot._operator_pause.pause()
     bot.active_positions[SAMPLE_PUMP_MINT] = {"current_market_cap": 40.0}
-    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
-        return_value={"market_cap_sol": 33.0}
+    _single_curve_reads(
+        bot,
+        AsyncMock(return_value={"market_cap_sol": 33.0}),
     )
     exits = AsyncMock()
     bot._evaluate_and_execute_exit = exits  # type: ignore[method-assign]
@@ -6277,7 +6299,7 @@ async def test_websocket_connects_with_separate_api_key_but_never_logs_it(
         async def __aexit__(self, *_exc: object) -> None:
             return None
 
-        def ws_connect(self, url: str) -> Any:
+        def ws_connect(self, url: str, **_kwargs: Any) -> Any:
             connected.append(url)
             bot._stop_requested = True
             raise RuntimeError("closed")
@@ -6892,8 +6914,9 @@ async def test_held_confirmed_positions_keep_curve_progress_fresh(
 ) -> None:
     bot = make_bot(tmp_path, entry_mode="confirmed")
     bot.active_positions[SAMPLE_PUMP_MINT] = {"entry_market_cap": 60.0}
-    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
-        return_value=_polled_curve(80.0)
+    _single_curve_reads(
+        bot,
+        AsyncMock(return_value=_polled_curve(80.0)),
     )
     bot._evaluate_and_execute_exit = AsyncMock(return_value=False)  # type: ignore[method-assign]
 
@@ -7121,8 +7144,9 @@ async def test_position_refresh_and_paper_fills_record_their_curve_reads(
     recorder = MagicMock()
     bot.replay_recorder = recorder
     bot.active_positions[SAMPLE_PUMP_MINT] = {"entry_market_cap": 60.0}
-    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
-        return_value=_polled_curve(10.0)
+    _single_curve_reads(
+        bot,
+        AsyncMock(return_value=_polled_curve(10.0)),
     )
     bot._evaluate_and_execute_exit = AsyncMock(return_value=False)  # type: ignore[method-assign]
 
@@ -7324,10 +7348,23 @@ _COMPLETE_CURVE = {
 }
 
 
+def _single_curve_reads(bot: TradingBot, read: Any) -> None:
+    """Answer both curve reads from one per-mint mock: the position refresh
+    batches its reads (BUG-151), buys read one curve."""
+    bot.execution.get_bonding_curve_state = read  # type: ignore[method-assign]
+
+    async def batch(
+        mints: list[str], *, rejected: Any = None, timeout_seconds: float = 5.0
+    ) -> dict[str, Any]:
+        return {mint: await read(mint) for mint in mints}
+
+    bot.execution.get_bonding_curve_states = batch  # type: ignore[method-assign,assignment]
+
+
 def _graduated_paper_bot(tmp_path: Path, **config: Any) -> TradingBot:
     bot = make_bot(tmp_path, dry_run=True, **config)
     _hold_position(bot)
-    bot.execution.get_bonding_curve_state = AsyncMock(return_value=_COMPLETE_CURVE)  # type: ignore[method-assign]
+    _single_curve_reads(bot, AsyncMock(return_value=_COMPLETE_CURVE))
     bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
         return_value={"market_cap_sol": 60.0}
     )
@@ -7358,7 +7395,9 @@ async def test_held_curve_that_completes_exits_on_pumpswap(tmp_path: Path) -> No
 async def test_graduated_position_waits_for_the_pool_then_exits(
     tmp_path: Path,
 ) -> None:
+    clock = FakeClock()
     bot = _graduated_paper_bot(tmp_path)
+    bot.clock = clock.time
     bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("PumpSwap pool not found")
     )
@@ -7367,7 +7406,9 @@ async def test_graduated_position_waits_for_the_pool_then_exits(
     assert MINT in bot._migrating_mints
     assert bot._last_event.startswith("awaiting pool")
 
-    # Next pass: no curve read for a migrating mint; the pool is there now.
+    # Next pass, after the 2 s wait: no curve read for a migrating mint, and
+    # the pool is there now.
+    clock.advance(2.0)
     bot.execution.get_bonding_curve_state = AsyncMock(side_effect=AssertionError)  # type: ignore[method-assign]
     bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
         return_value={"market_cap_sol": 45.0}
@@ -7375,6 +7416,61 @@ async def test_graduated_position_waits_for_the_pool_then_exits(
     await bot._refresh_active_positions_market_caps()
     assert MINT not in bot.active_positions
     await bot.close()
+
+
+@pytest.mark.regression("BUG-148", "BUG-151")
+async def test_unreadable_pool_backs_off_warns_and_flags_the_price_stale(
+    tmp_path: Path,
+) -> None:
+    # rc.5: every held graduated coin re-read its pool every second (two
+    # RPC calls each) with the failure logged at debug level only.
+    clock = FakeClock()
+    bot = _graduated_paper_bot(tmp_path)
+    bot.clock = clock.time
+    pool = AsyncMock(side_effect=RuntimeError("RPC endpoint rate limited (HTTP 429)"))
+    bot.execution.get_pumpswap_market_state = pool  # type: ignore[method-assign]
+
+    logged: list[tuple[str, int]] = []
+    bot._log = lambda message, level=logging.INFO: logged.append((message, level))  # type: ignore[method-assign]
+    for _ in range(10):  # ten 1 s passes
+        await bot._refresh_active_positions_market_caps()
+        clock.advance(1.0)
+
+    # Reads at 0 s, 2 s and 6 s (waits of 2 s, then 4 s, then 8 s).
+    assert pool.await_count == 3
+    position = bot.active_positions[MINT]
+    assert position["price_stale"] is True
+    assert position["price_stale_since"] > 0
+    warnings = [
+        m for m, level in logged if level == logging.WARNING and "unreadable" in m
+    ]
+    # Warned on the 1st and 2nd failure, not the 3rd; the cause is named.
+    assert len(warnings) == 2
+    assert "HTTP 429" in warnings[0] and "stale" in warnings[0]
+    assert bot._pool_retry[MINT]["failures"] == 3
+
+    # The pool answers again: the flag and the wait are cleared, and it sells.
+    clock.advance(10.0)
+    bot.execution.get_pumpswap_market_state = AsyncMock(  # type: ignore[method-assign]
+        return_value={"market_cap_sol": 45.0}
+    )
+    await bot._refresh_active_positions_market_caps()
+    assert MINT not in bot.active_positions
+    assert MINT not in bot._pool_retry
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-148")
+def test_note_pool_read_clears_a_stale_flag(tmp_path: Path) -> None:
+    from pumpfun_trading.bot.handlers import raydium as raydium_handlers
+
+    bot = make_bot(tmp_path)
+    position: dict[str, Any] = {"price_stale": True, "price_stale_since": 1.0}
+    raydium_handlers.note_pool_read(bot, MINT, position)
+    assert "price_stale" not in position and "price_stale_since" not in position
+    # Nothing to clear: no log, no change.
+    raydium_handlers.note_pool_read(bot, MINT, position)
+    assert position == {}
 
 
 async def test_pumpswap_exit_can_be_switched_off(tmp_path: Path) -> None:
@@ -7693,3 +7789,93 @@ def test_startup_warns_about_unread_environment_variables(
     # Only the dry-run one is alerted: it looks like a safety switch.
     assert len(sent) == 1 and sent[0].startswith("PUMPFUN_DRY_RUN is set but not read")
     assert any("PUMPFUN_STOP_LOSS" in e for e in bot._recent_events)
+
+
+# --- rc.5 paper run findings (BUG-145 to BUG-151) ---------------------------------
+
+
+@pytest.mark.regression("BUG-145")
+async def test_paper_buy_without_a_curve_read_opens_nothing(tmp_path: Path) -> None:
+    bot = _paper_bot(tmp_path)
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("RPC endpoint rate limited (HTTP 429)")
+    )
+    balance = bot.wallet_balance_sol
+
+    assert await bot._buy_token(SAMPLE_PUMP_MINT, 30.0) is False
+
+    assert SAMPLE_PUMP_MINT not in bot.active_positions
+    assert bot.wallet_balance_sol == balance
+    assert bot._entry_refusals == {"curve_unreadable": 1}
+    assert bot._last_buy_error == "curve_unreadable: no curve read at the signal"
+    assert not [t for t in _audit_trades(tmp_path) if t.get("action") == "buy"]
+
+
+@pytest.mark.regression("BUG-149")
+async def test_no_buys_while_every_rpc_breaker_is_open(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path, require_trade_feed=False)
+    bot._health_ok = True
+    bot._last_health_check = time.monotonic()
+    assert isinstance(bot.rpc_pool, RpcConnectionPool)
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 30.0) is True
+
+    for endpoint in bot.rpc_pool.endpoints:
+        endpoint.state = CircuitState.OPEN
+        endpoint.cooldown_until = time.time() + 60.0
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 30.0) is False
+    assert bot._last_event == "buy blocked: no healthy RPC endpoint"
+    assert bot._entry_refusals["rpc_unavailable"] == 1
+
+    # A half-open endpoint takes the next probe: buying resumes.
+    for endpoint in bot.rpc_pool.endpoints:
+        endpoint.cooldown_until = 0.0
+    assert bot._should_buy(SAMPLE_PUMP_MINT, 30.0) is True
+
+    # No pool (disabled) means no RPC gate.
+    bot.rpc_pool = None
+    assert bot._rpc_available_for_buys() is True
+
+
+@pytest.mark.regression("BUG-151")
+def test_single_rpc_endpoint_is_warned_about_at_startup(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    assert isinstance(bot.rpc_pool, RpcConnectionPool)
+    logged: list[tuple[str, int]] = []
+    bot._log = lambda message, level=logging.INFO: logged.append((message, level))  # type: ignore[method-assign]
+    assert bot._warn_single_rpc_endpoint() is True
+    ((message, level),) = logged
+    assert level == logging.WARNING and "PUMPFUN_RPC_URLS" in message
+    assert "api-key" not in message
+
+    bot.rpc_pool.add_endpoint("https://second.invalid")
+    assert bot._warn_single_rpc_endpoint() is False
+
+
+@pytest.mark.regression("BUG-150")
+def test_bot_stream_pings_and_reconnects_after_the_health_timeout(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path, health_check_timeout_seconds=45)
+    assert bot.stream_heartbeat_seconds == 20.0
+    assert bot.stream_idle_timeout_seconds == 45.0
+    bot.config = replace(bot.config, stream_heartbeat_seconds=0.0)
+    assert bot.stream_heartbeat_seconds is None
+
+
+@pytest.mark.regression("BUG-148")
+def test_repeated_exit_decisions_log_at_info_once_a_minute(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    clock = [1000.0]
+    with patch.object(run_module.time, "monotonic", side_effect=lambda: clock[0]):
+        assert bot._exit_log_level(MINT, "stop_loss") == logging.INFO
+        clock[0] += 1.0
+        assert bot._exit_log_level(MINT, "stop_loss") == logging.DEBUG
+        assert bot._exit_log_level(MINT, "max_hold_timeout") == logging.INFO
+        clock[0] += 60.0
+        assert bot._exit_log_level(MINT, "stop_loss") == logging.INFO
+        # The table stays bounded.
+        for i in range(2_100):
+            bot._exit_log_level(f"mint{i}", "stop_loss")
+        clock[0] += 61.0
+        bot._exit_log_level("fresh", "stop_loss")
+    assert len(bot._exit_logged_at) < 2_100

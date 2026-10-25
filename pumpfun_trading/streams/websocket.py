@@ -50,7 +50,14 @@ async def send_ws_message(
 
 
 class WebSocketStreamHost(Protocol):
-    """What the transport loop needs from the runtime."""
+    """What the transport loop needs from the runtime.
+
+    Optional attributes (read with ``getattr``): ``stream_heartbeat_seconds``
+    (ping interval; aiohttp closes the socket when a pong does not come back
+    within half of it; ``None`` = no pings) and ``stream_idle_timeout_seconds``
+    (reconnect when no message arrives for that long, ``None`` = wait for
+    ever), both BUG-150.
+    """
 
     stream_url: str
     reconnect_delay_seconds: float
@@ -74,22 +81,48 @@ class WebSocketStreamHost(Protocol):
     def on_stream_closed(self) -> None: ...
 
 
+async def _next_message(messages: Any, idle_timeout: float | None) -> Any:
+    """The socket's next message; ``TimeoutError`` after ``idle_timeout`` seconds."""
+    if idle_timeout is None or idle_timeout <= 0:
+        return await messages.__anext__()
+    return await asyncio.wait_for(messages.__anext__(), timeout=idle_timeout)
+
+
 async def run_websocket_stream(host: WebSocketStreamHost) -> None:
     """Connect to `host.stream_url` and feed decoded messages until stopped.
 
     Reconnects with exponential backoff (doubling, capped at 30 s) after an
     error or a remote close; the backoff resets once a connection is up.
+    The socket is pinged every ``stream_heartbeat_seconds``, and a socket
+    that delivers nothing for ``stream_idle_timeout_seconds`` is dropped and
+    reconnected: a half-open connection used to wait for ever (BUG-150).
     """
     backoff = host.reconnect_delay_seconds
+    heartbeat = getattr(host, "stream_heartbeat_seconds", None)
+    idle_timeout = getattr(host, "stream_idle_timeout_seconds", None)
+    connect_kwargs: dict[str, Any] = {"heartbeat": heartbeat} if heartbeat else {}
     while not host.stream_stop_requested():
         try:
             host.stream_log(f"Connecting to WebSocket stream at {host.stream_url}...")
             timeout = aiohttp.ClientTimeout(total=None, sock_read=60.0)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.ws_connect(host.stream_connect_url()) as ws:
+                async with session.ws_connect(
+                    host.stream_connect_url(), **connect_kwargs
+                ) as ws:
                     await host.on_stream_connected(ws)
                     backoff = host.reconnect_delay_seconds
-                    async for msg in ws:
+                    messages = ws.__aiter__()
+                    while True:
+                        try:
+                            msg = await _next_message(messages, idle_timeout)
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError:
+                            host.on_stream_error(
+                                f"No WebSocket message for {idle_timeout:g}s: the "
+                                "connection is stale; reconnecting"
+                            )
+                            break
                         if host.stream_stop_requested():
                             break
                         if msg.type == aiohttp.WSMsgType.TEXT:
@@ -114,6 +147,21 @@ async def run_websocket_stream(host: WebSocketStreamHost) -> None:
                             break
         except asyncio.CancelledError:
             break
+        except ConnectionResetError as exc:
+            # "Cannot write to closing transport": the server closed the
+            # socket while a subscription was being sent. A disconnect, not a
+            # fault; reconnect like a remote close (BUG-150).
+            host.stream_log(
+                f"WebSocket closed while sending ({exc}); reconnecting.",
+                level=logging.INFO,
+            )
+            if not host.stream_stop_requested():
+                host.on_stream_ended()
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    break
+                backoff = min(backoff * 2.0, MAX_RECONNECT_BACKOFF_SECONDS)
         except Exception as exc:
             host.on_stream_exception(exc, backoff)
             try:

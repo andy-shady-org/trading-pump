@@ -705,3 +705,12 @@ def test_profit_ratchet_min_gain_default_and_bounds(tmp_path: Path) -> None:
         resolve_strategy_config(
             "balanced", overrides={"profit_ratchet_min_gain_pct": 1.5}
         )
+
+
+@pytest.mark.regression("BUG-150")
+def test_stream_heartbeat_defaults_reads_and_validates() -> None:
+    assert resolve_strategy_config("balanced").stream_heartbeat_seconds == 20.0
+    off = resolve_strategy_config("balanced", overrides={"stream_heartbeat_seconds": 0})
+    assert off.stream_heartbeat_seconds == 0.0
+    with pytest.raises(ValueError, match="stream_heartbeat_seconds"):
+        resolve_strategy_config("balanced", overrides={"stream_heartbeat_seconds": -1})

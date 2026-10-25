@@ -45,6 +45,9 @@ DISCOVERY_SCAN_LIMIT = 50
 # Bounded waits: an observation never holds its task longer than this.
 OBSERVATION_RPC_TIMEOUT_SECONDS = 10.0
 DISCOVERY_API_TIMEOUT_SECONDS = 10.0
+# Record-only polls wait this long after any RPC rate limit, so they never
+# compete with the reads that price and sell positions (BUG-151).
+OBSERVATION_RATE_LIMIT_BACKOFF_SECONDS = 30.0
 # A brand-new account can lag on load-balanced RPCs; don't end it this early.
 MISSING_ACCOUNT_GRACE_SECONDS = 15.0
 # Create-event fields copied onto a launch sample's observation_start row.
@@ -402,6 +405,14 @@ async def poll_observations(bot: TradingBot) -> None:
         for mint in book.due(now):
             due.setdefault(mint, []).append(book)
     if not due:
+        return
+    pool = getattr(bot, "rpc_pool", None)
+    if (
+        pool is not None
+        and pool.under_pressure(OBSERVATION_RATE_LIMIT_BACKOFF_SECONDS) is True
+    ):
+        # Trading reads first: skip this record-only poll (BUG-151).
+        bot._count_watch("observation_polls_deferred")
         return
     rejected: dict[str, str] = {}
     try:

@@ -342,3 +342,46 @@ async def test_momentum_buys_record_buy_timing_and_the_bundle_proxy(
     assert metrics["buy_gap_cv"] == 0.0 and metrics["buy_gap_median_seconds"] == 3.0
     assert {"burst_share", "buy_size_cv", "small_buy_share"} <= set(metrics)
     assert metrics["early_holders"] == 1 and metrics["early_holder_pct"] == 0.1
+
+
+@pytest.mark.regression("BUG-147")
+async def test_trade_feed_never_prices_a_migrated_position(tmp_path: Path) -> None:
+    # rc.5 showed a coin at 3,603 SOL (+877%) from PumpPortal's post-migration
+    # trade market cap while its PumpSwap pool was worth 18 SOL.
+    bot = make_bot(tmp_path)
+    make_position(bot, SAMPLE_PUMP_MINT, entry_market_cap=410.88)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    bot._migrating_mints.add(SAMPLE_PUMP_MINT)
+    bot._evaluate_and_execute_exit = AsyncMock()  # type: ignore[method-assign]
+    bot.execution.get_bonding_curve_state = AsyncMock()  # type: ignore[method-assign]
+
+    await trade.handle_trade_update(
+        bot,
+        {
+            "mint": SAMPLE_PUMP_MINT,
+            "txType": "buy",
+            "solAmount": 1.0,
+            "marketCapSol": 3603.93,
+            "traderPublicKey": "Buyer1",
+        },
+    )
+
+    bot._evaluate_and_execute_exit.assert_not_awaited()
+    bot.execution.get_bonding_curve_state.assert_not_awaited()
+    position = bot.active_positions[SAMPLE_PUMP_MINT]
+    assert float(position.get("current_market_cap") or 0.0) == pytest.approx(410.88)
+
+    update = TradeEventUpdate(
+        mint=SAMPLE_PUMP_MINT,
+        sol_amount_lamports=100_000_000,
+        token_amount=1,
+        is_buy=True,
+        user="buyer",
+        timestamp=0,
+        virtual_sol_reserves=40_000_000_000,
+        virtual_token_reserves=1_000_000_000_000_000,
+        real_sol_reserves=0,
+        real_token_reserves=0,
+    )
+    await trade.handle_trade_event_update(bot, update)
+    bot._evaluate_and_execute_exit.assert_not_awaited()
