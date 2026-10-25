@@ -28,6 +28,7 @@ from pumpfun_trading.streams.geyser import (
     TradeEventUpdate,
 )
 from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.fakes import FakeCurves
 
 UTC = datetime.timezone.utc
 
@@ -1165,6 +1166,7 @@ async def test_dry_run_simulated_cash_flow_and_circuit_breaker_resilience() -> N
     # Set starting balance and initialize equity tracker
     bot.wallet_balance_sol = 0.20
     bot.daily_equity_tracker.initialize_or_rollover(0.20, 0.0)
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
 
     # 1. Buy Token 1 (cost 0.01 SOL)
     mint1 = "Stockguy1111111111111111111111111111111111"

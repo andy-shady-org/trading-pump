@@ -24,6 +24,7 @@ import pytest
 
 from pumpfun_trading.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
 from pumpfun_trading.tests.support.factories import make_bot
+from pumpfun_trading.tests.support.fakes import FakeCurves
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 UPDATE = os.environ.get("PUMPFUN_UPDATE_GOLDEN") == "1"
@@ -125,7 +126,11 @@ async def _run(
     config: dict[str, Any], messages: list[dict[str, Any]], tmp_path: Path
 ) -> dict[str, Any]:
     bot = make_bot(tmp_path, **{**BASE_CONFIG, **config})
+    # Paper fills read the curve (BUG-145): it follows the stream's price.
+    curves = FakeCurves().install(bot)
     for message in messages:
+        if message.get("marketCapSol"):
+            curves.at(str(message["mint"]), float(message["marketCapSol"]))
         await bot._handle_message(message)
     ledger = [
         {field: _rounded(row.get(field)) for field in LEDGER_FIELDS}

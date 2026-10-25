@@ -496,6 +496,7 @@ def resolve_strategy_config(
         min_sell_balance=int(base.get("min_sell_balance", 1)),
         recent_token_ttl_seconds=int(base.get("recent_token_ttl_seconds", 600)),
         reconnect_delay_seconds=float(base.get("reconnect_delay_seconds", 2.0)),
+        stream_heartbeat_seconds=float(base.get("stream_heartbeat_seconds", 20.0)),
         dry_run=bool(base.get("dry_run", False)),
         paper_trade=bool(base.get("paper_trade", False)),
         verbose=bool(base.get("verbose", True)),
@@ -842,6 +843,8 @@ def resolve_strategy_config(
         )
     if config.max_active_positions < 1:
         raise ValueError("max_active_positions must be at least 1.")
+    if config.stream_heartbeat_seconds < 0:
+        raise ValueError("stream_heartbeat_seconds must be zero (off) or positive.")
     if config.stop_loss_hard_floor and config.stop_loss_hard_floor >= config.stop_loss:
         raise ValueError("stop_loss_hard_floor must be below stop_loss (0 = none).")
     if config.stagnant_timeout_seconds <= 0:

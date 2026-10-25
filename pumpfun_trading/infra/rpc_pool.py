@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from typing import Any, Optional, Sequence
 
 import aiohttp
 
-from pumpfun_trading.ops.redact import redact_url
+from pumpfun_trading.ops.redact import redact_text, redact_url
 
 # JSON-RPC errors caused by the request itself (bad params, missing account,
 # preflight/simulation or signature failure). Every other error code is treated
@@ -26,6 +27,22 @@ from pumpfun_trading.ops.redact import redact_url
 DETERMINISTIC_JSONRPC_ERROR_CODES = frozenset(
     {-32600, -32601, -32602, -32002, -32003, -32006, -32013, -32015}
 )
+
+
+# ``api-key=…`` and similar outside a URL (a provider echoing the key in an
+# error body): masked before the body reaches an error message.
+_INLINE_SECRET_RE = re.compile(
+    r"(?i)\b(api[-_]?key|access[-_]?token|auth[-_]?token|token|secret|password)"
+    r"=[^\s&'\"]+"
+)
+
+
+class RpcPoolUnavailableError(RuntimeError):
+    """Every endpoint's circuit breaker is open: the request was not sent (BUG-151)."""
+
+
+class _RecordedRpcError(RuntimeError):
+    """An endpoint error (HTTP status, bad JSON, node error) the pool recorded."""
 
 
 class CircuitState(str, Enum):
@@ -51,7 +68,13 @@ class RpcEndpoint:
     rate_limited_count: int = 0
     last_error_time: Optional[float] = None
     last_success_time: Optional[float] = None
+    last_rate_limited_time: Optional[float] = None
     cooldown_until: float = 0.0
+    # Times the breaker opened in a row without a success in between; each
+    # opening waits twice as long, up to the full cooldown (BUG-151).
+    open_streak: int = 0
+    # A half-open endpoint takes one probe at a time (BUG-151).
+    probe_in_flight: bool = False
     latency_samples: deque[float] = field(default_factory=lambda: deque(maxlen=100))
 
     def __post_init__(self) -> None:
@@ -73,14 +96,22 @@ class RpcEndpoint:
         self.latency_samples.append(max(0.0, float(latency_seconds)))
         # Any success restores circuit to healthy
         self.state = CircuitState.HEALTHY
+        self.open_streak = 0
 
     def record_failure(
         self,
         error_type: str = "generic",
         cooldown_seconds: float = 60.0,
         circuit_breaker_threshold: int = 3,
+        initial_cooldown_seconds: float | None = None,
     ) -> None:
-        """Record an RPC failure and dynamically adjust circuit breaker state."""
+        """Record an RPC failure and dynamically adjust circuit breaker state.
+
+        With ``initial_cooldown_seconds`` the first opening waits that long and
+        each further opening without a success in between twice as long, up
+        to ``cooldown_seconds`` (BUG-151); without it every opening waits
+        ``cooldown_seconds``.
+        """
         self.total_requests += 1
         self.total_errors += 1
         self.consecutive_failures += 1
@@ -97,15 +128,24 @@ class RpcEndpoint:
 
         if is_rate_limit:
             self.rate_limited_count += 1
+            self.last_rate_limited_time = now
+        if (
+            is_rate_limit
+            or self.state == CircuitState.HALF_OPEN
+            or self.consecutive_failures >= circuit_breaker_threshold
+        ):
+            # A rate limit, a failed half-open probe or too many failures in a
+            # row: open (again).
             self.state = CircuitState.OPEN
-            self.cooldown_until = now + cooldown_seconds
-        elif self.state == CircuitState.HALF_OPEN:
-            # Probe failed in half-open state, re-open immediately with full cooldown
-            self.state = CircuitState.OPEN
-            self.cooldown_until = now + cooldown_seconds
-        elif self.consecutive_failures >= circuit_breaker_threshold:
-            self.state = CircuitState.OPEN
-            self.cooldown_until = now + cooldown_seconds
+            self.open_streak += 1
+            wait = float(cooldown_seconds)
+            if initial_cooldown_seconds is not None:
+                wait = min(
+                    wait,
+                    max(0.0, float(initial_cooldown_seconds))
+                    * 2 ** min(self.open_streak - 1, 30),
+                )
+            self.cooldown_until = now + wait
         else:
             self.state = CircuitState.DEGRADED
 
@@ -118,13 +158,12 @@ class RpcEndpoint:
         return self.state
 
     def is_available(self, now: Optional[float] = None) -> bool:
-        """Return True if endpoint can accept traffic (HEALTHY, DEGRADED, or HALF_OPEN)."""
+        """Return True if endpoint can accept traffic (HEALTHY, DEGRADED, or a
+        HALF_OPEN endpoint with no probe already in flight)."""
         current_state = self.check_health_and_cooldown(now)
-        return current_state in (
-            CircuitState.HEALTHY,
-            CircuitState.DEGRADED,
-            CircuitState.HALF_OPEN,
-        )
+        if current_state == CircuitState.HALF_OPEN:
+            return not self.probe_in_flight
+        return current_state in (CircuitState.HEALTHY, CircuitState.DEGRADED)
 
     def _calculate_percentile(self, p: float) -> float:
         if not self.latency_samples:
@@ -191,7 +230,9 @@ class RpcEndpoint:
             "rate_limited_count": self.rate_limited_count,
             "last_error_time": self.last_error_time,
             "last_success_time": self.last_success_time,
+            "last_rate_limited_time": self.last_rate_limited_time,
             "cooldown_until": self.cooldown_until,
+            "open_streak": self.open_streak,
             "sample_count": len(self.latency_samples),
             "p50_latency_ms": self.p50_latency_ms,
             "p95_latency_ms": self.p95_latency_ms,
@@ -209,6 +250,9 @@ class RpcPoolConfig:
     health_check_interval_seconds: float = 30.0
     circuit_breaker_threshold: int = 3
     circuit_breaker_cooldown_seconds: float = 60.0
+    # First wait after the breaker opens; doubles per opening up to the
+    # cooldown above (BUG-151).
+    circuit_breaker_initial_cooldown_seconds: float = 1.0
     broadcast_concurrency: int = 3
     request_timeout_seconds: float = 15.0
     max_retries_per_query: int = 3
@@ -223,6 +267,9 @@ class RpcPoolConfig:
             "health_check_interval_seconds": self.health_check_interval_seconds,
             "circuit_breaker_threshold": self.circuit_breaker_threshold,
             "circuit_breaker_cooldown_seconds": self.circuit_breaker_cooldown_seconds,
+            "circuit_breaker_initial_cooldown_seconds": (
+                self.circuit_breaker_initial_cooldown_seconds
+            ),
             "broadcast_concurrency": self.broadcast_concurrency,
             "request_timeout_seconds": self.request_timeout_seconds,
             "max_retries_per_query": self.max_retries_per_query,
@@ -254,6 +301,9 @@ class RpcPoolConfig:
             circuit_breaker_cooldown_seconds=float(
                 data.get("circuit_breaker_cooldown_seconds", 60.0)
             ),
+            circuit_breaker_initial_cooldown_seconds=float(
+                data.get("circuit_breaker_initial_cooldown_seconds", 1.0)
+            ),
             broadcast_concurrency=int(data.get("broadcast_concurrency", 3)),
             request_timeout_seconds=float(data.get("request_timeout_seconds", 15.0)),
             max_retries_per_query=int(data.get("max_retries_per_query", 3)),
@@ -275,6 +325,10 @@ class RpcConnectionPool:
         self._running: bool = False
         self._session: Optional[aiohttp.ClientSession] = session
         self._lock = asyncio.Lock()
+        # Requests by JSON-RPC method, and requests refused unsent because
+        # every breaker was open (BUG-151).
+        self.requests_by_method: dict[str, int] = {}
+        self.rejected_requests: int = 0
 
         # Ingest initial endpoints
         raw_list: list[str | RpcEndpoint] = []
@@ -333,6 +387,20 @@ class RpcConnectionPool:
         available = [ep for ep in self._endpoints if ep.is_available(now)]
         return sorted(available, key=lambda ep: ep.get_score())
 
+    def under_pressure(
+        self, window_seconds: float, now: Optional[float] = None
+    ) -> bool:
+        """True when no endpoint is available or one was rate limited within
+        ``window_seconds``: record-only reads should wait (BUG-151)."""
+        current = time.time() if now is None else now
+        if self._endpoints and not self.get_healthy_endpoints(current):
+            return True
+        return any(
+            ep.last_rate_limited_time is not None
+            and current - ep.last_rate_limited_time < window_seconds
+            for ep in self._endpoints
+        )
+
     def get_best_endpoint(self, now: Optional[float] = None) -> Optional[RpcEndpoint]:
         """Return the optimal endpoint with the lowest score."""
         healthy = self.get_healthy_endpoints(now)
@@ -351,6 +419,25 @@ class RpcConnectionPool:
             self._session = aiohttp.ClientSession()
         return self._session
 
+    def _record_endpoint_failure(self, endpoint: RpcEndpoint, error_type: str) -> None:
+        endpoint.record_failure(
+            error_type=error_type,
+            cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
+            circuit_breaker_threshold=self.config.circuit_breaker_threshold,
+            initial_cooldown_seconds=self.config.circuit_breaker_initial_cooldown_seconds,
+        )
+
+    def _unavailable_error(self, now: float) -> RpcPoolUnavailableError:
+        self.rejected_requests += 1
+        wait = min(
+            (max(0.0, ep.cooldown_until - now) for ep in self._endpoints),
+            default=0.0,
+        )
+        return RpcPoolUnavailableError(
+            "No RPC endpoint available: every circuit breaker is open "
+            f"(next probe in {wait:.1f}s)"
+        )
+
     async def request(
         self,
         payload: dict[str, Any],
@@ -358,10 +445,19 @@ class RpcConnectionPool:
         max_retries: Optional[int] = None,
         timeout_seconds: Optional[float] = None,
     ) -> dict[str, Any]:
-        """Intelligently route a JSON-RPC request to the lowest-latency healthy endpoint with failover."""
+        """Route a JSON-RPC request to the lowest-latency available endpoint, with failover.
+
+        A request is never sent to an endpoint whose breaker is open: when
+        none is available it fails at once with :class:`RpcPoolUnavailableError`,
+        so a rate-limited provider gets time to recover instead of a request
+        every few milliseconds (BUG-151). A half-open endpoint takes one probe
+        at a time.
+        """
         if not self._endpoints:
             raise RuntimeError("No RPC endpoints configured in connection pool")
 
+        method = str(payload.get("method") or "unknown")[:64]
+        self.requests_by_method[method] = self.requests_by_method.get(method, 0) + 1
         retries = (
             max_retries
             if max_retries is not None
@@ -379,121 +475,130 @@ class RpcConnectionPool:
         for attempt in range(retries + 1):
             now = time.time()
             candidates = self.get_healthy_endpoints(now)
+            if not candidates:
+                if last_error is None:
+                    raise self._unavailable_error(now)
+                break
 
             # Prioritize candidates not yet attempted in this query cycle
             unattempted = [ep for ep in candidates if ep.url not in attempted_urls]
-            chosen_ep = (
-                unattempted[0]
-                if unattempted
-                else (candidates[0] if candidates else self.get_best_endpoint(now))
-            )
-
-            if chosen_ep is None:
-                break
+            chosen_ep = unattempted[0] if unattempted else candidates[0]
 
             attempted_urls.add(chosen_ep.url)
+            probing = chosen_ep.state == CircuitState.HALF_OPEN
+            if probing:
+                chosen_ep.probe_in_flight = True
             start_t = time.perf_counter()
 
             try:
-                session = await self._get_session()
-                client_timeout = aiohttp.ClientTimeout(total=timeout_sec)
-                async with session.post(
-                    chosen_ep.url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=client_timeout,
-                ) as resp:
-                    elapsed = time.perf_counter() - start_t
-                    body = ""
-                    parsed = None
-
-                    if resp.status == 429:
-                        chosen_ep.record_failure(
-                            error_type="429",
-                            cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                            circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                        )
-                        raise RuntimeError(
-                            f"RPC endpoint rate limited (HTTP 429): {chosen_ep.label}"
-                        )
-
-                    if resp.status != 200:
-                        try:
-                            body = await resp.text()
-                        except Exception:
-                            body = ""
-                        chosen_ep.record_failure(
-                            error_type=f"HTTP_{resp.status}",
-                            cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                            circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                        )
-                        raise RuntimeError(
-                            f"RPC HTTP {resp.status} from {chosen_ep.label}: {body[:200]}"
-                        )
-
-                    try:
-                        text_res = await resp.text()
-                        if isinstance(text_res, str):
-                            body = text_res
-                            parsed = json.loads(body)
-                    except Exception:
-                        parsed = None
-
-                    if parsed is None and hasattr(resp, "json"):
-                        try:
-                            json_res = await resp.json()
-                            if isinstance(json_res, dict):
-                                parsed = json_res
-                        except Exception:
-                            pass
-
-                    if not isinstance(parsed, dict):
-                        chosen_ep.record_failure(
-                            error_type="invalid_json_type",
-                            cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                            circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                        )
-                        raise RuntimeError(
-                            f"RPC response not a JSON dict from {chosen_ep.label}"
-                        )
-
-                    # Check for JSON-RPC level rate limits or server errors
-                    # Node-side errors fail over; deterministic request errors are
-                    # returned to the caller with the endpoint still healthy (BUG-67).
-                    if "error" in parsed and isinstance(parsed["error"], dict):
-                        err_code = parsed["error"].get("code", 0)
-                        err_msg = str(parsed["error"].get("message", ""))
-                        if err_code not in DETERMINISTIC_JSONRPC_ERROR_CODES:
-                            is_rate_limit = err_code == 429
-                            chosen_ep.record_failure(
-                                error_type=(
-                                    "429_jsonrpc" if is_rate_limit else "jsonrpc_error"
-                                ),
-                                cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                                circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                            )
-                            label = "rate limit" if is_rate_limit else "error"
-                            raise RuntimeError(
-                                f"JSON-RPC {label} on {chosen_ep.label}: "
-                                f"[{err_code}] {err_msg}"
-                            )
-
-                    # Success!
-                    chosen_ep.record_success(elapsed)
-                    return parsed
-
+                parsed = await self._send(chosen_ep, payload, timeout_sec, start_t)
+                return parsed
             except Exception as exc:
+                # Endpoint errors are recorded where they are raised; transport
+                # errors (timeouts, resets) leave the breaker as it was.
                 last_error = exc
-                if attempt >= retries:
-                    break
-                # Short backoff before trying next candidate
-                await asyncio.sleep(min(0.5, 0.1 * (2**attempt)))
+            finally:
+                if probing:
+                    chosen_ep.probe_in_flight = False
+            if attempt >= retries:
+                break
+            # Short backoff before trying next candidate
+            await asyncio.sleep(min(0.5, 0.1 * (2**attempt)))
 
         if last_error is not None:
             raise RuntimeError(
                 f"All RPC pool query attempts failed: {last_error}"
             ) from last_error
         raise RuntimeError("RPC pool query failed without captured error")
+
+    async def _send(
+        self,
+        endpoint: RpcEndpoint,
+        payload: dict[str, Any],
+        timeout_sec: float,
+        start_t: float,
+    ) -> dict[str, Any]:
+        """POST one request; endpoint errors raise :class:`_RecordedRpcError`."""
+        session = await self._get_session()
+        client_timeout = aiohttp.ClientTimeout(total=timeout_sec)
+        async with session.post(
+            endpoint.url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=client_timeout,
+        ) as resp:
+            elapsed = time.perf_counter() - start_t
+            body = ""
+            parsed = None
+
+            if resp.status == 429:
+                self._record_endpoint_failure(endpoint, "429")
+                # The body says whether this is a rate or a plan limit (credits).
+                detail = await self._error_body(resp)
+                raise _RecordedRpcError(
+                    f"RPC endpoint rate limited (HTTP 429): {endpoint.label}"
+                    + (f": {detail}" if detail else "")
+                )
+
+            if resp.status != 200:
+                detail = await self._error_body(resp)
+                self._record_endpoint_failure(endpoint, f"HTTP_{resp.status}")
+                raise _RecordedRpcError(
+                    f"RPC HTTP {resp.status} from {endpoint.label}: {detail}"
+                )
+
+            try:
+                text_res = await resp.text()
+                if isinstance(text_res, str):
+                    body = text_res
+                    parsed = json.loads(body)
+            except Exception:
+                parsed = None
+
+            if parsed is None and hasattr(resp, "json"):
+                try:
+                    json_res = await resp.json()
+                    if isinstance(json_res, dict):
+                        parsed = json_res
+                except Exception:
+                    pass
+
+            if not isinstance(parsed, dict):
+                self._record_endpoint_failure(endpoint, "invalid_json_type")
+                raise _RecordedRpcError(
+                    f"RPC response not a JSON dict from {endpoint.label}"
+                )
+
+            # Check for JSON-RPC level rate limits or server errors
+            # Node-side errors fail over; deterministic request errors are
+            # returned to the caller with the endpoint still healthy (BUG-67).
+            if "error" in parsed and isinstance(parsed["error"], dict):
+                err_code = parsed["error"].get("code", 0)
+                err_msg = str(parsed["error"].get("message", ""))
+                if err_code not in DETERMINISTIC_JSONRPC_ERROR_CODES:
+                    is_rate_limit = err_code == 429
+                    self._record_endpoint_failure(
+                        endpoint, "429_jsonrpc" if is_rate_limit else "jsonrpc_error"
+                    )
+                    label = "rate limit" if is_rate_limit else "error"
+                    raise _RecordedRpcError(
+                        f"JSON-RPC {label} on {endpoint.label}: "
+                        f"[{err_code}] {redact_text(err_msg)[:200]}"
+                    )
+
+            # Success!
+            endpoint.record_success(elapsed)
+            return parsed
+
+    @staticmethod
+    async def _error_body(resp: Any) -> str:
+        """The first 200 characters of an error body, key-free (BUG-102)."""
+        try:
+            text = await resp.text()
+        except Exception:
+            return ""
+        flat = redact_text(" ".join(str(text or "").split()))
+        return _INLINE_SECRET_RE.sub(r"\1=***", flat)[:200]
 
     async def broadcast_transaction(
         self,
@@ -559,11 +664,7 @@ class RpcConnectionPool:
                 parsed = None
 
                 if resp.status == 429:
-                    endpoint.record_failure(
-                        error_type="429",
-                        cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                        circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                    )
+                    self._record_endpoint_failure(endpoint, "429")
                     raise RuntimeError(f"Rate limited (HTTP 429) on {endpoint.label}")
 
                 if resp.status != 200:
@@ -571,11 +672,7 @@ class RpcConnectionPool:
                         body = await resp.text()
                     except Exception:
                         body = ""
-                    endpoint.record_failure(
-                        error_type=f"HTTP_{resp.status}",
-                        cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                        circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                    )
+                    self._record_endpoint_failure(endpoint, f"HTTP_{resp.status}")
                     raise RuntimeError(
                         f"HTTP {resp.status} on {endpoint.label}: {body[:200]}"
                     )
@@ -597,31 +694,25 @@ class RpcConnectionPool:
                         pass
 
                 if not isinstance(parsed, dict):
-                    endpoint.record_failure(
-                        error_type="invalid_json_type",
-                        cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                        circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                    )
+                    self._record_endpoint_failure(endpoint, "invalid_json_type")
                     raise RuntimeError(f"Invalid JSON from {endpoint.label}")
 
                 if "error" in parsed:
-                    err_msg = str(parsed["error"])
-                    endpoint.record_failure(
-                        error_type="send_tx_error",
-                        cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                        circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                    )
+                    err = parsed["error"]
+                    err_msg = str(err)
+                    code = err.get("code") if isinstance(err, dict) else None
+                    if code not in DETERMINISTIC_JSONRPC_ERROR_CODES:
+                        # A failed simulation is the transaction's fault, not
+                        # the endpoint's: it must not open the breaker, which
+                        # now stops reads too (BUG-151).
+                        self._record_endpoint_failure(endpoint, "send_tx_error")
                     raise RuntimeError(
                         f"SendTransaction error on {endpoint.label}: {err_msg}"
                     )
 
                 sig = parsed.get("result")
                 if not isinstance(sig, str) or len(sig) < 20:
-                    endpoint.record_failure(
-                        error_type="invalid_signature",
-                        cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
-                        circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-                    )
+                    self._record_endpoint_failure(endpoint, "invalid_signature")
                     raise RuntimeError(
                         f"Invalid signature response on {endpoint.label}: {parsed}"
                     )
@@ -676,25 +767,13 @@ class RpcConnectionPool:
                     endpoint.record_success(elapsed)
                     return True
                 elif resp.status == 429:
-                    endpoint.record_failure(
-                        "429",
-                        self.config.circuit_breaker_cooldown_seconds,
-                        self.config.circuit_breaker_threshold,
-                    )
+                    self._record_endpoint_failure(endpoint, "429")
                     return False
                 else:
-                    endpoint.record_failure(
-                        f"HTTP_{resp.status}",
-                        self.config.circuit_breaker_cooldown_seconds,
-                        self.config.circuit_breaker_threshold,
-                    )
+                    self._record_endpoint_failure(endpoint, f"HTTP_{resp.status}")
                     return False
         except Exception as exc:
-            endpoint.record_failure(
-                str(exc),
-                self.config.circuit_breaker_cooldown_seconds,
-                self.config.circuit_breaker_threshold,
-            )
+            self._record_endpoint_failure(endpoint, str(exc))
             return False
 
     async def check_all_health(self) -> dict[str, bool]:
@@ -770,6 +849,8 @@ class RpcConnectionPool:
             "half_open_endpoints": half_open_count,
             "total_requests": total_requests,
             "total_errors": total_errors,
+            "rejected_requests": self.rejected_requests,
+            "requests_by_method": dict(self.requests_by_method),
             "endpoints": endpoints_data,
         }
 
@@ -777,6 +858,7 @@ class RpcConnectionPool:
 __all__ = [
     "CircuitState",
     "RpcEndpoint",
+    "RpcPoolUnavailableError",
     "RpcPoolConfig",
     "RpcConnectionPool",
 ]

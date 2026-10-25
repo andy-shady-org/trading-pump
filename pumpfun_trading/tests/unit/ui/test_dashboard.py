@@ -16,7 +16,7 @@ from pumpfun_trading.bot.lifecycle import TradingBotState
 from pumpfun_trading.bot.risk import DailyEquityTracker
 from pumpfun_trading.bot.run import TradingBot
 from pumpfun_trading.bot.strategy import TradingBotConfig
-from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY
+from pumpfun_trading.tests.support.constants import SAMPLE_PRIVATE_KEY, SAMPLE_PUMP_MINT
 from pumpfun_trading.tests.support.factories import make_bot, make_config, make_position
 from pumpfun_trading.ui.dashboard import (
     _reconciliation_text,
@@ -1065,3 +1065,21 @@ def test_watch_list_row_shows_only_in_confirmed_mode(tmp_path: Path) -> None:
     assert any(
         "Watch list" in line and "2 watched, 1/20 subscribed" in line for line in lines
     )
+
+
+@pytest.mark.regression("BUG-147")
+def test_positions_table_marks_a_stale_price(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    make_position(bot, SAMPLE_PUMP_MINT, entry_market_cap=30.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    bot.active_positions[SAMPLE_PUMP_MINT]["current_market_cap"] = 18.0
+    bot.active_positions[SAMPLE_PUMP_MINT]["price_stale"] = True
+    console = Console(width=240, record=True)
+    console.print(build_dashboard(bot))
+    text = " ".join(console.export_text().split())
+    assert "18.00 SOL (stale)" in text
+
+    bot.active_positions[SAMPLE_PUMP_MINT].pop("price_stale")
+    console = Console(width=240, record=True)
+    console.print(build_dashboard(bot))
+    assert "(stale)" not in console.export_text()

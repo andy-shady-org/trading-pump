@@ -16,6 +16,7 @@ from pumpfun_trading.bot.handlers import observe
 from pumpfun_trading.bot.handlers.curve import RAW_TOKEN_UNITS_THRESHOLD
 from pumpfun_trading.bot.strategy import TokenScreeningVerdict
 from pumpfun_trading.ops.events import EventCategory, EventSeverity
+from pumpfun_trading.sdk.curve import complete_at_create
 
 if TYPE_CHECKING:
     from pumpfun_trading.bot.run import TradingBot
@@ -139,6 +140,24 @@ async def handle_new_token_event(
     # rc.5 (FEAT-72): a sample of every standard launch, before any screening
     # or entry gate, so the capture is not shaped by what the bot would buy.
     observe.maybe_sample_launch(bot, mint, data, current_market_cap)
+
+    if complete_at_create(current_market_cap):
+        # The creator bought the whole curve in the create transaction and the
+        # coin migrated at once: no curve buy is possible, and pricing a paper
+        # fill here produced fake 9x "graduation" wins (BUG-146).
+        bot._count_entry_refusal("complete_at_create")
+        bot._mark_seen(mint)
+        bot._last_event = f"complete_at_create {mint[:8]}"
+        if hasattr(bot, "event_logger") and bot.event_logger is not None:
+            bot.event_logger.emit(
+                category=EventCategory.SCREENING,
+                severity=EventSeverity.DEBUG,
+                event_name="token_rejected_complete_at_create",
+                mint=mint,
+                mint_name=token_name,
+                data={"market_cap_sol": round(current_market_cap, 4)},
+            )
+        return
 
     confirmed = bot._entry_mode() == "confirmed"
     async with bot._trade_lock:

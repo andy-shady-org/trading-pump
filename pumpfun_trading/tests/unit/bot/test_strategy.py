@@ -10,6 +10,7 @@ from pumpfun_trading.bot.strategy import (
     resolve_strategy_config,
 )
 from pumpfun_trading.tests.support.factories import make_config
+from pumpfun_trading.tests.support.fakes import FakeCurves
 
 
 @pytest.mark.regression("BUG-46")
@@ -53,6 +54,7 @@ async def test_bot_resolves_names_and_tracks_position_metadata():
     bot._last_message_at = time.monotonic()
     bot._last_health_check = time.monotonic()
     bot.dry_run = True
+    FakeCurves(default_market_cap=30.0).install(bot)  # paper buys read the curve
 
     assert await bot._resolve_token_name("mint", "PumpCoin") == "PumpCoin"
     assert await bot._resolve_token_name("mint", None) is None
@@ -318,6 +320,7 @@ async def test_concurrent_mint_events_do_not_exceed_max_positions():
 
     mint1 = "3JfNw9xJUP9VYdB4KJdQ69yX4dE3Ws5YQm1Yw7Gv2fM9"
     mint2 = "9xNw9xJUP9VYdB4KJdQ69yX4dE3Ws5YQm1Yw7Gv2fM9"
+    FakeCurves(default_market_cap=35.0).install(bot)  # paper buys read the curve
 
     class DummyWS:
         async def send(self, *args, **kwargs):

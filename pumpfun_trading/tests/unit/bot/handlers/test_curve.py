@@ -13,6 +13,7 @@ from pumpfun_trading.bot.handlers import curve
 from pumpfun_trading.streams.geyser import CompleteEventUpdate
 from pumpfun_trading.tests.support.constants import SAMPLE_MINT
 from pumpfun_trading.tests.support.factories import make_bot, make_position
+from pumpfun_trading.tests.support.fakes import FakeCurves
 
 
 def _launch_curve() -> dict[str, Any]:
@@ -76,8 +77,8 @@ async def test_refresh_exits_a_held_curve_that_completed(tmp_path: Path) -> None
     bot = make_bot(tmp_path)
     make_position(bot, SAMPLE_MINT)
     bot.active_positions = bot.position_manager.get_all_positions()
-    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
-        return_value={"complete": True}
+    bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+        return_value={SAMPLE_MINT: {"complete": True}}
     )
     bot._exit_graduated_position = AsyncMock(  # type: ignore[method-assign]
         return_value=True
@@ -93,8 +94,8 @@ async def test_refresh_notes_the_first_stop_crossing_only_when_asked(
         bot = make_bot(tmp_path, stop_loss=0.95, record_stop_crossings=record)
         make_position(bot, SAMPLE_MINT, entry_market_cap=30.0)
         bot.active_positions = bot.position_manager.get_all_positions()
-        bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
-            return_value=_launch_curve()  # ~27.96 SOL: 93% of entry
+        bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+            return_value={SAMPLE_MINT: _launch_curve()}  # ~27.96 SOL: 93% of entry
         )
         bot._evaluate_and_execute_exit = AsyncMock()  # type: ignore[method-assign]
         await curve.refresh_active_positions_market_caps(bot)
@@ -105,6 +106,75 @@ async def test_refresh_notes_the_first_stop_crossing_only_when_asked(
             assert crossings["refresh"]["ratio"] == pytest.approx(0.932, rel=0.01)
         else:
             assert crossings is None
+
+
+@pytest.mark.regression("BUG-151")
+async def test_refresh_reads_every_held_curve_in_one_batch(tmp_path: Path) -> None:
+    # Ten held mints were ten getAccountInfo calls a second per bot.
+    bot = make_bot(tmp_path)
+    mints = [f"{i}{SAMPLE_MINT[1:]}" for i in range(1, 6)]
+    for mint in mints:
+        make_position(bot, mint, entry_market_cap=30.0)
+    migrating = mints[-1]
+    bot._migrating_mints.add(migrating)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    curves = FakeCurves(default_market_cap=31.0)
+    batch = AsyncMock(side_effect=curves.get_bonding_curve_states)
+    single = AsyncMock(side_effect=AssertionError("no single reads"))
+    bot.execution.get_bonding_curve_states = batch  # type: ignore[method-assign]
+    bot.execution.get_bonding_curve_state = single  # type: ignore[method-assign]
+    bot._evaluate_and_execute_exit = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    bot._exit_graduated_position = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    await curve.refresh_active_positions_market_caps(bot)
+
+    batch.assert_awaited_once()
+    assert batch.await_args is not None
+    assert sorted(batch.await_args.args[0]) == sorted(mints[:-1])
+    single.assert_not_awaited()
+    assert bot._evaluate_and_execute_exit.await_count == 4
+    bot._exit_graduated_position.assert_awaited_once_with(migrating)
+
+
+@pytest.mark.regression("BUG-151")
+async def test_refresh_keeps_last_prices_when_the_batch_fails(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    make_position(bot, SAMPLE_MINT, entry_market_cap=30.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    bot.active_positions[SAMPLE_MINT]["current_market_cap"] = 33.0
+    bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("HTTP 429")
+    )
+    single = AsyncMock()
+    bot.execution.get_bonding_curve_state = single  # type: ignore[method-assign]
+    bot._evaluate_and_execute_exit = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    await curve.refresh_active_positions_market_caps(bot)
+
+    # No per-mint retry storm on a failed batch: exits run on the last price.
+    single.assert_not_awaited()
+    bot._evaluate_and_execute_exit.assert_awaited_once_with(SAMPLE_MINT, 33.0)
+    assert bot._watch_stats["position_refresh_errors"] == 1
+
+
+async def test_refresh_reads_mint_by_mint_without_a_batch_read(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    make_position(bot, SAMPLE_MINT, entry_market_cap=30.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    curves = FakeCurves(default_market_cap=31.0)
+    # A client whose batch read is not a coroutine (a plain mock).
+    bot.execution.get_bonding_curve_states = lambda *_a, **_k: None  # type: ignore[method-assign,assignment]
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[curves.curve(SAMPLE_MINT)]
+    )
+    bot._evaluate_and_execute_exit = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    await curve.refresh_active_positions_market_caps(bot)
+
+    bot._evaluate_and_execute_exit.assert_awaited_once()
+    exit_call = bot._evaluate_and_execute_exit.await_args
+    assert exit_call is not None
+    assert exit_call.args[1] == pytest.approx(31.0)
 
 
 def test_note_stop_crossing_ignores_mints_not_held(tmp_path: Path) -> None:
@@ -152,3 +222,53 @@ async def test_bot_methods_delegate_to_curve_handlers(
     # Only the pre-graduation entry returns a value (handled or not).
     if method == "_maybe_buy_pre_graduation":
         assert result == "result"
+
+
+async def test_held_curve_reads_without_a_batch_or_with_failing_single_reads(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    bot = make_bot(tmp_path)
+    reads = AsyncMock(side_effect=[RuntimeError("down"), {"complete": True}, None])
+    bot.execution = SimpleNamespace(get_bonding_curve_state=reads)  # type: ignore[assignment]
+    curves = await curve.read_held_curves(bot, ["A", "B", "C"])
+    assert curves == {"A": None, "B": {"complete": True}, "C": None}
+    assert await curve.read_held_curves(bot, []) == {}
+
+
+async def test_refresh_prices_from_reserves_and_survives_a_failing_exit(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    make_position(bot, SAMPLE_MINT, entry_market_cap=30.0)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    bot.active_positions[SAMPLE_MINT]["current_market_cap"] = 30.0
+    bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            SAMPLE_MINT: {
+                "virtual_sol_reserves": 40_000_000_000,
+                "virtual_token_reserves": 1_000_000_000_000_000,
+            }
+        }
+    )
+    calls: list[float] = []
+
+    async def failing_exit(mint: str, mc: float) -> bool:
+        calls.append(mc)
+        raise RuntimeError("exit failed")
+
+    bot._evaluate_and_execute_exit = failing_exit  # type: ignore[method-assign,assignment]
+    await curve.refresh_active_positions_market_caps(bot)
+    # The fresh price first, then the last known one after the failure.
+    assert calls == [pytest.approx(40.0), 30.0]
+
+    # A curve with no reserves at all keeps the last price.
+    bot.execution.get_bonding_curve_states = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            SAMPLE_MINT: {"virtual_sol_reserves": 0, "virtual_token_reserves": 0}
+        }
+    )
+    calls.clear()
+    await curve.refresh_active_positions_market_caps(bot)
+    assert calls == [30.0, 30.0]
