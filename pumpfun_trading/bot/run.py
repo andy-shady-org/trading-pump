@@ -195,8 +195,6 @@ TRADED_MINTS_LIMIT = 10_000
 # A repeated exit decision of one type and mint is logged at INFO once per
 # this many seconds, at DEBUG in between (BUG-148).
 EXIT_LOG_REPEAT_SECONDS = 60.0
-# The stream reconnects after this many health timeouts without a message.
-STREAM_IDLE_TIMEOUT_FACTOR = 2.0
 
 
 class TradingBot:
@@ -3370,14 +3368,9 @@ class TradingBot:
 
     @property
     def stream_idle_timeout_seconds(self) -> float:
-        """Reconnect after twice the health timeout without a message (120 s
-        by default): the health timeout used to pause trading only, for
-        hours (BUG-150). Twice, because the create feed went quiet for 61 s
-        once in the 13.85 h rc.5 run, and the pings catch a dead socket in
-        about 30 s anyway."""
-        return STREAM_IDLE_TIMEOUT_FACTOR * float(
-            self.config.health_check_timeout_seconds
-        )
+        """Reconnect after this long without a message: the health timeout
+        used to pause trading only, for hours (BUG-150)."""
+        return float(self.config.health_check_timeout_seconds)
 
     def stream_connect_url(self) -> str:
         return self._stream_connect_url()

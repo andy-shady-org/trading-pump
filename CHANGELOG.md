@@ -8,11 +8,7 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-## [0.3.0-rc.6] - 2026-10-25
-
-Sixth release candidate of v0.3.0 (this release branch, off `main` after the rc.5 merge and the operator's cost notes): a **fix release** for the rc.5 launch-mode paper run (BUG-145 to BUG-153, [`BUGS.md` §26](docs/dev/BUGS.md#26-rc5-paper-run-findings-2026-10-25); branches `fix/runtime-rpc-outage`, `fix/paper-sell-and-retry-reason`, `docs/costs`). Both rc.5 A/B runs are void: 29% of their paper buys were filled at an invented price when the curve read failed, which made all of the reported profit, and the last hour ran with no working RPC. rc.6 makes paper buys and sells fail where live ones would, stops the RPC pool from hammering a rate-limited endpoint, and reconnects a silent stream.
-
-This is a **pre-release for paper testing only**, like rc.1 to rc.5. It must not run on a funded wallet.
+Fixes from the rc.5 launch-mode paper run (BUG-145 to BUG-151, [`BUGS.md` §26](docs/dev/BUGS.md#26-rc5-paper-run-findings-2026-10-25); branch `fix/runtime-rpc-outage`). Both rc.5 A/B runs are void: 29% of their paper buys were filled at an invented price when the curve read failed, which made all of the reported profit, and the last hour ran with no working RPC.
 
 ### Fixed
 - Paper buys no longer fill without a curve read: a failed read at the signal or after `paper_entry_delay_seconds`, a zero-token quote or a complete curve refuses the buy (`curve_unreadable`, `curve_complete`), as it would refuse a live one; the fresh-launch fallback is gone (BUG-145).
@@ -20,15 +16,13 @@ This is a **pre-release for paper testing only**, like rc.1 to rc.5. It must not
 - A held coin that migrated is valued and exited from its PumpSwap pool only, never from PumpPortal trade messages; while the pool can't be read the position is flagged `price_stale` and shown as `… SOL (stale)` in the terminal UI (BUG-147).
 - A failed PumpSwap pool read backs off (2 s doubling to 60 s, no RPC call while waiting) and is logged as a warning with its cause; "graduated while held" is logged; a repeated exit decision logs at INFO once a minute (BUG-148).
 - No buys while every RPC endpoint's breaker is open (BUG-149).
-- The PumpPortal socket is pinged (`stream_heartbeat_seconds`) and reconnected after twice `health_check_timeout_seconds` (120 s) without a message, instead of waiting on a half-open connection for hours; "Cannot write to closing transport" reconnects quietly (BUG-150).
+- The PumpPortal socket is pinged (`stream_heartbeat_seconds`) and reconnected after `health_check_timeout_seconds` without a message, instead of waiting on a half-open connection for hours; "Cannot write to closing transport" reconnects quietly (BUG-150).
 - The RPC pool sends nothing to an open endpoint: requests fail at once (`RpcPoolUnavailableError`) until the cooldown ends, which now starts at 1 s and doubles per opening up to `rpc_pool_circuit_breaker_cooldown_seconds`, with one half-open probe at a time; failed transaction simulations no longer open the breaker; a 429 error keeps the provider's reason with keys masked (BUG-151).
-- Paper sells whose curve read fails are refused and go to the exit retry queue, as a live sell would (BUG-152).
-- A retried sell repeats the exit that failed (reason, tier, fraction) instead of recording the error text as its reason and selling everything (BUG-153).
 - Held positions are refreshed with one `getMultipleAccounts` per pass instead of one call per position, and record-only observation polls wait while the RPC is rate limited (BUG-151).
 
 ### Added
 - Config key `stream_heartbeat_seconds` (default `20`, `0` = no pings) (BUG-150).
-- `bot_status.json`: `entry_refusals` (refused entries by cause: `curve_unreadable`, `curve_complete`, `complete_at_create`, `rpc_unavailable`, …); `rpc_pool_telemetry.rejected_requests` and `requests_by_method`, and per endpoint `open_streak` and `last_rate_limited_time`; positions `price_stale` / `price_stale_since`; watch stats `position_refresh_errors` and `observation_polls_deferred`; exit retry entries `exit_reason`, `sell_fraction`, `sell_amount_tokens` and `target_tier` (BUG-145 to BUG-153).
+- `bot_status.json`: `entry_refusals` (refused entries by cause: `curve_unreadable`, `curve_complete`, `complete_at_create`, `rpc_unavailable`, …); `rpc_pool_telemetry.rejected_requests` and `requests_by_method`, and per endpoint `open_streak` and `last_rate_limited_time`; positions `price_stale` / `price_stale_since`; watch stats `position_refresh_errors` and `observation_polls_deferred` (BUG-145 to BUG-151).
 - A startup warning when the RPC pool has a single endpoint (BUG-151); [`RUNBOOK.md` §5.8](docs/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151) on RPC capacity and outages.
 - Test support: `FakeCurves` and `standard_curve` (`tests/support/fakes.py`) give a paper bot curve reads.
 
@@ -36,22 +30,8 @@ This is a **pre-release for paper testing only**, like rc.1 to rc.5. It must not
 - Replay cannot see an RPC outage: on a capture where paper buys were refused (`entry_refusals.curve_unreadable` / `rpc_unavailable`), replay can still buy those signals, so `--compare-audit` shows them as replay-only fills.
 
 ### Changed
-- New [`docs/dev/COSTS.md`](docs/dev/COSTS.md): subscriptions, payments and the measured running cost per bot (Helius credits, PumpPortal trade data).
 - `PUMPFUN_RPC_URLS` documentation: when set, the pool uses only those endpoints (list the primary first).
 - Golden replay: the scenarios give the bot a curve that follows the stream's market cap; the open position in `position_cap_and_unheld_trades` now holds the curve's 329,113,500,516 tokens instead of the fresh-launch fallback's 353,134,762,944. Every ledger row is unchanged.
-
-### Release record – v0.3.0-rc.6 (2026-10-25)
-- Commit: the release commit on `release/v0.3.0rc6` (`pyproject.toml` → `0.3.0rc6`, this entry), on merges of `docs/costs` and `fix/paper-sell-and-retry-reason` (which contains `fix/runtime-rpc-outage`) into `main` at `50658ec`
-- Release gate: PASS on Linux (`nox -s format lint mypy tests package audit`: tests on 3.11, 3.12, 3.13 and 3.14); the CI matrix and the kill-and-restart drill in paper mode on the Mac are still to run
-- Tests: 2,155 collected (43 more than rc.5, for BUG-145 to BUG-153), all passed on 3.11–3.14; coverage 97.09–97.14% (statement + branch); the wheel `pumpfun_trading-0.3.0rc6-py3-none-any.whl` ships 119 files, no tests, private classifier
-- Risk drills: `pumpfun-drill --report` 4 of 4 passed
-- Security: secrets grep clean; `nox -s audit` no known vulnerabilities
-- Replay parity: golden replay changed only in the open position's token amount (above); live-fidelity replay now skips launches complete at creation (BUG-146)
-- Stream: PumpPortal answers WebSocket pings (pong in 115 ms, 2026-10-25), so the 20 s heartbeat is safe
-- Paper verdict (FEAT-67): `configs/verdict_rules.json` unchanged
-- Before the next run: the HTTPS Helius URL in `PUMPFUN_RPC_URL`, one RPC key per bot plus a fallback in `PUMPFUN_RPC_URLS` ([`RUNBOOK.md` §5.8](docs/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)), `EXPECTED_VERSION=0.3.0rc6` in `run-paper.sh`, and a 1 h check of `entry_refusals` and `rpc_pool_telemetry.requests_by_method`
-- Capital stage after this release: 0 (paper only)
-- Sign-off: –
 
 ## [0.3.0-rc.5] - 2026-10-24
 

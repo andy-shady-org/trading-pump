@@ -309,10 +309,8 @@ async def test_order_executor_dry_run():
     assert buy_res.mint == "Mint111"
     assert buy_res.is_buy
 
-    # A curve without reserves gives the paper sell no quote.
-    exec_client.get_bonding_curve_state = AsyncMock(
-        return_value={"virtual_sol_reserves": 0, "virtual_token_reserves": 0}
-    )
+    # Without a curve the paper sell has no quote.
+    exec_client.get_bonding_curve_state = AsyncMock(side_effect=RuntimeError("down"))
     sell_res = await executor.execute_sell("Mint111", 500_000, reason="dry_sell")
     assert sell_res.success
     assert sell_res.dry_run

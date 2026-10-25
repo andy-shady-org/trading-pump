@@ -156,10 +156,7 @@ class OrderExecutor:
         :class:`MayhemModeCurveError` unless ``skip_mayhem_mode`` is off, and a mint without a curve owned
         by the Pump.fun program raises :class:`NotPumpFunCurveError` (BUG-108),
         and a complete curve raises :class:`CurveCompleteError` (BUG-145),
-        instead of returning ``None``. A read that failed (RPC error, timeout)
-        (``RuntimeError``, ``TimeoutError``, ``OSError``) is appended to
-        ``read_errors`` when given, so a caller can tell it from a curve that
-        answered without reserves (BUG-152).
+        instead of returning ``None``.
         """
         if self.execution is None:
             return None
