@@ -8,6 +8,10 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Added
+- Graduation tracking (FEAT-73, record-only): `graduation_observation_seconds` (default `0` = off), `graduation_observation_max_mints` (300) and `graduation_observation_poll_interval_seconds` (5) follow every coin that migrates to PumpSwap, held or not, as `curve_poll` rows with `source: "graduation"` (`market_cap_sol` on the curve basis, `pool_sol`, `pool_tokens`) and `observation_start` / `observation_end` rows. Never trades; replay skips the rows. `configs/capture.json` turns it on for 4 h at 10 s. Status: `watch_list.graduation`, counter `graduation_observed`.
+- `get_pumpswap_pool_states`: batched PumpSwap pool reads (33 pools per `getMultipleAccounts` call, vault addresses cached), with the reason each refused pool was left out.
+
 ## [0.3.0-rc.7] - 2026-10-26
 
 Seventh release candidate of v0.3.0 (this release branch, off `main` at the v0.3.0-rc.6 merge): a **fix release** from the first 18 h of the rc.6 launch-mode A/B (BUG-154, BUG-155, [`BUGS.md` §27](docs/dev/BUGS.md#27-rc6-paper-run-findings-2026-10-26); branch `fix/curve-wait-and-health-label`). Entry market caps were correct (median 28.35 SOL against a fresh curve's 27.96 SOL), but 80% of the launch buys were refused because the new coin's curve was read before the RPC had it, and the coins refused did better than the ones bought. The rc.6 A/B covers only that biased fifth of launches; re-run it on rc.7.

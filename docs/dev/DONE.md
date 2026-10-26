@@ -851,6 +851,11 @@ Open items and the sprint table are in [`TODO.md`](TODO.md#phase-4c-strategy-piv
 - [x] Post-exit tracking: `post_exit_observation_seconds` (900 in `configs/capture.json` and `configs/pregrad_pilot.json`) keeps polling each fully closed position as `source: "post_exit"` rows tagged with the exit reason and the entry / exit market cap *(tests: `unit/bot/handlers/test_observe.py`, `unit/bot/test_run.py`)* (v0.3.0-rc.5)
 - [x] Observation task runs in launch mode when an rc.5 list is on, polls at the shortest list interval, and reads a mint in several lists once with one row per list *(tests: `unit/bot/handlers/test_observe.py`)* (v0.3.0-rc.5)
 
+### Graduation Tracking (FEAT-73)
+- [x] `graduation_observation_seconds` (default 0 = off; 14,400 at a 10 s interval in `configs/capture.json`) follows every migrated coin's canonical PumpSwap pool from its migration event, and a held coin whose curve completes, as `curve_poll` rows with `source: "graduation"` (`market_cap_sol` on the curve basis, `pool_sol`, `pool_tokens`; a drained pool is written with a market cap of 0) *(tests: `unit/bot/handlers/test_observe.py`, `unit/bot/handlers/test_raydium.py`, `unit/strategies/test_presets.py`)*
+- [x] `get_pumpswap_pool_states`: one batched read of many pools, vault addresses cached after the first read, 33 pools per `getMultipleAccounts` call, each refused pool named (`missing`, `not_pumpswap`, `not_sol_pair`, `decode_error`) *(tests: `unit/sdk/test_pumpswap_execution.py`)*
+- [x] Replay and the shadow scan skip the new rows like every record-only source *(tests: `unit/engines/test_replay.py`, `unit/strategies/test_observation.py`)*
+
 ## Phase 5: Platform Refactor (required before the Web UI)
 
 Open sprints (28c–31) and the findings table are in [`TODO.md`](TODO.md#phase-5-platform-refactor-required-before-the-web-ui).

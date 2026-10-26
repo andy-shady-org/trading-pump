@@ -630,6 +630,15 @@ def resolve_strategy_config(
         post_exit_poll_interval_seconds=float(
             base.get("post_exit_poll_interval_seconds", 2.0)
         ),
+        graduation_observation_seconds=float(
+            base.get("graduation_observation_seconds", 0.0)
+        ),
+        graduation_observation_max_mints=int(
+            base.get("graduation_observation_max_mints", 300)
+        ),
+        graduation_observation_poll_interval_seconds=float(
+            base.get("graduation_observation_poll_interval_seconds", 5.0)
+        ),
         observation_poll_interval_seconds=float(
             base.get("observation_poll_interval_seconds", 5.0)
         ),
@@ -993,6 +1002,14 @@ def _validate_observations(config: TradingBotConfig) -> None:
         raise ValueError("post_exit_max_mints must not be negative.")
     if config.post_exit_poll_interval_seconds < 1.0:
         raise ValueError("post_exit_poll_interval_seconds must be at least 1.")
+    if config.graduation_observation_seconds < 0:
+        raise ValueError("graduation_observation_seconds must not be negative.")
+    if config.graduation_observation_max_mints < 0:
+        raise ValueError("graduation_observation_max_mints must not be negative.")
+    if config.graduation_observation_poll_interval_seconds < 1.0:
+        raise ValueError(
+            "graduation_observation_poll_interval_seconds must be at least 1."
+        )
 
 
 __all__ = [

@@ -17,7 +17,7 @@ from pumpfun_trading.strategies.observation import (
     in_launch_sample,
     in_reject_sample,
 )
-from pumpfun_trading.tests.support.constants import SAMPLE_PUMP_MINT
+from pumpfun_trading.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
 from pumpfun_trading.tests.support.factories import make_bot
 
 OTHER_MINT = "Other1111111111111111111111111111111111pump"
@@ -633,3 +633,176 @@ async def test_record_only_polls_wait_while_the_rpc_is_rate_limited(
     endpoint.last_rate_limited_time = time.time() - 31.0
     await observe.poll_observations(bot)
     bot.execution.get_bonding_curve_states.assert_awaited_once()
+
+
+# --- FEAT-73: graduated coins' PumpSwap pools ----------------------------------
+
+
+def _grad_bot(tmp_path: Path, **overrides: Any) -> Any:
+    values: dict[str, Any] = {
+        "entry_mode": "launch",
+        "graduation_observation_seconds": 14_400.0,
+    }
+    values.update(overrides)
+    bot = make_bot(tmp_path, **values)
+    bot.replay_recorder = MagicMock()
+    return bot
+
+
+def _pool(quote_sol: float, tokens: float = 200_000_000.0) -> dict[str, Any]:
+    from pumpfun_trading.sdk.pumpswap import pumpswap_market_cap_sol
+
+    base, quote = int(tokens * 1e6), int(quote_sol * 1e9)
+    return {
+        "pool": "Pool1",
+        "base_reserve": base,
+        "quote_reserve": quote,
+        "market_cap_sol": pumpswap_market_cap_sol(base, quote),
+    }
+
+
+def test_graduation_list_is_off_by_default_and_runs_in_both_modes(
+    tmp_path: Path,
+) -> None:
+    off = make_bot(tmp_path, entry_mode="launch")
+    off.replay_recorder = MagicMock()
+    assert observe.graduation_list(off) is None
+    assert not observe.start_graduation(off, SAMPLE_PUMP_MINT)
+
+    bot = _grad_bot(
+        tmp_path,
+        graduation_observation_max_mints=7,
+        graduation_observation_poll_interval_seconds=3.0,
+    )
+    book = observe.graduation_list(bot)
+    assert book is not None
+    assert (book.max_mints, book.ttl_seconds, book.poll_interval_seconds) == (
+        7,
+        14_400.0,
+        3.0,
+    )
+    assert [b.source for b in observe.active_lists(bot)] == ["graduation"]
+    assert observe.observations_enabled(bot) is True
+    assert observe.observation_interval(bot) == 3.0
+    assert set(observe.observation_status(bot)) == {"graduation"}
+    confirmed = _grad_bot(tmp_path, entry_mode="confirmed")
+    assert "graduation" in [b.source for b in observe.active_lists(confirmed)]
+
+
+def test_graduation_starts_at_the_migration_with_its_pool(tmp_path: Path) -> None:
+    from pumpfun_trading.sdk.pumpswap import canonical_pool_address
+
+    bot = _grad_bot(tmp_path)
+    assert observe.start_graduation(bot, SAMPLE_PUMP_MINT, now=1_000.0)
+    assert not observe.start_graduation(bot, SAMPLE_PUMP_MINT)  # once per mint
+    (start,) = _rows(bot, "observation_start")
+    assert start == {
+        "timestamp": 1_000.0,
+        "mint": SAMPLE_PUMP_MINT,
+        "event": "observation_start",
+        "source": "graduation",
+        "migrated_at": 1_000.0,
+        "pool": str(canonical_pool_address(SAMPLE_PUMP_MINT)),
+        "held": False,
+    }
+    assert bot._watch_stats["graduation_observed"] == 1
+
+    # Not a valid mint: counted, never raised; no recorder: nothing starts.
+    assert not observe.start_graduation(bot, "not a mint")
+    assert bot._watch_stats["observation_hook_errors"] == 1
+    unrecorded = _grad_bot(tmp_path)
+    unrecorded.replay_recorder = None
+    assert not observe.start_graduation(unrecorded, SAMPLE_PUMP_MINT)
+
+
+async def test_graduation_polls_the_pool_and_records_rugs_too(
+    tmp_path: Path,
+) -> None:
+    bot = _grad_bot(tmp_path)
+    assert observe.start_graduation(bot, SAMPLE_PUMP_MINT)
+    bot.execution.get_bonding_curve_states = AsyncMock(return_value={})
+    bot.execution.get_pumpswap_pool_states = AsyncMock(
+        return_value={SAMPLE_PUMP_MINT: _pool(85.0)}
+    )
+    await observe.poll_observations(bot)
+    bot.execution.get_bonding_curve_states.assert_not_awaited()  # pools only
+    bot.execution.get_pumpswap_pool_states.assert_awaited_once()
+    (poll,) = _rows(bot, "curve_poll")
+    assert poll["source"] == "graduation"
+    assert (poll["pool_sol"], poll["pool_tokens"]) == (85.0, 200_000_000.0)
+    assert poll["market_cap_sol"] == pytest.approx(425.0)
+    assert poll["price"] == pytest.approx(425.0 / 1e9)
+
+    # A drained pool is a result: it is written with a market cap of 0.
+    book = observe.graduation_list(bot)
+    assert book is not None
+    book.get(SAMPLE_PUMP_MINT).last_polled_at = 0.0  # type: ignore[union-attr]
+    bot.execution.get_pumpswap_pool_states = AsyncMock(
+        return_value={SAMPLE_PUMP_MINT: {**_pool(0.0), "market_cap_sol": 0.0}}
+    )
+    await observe.poll_observations(bot)
+    assert _rows(bot, "curve_poll")[-1]["market_cap_sol"] == 0.0
+
+    # Ends at its TTL with the pool's first / last / peak SOL.
+    book.get(SAMPLE_PUMP_MINT).added_at -= 20_000.0  # type: ignore[union-attr]
+    await observe.poll_observations(bot)
+    (end,) = _rows(bot, "observation_end")
+    assert end["cause"] == "ttl"
+    assert (end["first_real_sol"], end["last_real_sol"], end["peak_real_sol"]) == (
+        85.0,
+        0.0,
+        85.0,
+    )
+
+    # Without curve-poll capture the observation still runs its course.
+    quiet = _grad_bot(tmp_path, capture_curve_polls=False)
+    assert observe.start_graduation(quiet, SAMPLE_PUMP_MINT)
+    quiet.execution.get_pumpswap_pool_states = AsyncMock(
+        return_value={SAMPLE_PUMP_MINT: _pool(85.0)}
+    )
+    await observe.poll_observations(quiet)
+    assert _rows(quiet, "curve_poll") == []
+    assert observe.graduation_list(quiet).get(SAMPLE_PUMP_MINT).polls == 1  # type: ignore[union-attr]
+
+
+async def test_a_missing_pool_gets_a_grace_period_other_reasons_end_it(
+    tmp_path: Path,
+) -> None:
+    bot = _grad_bot(tmp_path)
+    assert observe.start_graduation(bot, SAMPLE_PUMP_MINT)
+    assert observe.start_graduation(bot, SAMPLE_MINT)
+
+    async def states(mints: list[str], *, rejected: dict[str, str]) -> dict[str, Any]:
+        rejected.update(dict.fromkeys(mints, "missing"))
+        if SAMPLE_MINT in mints:
+            rejected[SAMPLE_MINT] = "not_sol_pair"
+        return {}
+
+    bot.execution.get_pumpswap_pool_states = AsyncMock(side_effect=states)
+    await observe.poll_observations(bot)
+    ends = [(r["mint"], r["cause"]) for r in _rows(bot, "observation_end")]
+    assert ends == [(SAMPLE_MINT, "not_sol_pair")]
+
+    book = observe.graduation_list(bot)
+    assert book is not None
+    entry = book.get(SAMPLE_PUMP_MINT)
+    assert entry is not None
+    entry.added_at -= observe.POOL_MISSING_GRACE_SECONDS + 1
+    entry.last_polled_at = 0.0
+    await observe.poll_observations(bot)
+    assert _rows(bot, "observation_end")[-1]["cause"] == "missing"
+
+
+async def test_pool_poll_failure_is_counted_and_curves_still_read(
+    tmp_path: Path,
+) -> None:
+    bot = _grad_bot(tmp_path, launch_sample_pct=1.0)
+    assert observe.maybe_sample_launch(bot, SAMPLE_PUMP_MINT, {}, 30.0)
+    assert observe.start_graduation(bot, SAMPLE_MINT)
+    bot.execution.get_bonding_curve_states = AsyncMock(
+        return_value={SAMPLE_PUMP_MINT: _curve(1.0)}
+    )
+    bot.execution.get_pumpswap_pool_states = AsyncMock(side_effect=RuntimeError("down"))
+    await observe.poll_observations(bot)
+    assert [r["source"] for r in _rows(bot, "curve_poll")] == ["launch_sample"]
+    assert bot._watch_stats["observation_poll_errors"] == 1

@@ -212,6 +212,7 @@ class TradingBot:
     _discovery_list: CurveObservationList
     _launch_sample_list: CurveObservationList
     _post_exit_list: CurveObservationList
+    _graduation_list: CurveObservationList
     _discovery_scanned_at: float
 
     def __init__(

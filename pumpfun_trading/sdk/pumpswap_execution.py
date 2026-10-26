@@ -1,7 +1,7 @@
 """PumpSwap reads and sell transactions for graduated Pump.fun coins (BUG-123)."""
 
 import base64
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from solders.instruction import Instruction
 from solders.pubkey import Pubkey
@@ -14,7 +14,7 @@ from spl.token.instructions import (
     get_associated_token_address,
 )
 
-from .execution_types import WSOL_MINT_STR
+from .execution_types import GET_MULTIPLE_ACCOUNTS_LIMIT, WSOL_MINT_STR
 from .pumpswap import (
     PUMP_AMM_PROGRAM_ID,
     PumpSwapGlobalConfig,
@@ -31,9 +31,16 @@ from .pumpswap import (
 )
 from .transport import TransactionTransportMixin
 
+# Accounts read per observed pool on a batched poll: the pool and its two vaults.
+POOL_ACCOUNTS_PER_MINT = 3
+
 
 class PumpSwapExecutionMixin(TransactionTransportMixin):
     """Find a graduated coin's canonical PumpSwap pool, price it and sell into it."""
+
+    # mint -> (pool, base vault, quote vault), filled by the first batched read
+    # (FEAT-73); a pool's vault addresses never change.
+    _pumpswap_vaults: dict[str, tuple[str, str, str]]
 
     async def _get_accounts(
         self, addresses: list[str], *, timeout_seconds: float = 5.0
@@ -121,6 +128,101 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
             "market_cap_sol": pumpswap_market_cap_sol(base_reserve, quote_reserve),
             "base_token_program": str(vaults["base"].get("owner") or ""),
         }
+
+    async def get_pumpswap_pool_states(
+        self,
+        mints: Sequence[str],
+        *,
+        rejected: dict[str, str] | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, dict[str, Any]]:
+        """Batch-read the canonical PumpSwap pools of graduated coins (FEAT-73).
+
+        The first read of a mint resolves its pool (at most 100 pools per
+        ``getMultipleAccounts`` call) and caches the vault addresses; every read
+        then fetches the pool and both vaults, 33 mints per call. Returns
+        ``pool``, ``base_reserve``, ``quote_reserve`` (with the pool's virtual
+        quote reserve) and ``market_cap_sol`` on the curve basis; a drained pool
+        is returned with a market cap of 0, not dropped. Every other mint goes
+        to ``rejected`` with a reason (``missing``, ``not_pumpswap``,
+        ``not_sol_pair``, ``decode_error``). An RPC failure raises.
+        """
+        unique = list(dict.fromkeys(str(m) for m in mints if m))
+        cache = getattr(self, "_pumpswap_vaults", None)
+        if cache is None:
+            cache = self._pumpswap_vaults = {}
+        reasons: dict[str, str] = {}
+        unknown = [mint for mint in unique if mint not in cache]
+        for start in range(0, len(unknown), GET_MULTIPLE_ACCOUNTS_LIMIT):
+            chunk = unknown[start : start + GET_MULTIPLE_ACCOUNTS_LIMIT]
+            addresses = [str(canonical_pool_address(mint)) for mint in chunk]
+            values = await self._get_accounts(
+                addresses, timeout_seconds=timeout_seconds
+            )
+            for mint, address, value in zip(chunk, addresses, values):
+                pool, reason = self._observed_pool(mint, address, value)
+                if pool is None:
+                    reasons[mint] = reason
+                else:
+                    cache[mint] = (address, pool.base_vault, pool.quote_vault)
+        states: dict[str, dict[str, Any]] = {}
+        known = [mint for mint in unique if mint in cache]
+        per_call = GET_MULTIPLE_ACCOUNTS_LIMIT // POOL_ACCOUNTS_PER_MINT
+        for start in range(0, len(known), per_call):
+            chunk = known[start : start + per_call]
+            addresses = [address for mint in chunk for address in cache[mint]]
+            values = await self._get_accounts(
+                addresses, timeout_seconds=timeout_seconds
+            )
+            for index, mint in enumerate(chunk):
+                pool_value, base_value, quote_value = values[
+                    index
+                    * POOL_ACCOUNTS_PER_MINT : (index + 1)
+                    * POOL_ACCOUNTS_PER_MINT
+                ]
+                pool, reason = self._observed_pool(mint, cache[mint][0], pool_value)
+                if pool is None:
+                    reasons[mint] = reason
+                    continue
+                if not base_value or not quote_value:
+                    reasons[mint] = "missing"
+                    continue
+                try:
+                    base_reserve = token_account_amount(self._account_bytes(base_value))
+                    quote_reserve = (
+                        token_account_amount(self._account_bytes(quote_value))
+                        + pool.virtual_quote_reserves
+                    )
+                except Exception:
+                    reasons[mint] = "decode_error"
+                    continue
+                states[mint] = {
+                    "pool": pool.address,
+                    "base_reserve": base_reserve,
+                    "quote_reserve": quote_reserve,
+                    "market_cap_sol": pumpswap_market_cap_sol(
+                        base_reserve, quote_reserve
+                    ),
+                }
+        if rejected is not None:
+            rejected.update(reasons)
+        return states
+
+    def _observed_pool(
+        self, mint: str, address: str, value: Optional[dict[str, Any]]
+    ) -> tuple[Optional[PumpSwapPool], str]:
+        """The decoded canonical pool of ``mint``, or ``None`` and why not."""
+        if not value:
+            return None, "missing"
+        if str(value.get("owner") or "") != PUMP_AMM_PROGRAM_ID:
+            return None, "not_pumpswap"
+        try:
+            pool = decode_pool(address, self._account_bytes(value))
+        except Exception:
+            return None, "decode_error"
+        if pool.base_mint != mint or pool.quote_mint != WSOL_MINT_STR:
+            return None, "not_sol_pair"
+        return pool, ""
 
     async def quote_pumpswap_sell(
         self, mint: str, token_amount: int, *, slippage_bps: int = 0

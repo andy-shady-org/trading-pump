@@ -150,6 +150,12 @@ class TradingBotConfig:
     post_exit_observation_seconds: float = 0.0
     post_exit_max_mints: int = 100
     post_exit_poll_interval_seconds: float = 2.0
+    # FEAT-73: seconds to follow a graduated coin's PumpSwap pool as
+    # ``graduation`` from its migration event (0 = off), held or not, in either
+    # entry mode, so a capture shows what coins do after the curve.
+    graduation_observation_seconds: float = 0.0
+    graduation_observation_max_mints: int = 300
+    graduation_observation_poll_interval_seconds: float = 5.0
     observation_poll_interval_seconds: float = 5.0
     # Record where a held position's price first crossed ``stop_loss`` on the
     # trade feed and on the curve refresh, next to the price the exit sold
@@ -391,6 +397,11 @@ class TradingBotConfig:
             "post_exit_observation_seconds": self.post_exit_observation_seconds,
             "post_exit_max_mints": self.post_exit_max_mints,
             "post_exit_poll_interval_seconds": self.post_exit_poll_interval_seconds,
+            "graduation_observation_seconds": self.graduation_observation_seconds,
+            "graduation_observation_max_mints": self.graduation_observation_max_mints,
+            "graduation_observation_poll_interval_seconds": (
+                self.graduation_observation_poll_interval_seconds
+            ),
             "observation_poll_interval_seconds": self.observation_poll_interval_seconds,
             "record_stop_crossings": self.record_stop_crossings,
             "shadow_variants": [dict(v) for v in self.shadow_variants],

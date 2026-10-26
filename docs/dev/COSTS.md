@@ -59,6 +59,8 @@ A standard RPC call costs 1 credit (`getAccountInfo`, `getMultipleAccounts`, `ge
 
 (`rpc_pool_telemetry`: total requests less rate-limited ones; every request after 07:01 UTC failed.) That run read each held curve with its own call every second; since `fix/runtime-rpc-outage` all held curves are one call per second, so expect less. Two bots on the measured load use about 6.3 M credits a month: inside the Developer plan's 10 M, six times the Free plan's 1 M. Each bot should have its own key ([`RUNBOOK.md` §5.8](RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)); check on the Helius dashboard whether a second key draws on the same credits.
 
+Graduation tracking (FEAT-73, record-only) adds to one bot: at rc.6's rate (about 930 migrations a day, about 155 pools followed at once for 4 h, 33 pools per call) about one `getMultipleAccounts` call a second at a 5 s interval, ≈ 86,000 credits a day or ≈ 2.6 M per 30 days; at the 10 s interval in `configs/capture.json` about half that, ≈ 1.3 M. With the two bots above that is about 7.6 M of the Developer plan's 10 M: turn it on in one bot only, and lower `graduation_observation_seconds` or raise the interval if migrations pick up.
+
 ### 3.2 PumpPortal trade data
 
 PumpPortal meters token-trade messages against the API key's wallet: 0.01 SOL per 10,000 messages; the create and migration feeds are free ([`RUNBOOK.md` §5.7](RUNBOOK.md#57-trade-feed-circuit-breaker-pumpportal-api-key-funds-bug-116)).
