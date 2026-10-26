@@ -65,6 +65,7 @@ from pumpfun_trading.bot.lifecycle import (
 from pumpfun_trading.bot.operator import OperatorPause
 from pumpfun_trading.bot.pnl import PnlTotals, build_pnl_fields
 from pumpfun_trading.bot.trade_feed import (
+    TRADE_FEED_REFUSED_STATUS,
     TradeFeedBreaker,
     stream_connect_url,
     stream_url_has_api_key,
@@ -383,6 +384,8 @@ class TradingBot:
             reconnect_delay_seconds=self.reconnect_delay_seconds,
         )
         self._active_ws: Optional[Any] = None
+        # Set while the bot closes the stream itself to retry the trade feed (BUG-156).
+        self._trade_feed_reconnect_requested = False
 
         self._stream_consecutive_failures = 0
         self._circuit_breaker_tripped = False
@@ -3088,7 +3091,7 @@ class TradingBot:
             counts.pop(next(iter(counts)))
         breaker = self._trade_feed_breaker()
         if is_trade_feed_refusal(text):
-            self._last_status = "degraded: token-trade subscription refused"
+            self._last_status = TRADE_FEED_REFUSED_STATUS
             if breaker.record_refusal(text):
                 # Usually the API key's wallet ran dry; buys stop until a probe works.
                 notice = breaker.trip_message()
@@ -3116,8 +3119,9 @@ class TradingBot:
             return
         notice = self._trade_feed_breaker().recovery_message()
         self._log(notice, level=logging.WARNING)
+        # Sets "Last event" on the dashboard; the Trade feed row reads the breaker.
         self._record_event(notice, alert=True)
-        if self._last_status == "degraded: token-trade subscription refused":
+        if self._last_status == TRADE_FEED_REFUSED_STATUS:
             self._last_status = "monitoring active tokens"
 
     def trade_feed_available(self) -> bool:
@@ -3135,9 +3139,29 @@ class TradingBot:
         await self._unsubscribe_from_token_trades(websocket, mint)
 
     async def _maybe_probe_trade_feed(self) -> None:
-        """While the breaker is open, re-try a subscription every probe interval."""
+        """While the breaker is open, re-try a subscription every probe interval.
+
+        A connection that already refused is reconnected instead of asked
+        again: PumpPortal did not accept a top-up on the open connection
+        (BUG-156). The fresh connection resubscribes held mints and probes on
+        the next health pass.
+        """
         breaker = self._trade_feed_breaker()
         if not breaker.probe_due() or self._active_ws is None:
+            return
+        if breaker.wants_reconnect():
+            breaker.start_reconnect()
+            self._trade_feed_reconnect_requested = True
+            notice = (
+                "trade-feed breaker open: reconnecting the stream so a top-up of "
+                f"the PumpPortal key is picked up (reconnect {breaker.reconnects})"
+            )
+            self._log(notice, level=logging.WARNING)
+            self._record_event(notice, alert=False)
+            try:
+                await self._active_ws.close()
+            except Exception as exc:  # the stream loop reconnects either way
+                self._log(f"Closing the stream failed: {exc}", level=logging.DEBUG)
             return
         held = list(self.active_positions)
         mint = held[0] if held else str(self._last_new_token or "")
@@ -3432,14 +3456,20 @@ class TradingBot:
 
     async def on_stream_connected(self, ws: Any) -> None:
         self._active_ws = ws
+        self._trade_feed_breaker().connection_opened()
         self._log(f"Connected to WebSocket stream at {self.stream_url}")
         self._record_event(f"stream connected: {self.stream_url}", alert=False)
         self._last_message_at = time.monotonic()
         self._circuit_breaker_tripped = False
         self._stream_consecutive_failures = 0
         # The breaker stays open across reconnects: only a
-        # confirmed subscription or trade data closes it.
-        self._last_status = "monitoring active tokens"
+        # confirmed subscription or trade data closes it, and the dashboard
+        # keeps saying so until then (BUG-156).
+        self._last_status = (
+            TRADE_FEED_REFUSED_STATUS
+            if self.trade_feed_breaker.is_open
+            else "monitoring active tokens"
+        )
         self._health_ok = True
         await send_ws_message(ws, NEW_TOKEN_SUBSCRIPTION)
         # Free feed: graduation rate for the regime record, and the exit signal
@@ -3479,6 +3509,11 @@ class TradingBot:
         self._trip_stream_breaker_if_failing()
 
     def on_stream_ended(self) -> None:
+        if getattr(self, "_trade_feed_reconnect_requested", False):
+            # Our own close to retry the trade feed: not a connection loss.
+            self._trade_feed_reconnect_requested = False
+            self._log("Stream closed to retry the trade feed; reconnecting")
+            return
         if not self._stop_requested:
             self._record_connection_loss()
         self._trip_stream_breaker_if_failing()

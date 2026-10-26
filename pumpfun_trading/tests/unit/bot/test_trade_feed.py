@@ -185,3 +185,20 @@ def test_split_stream_api_key(url: str | None, clean: str, key: str | None) -> N
 )
 def test_stream_connect_url(url: str, api_key: str | None, expected: str) -> None:
     assert stream_connect_url(url, api_key) == expected
+
+
+@pytest.mark.regression("BUG-156")
+def test_a_connection_that_refused_is_reconnected_not_asked_again() -> None:
+    now = [1_000.0]
+    breaker = TradeFeedBreaker(probe_interval_seconds=300.0, clock=lambda: now[0])
+    assert not breaker.wants_reconnect()  # closed
+    breaker.record_refusal("refused")
+    assert breaker.refused_on_connection and breaker.wants_reconnect()
+    breaker.start_reconnect()
+    assert breaker.reconnects == 1 and breaker.next_probe_at == 1_300.0
+    breaker.connection_opened()  # the fresh connection has refused nothing yet
+    assert not breaker.wants_reconnect() and breaker.is_open
+    assert breaker.to_dict()["reconnects"] == 1
+    message = breaker.trip_message()
+    assert "at all times" in message and "reconnects every 300 s" in message
+    assert "no restart needed" in message

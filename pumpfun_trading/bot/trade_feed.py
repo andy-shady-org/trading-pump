@@ -9,7 +9,10 @@ The breaker opens on the first refusal, blocks new buys while open, and closes
 only on evidence that the feed works again: a "subscribed to keys"
 confirmation or trade data for a subscribed mint. While open, the bot sends a
 probe subscription every ``probe_interval_seconds`` so a top-up is noticed
-without a restart.
+without a restart. A connection that has already refused is not asked again:
+a 0.02 SOL top-up at 15:49:16 UTC on 2026-10-26 was not accepted on the open
+connection 65 s later (BUG-156), so the next probe reconnects instead and the
+fresh connection subscribes again.
 """
 
 from __future__ import annotations
@@ -22,9 +25,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 PUMPPORTAL_PUBLIC_STREAM_URL = "wss://pumpportal.fun/api/data"
 
 FUNDING_REQUIREMENT = (
-    "PumpPortal needs the API key's linked wallet to hold at least 0.02 SOL "
-    "(0.01 SOL per 10,000 messages)"
+    "PumpPortal needs the API key's linked wallet to hold at least 0.02 SOL at "
+    "all times; only the balance above that pays for messages (0.01 SOL per "
+    "10,000)"
 )
+# ``_last_status`` while the breaker is open (dashboard "Last status").
+TRADE_FEED_REFUSED_STATUS = "degraded: token-trade subscription refused"
 
 
 def stream_url_has_api_key(url: str | None) -> bool | None:
@@ -119,6 +125,10 @@ class TradeFeedBreaker:
     probe_mint: str | None = None
     confirmed_before_trip: bool = False
     stream_has_api_key: bool | None = None
+    # A refusal arrived on the current connection, so the next probe
+    # reconnects rather than asking it again (BUG-156).
+    refused_on_connection: bool = False
+    reconnects: int = 0
 
     @property
     def is_open(self) -> bool:
@@ -128,6 +138,7 @@ class TradeFeedBreaker:
         """Records a refusal; True when it opens the breaker."""
         self.refusals += 1
         self.last_refusal = text
+        self.refused_on_connection = True
         now = self.clock()
         self.next_probe_at = now + max(0.0, float(self.probe_interval_seconds))
         if self.is_open:
@@ -157,6 +168,19 @@ class TradeFeedBreaker:
         self.tripped_at = None
         self.next_probe_at = None
         return True
+
+    def connection_opened(self) -> None:
+        """A new stream connection: it has not refused anything yet."""
+        self.refused_on_connection = False
+
+    def wants_reconnect(self) -> bool:
+        """Open, and the current connection has already refused (BUG-156)."""
+        return self.is_open and self.refused_on_connection
+
+    def start_reconnect(self) -> None:
+        """Marks a reconnect as requested; the fresh connection probes at once."""
+        self.reconnects += 1
+        self.next_probe_at = self.clock() + max(0.0, float(self.probe_interval_seconds))
 
     def probe_due(self) -> bool:
         return (
@@ -196,8 +220,10 @@ class TradeFeedBreaker:
             f"token-trade subscription. Most likely {self.likely_cause()}. "
             f"{FUNDING_REQUIREMENT}; top it up (or export a funded key as "
             "PUMPFUN_STREAM_API_KEY). New buys are blocked and held positions are "
-            "priced from the curve only until a probe subscription succeeds. "
-            f"Server said: {self.last_refusal}"
+            "priced from the curve only until a probe subscription succeeds; the "
+            "bot reconnects every "
+            f"{max(0.0, float(self.probe_interval_seconds)):g} s to pick up a "
+            f"top-up, no restart needed. Server said: {self.last_refusal}"
         )
 
     def recovery_message(self) -> str:
@@ -215,6 +241,7 @@ class TradeFeedBreaker:
             "confirmations": self.confirmations,
             "trade_messages": self.trade_messages,
             "send_failures": self.send_failures,
+            "reconnects": self.reconnects,
             "last_confirmed_at": self.last_confirmed_at,
             "next_probe_at": self.next_probe_at,
             "stream_has_api_key": self.stream_has_api_key,

@@ -237,9 +237,20 @@ def build_dashboard(bot: Any) -> Panel:
     if callable(trade_feed):
         # Breaker open: PumpPortal refuses token-trade subscriptions, usually
         # because the API key's wallet ran out of funds (BUG-112, BUG-116).
+        breaker = getattr(bot, "trade_feed_breaker", None)
+        retry_at = getattr(breaker, "next_probe_at", None)
+        retry = (
+            f" · retry in {max(0, int(retry_at - time.time()))}s"
+            if isinstance(retry_at, (int, float)) and retry_at > 0
+            else ""
+        )
         health.add_row(
             "Trade feed",
-            "ok" if trade_feed() else "[bold red]REFUSED (key funds?)[/bold red]",
+            (
+                "ok"
+                if trade_feed()
+                else f"[bold red]REFUSED (key funds?)[/bold red]{retry}"
+            ),
         )
     watch_status = getattr(bot, "watch_list_status", None)
     if callable(watch_status):

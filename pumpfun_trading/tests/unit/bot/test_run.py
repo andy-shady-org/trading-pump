@@ -6101,6 +6101,7 @@ async def test_trade_feed_probe_subscribes_then_unsubscribes_probe_mint(
     bot = make_bot(tmp_path, trade_feed_probe_seconds=60.0)
     bot._record_event = MagicMock()  # type: ignore[method-assign]
     bot._handle_server_message(REFUSAL)
+    bot.trade_feed_breaker.connection_opened()  # probing on a fresh connection
     ws = MagicMock(spec=["send_json"])
     ws.send_json = AsyncMock()
     bot._active_ws = ws
@@ -6136,6 +6137,7 @@ async def test_trade_feed_probe_uses_held_mint_and_keeps_it_subscribed(
     bot = make_bot(tmp_path)
     bot._record_event = MagicMock()  # type: ignore[method-assign]
     bot._handle_server_message(REFUSAL)
+    bot.trade_feed_breaker.connection_opened()  # probing on a fresh connection
     bot.active_positions["HeldMint"] = {"mint": "HeldMint"}
     bot.trade_feed_breaker.next_probe_at = 0.0
     ws = MagicMock(spec=["send_json"])
@@ -6149,6 +6151,95 @@ async def test_trade_feed_probe_uses_held_mint_and_keeps_it_subscribed(
     assert bot.trade_feed_available() is False
     alerts = [c for c in bot._record_event.call_args_list if c.kwargs.get("alert")]  # type: ignore[attr-defined]
     assert len(alerts) == 1  # repeat refusals don't re-alert
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-156")
+async def test_trade_feed_reconnects_after_a_refusal_and_the_ui_shows_recovery(
+    tmp_path: Path,
+) -> None:
+    # 2026-10-26: the wallet fell under 0.02 SOL, PumpPortal refused on the
+    # new connection, a top-up at 15:49:16 was not accepted on that same
+    # connection at 15:50:21, and the bots never resumed.
+    from rich.console import Console
+
+    from pumpfun_trading.ui.dashboard import build_dashboard
+
+    bot = make_bot(tmp_path, trade_feed_probe_seconds=60.0)
+    bot._last_new_token = SAMPLE_PUMP_MINT
+    metrics = MagicMock()
+    bot._record_metric = metrics  # type: ignore[method-assign]
+    old_ws = MagicMock(spec=["send_json", "close"])
+    old_ws.send_json = AsyncMock()
+    old_ws.close = AsyncMock()
+    bot._active_ws = old_ws
+    await bot._handle_message({"message": REFUSAL}, old_ws)
+    assert bot._last_status == "degraded: token-trade subscription refused"
+
+    def dashboard() -> str:
+        console = Console(width=220, record=True)
+        console.print(build_dashboard(bot))
+        return console.export_text()
+
+    assert "REFUSED (key funds?) · retry in" in dashboard()
+
+    # The probe is due: the refused connection is closed, not asked again.
+    bot.trade_feed_breaker.next_probe_at = 0.0
+    await bot._maybe_probe_trade_feed()
+    old_ws.close.assert_awaited_once()
+    old_ws.send_json.assert_not_awaited()
+    assert bot.trade_feed_breaker.reconnects == 1
+    assert "reconnecting the stream" in bot._last_event
+    # The stream loop sees our close: no connection loss is recorded.
+    bot.on_stream_ended()
+    assert "connection_loss" not in [c.args[0] for c in metrics.call_args_list]
+    assert bot._trade_feed_reconnect_requested is False
+
+    # The fresh connection keeps the refused status until proof of delivery,
+    # and probes on the next health pass.
+    new_ws = MagicMock(spec=["send_json", "close"])
+    new_ws.send_json = AsyncMock()
+    new_ws.close = AsyncMock()
+    await bot.on_stream_connected(new_ws)
+    assert bot._last_status == "degraded: token-trade subscription refused"
+    assert bot.trade_feed_breaker.probe_due() is True
+    await bot._maybe_probe_trade_feed()
+    new_ws.close.assert_not_awaited()
+    assert {"method": "subscribeTokenTrade", "keys": [SAMPLE_PUMP_MINT]} in [
+        c.args[0] for c in new_ws.send_json.await_args_list
+    ]
+
+    # Topped up: the subscription is confirmed, buys resume, and the UI says so.
+    await bot._handle_message({"message": "Successfully subscribed to keys."}, new_ws)
+    assert bot.trade_feed_available() is True
+    assert bot._last_status == "monitoring active tokens"
+    assert "CLOSED" in bot._last_event
+    text = dashboard()
+    assert any(
+        "Trade feed" in line and "ok" in line and "REFUSED" not in line
+        for line in text.splitlines()
+    )
+    assert "monitoring active tokens" in text
+    # A later connection loss is counted again.
+    bot.on_stream_ended()
+    assert "connection_loss" in [c.args[0] for c in metrics.call_args_list]
+    await bot.close()
+
+
+@pytest.mark.regression("BUG-156")
+async def test_a_failed_close_still_leaves_the_reconnect_to_the_stream_loop(
+    tmp_path: Path,
+) -> None:
+    bot = make_bot(tmp_path)
+    bot._handle_server_message(REFUSAL)
+    ws = MagicMock(spec=["send_json", "close"])
+    ws.send_json = AsyncMock()
+    ws.close = AsyncMock(side_effect=RuntimeError("already closing"))
+    bot._active_ws = ws
+    bot.trade_feed_breaker.next_probe_at = 0.0
+    await bot._maybe_probe_trade_feed()
+    ws.close.assert_awaited_once()
+    assert bot.trade_feed_breaker.reconnects == 1
     await bot.close()
 
 

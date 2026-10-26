@@ -8,6 +8,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Fixed
+- A PumpPortal top-up is picked up without a restart: while the trade-feed breaker is open, a connection that has already refused is closed and the fresh connection subscribes again, instead of re-asking the refused one (BUG-156). The dashboard keeps "degraded: token-trade subscription refused" across reconnects until the feed is back, shows the retry countdown on the Trade feed row, and on recovery shows Trade feed ok, Last status "monitoring active tokens" and the CLOSED notice. `bot_status.json` → `trade_feed_breaker.reconnects`.
+
 ### Added
 - Graduation tracking (FEAT-73, record-only): `graduation_observation_seconds` (default `0` = off), `graduation_observation_max_mints` (300) and `graduation_observation_poll_interval_seconds` (5) follow every coin that migrates to PumpSwap, held or not, as `curve_poll` rows with `source: "graduation"` (`market_cap_sol` on the curve basis, `pool_sol`, `pool_tokens`) and `observation_start` / `observation_end` rows. Never trades; replay skips the rows. `configs/capture.json` turns it on for 4 h at 10 s. Status: `watch_list.graduation`, counter `graduation_observed`.
 - Graduation tracking polls the first `graduation_observation_fast_seconds` (300) after a migration every `graduation_observation_fast_poll_interval_seconds` (2) (FEAT-73).
