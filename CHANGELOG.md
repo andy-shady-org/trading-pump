@@ -8,7 +8,11 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-Fixes from the first 18 h of the rc.6 launch-mode A/B (BUG-154, BUG-155, [`BUGS.md` §27](docs/dev/BUGS.md#27-rc6-paper-run-findings-2026-10-26); branch `fix/curve-wait-and-health-label`).
+## [0.3.0-rc.7] - 2026-10-26
+
+Seventh release candidate of v0.3.0 (this release branch, off `main` at the v0.3.0-rc.6 merge): a **fix release** from the first 18 h of the rc.6 launch-mode A/B (BUG-154, BUG-155, [`BUGS.md` §27](docs/dev/BUGS.md#27-rc6-paper-run-findings-2026-10-26); branch `fix/curve-wait-and-health-label`). Entry market caps were correct (median 28.35 SOL against a fresh curve's 27.96 SOL), but 80% of the launch buys were refused because the new coin's curve was read before the RPC had it, and the coins refused did better than the ones bought. The rc.6 A/B covers only that biased fifth of launches; re-run it on rc.7.
+
+This is a **pre-release for paper testing only**, like rc.1 to rc.6. It must not run on a funded wallet.
 
 ### Fixed
 - A buy waits for a new launch's curve account: when the read finds no account, it is repeated every 0.25 s for up to `entry_curve_wait_seconds` before the buy is refused as `curve_missing` (was: refused at once as `not_pump_fun`); a curve owned by another program is still refused at once. In paper the wait counts toward `paper_entry_delay_seconds` (BUG-154).
@@ -22,6 +26,16 @@ Fixes from the first 18 h of the rc.6 launch-mode A/B (BUG-154, BUG-155, [`BUGS.
 ### Known issues
 - rc.5 had almost no such refusals and rc.6 had 63–96% every hour; the change came with rc.6's RPC setup and is not explained. `entry_curve_wait` measures how long Helius takes now; if fills often wait close to the budget, raise it.
 - Everything listed under rc.6's known issues still applies.
+
+### Release record – v0.3.0-rc.7 (2026-10-26)
+- Commit: the release commit on `release/v0.3.0rc7` (`pyproject.toml` → `0.3.0rc7`, this entry), on a merge of `fix/curve-wait-and-health-label` into `main` at `dd3dd2c` (the v0.3.0-rc.6 merge)
+- Release gate: PASS on Linux (`nox -s format lint mypy tests package audit`: tests on 3.11, 3.12, 3.13 and 3.14); the CI matrix and the kill-and-restart drill in paper mode on the Mac are still to run
+- Tests: 2,164 collected (9 more than rc.6, for BUG-154 and BUG-155), all passed on 3.11–3.14; coverage 97.08–97.12% (statement + branch); the wheel `pumpfun_trading-0.3.0rc7-py3-none-any.whl` ships 119 files, no tests, private classifier
+- Risk drills: `pumpfun-drill --report` 4 of 4 passed
+- Security: secrets grep clean; `nox -s audit` no known vulnerabilities
+- Paper verdict (FEAT-67): `configs/verdict_rules.json` unchanged
+- Capital stage after this release: 0 (paper only)
+- Sign-off: –
 
 ## [0.3.0-rc.6] - 2026-10-25
 
