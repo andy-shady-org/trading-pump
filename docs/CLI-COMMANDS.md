@@ -81,7 +81,7 @@ pumpfun record [OPTIONS]
 
 | Flag | Short | Type | Default | Description |
 | :--- | :---: | :---: | :---: | :--- |
-| `--output` | `-o` | String | `market_replay.jsonl` | Destination file path for the recorded `.jsonl` replay dataset (`slow_lane/jupiter_quotes.jsonl` with `--jupiter-quotes`, `slow_lane/bars.jsonl` with `--backfill-bars`, `slow_lane/binance_bars.jsonl` with `--backfill-bars --bar-source binance`). |
+| `--output` | `-o` | String | `market_replay.jsonl` | Destination file path for the recorded `.jsonl` replay dataset (`slow_lane/jupiter_quotes.jsonl` with `--jupiter-quotes`, `slow_lane/bars.jsonl` with `--backfill-bars`, `slow_lane/binance_bars.jsonl` with `--backfill-bars --bar-source binance`, `market/market.jsonl` with `--market`). |
 | `--duration` | `-d` | Float | `None` (Infinite) | Maximum recording duration in seconds before automatically stopping. |
 | `--limit` | `-l` | Integer | `None` (Infinite) | Maximum number of market snapshot records to capture before stopping. |
 | `--geyser-endpoint` | — | URL | `None` (Env) | Yellowstone Geyser gRPC streaming endpoint (overrides `PUMPFUN_GEYSER_ENDPOINT`). |
@@ -102,6 +102,12 @@ pumpfun record [OPTIONS]
 | `--bar-base-url` | — | URL | source default | Bar API host override, e.g. `https://api.binance.com` when the market-data host is blocked on your network. |
 | `--bar-max-pages` | — | Integer | `6` (GeckoTerminal), `100` (Binance) | Pages of 1,000 bars per token and timeframe (GeckoTerminal also stops at its public history limit). `Page limit reached` in the summary means bars were left: raise it. |
 | `--bar-since` | — | Date | listing | Binance only: first bar date, `YYYY-MM-DD` UTC (e.g. to top up a file, or to fetch only recent `minute` bars). |
+| `--market` | — | Flag | `false` | FEAT-74 (record-only): records every new pool and the trending / top-volume lists on several chains (GeckoTerminal) and follows each picked pool for up to 7 days (DexScreener: 30 s for 30 min, 2 min to 6 h, 10 min after), until `--duration` or SIGINT / SIGTERM. Keyless; no RPC. |
+| `--market-chains` | — | String | `solana,base,bsc` | Chains to record: `solana`, `base`, `bsc`, `eth`. |
+| `--market-sample` | — | String | `solana:pump-fun=0.1` | Share of new pools followed per `chain:dex` (GeckoTerminal dex id); every other new pool is followed. |
+| `--market-state` | — | File Path | `market/state.json` | Follow-list file saved every minute and read at start, so a restart resumes; `''` for none. |
+| `--market-max-followed` | — | Integer | `20000` | Most pools followed at once; new ones are refused (counted as `full`) above it. |
+| `--market-no-lists` | — | Flag | `false` | New pools only: skip the trending / top-volume lists. |
 
 ### Execution Examples & Recipes
 
@@ -157,6 +163,13 @@ pumpfun-recorder --jupiter-quotes --tokens configs/slow_lane_tokens.json -o runt
 pumpfun-recorder --backfill-bars --tokens configs/slow_lane_tokens.json -o runtime/slow_lane/bars.jsonl
 # Multi-year daily / hourly history (each pair since its listing; about 3 min and one ~100 MB file for the default list):
 pumpfun-recorder --backfill-bars --bar-source binance --tokens configs/slow_lane_tokens.json -o runtime/slow_lane/binance_bars.jsonl
+```
+
+#### Recipe 7: Cross-Chain Market Data (FEAT-74, record-only)
+New pools and momentum lists on Solana, Base and BSC, each picked pool followed for up to 7 days ([`dev/RUNBOOK.md` §6.5](dev/RUNBOOK.md)). Rows carry `venue: "market"` and `event` (`market_pool`, `market_list`, `market_snapshot`, `market_end`, `market_stats`):
+```bash
+pumpfun-recorder --market -o runtime/market/market.jsonl
+pumpfun-recorder --market --market-chains solana,base,bsc,eth --market-sample solana:pump-fun=0.05 --duration 3600
 ```
 
 ---
