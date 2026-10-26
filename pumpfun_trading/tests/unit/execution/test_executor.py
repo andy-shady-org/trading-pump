@@ -1159,3 +1159,113 @@ async def test_paper_sell_with_an_unparseable_address_is_not_a_read_failure() ->
     executor = _executor(client)
     result = await executor.execute_sell(MINT, TOKENS, reason="stop_loss", dry_run=True)
     assert result.success
+
+
+# --- BUG-154: wait for a new launch's curve account -------------------------------
+
+
+def _missing(n: int, then: dict | Exception) -> AsyncMock:
+    """A curve read that is missing ``n`` times, then answers ``then``."""
+    from pumpfun_trading.sdk.execution import CurveAccountMissingError
+
+    answers: list[Any] = [
+        CurveAccountMissingError("Bonding curve account X not found")
+    ] * n
+    answers.append(then)
+    return AsyncMock(side_effect=answers)
+
+
+STANDARD = {
+    "virtual_token_reserves": 1_073_000_000_000_000,
+    "virtual_sol_reserves": 30_000_000_000,
+}
+
+
+@pytest.mark.regression("BUG-154")
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_buy_waits_for_a_curve_that_appears_late(dry_run: bool) -> None:
+    # rc.6 refused 3,548 of 4,451 launch buys: read 90 ms after the create
+    # event, the curve account was not on the RPC yet (readable ~0.1-0.5 s later).
+    client = _client(get_bonding_curve_state=_missing(2, STANDARD))
+    executor = _executor(client, entry_curve_wait_seconds=2.0)
+    with patch(
+        "pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()
+    ) as sleep:
+        result = await executor.execute_buy(MINT, 0.01, dry_run=dry_run)
+    assert result.success
+    assert [c.args[0] for c in sleep.await_args_list][:2] == [0.25, 0.25]
+    assert "curve_wait_seconds" in result.metadata
+    # Two missing reads, the one that found it (live adds a post-fill read).
+    assert client.get_bonding_curve_state.await_count == (3 if dry_run else 4)
+
+
+@pytest.mark.regression("BUG-154")
+async def test_buy_refuses_a_curve_still_missing_after_the_wait() -> None:
+    from pumpfun_trading.sdk.execution import CurveAccountMissingError
+
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=CurveAccountMissingError("not found")
+        )
+    )
+    executor = _executor(client, entry_curve_wait_seconds=1.0)
+    with patch(
+        "pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()
+    ) as sleep:
+        result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+    assert not result.success
+    assert result.error is not None and result.error.startswith("curve_missing")
+    assert client.get_bonding_curve_state.await_count == 5  # 1 + 1.0 / 0.25 reads
+    assert sleep.await_count == 4
+
+
+@pytest.mark.regression("BUG-154")
+async def test_curve_wait_counts_toward_the_paper_latency() -> None:
+    from pumpfun_trading.sdk.execution import CurveAccountMissingError
+
+    client = _client(get_bonding_curve_state=_missing(1, STANDARD))
+    executor = _executor(client, paper_entry_delay_seconds=1.5)
+    clock = [100.0]
+
+    async def fake_sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    with (
+        patch(
+            "pumpfun_trading.execution.executor.asyncio.sleep", side_effect=fake_sleep
+        ) as sleep,
+        patch(
+            "pumpfun_trading.execution.executor.time.monotonic",
+            side_effect=lambda: clock[0],
+        ),
+    ):
+        client.get_bonding_curve_state.side_effect = [
+            CurveAccountMissingError("not found"),
+            STANDARD,
+            STANDARD,
+        ]
+        result = await executor.execute_buy(MINT, 0.01, dry_run=True)
+    assert result.success
+    # 0.25 s waiting for the curve, then the rest of the 1.5 s latency.
+    assert [c.args[0] for c in sleep.await_args_list] == [0.25, pytest.approx(1.25)]
+    assert result.metadata["curve_wait_seconds"] == 0.25
+
+
+@pytest.mark.regression("BUG-154")
+async def test_wrong_owner_and_zero_wait_are_refused_at_once() -> None:
+    client = _client(
+        get_bonding_curve_state=AsyncMock(
+            side_effect=NotPumpFunCurveError("owned by X")
+        )
+    )
+    with patch(
+        "pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()
+    ) as sleep:
+        result = await _executor(client).execute_buy(MINT, 0.01, dry_run=True)
+        assert result.error is not None and result.error.startswith("not_pump_fun")
+        client2 = _client(get_bonding_curve_state=_missing(1, STANDARD))
+        result2 = await _executor(client2, entry_curve_wait_seconds=0.0).execute_buy(
+            MINT, 0.01, dry_run=True
+        )
+    assert result2.error is not None and result2.error.startswith("curve_missing")
+    sleep.assert_not_awaited()

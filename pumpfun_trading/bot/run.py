@@ -368,6 +368,9 @@ class TradingBot:
         # Entries refused before or at the fill, by cause: launches complete at
         # creation, unreadable or complete curves, no healthy RPC (BUG-145/146/149).
         self._entry_refusals: dict[str, int] = {}
+        # How long filled buys waited for their curve account (BUG-154).
+        self._entry_curve_waits: deque[float] = deque(maxlen=500)
+        self._entry_curve_first_read = 0
         self.console = get_configured_console(file=sys.stdout)
 
         self.geyser_endpoint = geyser_endpoint or os.getenv("PUMPFUN_GEYSER_ENDPOINT")
@@ -1615,6 +1618,7 @@ class TradingBot:
             "non_pump_rejections": dict(self._non_pump_rejections),
             "mayhem_rejections": int(getattr(self, "_mayhem_rejections", 0)),
             "entry_refusals": dict(getattr(self, "_entry_refusals", {})),
+            "entry_curve_wait": self._entry_curve_wait_status(),
             "watch_list": self.watch_list_status(),
             "market_regime": self._market_regime().snapshot(),
             "trade_ledger": list(self._trade_ledger),
@@ -1799,6 +1803,41 @@ class TradingBot:
         ):
             return False
         return self._buy_attempts.get(mint, 0) < self.max_buy_attempts_per_mint
+
+    def _note_entry_curve_wait(self, waited: Any) -> None:
+        """Count a filled buy: found on the first curve read, or after a wait."""
+        if isinstance(waited, (int, float)) and not isinstance(waited, bool):
+            waits = getattr(self, "_entry_curve_waits", None)
+            if waits is None:
+                waits = self._entry_curve_waits = deque(maxlen=500)
+            waits.append(float(waited))
+        else:
+            self._entry_curve_first_read = (
+                int(getattr(self, "_entry_curve_first_read", 0)) + 1
+            )
+
+    def _entry_curve_wait_status(self) -> dict[str, Any]:
+        """Filled buys by how they found their curve, for tuning
+        ``entry_curve_wait_seconds`` (BUG-154): the wait percentiles are over
+        the last 500 buys that waited; ``entry_refusals.curve_missing`` counts
+        the launches still missing after the wait."""
+        waits = sorted(getattr(self, "_entry_curve_waits", ()) or ())
+
+        def pct(share: float) -> float | None:
+            if not waits:
+                return None
+            return round(waits[min(len(waits) - 1, int(share * len(waits)))], 3)
+
+        return {
+            "found_first_read": int(getattr(self, "_entry_curve_first_read", 0)),
+            "found_after_wait": len(waits),
+            "wait_p50_seconds": pct(0.5),
+            "wait_p90_seconds": pct(0.9),
+            "wait_max_seconds": round(waits[-1], 3) if waits else None,
+            "budget_seconds": float(
+                getattr(self.config, "entry_curve_wait_seconds", 0.0) or 0.0
+            ),
+        }
 
     def _rpc_available_for_buys(self) -> bool:
         """False while every RPC endpoint's circuit breaker is open (BUG-149).
@@ -2050,6 +2089,11 @@ class TradingBot:
         exec_metadata = getattr(exec_res, "metadata", None)
         fill_drift = (
             exec_metadata.get("fill_drift_pct")
+            if isinstance(exec_metadata, dict)
+            else None
+        )
+        self._note_entry_curve_wait(
+            exec_metadata.get("curve_wait_seconds")
             if isinstance(exec_metadata, dict)
             else None
         )

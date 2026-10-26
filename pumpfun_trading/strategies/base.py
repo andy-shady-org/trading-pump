@@ -77,6 +77,9 @@ class TradingBotConfig:
     # Paper fills pay for the screening/landing latency a live buy has: wait,
     # re-read the curve, then worsen the fill by this many bps.
     paper_entry_delay_seconds: float = 0.0
+    # How long a buy waits for a new launch's curve account to appear on the
+    # RPC before refusing it (BUG-154); 0 = read once.
+    entry_curve_wait_seconds: float = 3.0
     paper_entry_slippage_bps: int = 0
     # Paper sells take this many bps off their proceeds: the price impact and
     # latency a live sell pays. Replay applies the same haircut (BUG-126).
@@ -353,6 +356,7 @@ class TradingBotConfig:
             "require_pump_mint_suffix": self.require_pump_mint_suffix,
             "allow_mint_reentry": self.allow_mint_reentry,
             "paper_entry_delay_seconds": self.paper_entry_delay_seconds,
+            "entry_curve_wait_seconds": self.entry_curve_wait_seconds,
             "paper_entry_slippage_bps": self.paper_entry_slippage_bps,
             "paper_exit_slippage_bps": self.paper_exit_slippage_bps,
             "paper_starting_balance_sol": self.paper_starting_balance_sol,

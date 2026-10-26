@@ -555,6 +555,7 @@ def resolve_strategy_config(
         paper_entry_delay_seconds=max(
             0.0, float(base.get("paper_entry_delay_seconds", 0.0))
         ),
+        entry_curve_wait_seconds=float(base.get("entry_curve_wait_seconds", 3.0)),
         paper_entry_slippage_bps=max(
             0, min(5_000, int(base.get("paper_entry_slippage_bps", 0)))
         ),
@@ -843,6 +844,8 @@ def resolve_strategy_config(
         )
     if config.max_active_positions < 1:
         raise ValueError("max_active_positions must be at least 1.")
+    if not 0.0 <= config.entry_curve_wait_seconds <= 10.0:
+        raise ValueError("entry_curve_wait_seconds must be between 0 and 10.")
     if config.stream_heartbeat_seconds < 0:
         raise ValueError("stream_heartbeat_seconds must be zero (off) or positive.")
     if config.stop_loss_hard_floor and config.stop_loss_hard_floor >= config.stop_loss:

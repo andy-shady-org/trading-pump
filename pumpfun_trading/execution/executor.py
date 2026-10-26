@@ -26,6 +26,7 @@ from pumpfun_trading.sdk.curve import (
 )
 from pumpfun_trading.sdk.execution import (
     PUMP_DEFAULT_FEE_BPS,
+    CurveAccountMissingError,
     CurveCompleteError,
     MayhemModeCurveError,
     NonStandardCurveError,
@@ -36,6 +37,10 @@ from pumpfun_trading.sdk.raydium import RaydiumPoolKeys
 from pumpfun_trading.strategies.base import TradingBotConfig
 
 logger = logging.getLogger(__name__)
+
+# Interval between reads while a new launch's curve account is not visible yet;
+# the wait itself is ``entry_curve_wait_seconds`` (BUG-154).
+CURVE_WAIT_STEP_SECONDS = 0.25
 
 
 @dataclass
@@ -254,7 +259,9 @@ class OrderExecutor:
     ) -> ExecutionResult:
         """A buy refused because the curve is not a standard Pump.fun curve."""
         logger.warning("Skipping buy of %s: %s", mint, exc)
-        if isinstance(exc, NotPumpFunCurveError):
+        if isinstance(exc, CurveAccountMissingError):
+            kind = "curve_missing"
+        elif isinstance(exc, NotPumpFunCurveError):
             kind = "not_pump_fun"
         elif isinstance(exc, CurveCompleteError):
             kind = "curve_complete"
@@ -271,6 +278,39 @@ class OrderExecutor:
             error=f"{kind}: {exc}",
             dry_run=dry_run,
         )
+
+    async def _wait_for_curve(
+        self, mint: str
+    ) -> tuple[tuple[int, int] | None, float | None]:
+        """The curve for a buy, waiting while its account is not visible yet.
+
+        A launch's curve account reaches the RPC node a few hundred
+        milliseconds after PumpPortal's create event; read at once, 80% of the
+        rc.6 launch buys were refused as not Pump.fun, and the coins skipped
+        did better than the ones bought (BUG-154). The read is repeated every
+        ``CURVE_WAIT_STEP_SECONDS`` for up to ``entry_curve_wait_seconds``; a
+        curve still missing then raises :class:`CurveAccountMissingError`.
+        Returns the reserves and how long it waited (``None`` when the first
+        read found the account).
+        """
+        budget = max(
+            0.0, float(getattr(self.config, "entry_curve_wait_seconds", 0.0) or 0.0)
+        )
+        retries = int(budget / CURVE_WAIT_STEP_SECONDS + 1e-9)
+        started = time.monotonic()
+        for attempt in range(retries + 1):
+            try:
+                reserves = await self._fetch_curve_reserves(
+                    mint, reject_non_standard=True
+                )
+            except CurveAccountMissingError:
+                if attempt >= retries:
+                    raise
+                await asyncio.sleep(CURVE_WAIT_STEP_SECONDS)
+                continue
+            waited = time.monotonic() - started if attempt else None
+            return reserves, waited
+        raise AssertionError("unreachable")  # pragma: no cover
 
     @staticmethod
     def _unpriced_buy(
@@ -477,7 +517,7 @@ class OrderExecutor:
             drift_limit = 0.0
 
         try:
-            reserves = await self._fetch_curve_reserves(mint, reject_non_standard=True)
+            reserves, curve_wait = await self._wait_for_curve(mint)
         except (NonStandardCurveError, NotPumpFunCurveError, CurveCompleteError) as exc:
             return self._refused_buy(mint, amount_sol, reason, exc, is_dry_run)
         resolved_slippage = slippage_bps
@@ -508,6 +548,10 @@ class OrderExecutor:
                 # curve instead (BUG-145).
                 return self._unpriced_buy(mint, amount_sol, reason, "signal")
             delay = float(getattr(self.config, "paper_entry_delay_seconds", 0.0) or 0.0)
+            if curve_wait is not None:
+                # The latency runs from the signal: time spent waiting for the
+                # curve is part of it (BUG-154).
+                delay = max(0.0, delay - curve_wait)
             if delay > 0:
                 # A live buy lands after screening and confirmation; price the
                 # paper fill from the curve as it is then, not at the signal.
@@ -558,6 +602,8 @@ class OrderExecutor:
                 metadata["paper_entry_delay_seconds"] = delay
             if drift_limit > 0 and drift is not None:
                 metadata["fill_drift_pct"] = round(drift, 4)
+            if curve_wait is not None:
+                metadata["curve_wait_seconds"] = round(curve_wait, 3)
             return ExecutionResult(
                 success=True,
                 signature=dry_signature,
@@ -693,6 +739,8 @@ class OrderExecutor:
                 # Exits measure the position from its own fill (BUG-129).
                 live_metadata["entry_market_cap_sol"] = entry_mc
             live_metadata["entry_price_source"] = entry_source
+            if curve_wait is not None:
+                live_metadata["curve_wait_seconds"] = round(curve_wait, 3)
             if signal_market_cap_sol:
                 live_metadata["signal_market_cap_sol"] = float(signal_market_cap_sol)
             return ExecutionResult(

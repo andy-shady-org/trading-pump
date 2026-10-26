@@ -70,3 +70,31 @@ def test_health_checks():
     update_health_state(bot)
     assert bot._health_ok is True
     assert health_ok_for_trading(bot)
+
+
+@pytest.mark.regression("BUG-155")
+def test_health_timeout_label_clears_when_the_stream_recovers(tmp_path) -> None:
+    import time as _time
+
+    from pumpfun_trading.bot import health
+    from pumpfun_trading.tests.support.factories import make_bot
+
+    bot = make_bot(tmp_path, health_check_timeout_seconds=60)
+    events: list[str] = []
+    bot._record_event = lambda event_message, alert=False: events.append(event_message)  # type: ignore[method-assign]
+    bot._last_message_at = _time.monotonic() - 120.0
+    health.update_health_state(bot)
+    assert bot._health_ok is False and bot._last_status == "health timeout"
+
+    bot._last_message_at = _time.monotonic()
+    health.update_health_state(bot)
+    assert bot._health_ok is True
+    assert bot._last_status == "monitoring active tokens"
+    assert bot._last_event == "trading resumed: stream active"
+    assert events == ["trading paused: stream stale", "trading resumed: stream active"]
+
+    # Another status is left alone, and a healthy pass logs nothing new.
+    bot._last_status = "degraded: stream circuit breaker active"
+    health.update_health_state(bot)
+    assert bot._last_status == "degraded: stream circuit breaker active"
+    assert len(events) == 2

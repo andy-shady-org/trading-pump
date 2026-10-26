@@ -714,3 +714,14 @@ def test_stream_heartbeat_defaults_reads_and_validates() -> None:
     assert off.stream_heartbeat_seconds == 0.0
     with pytest.raises(ValueError, match="stream_heartbeat_seconds"):
         resolve_strategy_config("balanced", overrides={"stream_heartbeat_seconds": -1})
+
+
+@pytest.mark.regression("BUG-154")
+def test_entry_curve_wait_defaults_reads_and_validates() -> None:
+    assert resolve_strategy_config("balanced").entry_curve_wait_seconds == 3.0
+    cfg = resolve_strategy_config(
+        "balanced", overrides={"entry_curve_wait_seconds": 3.5}
+    )
+    assert cfg.entry_curve_wait_seconds == 3.5
+    with pytest.raises(ValueError, match="entry_curve_wait_seconds"):
+        resolve_strategy_config("balanced", overrides={"entry_curve_wait_seconds": 11})
