@@ -160,10 +160,10 @@ PumpPortal meters token-trade data against the API key's linked wallet (0.01 SOL
 - dashboard `Trade feed: REFUSED (key funds?)`, `bot_status.json` → `trade_feed_breaker.open: true`;
 - no new buys (`require_trade_feed`); held positions keep exiting on the 1 s curve refresh.
 
-**Action:** top up the PumpPortal key's wallet (keep well above 0.02 SOL; a busy run uses roughly 0.01 SOL per 10,000 trade messages). No restart is needed: the bot sends a probe subscription every `trade_feed_probe_seconds` (default 300 s) and, once PumpPortal confirms it or trade data arrives, closes the breaker, sends `trade-feed circuit breaker CLOSED` and resumes buying. A reconnect alone never closes it. If the key itself changed, update `PUMPFUN_STREAM_API_KEY` and restart.
+**Action:** top up the PumpPortal key's wallet. Only the balance above 0.02 SOL pays for messages, so keep the run's expected use on top of that floor (two launch-mode bots used about 0.0024 SOL an hour in rc.7; [`COSTS.md` §3.2](COSTS.md#32-pumpportal-trade-data)). No restart is needed: every `trade_feed_probe_seconds` (default 300 s) the bot retries. A connection that has already refused is not asked again (PumpPortal did not accept a top-up on it, BUG-156): the bot closes it (`trade-feed breaker open: reconnecting the stream …` in the events, `trade_feed_breaker.reconnects` in `bot_status.json`), and the fresh connection resubscribes the held coins and probes. Once PumpPortal confirms a subscription or trade data arrives, the breaker closes: `trade-feed circuit breaker CLOSED` is sent, buying resumes, and the dashboard shows `Trade feed: ok`, `Last status: monitoring active tokens` and the CLOSED notice as `Last event`. A reconnect alone never closes it. If the key itself changed, update `PUMPFUN_STREAM_API_KEY` and restart.
 
 ```bash
-jq '.trade_feed_breaker' data/bot_status.json
+jq '.trade_feed_breaker | {open, refusals, reconnects, next_probe_at, last_confirmed_at}' data/bot_status.json
 ```
 
 ### 5.8 RPC and stream outages (BUG-145 to BUG-151)
