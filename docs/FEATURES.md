@@ -609,3 +609,10 @@ Record-only, in its own process (`pumpfun-recorder --market`, [`dev/RUNBOOK.md` 
 - **Volume**: a 2-minute live run on 2026-10-26 saw 112 new pools on the three chains and followed 235 (with the lists); no rate limits. About 1 GB of rows a day before compression; rotation keeps 300 parts of 100 MB, gzipped, with no age limit.
 - **Not built**: anything that trades on these chains; per-trade data (wallets, sizes); Ethereum by default (gas makes small trades uneconomic; `--market-chains` adds it).
 
+## 45. Launch Entry Filters From The rc.6 / rc.7 Data (FEAT-75)
+
+Two entry filters for `entry_mode: "launch"`, both off by default, chosen because they held in all four rc.6 and rc.7 paper datasets (both runs of each, both halves of each run); together they cut the loss per trade by about one point (rc.7: −3.9% to −2.9%; rc.6: −5.5% to −4.6%), more than a random cut of the same share, but launch buying stayed negative in every set.
+
+- **Tiny Creator Buy** (`launch_skip_creator_buy_below_sol`, new; `0.05` in the rc.8 run B config): a launch whose create event shows the creator buying more than 0 and less than this many SOL is skipped before screening (`entry_refusals.tiny_creator_buy`, event `token_rejected_tiny_creator_buy`, `last_event` `tiny_creator_buy <mint>`). In the 20% launch samples 86% (rc.6) and 97% (rc.7) of them had no price move in their first 30 s and almost none reached 1.1×; bought, they lost the round-trip cost. A launch with no creator buy, or without `solAmount`, is not skipped (those behaved differently). Confirmed (watched) entries are not affected.
+- **Fill Drift** (existing `momentum_max_entry_drift_pct`; `0.15` in run B): in launch mode the signal is the create event, so the guard refuses a buy whose curve at the fill (after `paper_entry_delay_seconds`) is more than 15% above the create market cap (`entry_refusals.entry_drift`). Such fills were the worst group in every set (rc.7 −5.6%, 27% of buys; rc.6 −10.5%).
+

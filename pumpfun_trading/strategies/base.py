@@ -98,6 +98,10 @@ class TradingBotConfig:
     # Skip mayhem-mode launches: an agent trades their curve, whose reserves
     # then drift off the standard 30 SOL invariant (stream and curve flag).
     skip_mayhem_mode: bool = True
+    # FEAT-75 (launch mode): skip a launch whose creator bought more than 0
+    # but less than this many SOL in the create transaction (0 = off). In the
+    # rc.6 / rc.7 launch samples 86% / 97% of them were dead within 30 s.
+    launch_skip_creator_buy_below_sol: float = 0.0
     screening_cache_ttl_seconds: int = 60
     # Entry pipeline (Phase 4c, FEAT-51): "launch" buys at the create event;
     # "confirmed" watches screened launches, polls their curves over RPC and
@@ -382,6 +386,9 @@ class TradingBotConfig:
             "require_trade_feed": self.require_trade_feed,
             "trade_feed_probe_seconds": self.trade_feed_probe_seconds,
             "skip_mayhem_mode": self.skip_mayhem_mode,
+            "launch_skip_creator_buy_below_sol": (
+                self.launch_skip_creator_buy_below_sol
+            ),
             "screening_cache_ttl_seconds": self.screening_cache_ttl_seconds,
             "entry_mode": self.entry_mode,
             "watch_ttl_seconds": self.watch_ttl_seconds,
