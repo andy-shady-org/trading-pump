@@ -108,6 +108,8 @@ class ObservedCurve:
     first_real_sol: float | None = None
     last_real_sol: float | None = None
     peak_real_sol: float = 0.0
+    # Kept past the list's TTL because the curve was still alive (FEAT-73).
+    extended: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,6 +122,7 @@ class ObservedCurve:
             "first_real_sol": self.first_real_sol,
             "last_real_sol": self.last_real_sol,
             "peak_real_sol": round(self.peak_real_sol, 9),
+            "extended": self.extended,
             "tags": dict(self.tags),
         }
 
@@ -130,6 +133,13 @@ class CurveObservationList:
 
     ``min_real_sol`` > 0 drops an entry whose polled real SOL reserve falls
     below it (discovery); the reject sample keeps every entry until its TTL.
+
+    FEAT-73: ``fast_seconds`` > 0 polls an entry every
+    ``fast_poll_interval_seconds`` for its first seconds (a graduated pool just
+    after the migration); ``extend_ttl_seconds`` > ``ttl_seconds`` keeps an entry
+    past its TTL, polled every ``extend_poll_interval_seconds``, while its last
+    real SOL is at least ``extend_min_real_sol`` (a sampled launch still alive
+    at 15 minutes, followed until it graduates or fades).
     """
 
     source: str
@@ -137,6 +147,11 @@ class CurveObservationList:
     ttl_seconds: float
     poll_interval_seconds: float
     min_real_sol: float = 0.0
+    fast_seconds: float = 0.0
+    fast_poll_interval_seconds: float = 0.0
+    extend_ttl_seconds: float = 0.0
+    extend_min_real_sol: float = 0.0
+    extend_poll_interval_seconds: float = 0.0
     _entries: dict[str, ObservedCurve] = field(default_factory=dict)
     stats: dict[str, int] = field(default_factory=dict)
 
@@ -183,14 +198,37 @@ class CurveObservationList:
         self._count("added")
         return entry
 
+    @property
+    def extends(self) -> bool:
+        return float(self.extend_ttl_seconds) > float(self.ttl_seconds)
+
+    def interval_for(self, entry: ObservedCurve, now: float) -> float:
+        """Poll interval of one entry: fast while young, slower once extended."""
+        age = now - entry.added_at
+        if self.fast_seconds > 0 and self.fast_poll_interval_seconds > 0:
+            if age < float(self.fast_seconds):
+                return float(self.fast_poll_interval_seconds)
+        if entry.extended and self.extend_poll_interval_seconds > 0:
+            return float(self.extend_poll_interval_seconds)
+        return float(self.poll_interval_seconds)
+
+    def shortest_interval(self) -> float:
+        """The shortest interval any entry of this list can be polled at."""
+        intervals = [float(self.poll_interval_seconds)]
+        if self.fast_seconds > 0 and self.fast_poll_interval_seconds > 0:
+            intervals.append(float(self.fast_poll_interval_seconds))
+        if self.extends and self.extend_poll_interval_seconds > 0:
+            intervals.append(float(self.extend_poll_interval_seconds))
+        return min(intervals)
+
     def due(self, now: float) -> list[str]:
-        """Never-polled mints and those whose last poll is at least one poll
+        """Never-polled mints and those whose last poll is at least their poll
         interval old."""
-        interval = float(self.poll_interval_seconds)
         return [
             mint
             for mint, entry in self._entries.items()
-            if entry.polls == 0 or now - entry.last_polled_at >= interval
+            if entry.polls == 0
+            or now - entry.last_polled_at >= self.interval_for(entry, now)
         ]
 
     def update(self, mint: str, *, real_sol: float, now: float) -> str | None:
@@ -207,6 +245,8 @@ class CurveObservationList:
         entry.peak_real_sol = max(entry.peak_real_sol, value)
         if self.min_real_sol > 0 and value < float(self.min_real_sol):
             return "below_floor"
+        if entry.extended and value < float(self.extend_min_real_sol):
+            return "faded"
         return None
 
     def remove(self, mint: str, cause: str) -> ObservedCurve | None:
@@ -216,11 +256,26 @@ class CurveObservationList:
         return entry
 
     def expired(self, now: float) -> list[str]:
-        """Mints observed longer than the TTL (the caller ends them)."""
+        """Mints observed longer than the TTL (the caller ends them). With an
+        extension, a mint still at or above ``extend_min_real_sol`` is kept
+        until ``extend_ttl_seconds`` instead (FEAT-73)."""
         ttl = float(self.ttl_seconds)
-        return [
-            mint for mint, entry in self._entries.items() if now - entry.added_at > ttl
-        ]
+        done: list[str] = []
+        for mint, entry in self._entries.items():
+            age = now - entry.added_at
+            if age <= ttl:
+                continue
+            if (
+                self.extends
+                and age <= float(self.extend_ttl_seconds)
+                and (entry.last_real_sol or 0.0) >= float(self.extend_min_real_sol)
+            ):
+                if not entry.extended:
+                    entry.extended = True
+                    self._count("extended")
+                continue
+            done.append(mint)
+        return done
 
     def snapshot(self) -> dict[str, Any]:
         return {

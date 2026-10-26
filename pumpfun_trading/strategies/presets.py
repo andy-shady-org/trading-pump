@@ -623,6 +623,15 @@ def resolve_strategy_config(
         launch_sample_poll_interval_seconds=float(
             base.get("launch_sample_poll_interval_seconds", 5.0)
         ),
+        launch_sample_extend_seconds=float(
+            base.get("launch_sample_extend_seconds", 0.0)
+        ),
+        launch_sample_extend_min_real_sol=float(
+            base.get("launch_sample_extend_min_real_sol", 1.0)
+        ),
+        launch_sample_extend_poll_interval_seconds=float(
+            base.get("launch_sample_extend_poll_interval_seconds", 15.0)
+        ),
         post_exit_observation_seconds=float(
             base.get("post_exit_observation_seconds", 0.0)
         ),
@@ -638,6 +647,12 @@ def resolve_strategy_config(
         ),
         graduation_observation_poll_interval_seconds=float(
             base.get("graduation_observation_poll_interval_seconds", 5.0)
+        ),
+        graduation_observation_fast_seconds=float(
+            base.get("graduation_observation_fast_seconds", 300.0)
+        ),
+        graduation_observation_fast_poll_interval_seconds=float(
+            base.get("graduation_observation_fast_poll_interval_seconds", 2.0)
         ),
         observation_poll_interval_seconds=float(
             base.get("observation_poll_interval_seconds", 5.0)
@@ -996,6 +1011,19 @@ def _validate_observations(config: TradingBotConfig) -> None:
         raise ValueError("launch_sample_ttl_seconds must be greater than zero.")
     if config.launch_sample_poll_interval_seconds < 1.0:
         raise ValueError("launch_sample_poll_interval_seconds must be at least 1.")
+    if config.launch_sample_extend_seconds < 0 or (
+        0 < config.launch_sample_extend_seconds <= config.launch_sample_ttl_seconds
+    ):
+        raise ValueError(
+            "launch_sample_extend_seconds must be 0 (off) or longer than "
+            "launch_sample_ttl_seconds."
+        )
+    if config.launch_sample_extend_min_real_sol < 0:
+        raise ValueError("launch_sample_extend_min_real_sol must not be negative.")
+    if config.launch_sample_extend_poll_interval_seconds < 1.0:
+        raise ValueError(
+            "launch_sample_extend_poll_interval_seconds must be at least 1."
+        )
     if config.post_exit_observation_seconds < 0:
         raise ValueError("post_exit_observation_seconds must not be negative.")
     if config.post_exit_max_mints < 0:
@@ -1009,6 +1037,12 @@ def _validate_observations(config: TradingBotConfig) -> None:
     if config.graduation_observation_poll_interval_seconds < 1.0:
         raise ValueError(
             "graduation_observation_poll_interval_seconds must be at least 1."
+        )
+    if config.graduation_observation_fast_seconds < 0:
+        raise ValueError("graduation_observation_fast_seconds must not be negative.")
+    if config.graduation_observation_fast_poll_interval_seconds < 1.0:
+        raise ValueError(
+            "graduation_observation_fast_poll_interval_seconds must be at least 1."
         )
 
 

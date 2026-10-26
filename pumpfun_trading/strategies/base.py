@@ -144,6 +144,13 @@ class TradingBotConfig:
     launch_sample_max_mints: int = 300
     launch_sample_ttl_seconds: float = 900.0
     launch_sample_poll_interval_seconds: float = 5.0
+    # FEAT-73: keep a sampled launch past ``launch_sample_ttl_seconds``, up to
+    # this age (0 = off), while its real SOL is at least
+    # ``launch_sample_extend_min_real_sol``, so a capture has the whole curve of
+    # coins that graduate later.
+    launch_sample_extend_seconds: float = 0.0
+    launch_sample_extend_min_real_sol: float = 1.0
+    launch_sample_extend_poll_interval_seconds: float = 15.0
     # rc.5 (FEAT-72): seconds to keep polling a coin as ``post_exit`` after the
     # bot fully closed its position (0 = off), so a capture shows what the coin
     # did after the stop or take-profit.
@@ -156,6 +163,11 @@ class TradingBotConfig:
     graduation_observation_seconds: float = 0.0
     graduation_observation_max_mints: int = 300
     graduation_observation_poll_interval_seconds: float = 5.0
+    # ... polled every ``graduation_observation_fast_poll_interval_seconds`` for
+    # the first ``graduation_observation_fast_seconds`` after the migration,
+    # where most of the move is (0 = no fast phase).
+    graduation_observation_fast_seconds: float = 300.0
+    graduation_observation_fast_poll_interval_seconds: float = 2.0
     observation_poll_interval_seconds: float = 5.0
     # Record where a held position's price first crossed ``stop_loss`` on the
     # trade feed and on the curve refresh, next to the price the exit sold
@@ -394,6 +406,11 @@ class TradingBotConfig:
             "launch_sample_max_mints": self.launch_sample_max_mints,
             "launch_sample_ttl_seconds": self.launch_sample_ttl_seconds,
             "launch_sample_poll_interval_seconds": self.launch_sample_poll_interval_seconds,
+            "launch_sample_extend_seconds": self.launch_sample_extend_seconds,
+            "launch_sample_extend_min_real_sol": self.launch_sample_extend_min_real_sol,
+            "launch_sample_extend_poll_interval_seconds": (
+                self.launch_sample_extend_poll_interval_seconds
+            ),
             "post_exit_observation_seconds": self.post_exit_observation_seconds,
             "post_exit_max_mints": self.post_exit_max_mints,
             "post_exit_poll_interval_seconds": self.post_exit_poll_interval_seconds,
@@ -401,6 +418,12 @@ class TradingBotConfig:
             "graduation_observation_max_mints": self.graduation_observation_max_mints,
             "graduation_observation_poll_interval_seconds": (
                 self.graduation_observation_poll_interval_seconds
+            ),
+            "graduation_observation_fast_seconds": (
+                self.graduation_observation_fast_seconds
+            ),
+            "graduation_observation_fast_poll_interval_seconds": (
+                self.graduation_observation_fast_poll_interval_seconds
             ),
             "observation_poll_interval_seconds": self.observation_poll_interval_seconds,
             "record_stop_crossings": self.record_stop_crossings,

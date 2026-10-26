@@ -311,7 +311,10 @@ From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json
           | {mint, timestamp, market_cap_sol}' $C                     # ... their curves from creation
    jq -c 'select(.event=="curve_poll" and .source=="post_exit")
           | {mint, timestamp, market_cap_sol, exit_market_cap_sol, exit_reason}' $C  # after each sell
-   # FEAT-73 record-only input: every graduated coin's PumpSwap pool for 4 h
+   # FEAT-73 record-only input: every graduated coin's PumpSwap pool for 4 h,
+   # and sampled launches followed past 15 min until they graduate or fade
+   jq -c 'select(.event=="observation_end" and .source=="launch_sample" and .extended)
+          | {mint, cause, observed_seconds, peak_real_sol}' $C       # followed to graduation?
    jq -c 'select(.event=="observation_start" and .source=="graduation")
           | {mint, migrated_at, pool, held}' $C                       # graduations followed
    jq -c 'select(.event=="curve_poll" and .source=="graduation")

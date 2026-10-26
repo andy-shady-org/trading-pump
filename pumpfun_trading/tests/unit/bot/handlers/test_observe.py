@@ -673,6 +673,7 @@ def test_graduation_list_is_off_by_default_and_runs_in_both_modes(
         tmp_path,
         graduation_observation_max_mints=7,
         graduation_observation_poll_interval_seconds=3.0,
+        graduation_observation_fast_seconds=0.0,
     )
     book = observe.graduation_list(bot)
     assert book is not None
@@ -684,6 +685,11 @@ def test_graduation_list_is_off_by_default_and_runs_in_both_modes(
     assert [b.source for b in observe.active_lists(bot)] == ["graduation"]
     assert observe.observations_enabled(bot) is True
     assert observe.observation_interval(bot) == 3.0
+    # By default the first 5 minutes after a migration are polled every 2 s.
+    fast = observe.graduation_list(_grad_bot(tmp_path))
+    assert fast is not None
+    assert (fast.fast_seconds, fast.fast_poll_interval_seconds) == (300.0, 2.0)
+    assert observe.observation_interval(_grad_bot(tmp_path)) == 2.0
     assert set(observe.observation_status(bot)) == {"graduation"}
     confirmed = _grad_bot(tmp_path, entry_mode="confirmed")
     assert "graduation" in [b.source for b in observe.active_lists(confirmed)]
@@ -806,3 +812,54 @@ async def test_pool_poll_failure_is_counted_and_curves_still_read(
     await observe.poll_observations(bot)
     assert [r["source"] for r in _rows(bot, "curve_poll")] == ["launch_sample"]
     assert bot._watch_stats["observation_poll_errors"] == 1
+
+
+async def test_a_sampled_launch_alive_at_its_ttl_is_followed_to_graduation(
+    tmp_path: Path,
+) -> None:
+    # FEAT-73: the curve before graduation, for coins that graduate later.
+    bot = _rc5_bot(
+        tmp_path,
+        post_exit_observation_seconds=0.0,
+        launch_sample_extend_seconds=14_400.0,
+        launch_sample_extend_min_real_sol=1.0,
+        launch_sample_extend_poll_interval_seconds=15.0,
+    )
+    book = observe.launch_sample_list(bot)
+    assert book is not None
+    assert (
+        book.extend_ttl_seconds,
+        book.extend_min_real_sol,
+        book.extend_poll_interval_seconds,
+    ) == (14_400.0, 1.0, 15.0)
+    assert observe.maybe_sample_launch(bot, SAMPLE_PUMP_MINT, {}, 30.0)
+    assert observe.maybe_sample_launch(bot, SAMPLE_MINT, {}, 30.0)
+    bot.execution.get_bonding_curve_states = AsyncMock(
+        return_value={SAMPLE_PUMP_MINT: _curve(6.0), SAMPLE_MINT: _curve(0.1)}
+    )
+    await observe.poll_observations(bot)
+    for mint in (SAMPLE_PUMP_MINT, SAMPLE_MINT):
+        entry = book.get(mint)
+        assert entry is not None
+        entry.added_at -= 1_000.0  # past the 900 s TTL
+        entry.last_polled_at = 0.0
+    await observe.poll_observations(bot)
+    # The dead one ends at its TTL; the live one is kept and still polled.
+    (end,) = _rows(bot, "observation_end")
+    assert (end["mint"], end["cause"]) == (SAMPLE_MINT, "ttl")
+    assert "extended" not in end
+    assert book.get(SAMPLE_PUMP_MINT).extended  # type: ignore[union-attr]
+    assert bot._launch_sample_list.stats["extended"] == 1
+
+    # It graduates: the observation ends as complete, marked as extended.
+    book.get(SAMPLE_PUMP_MINT).last_polled_at = 0.0  # type: ignore[union-attr]
+    bot.execution.get_bonding_curve_states = AsyncMock(
+        return_value={SAMPLE_PUMP_MINT: _curve(85.0, complete=True)}
+    )
+    await observe.poll_observations(bot)
+    last = _rows(bot, "observation_end")[-1]
+    assert (last["mint"], last["cause"], last["extended"]) == (
+        SAMPLE_PUMP_MINT,
+        "complete",
+        True,
+    )
