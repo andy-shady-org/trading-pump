@@ -8,16 +8,44 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
-### Fixed
-- A PumpPortal top-up is picked up without a restart: while the trade-feed breaker is open, a connection that has already refused is closed and the fresh connection subscribes again, instead of re-asking the refused one (BUG-156). The dashboard keeps "degraded: token-trade subscription refused" across reconnects until the feed is back, shows the retry countdown on the Trade feed row, and on recovery shows Trade feed ok, Last status "monitoring active tokens" and the CLOSED notice. `bot_status.json` → `trade_feed_breaker.reconnects`.
+## [0.3.0-rc.8] - 2026-10-26
+
+Eighth release candidate of v0.3.0 (this release branch, off `main` at the merge of `feat/launch-entry-filters`): a **data release** from the 5.75 h rc.7 launch-mode A/B. rc.7 bought most launches (1,274 per bot) and lost 3.9% per trade; no exit rule and no create-time feature made launch buying pay on the rc.6 or rc.7 data, and the coins the operator saw running were on PumpSwap after graduation, on other launchpads and chains, or weeks old, none of which the bot recorded. rc.8 records them (FEAT-73, FEAT-74), adds the two launch entry filters that held on every dataset (FEAT-75) and fixes the trade feed that did not come back after a top-up (BUG-156, [`BUGS.md` §28](docs/dev/BUGS.md#28-rc7-paper-run-findings-2026-10-26)). Branches: `feat/graduation-observer`, `feat/graduation-entry-data`, `feat/market-recorder`, `docs/pumpportal-topup`, `fix/trade-feed-reconnect`, `feat/launch-entry-filters`.
+
+This is a **pre-release for paper testing only**, like rc.1 to rc.7. It must not run on a funded wallet.
 
 ### Added
-- Launch entry filter (FEAT-75): `launch_skip_creator_buy_below_sol` (default `0` = off) skips a launch whose creator bought more than 0 and less than that many SOL (`entry_refusals.tiny_creator_buy`); with `momentum_max_entry_drift_pct: 0.15` (fills more than 15% above the create market cap) it cut the paper loss per trade by about one point on the rc.6 and rc.7 data.
-- Graduation tracking (FEAT-73, record-only): `graduation_observation_seconds` (default `0` = off), `graduation_observation_max_mints` (300) and `graduation_observation_poll_interval_seconds` (5) follow every coin that migrates to PumpSwap, held or not, as `curve_poll` rows with `source: "graduation"` (`market_cap_sol` on the curve basis, `pool_sol`, `pool_tokens`) and `observation_start` / `observation_end` rows. Never trades; replay skips the rows. `configs/capture.json` turns it on for 4 h at 10 s. Status: `watch_list.graduation`, counter `graduation_observed`.
-- Graduation tracking polls the first `graduation_observation_fast_seconds` (300) after a migration every `graduation_observation_fast_poll_interval_seconds` (2) (FEAT-73).
-- The launch sample follows a launch still alive at its TTL until it graduates or fades: `launch_sample_extend_seconds` (default `0` = off), `launch_sample_extend_min_real_sol` (1.0), `launch_sample_extend_poll_interval_seconds` (15); its `observation_end` row carries `extended: true` and a new cause `faded`; counter `extended` in `watch_list.launch_sample.stats` (FEAT-73). `configs/capture.json` turns it on for up to 4 h.
-- Cross-chain market recorder (FEAT-74, record-only): `pumpfun-recorder --market` records new pools and trending / top-volume lists on Solana, Base and BSC (GeckoTerminal) and follows each picked pool for up to 7 days (DexScreener), into `market/market.jsonl` (`market_pool`, `market_list`, `market_snapshot`, `market_end`, `market_stats`). Options `--market-chains`, `--market-sample`, `--market-state`, `--market-max-followed`, `--market-no-lists`. Keyless; no RPC credits.
+- Graduation tracking (FEAT-73, record-only): `graduation_observation_seconds` (default `0` = off), `graduation_observation_max_mints` (300) and `graduation_observation_poll_interval_seconds` (5) follow every coin that migrates to PumpSwap, held or not, as `curve_poll` rows with `source: "graduation"` (`market_cap_sol` on the curve basis, `pool_sol`, `pool_tokens`; a drained pool is written with a market cap of 0) and `observation_start` / `observation_end` rows. The first `graduation_observation_fast_seconds` (300) after a migration are polled every `graduation_observation_fast_poll_interval_seconds` (2). Never trades; replay skips the rows. Status: `watch_list.graduation`, counter `graduation_observed`.
+- The launch sample follows a launch still alive at its TTL until it graduates or fades: `launch_sample_extend_seconds` (default `0` = off), `launch_sample_extend_min_real_sol` (1.0), `launch_sample_extend_poll_interval_seconds` (15); its `observation_end` row carries `extended: true` and a new cause `faded`; counter `extended` in `watch_list.launch_sample.stats` (FEAT-73).
+- Cross-chain market recorder (FEAT-74, record-only): `pumpfun-recorder --market` records new pools and trending / top-volume lists on Solana, Base and BSC (GeckoTerminal) and follows each picked pool for up to 7 days (DexScreener), into `market/market.jsonl` (`market_pool`, `market_list`, `market_snapshot`, `market_end`, `market_stats`), with a resumable follow list (`market/state.json`). Options `--market-chains`, `--market-sample`, `--market-state`, `--market-max-followed`, `--market-no-lists`. Keyless; no RPC credits.
+- Launch entry filter (FEAT-75): `launch_skip_creator_buy_below_sol` (default `0` = off) skips a launch whose creator bought more than 0 and less than that many SOL (`entry_refusals.tiny_creator_buy`, event `token_rejected_tiny_creator_buy`). With the existing `momentum_max_entry_drift_pct: 0.15` (refuse fills more than 15% above the create market cap) it cut the paper loss per trade by about one point on the rc.6 and rc.7 data.
 - `get_pumpswap_pool_states`: batched PumpSwap pool reads (33 pools per `getMultipleAccounts` call, vault addresses cached), with the reason each refused pool was left out.
+- `bot_status.json` → `trade_feed_breaker.reconnects` (BUG-156).
+
+### Changed
+- `configs/capture.json` turns on graduation tracking (4 h at 10 s, fast phase 5 min at 2 s) and follows live sampled launches for up to 4 h.
+- The trade-feed trip alert says the PumpPortal key's wallet must hold 0.02 SOL at all times and that no restart is needed; while the breaker is open the status stays "degraded: token-trade subscription refused" across reconnects (BUG-156).
+
+### Fixed
+- A PumpPortal top-up is picked up without a restart: while the trade-feed breaker is open, a connection that has already refused is closed and the fresh connection subscribes again, instead of re-asking the refused one; the close is not counted as a connection loss. The dashboard shows the retry countdown on the Trade feed row while refused, and on recovery Trade feed ok, Last status "monitoring active tokens" and the CLOSED notice (BUG-156).
+
+### Known issues
+- Launch buying on Pump.fun is not profitable on paper: −3.9% per trade on rc.7 (round trip about 4.4% in the paper cost model), and the FEAT-75 filters only narrow it. rc.8's A/B measures the filters live; the FEAT-73 / FEAT-74 data is what the next strategy decision rests on.
+- Both bots share one PumpPortal key, while PumpPortal asks for one WebSocket connection per key; it worked for the 6 h of rc.7. Watch for refusals or dropped connections in the first hours.
+- Helius credits: graduation tracking adds about 2.5 M credits per 30 days to the capture bot; with both bots that is about 8.8 M of the Developer plan's 10 M ([`COSTS.md` §3.1](docs/dev/COSTS.md#31-helius-rpc-credits)). Check the dashboard in the first day.
+- The market recorder writes about 1 GB of rows a day before compression; on BSC a few pools DexScreener does not index stay missing (3 of 79 in the live check).
+- Everything listed under rc.7's known issues still applies.
+
+### Release record – v0.3.0-rc.8 (2026-10-26)
+- Commit: the release commit on `release/v0.3.0rc8` (`pyproject.toml` → `0.3.0rc8`, this entry), on `main` at the merge of `feat/launch-entry-filters` (`abc2eb0`)
+- Release gate: PASS on Linux (`nox -s format lint mypy tests package audit`: tests on 3.11, 3.12, 3.13 and 3.14); the CI matrix and the kill-and-restart drill in paper mode on the Mac are still to run
+- Tests: 2,208 collected (44 more than rc.7, for FEAT-73, FEAT-74, FEAT-75 and BUG-156), all passed on 3.11–3.14; coverage 97.15–97.19% (statement + branch); the wheel `pumpfun_trading-0.3.0rc8-py3-none-any.whl` ships 120 files, no tests, private classifier
+- Risk drills: `pumpfun-drill --report` 4 of 4 passed
+- Live checks: the market recorder ran twice for 2–2.5 minutes against GeckoTerminal and DexScreener from the operator's machine (no rate limits, no errors); graduation tracking's pool reads are tested against mainnet account bytes only, so the first run is its live check (`watch_list.graduation`, `observation_poll_errors` near 0)
+- Security: secrets grep clean (test fixtures only); `nox -s audit` no known vulnerabilities
+- Paper verdict (FEAT-67): `configs/verdict_rules.json` unchanged
+- Capital stage after this release: 0 (paper only)
+- Sign-off: –
 
 ## [0.3.0-rc.7] - 2026-10-26
 
