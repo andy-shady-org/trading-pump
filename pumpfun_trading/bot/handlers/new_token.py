@@ -160,6 +160,24 @@ async def handle_new_token_event(
         return
 
     confirmed = bot._entry_mode() == "confirmed"
+    creator_buy = tiny_creator_buy(bot, data) if not confirmed else None
+    if creator_buy is not None:
+        # FEAT-75: launches whose creator bought a token amount are nearly all
+        # dead (rc.6 / rc.7 launch samples); each buy would pay the round trip.
+        bot._count_entry_refusal("tiny_creator_buy")
+        bot._mark_seen(mint)
+        bot._last_event = f"tiny_creator_buy {mint[:8]}"
+        if hasattr(bot, "event_logger") and bot.event_logger is not None:
+            bot.event_logger.emit(
+                category=EventCategory.SCREENING,
+                severity=EventSeverity.DEBUG,
+                event_name="token_rejected_tiny_creator_buy",
+                mint=mint,
+                mint_name=token_name,
+                data={"creator_buy_sol": creator_buy},
+            )
+        return
+
     async with bot._trade_lock:
         if mint in bot.active_positions or bot._is_recently_seen(mint):
             return
@@ -208,6 +226,23 @@ async def handle_new_token_event(
         )
         if bought and websocket:
             await bot._subscribe_to_token_trades(websocket, mint)
+
+
+def tiny_creator_buy(bot: TradingBot, data: dict[str, Any]) -> float | None:
+    """The create event's creator buy in SOL when it is above 0 and below
+    ``launch_skip_creator_buy_below_sol`` (FEAT-75), else ``None``. A launch
+    with no creator buy, or without the field, is not skipped: the samples
+    showed those behave differently."""
+    limit = float(getattr(bot.config, "launch_skip_creator_buy_below_sol", 0.0) or 0.0)
+    if limit <= 0.0:
+        return None
+    try:
+        amount = float(data.get("solAmount"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if 0.0 < amount < limit:
+        return round(amount, 9)
+    return None
 
 
 def watch_token(

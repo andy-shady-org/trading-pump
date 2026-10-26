@@ -858,6 +858,9 @@ Open items and the sprint table are in [`TODO.md`](TODO.md#phase-4c-strategy-piv
 - [x] Launch sample followed to graduation: `launch_sample_extend_seconds` keeps a sampled launch with at least `launch_sample_extend_min_real_sol` (1.0) past its TTL, polled every 15 s, until it completes, fades (`faded`) or ages out; `observation_end` carries `extended: true` *(tests: `unit/strategies/test_observation.py`, `unit/bot/handlers/test_observe.py`, `unit/strategies/test_presets.py`)*
 - [x] Replay and the shadow scan skip the new rows like every record-only source *(tests: `unit/engines/test_replay.py`, `unit/strategies/test_observation.py`)*
 
+### Launch Entry Filters (FEAT-75)
+- [x] `launch_skip_creator_buy_below_sol`: launch mode skips a launch whose creator bought more than 0 and less than the limit before screening; counted as `entry_refusals.tiny_creator_buy`; a zero or missing creator buy and confirmed entries are unaffected *(tests: `unit/bot/handlers/test_new_token.py`, `unit/strategies/test_presets.py`)*
+
 ### Cross-Chain Market Recorder (FEAT-74)
 - [x] `pumpfun-recorder --market`: new pools (paged until a known one) and trending / top-volume lists from GeckoTerminal on Solana, Base and BSC; every new pool followed except a 10% sample of Pump.fun curves; list entries followed however old *(tests: `unit/services/test_market_recorder.py`)*
 - [x] Following on DexScreener, 30 pools per call, on an age-based cadence (30 s / 2 min / 10 min, up to 7 days), unchanged snapshots skipped up to a 30-minute heartbeat; ends `dead`, `missing` (with a 10-minute grace for pools not indexed yet) or `max_age`; pools missed by the pair lookup found by their token (four.meme `:4meme` ids, unindexed BSC pools) *(tests: `unit/services/test_market_recorder.py`)*

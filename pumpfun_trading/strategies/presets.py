@@ -573,6 +573,9 @@ def resolve_strategy_config(
             30.0, float(base.get("trade_feed_probe_seconds", 300.0))
         ),
         skip_mayhem_mode=bool(base.get("skip_mayhem_mode", True)),
+        launch_skip_creator_buy_below_sol=float(
+            base.get("launch_skip_creator_buy_below_sol", 0.0)
+        ),
         screening_cache_ttl_seconds=int(base.get("screening_cache_ttl_seconds", 60)),
         entry_mode=str(base.get("entry_mode", "launch")).strip().lower(),
         watch_ttl_seconds=float(base.get("watch_ttl_seconds", 600.0)),
@@ -870,6 +873,8 @@ def resolve_strategy_config(
         raise ValueError("max_active_positions must be at least 1.")
     if not 0.0 <= config.entry_curve_wait_seconds <= 10.0:
         raise ValueError("entry_curve_wait_seconds must be between 0 and 10.")
+    if not 0.0 <= config.launch_skip_creator_buy_below_sol <= 10.0:
+        raise ValueError("launch_skip_creator_buy_below_sol must be between 0 and 10.")
     if config.stream_heartbeat_seconds < 0:
         raise ValueError("stream_heartbeat_seconds must be zero (off) or positive.")
     if config.stop_loss_hard_floor and config.stop_loss_hard_floor >= config.stop_loss:

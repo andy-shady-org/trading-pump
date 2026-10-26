@@ -793,3 +793,17 @@ def test_graduation_fast_phase_and_launch_extension_read_and_validate() -> None:
     ):
         with pytest.raises(ValueError, match=key.split("_seconds")[0]):
             resolve_strategy_config("balanced", overrides={key: value})
+
+
+def test_tiny_creator_buy_skip_defaults_reads_and_validates() -> None:
+    # FEAT-75: off by default.
+    assert resolve_strategy_config("balanced").launch_skip_creator_buy_below_sol == 0.0
+    cfg = resolve_strategy_config(
+        "balanced", overrides={"launch_skip_creator_buy_below_sol": 0.05}
+    )
+    assert cfg.to_dict()["launch_skip_creator_buy_below_sol"] == 0.05
+    for bad in (-0.01, 11):
+        with pytest.raises(ValueError, match="launch_skip_creator_buy_below_sol"):
+            resolve_strategy_config(
+                "balanced", overrides={"launch_skip_creator_buy_below_sol": bad}
+            )

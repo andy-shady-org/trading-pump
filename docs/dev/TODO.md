@@ -127,6 +127,10 @@ Built: every migrated coin's PumpSwap pool followed for 4 h, record-only ([`DONE
 - [ ] Read-out: per graduate the path over 4 h relative to the graduation price (410.88 SOL), split into coins complete at creation, curve filled within 5 minutes and slower; how often a crash below 0.5× comes back above 1× / 2×; and whether any entry rule (after the first crash, after a new high, by pool SOL) beats PumpSwap costs in both halves of the run and the next. Record it in `STRATEGY-PIVOT.md` §6
 - [ ] PumpSwap buys only if that read-out finds such a rule (the sell path and pool reads exist since BUG-123)
 
+### Launch Entry Filters (FEAT-75)
+Built: skip tiny creator buys; the fill-drift guard applies in launch mode ([`DONE.md`](DONE.md#launch-entry-filters-feat-75), [`FEATURES.md` §45](../FEATURES.md#45-launch-entry-filters-from-the-rc6--rc7-data-feat-75)).
+- [ ] rc.8 A/B: run A unchanged (stop 0.80), run B with `launch_skip_creator_buy_below_sol: 0.05` and `momentum_max_entry_drift_pct: 0.15`; per-trade net A vs B, and how many buys each filter refused (`entry_refusals`)
+
 ### Cross-Chain Market Recorder (FEAT-74)
 Built: new pools and momentum lists on Solana, Base and BSC, each followed for up to 7 days, record-only ([`DONE.md`](DONE.md#cross-chain-market-recorder-feat-74), [`FEATURES.md` §44](../FEATURES.md#44-cross-chain-market-recorder-feat-74)). Why: Pump.fun is not profitable on paper, and the coins the operator saw running were on other launchpads, other chains or weeks old.
 - [ ] Run it next to the rc.8 bots for at least 72 h ([`RUNBOOK.md` §6.5](RUNBOOK.md#65-cross-chain-market-recorder-feat-74-from-rc8)); check `market_stats` (no rate limits, few discovery gaps, `following` below the cap) and the disk use in the first day

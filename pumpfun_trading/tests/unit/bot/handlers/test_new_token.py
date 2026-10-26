@@ -99,3 +99,56 @@ def test_complete_at_create_threshold() -> None:
     assert new_token.complete_at_create(407.0)
     assert not new_token.complete_at_create(406.0)
     assert not new_token.complete_at_create(27.96)
+
+
+async def test_launch_with_a_tiny_creator_buy_is_skipped_when_configured(
+    tmp_path: Path,
+) -> None:
+    # FEAT-75: creator buys under 0.05 SOL were dead within 30 s in 86% (rc.6)
+    # and 97% (rc.7) of sampled launches.
+    def event(sol: object) -> dict[str, object]:
+        data: dict[str, object] = {
+            "mint": SAMPLE_PUMP_MINT,
+            "pool": "pump",
+            "marketCapSol": 28.0,
+        }
+        if sol is not None:
+            data["solAmount"] = sol
+        return data
+
+    bot = make_bot(
+        tmp_path,
+        enable_anti_rug_filters=False,
+        require_trade_feed=False,
+        launch_skip_creator_buy_below_sol=0.05,
+    )
+    bot._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    await new_token.handle_new_token_event(bot, event(0.000987653))
+    bot._buy_token.assert_not_awaited()
+    assert bot._entry_refusals == {"tiny_creator_buy": 1}
+    assert bot._last_event == f"tiny_creator_buy {SAMPLE_PUMP_MINT[:8]}"
+    assert bot._is_recently_seen(SAMPLE_PUMP_MINT)
+
+    # No creator buy, a missing or odd field, or a real buy: not skipped.
+    for sol in (0.0, None, "n/a", 0.05, 0.2963):
+        fresh = make_bot(
+            tmp_path,
+            enable_anti_rug_filters=False,
+            require_trade_feed=False,
+            launch_skip_creator_buy_below_sol=0.05,
+        )
+        fresh._buy_token = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        await new_token.handle_new_token_event(fresh, event(sol))
+        fresh._buy_token.assert_awaited_once()
+
+    # Off by default, and never applied to confirmed (watched) entries.
+    assert new_token.tiny_creator_buy(make_bot(tmp_path), {"solAmount": 0.001}) is None
+    confirmed = make_bot(
+        tmp_path,
+        entry_mode="confirmed",
+        enable_anti_rug_filters=False,
+        launch_skip_creator_buy_below_sol=0.05,
+    )
+    confirmed._watch_token = MagicMock()  # type: ignore[method-assign]
+    await new_token.handle_new_token_event(confirmed, event(0.001))
+    assert "tiny_creator_buy" not in confirmed._entry_refusals
