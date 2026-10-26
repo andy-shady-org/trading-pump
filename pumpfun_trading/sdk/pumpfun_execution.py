@@ -44,6 +44,7 @@ from .execution_types import (
     FEE_CONFIG_KEY,
     CurveStateUnavailableError,
     NonStandardCurveError,
+    CurveAccountMissingError,
     NotPumpFunCurveError,
 )
 from .fee_config import FeeConfig, bonding_curve_fee_bps, decode_fee_config
@@ -475,7 +476,7 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         parsed = await self._request_rpc_json(payload)
         value = (parsed.get("result") or {}).get("value")
         if not value:
-            raise NotPumpFunCurveError(
+            raise CurveAccountMissingError(
                 f"Bonding curve account {bonding_curve_pda} not found on-chain"
             )
         owner = value.get("owner")

@@ -89,5 +89,14 @@ class NotPumpFunCurveError(CurveStateUnavailableError):
     """The mint has no bonding curve owned by the Pump.fun program (BUG-108)."""
 
 
+class CurveAccountMissingError(NotPumpFunCurveError):
+    """No account at the curve address yet.
+
+    A launch's curve can take a few hundred milliseconds to show up on an RPC
+    node after the create event, so a buy waits for it before refusing the
+    mint as not Pump.fun (BUG-154).
+    """
+
+
 class CurveCompleteError(CurveStateUnavailableError):
     """The curve is complete (graduated) and takes no more buys (BUG-145)."""

@@ -8,6 +8,21 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+Fixes from the first 18 h of the rc.6 launch-mode A/B (BUG-154, BUG-155, [`BUGS.md` §27](docs/dev/BUGS.md#27-rc6-paper-run-findings-2026-10-26); branch `fix/curve-wait-and-health-label`).
+
+### Fixed
+- A buy waits for a new launch's curve account: when the read finds no account, it is repeated every 0.25 s for up to `entry_curve_wait_seconds` before the buy is refused as `curve_missing` (was: refused at once as `not_pump_fun`); a curve owned by another program is still refused at once. In paper the wait counts toward `paper_entry_delay_seconds` (BUG-154).
+- The status no longer stays "health timeout" after the stream recovers; a resume is recorded as "trading resumed: stream active" (BUG-155).
+
+### Added
+- Config key `entry_curve_wait_seconds` (default `3.0`, `0` = read once, 0–10) (BUG-154).
+- `bot_status.json` → `entry_curve_wait` (fills found on the first read / after a wait, wait p50 / p90 / max, budget) and `entry_refusals.curve_missing`; fills record `curve_wait_seconds` (BUG-154).
+- `CurveAccountMissingError` (a `NotPumpFunCurveError`) from `get_bonding_curve_state` when the curve account has no value.
+
+### Known issues
+- rc.5 had almost no such refusals and rc.6 had 63–96% every hour; the change came with rc.6's RPC setup and is not explained. `entry_curve_wait` measures how long Helius takes now; if fills often wait close to the budget, raise it.
+- Everything listed under rc.6's known issues still applies.
+
 ## [0.3.0-rc.6] - 2026-10-25
 
 Sixth release candidate of v0.3.0 (this release branch, off `main` after the rc.5 merge and the operator's cost notes): a **fix release** for the rc.5 launch-mode paper run (BUG-145 to BUG-153, [`BUGS.md` §26](docs/dev/BUGS.md#26-rc5-paper-run-findings-2026-10-25); branches `fix/runtime-rpc-outage`, `fix/paper-sell-and-retry-reason`, `docs/costs`). Both rc.5 A/B runs are void: 29% of their paper buys were filled at an invented price when the curve read failed, which made all of the reported profit, and the last hour ran with no working RPC. rc.6 makes paper buys and sells fail where live ones would, stops the RPC pool from hammering a rate-limited endpoint, and reconnects a silent stream.

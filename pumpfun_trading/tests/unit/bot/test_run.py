@@ -7960,3 +7960,31 @@ async def test_retry_entries_without_an_exit_reason_and_sold_tiers(
     assert MINT not in bot._exit_retry_queue
     assert len(sells) == 1
     await bot.close()
+
+
+@pytest.mark.regression("BUG-154")
+async def test_status_reports_how_buys_found_their_curve(tmp_path: Path) -> None:
+    from pumpfun_trading.sdk.execution import CurveAccountMissingError
+
+    bot = _paper_bot(tmp_path)
+    curves = FakeCurves(default_market_cap=30.0)
+    late = AsyncMock(
+        side_effect=[CurveAccountMissingError("not found"), curves.curve(MINT)]
+    )
+    bot.execution.get_bonding_curve_state = late  # type: ignore[method-assign]
+    with patch("pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()):
+        assert await bot._buy_token(MINT, 30.0) is True
+    curves.install(bot)
+    assert await bot._buy_token(MINT_2, 30.0) is True
+    status = bot.get_status_snapshot()["entry_curve_wait"]
+    assert status["found_first_read"] == 1 and status["found_after_wait"] == 1
+    assert status["budget_seconds"] == 3.0
+    assert status["wait_max_seconds"] is not None
+    # A launch still missing after the wait is refused and counted.
+    bot.execution.get_bonding_curve_state = AsyncMock(  # type: ignore[method-assign]
+        side_effect=CurveAccountMissingError("not found")
+    )
+    with patch("pumpfun_trading.execution.executor.asyncio.sleep", AsyncMock()):
+        assert await bot._buy_token(SAMPLE_PUMP_MINT, 30.0) is False
+    assert bot._entry_refusals["curve_missing"] == 1
+    await bot.close()
