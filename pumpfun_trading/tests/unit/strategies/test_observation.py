@@ -169,3 +169,61 @@ def test_entry_tags_are_kept_and_exported() -> None:
     assert entry.to_dict()["tags"] == {"exit_reason": "stop_loss_hit"}
     plain = book.add("N", now=1.0)
     assert plain is not None and plain.to_dict()["tags"] == {}
+
+
+# --- FEAT-73: fast phase and extension ----------------------------------------
+
+
+def test_a_young_entry_is_polled_fast_then_at_the_normal_interval() -> None:
+    book = _book(
+        ttl_seconds=1_000.0,
+        poll_interval_seconds=10.0,
+        fast_seconds=300.0,
+        fast_poll_interval_seconds=2.0,
+    )
+    assert book.shortest_interval() == 2.0
+    entry = book.add("young", now=0.0)
+    assert entry is not None
+    book.update("young", real_sol=85.0, now=0.0)
+    assert book.due(1.0) == [] and book.due(2.0) == ["young"]
+    assert book.interval_for(entry, 299.0) == 2.0
+    assert book.interval_for(entry, 300.0) == 10.0
+    book.update("young", real_sol=85.0, now=301.0)
+    assert book.due(305.0) == [] and book.due(311.0) == ["young"]
+    # No fast phase configured: one interval throughout.
+    plain = _book(poll_interval_seconds=10.0)
+    assert plain.shortest_interval() == 10.0
+
+
+def test_an_alive_entry_is_kept_past_its_ttl_until_it_fades_or_ages_out() -> None:
+    book = _book(
+        max_mints=5,
+        ttl_seconds=900.0,
+        poll_interval_seconds=5.0,
+        extend_ttl_seconds=3_600.0,
+        extend_min_real_sol=1.0,
+        extend_poll_interval_seconds=15.0,
+    )
+    assert book.extends and book.shortest_interval() == 5.0
+    for mint, real_sol in (("alive", 4.0), ("dead", 0.2), ("unpolled", None)):
+        book.add(mint, now=0.0)
+        if real_sol is not None:
+            book.update(mint, real_sol=real_sol, now=10.0)
+    assert sorted(book.expired(901.0)) == ["dead", "unpolled"]
+    alive = book.get("alive")
+    assert alive is not None and alive.extended and alive.to_dict()["extended"]
+    assert book.stats["extended"] == 1
+    book.expired(902.0)  # counted once
+    assert book.stats["extended"] == 1
+    # Polled at the slower interval while extended; fades below the floor.
+    assert book.interval_for(alive, 905.0) == 15.0
+    assert book.update("alive", real_sol=2.0, now=920.0) is None
+    assert book.update("alive", real_sol=0.5, now=935.0) == "faded"
+    # ... or ages out at the extension's end.
+    book.update("alive", real_sol=3.0, now=950.0)
+    assert book.expired(3_601.0) == ["alive", "dead", "unpolled"]
+    # A list without an extension never keeps anything past its TTL.
+    plain = _book(ttl_seconds=900.0)
+    plain.add("alive", now=0.0)
+    plain.update("alive", real_sol=50.0, now=1.0)
+    assert not plain.extends and plain.expired(901.0) == ["alive"]

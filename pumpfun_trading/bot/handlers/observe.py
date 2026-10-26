@@ -114,6 +114,16 @@ def launch_sample_list(bot: TradingBot) -> CurveObservationList | None:
             max_mints=int(bot.config.launch_sample_max_mints),
             ttl_seconds=float(bot.config.launch_sample_ttl_seconds),
             poll_interval_seconds=float(bot.config.launch_sample_poll_interval_seconds),
+            extend_ttl_seconds=float(
+                getattr(bot.config, "launch_sample_extend_seconds", 0.0) or 0.0
+            ),
+            extend_min_real_sol=float(
+                getattr(bot.config, "launch_sample_extend_min_real_sol", 0.0) or 0.0
+            ),
+            extend_poll_interval_seconds=float(
+                getattr(bot.config, "launch_sample_extend_poll_interval_seconds", 0.0)
+                or 0.0
+            ),
         )
     return book
 
@@ -149,6 +159,15 @@ def graduation_list(bot: TradingBot) -> CurveObservationList | None:
             poll_interval_seconds=float(
                 bot.config.graduation_observation_poll_interval_seconds
             ),
+            fast_seconds=float(
+                getattr(bot.config, "graduation_observation_fast_seconds", 0.0) or 0.0
+            ),
+            fast_poll_interval_seconds=float(
+                getattr(
+                    bot.config, "graduation_observation_fast_poll_interval_seconds", 0.0
+                )
+                or 0.0
+            ),
         )
     return book
 
@@ -170,7 +189,7 @@ def observations_enabled(bot: TradingBot) -> bool:
 
 def observation_interval(bot: TradingBot) -> float:
     """Loop interval: the shortest poll interval of the lists that are on (>= 1 s)."""
-    intervals = [float(b.poll_interval_seconds) for b in active_lists(bot)]
+    intervals = [b.shortest_interval() for b in active_lists(bot)]
     base = float(bot.config.observation_poll_interval_seconds)
     return max(1.0, min([base, *intervals]))
 
@@ -398,6 +417,8 @@ def end_observation(
             "first_real_sol": entry.first_real_sol,
             "last_real_sol": entry.last_real_sol,
             "peak_real_sol": round(entry.peak_real_sol, 9),
+            # Kept past the list's TTL while still alive (FEAT-73).
+            **({"extended": True} if entry.extended else {}),
         },
     )
 

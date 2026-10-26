@@ -753,3 +753,43 @@ def test_graduation_observation_defaults_reads_and_validates() -> None:
     ):
         with pytest.raises(ValueError, match=key):
             resolve_strategy_config("balanced", overrides={key: value})
+
+
+def test_graduation_fast_phase_and_launch_extension_read_and_validate() -> None:
+    # FEAT-73: fast polling after a migration is on by default (when the
+    # observation is); following sampled launches past their TTL is off.
+    base = resolve_strategy_config("balanced")
+    assert (
+        base.graduation_observation_fast_seconds,
+        base.graduation_observation_fast_poll_interval_seconds,
+    ) == (300.0, 2.0)
+    assert (
+        base.launch_sample_extend_seconds,
+        base.launch_sample_extend_min_real_sol,
+        base.launch_sample_extend_poll_interval_seconds,
+    ) == (0.0, 1.0, 15.0)
+    cfg = resolve_strategy_config(
+        "balanced",
+        overrides={
+            "graduation_observation_fast_seconds": 120,
+            "launch_sample_extend_seconds": 14_400,
+            "launch_sample_extend_min_real_sol": 2,
+            "launch_sample_extend_poll_interval_seconds": 30,
+        },
+    )
+    as_dict = cfg.to_dict()
+    assert as_dict["graduation_observation_fast_seconds"] == 120.0
+    assert as_dict["graduation_observation_fast_poll_interval_seconds"] == 2.0
+    assert as_dict["launch_sample_extend_seconds"] == 14_400.0
+    assert as_dict["launch_sample_extend_min_real_sol"] == 2.0
+    assert as_dict["launch_sample_extend_poll_interval_seconds"] == 30.0
+    for key, value in (
+        ("graduation_observation_fast_seconds", -1),
+        ("graduation_observation_fast_poll_interval_seconds", 0.5),
+        ("launch_sample_extend_seconds", -1),
+        ("launch_sample_extend_seconds", 600),  # not longer than the 900 s TTL
+        ("launch_sample_extend_min_real_sol", -1),
+        ("launch_sample_extend_poll_interval_seconds", 0.5),
+    ):
+        with pytest.raises(ValueError, match=key.split("_seconds")[0]):
+            resolve_strategy_config("balanced", overrides={key: value})
