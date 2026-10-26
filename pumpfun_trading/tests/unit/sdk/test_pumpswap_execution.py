@@ -214,3 +214,123 @@ async def test_pumpswap_sell_sends_over_rpc_or_jito(use_jito: bool) -> None:
         tip = client.build_pumpswap_sell_tx.await_args.kwargs["tip_lamports"]  # type: ignore[attr-defined]
     assert sig == ("jito-sig" if use_jito else "rpc-sig")
     assert tip == (1_000 if use_jito else None)
+
+
+# --- FEAT-73: batched pool reads for the graduation observation ---------------
+
+
+def _counting_rpc(
+    accounts: dict[str, dict[str, Any] | None],
+) -> tuple[AsyncMock, list[list[str]]]:
+    calls: list[list[str]] = []
+
+    async def answer(payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        assert payload["method"] == "getMultipleAccounts"
+        addresses = list(payload["params"][0])
+        calls.append(addresses)
+        return {"result": {"value": [accounts.get(a) for a in addresses]}}
+
+    return AsyncMock(side_effect=answer), calls
+
+
+async def test_pool_states_resolve_once_then_read_pool_and_vaults() -> None:
+    client = _client()
+    rpc, calls = _counting_rpc(_accounts())
+    with patch.object(client, "_request_rpc_json", rpc):
+        first = await client.get_pumpswap_pool_states([GRADUATED_MINT, GRADUATED_MINT])
+        second = await client.get_pumpswap_pool_states([GRADUATED_MINT])
+    expected = {
+        "pool": GRADUATED_POOL,
+        "base_reserve": BASE_RESERVE,
+        "quote_reserve": QUOTE_RESERVE,
+        "market_cap_sol": pytest.approx(
+            ps.pumpswap_market_cap_sol(BASE_RESERVE, QUOTE_RESERVE)
+        ),
+    }
+    assert first == {GRADUATED_MINT: expected} and second == first
+    # First read: the pool lookup, then pool + vaults; afterwards one call.
+    assert calls == [
+        [GRADUATED_POOL],
+        [GRADUATED_POOL, GRADUATED_BASE_VAULT_ADDRESS, GRADUATED_QUOTE_VAULT_ADDRESS],
+        [GRADUATED_POOL, GRADUATED_BASE_VAULT_ADDRESS, GRADUATED_QUOTE_VAULT_ADDRESS],
+    ]
+
+
+async def test_pool_states_name_why_a_pool_is_left_out() -> None:
+    accounts = _accounts()
+    other_pool = str(ps.canonical_pool_address(SAMPLE_PUMP_MINT))
+    accounts[other_pool] = accounts[GRADUATED_POOL]  # pairs another mint
+    client = _client()
+    rejected: dict[str, str] = {}
+    rpc, _ = _counting_rpc(accounts)
+    with patch.object(client, "_request_rpc_json", rpc):
+        states = await client.get_pumpswap_pool_states(
+            [SAMPLE_PUMP_MINT, "11111111111111111111111111111112"],
+            rejected=rejected,
+        )
+    assert states == {}
+    assert rejected == {
+        SAMPLE_PUMP_MINT: "not_sol_pair",
+        "11111111111111111111111111111112": "missing",
+    }
+
+    for change, reason in (
+        ({"owner": "x", "data": [GRADUATED_POOL_B64, "base64"]}, "not_pumpswap"),
+        ({"owner": GRADUATED_POOL_OWNER, "data": ["AAAA", "base64"]}, "decode_error"),
+    ):
+        client = _client()
+        rejected = {}
+        rpc, _ = _counting_rpc({**_accounts(), GRADUATED_POOL: change})
+        with patch.object(client, "_request_rpc_json", rpc):
+            assert (
+                await client.get_pumpswap_pool_states(
+                    [GRADUATED_MINT], rejected=rejected
+                )
+                == {}
+            )
+        assert rejected == {GRADUATED_MINT: reason}
+
+
+async def test_pool_states_after_resolution_report_vault_and_pool_trouble() -> None:
+    client = _client()
+    rpc, _ = _counting_rpc(_accounts())
+    with patch.object(client, "_request_rpc_json", rpc):
+        await client.get_pumpswap_pool_states([GRADUATED_MINT])  # cache the vaults
+    short_vault = {"owner": GRADUATED_BASE_VAULT_OWNER, "data": ["AAAA", "base64"]}
+    for change, reason in (
+        ({GRADUATED_QUOTE_VAULT_ADDRESS: None}, "missing"),
+        ({GRADUATED_BASE_VAULT_ADDRESS: short_vault}, "decode_error"),
+        ({GRADUATED_POOL: None}, "missing"),
+    ):
+        rejected: dict[str, str] = {}
+        rpc, _ = _counting_rpc({**_accounts(), **change})
+        with patch.object(client, "_request_rpc_json", rpc):
+            states = await client.get_pumpswap_pool_states(
+                [GRADUATED_MINT], rejected=rejected
+            )
+        assert states == {} and rejected == {GRADUATED_MINT: reason}
+
+
+async def test_a_drained_pool_is_read_with_a_zero_market_cap() -> None:
+    accounts = _accounts()
+    accounts[GRADUATED_BASE_VAULT_ADDRESS] = {
+        "owner": GRADUATED_BASE_VAULT_OWNER,
+        "data": [base64.b64encode(bytes(72)).decode(), "base64"],
+    }
+    client = _client()
+    with patch.object(client, "_request_rpc_json", _rpc(accounts)):
+        states = await client.get_pumpswap_pool_states([GRADUATED_MINT])
+    assert states[GRADUATED_MINT]["base_reserve"] == 0
+    assert states[GRADUATED_MINT]["market_cap_sol"] == 0.0
+
+
+async def test_pool_states_batch_33_pools_per_call() -> None:
+    client = _client()
+    mints = [f"mint{i}" for i in range(40)]
+    client._pumpswap_vaults = {m: (f"p{m}", f"b{m}", f"q{m}") for m in mints}
+    rpc, calls = _counting_rpc({})
+    rejected: dict[str, str] = {}
+    with patch.object(client, "_request_rpc_json", rpc):
+        assert await client.get_pumpswap_pool_states(mints, rejected=rejected) == {}
+    assert [len(c) for c in calls] == [99, 21]
+    assert set(rejected.values()) == {"missing"} and len(rejected) == 40

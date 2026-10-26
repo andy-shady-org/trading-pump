@@ -118,3 +118,34 @@ async def test_pool_helpers_work_on_a_bare_bot() -> None:
     assert not handlers.pool_read_due(bot, "MintA", 101.0)  # type: ignore[arg-type]
     assert handlers.pool_read_due(bot, "MintA", 102.0)  # type: ignore[arg-type]
     assert "no PumpSwap client" in logged[0]
+
+
+async def test_migration_starts_the_record_only_pool_observation(
+    tmp_path: Path,
+) -> None:
+    # FEAT-73: every migration event, and a held coin whose event was missed.
+    from unittest.mock import MagicMock
+
+    from pumpfun_trading.bot.handlers import observe
+    from pumpfun_trading.tests.support.constants import SAMPLE_PUMP_MINT
+
+    bot = make_bot(tmp_path, graduation_observation_seconds=600.0)
+    bot.replay_recorder = MagicMock()
+    await raydium.handle_ws_migration(bot, SAMPLE_PUMP_MINT)
+    book = observe.graduation_list(bot)
+    assert book is not None and SAMPLE_PUMP_MINT in book
+
+    bot._sell_token = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    make_position(bot, SAMPLE_MINT)
+    bot.active_positions = bot.position_manager.get_all_positions()
+    await raydium.exit_graduated_position(bot, SAMPLE_MINT)
+    assert SAMPLE_MINT in book
+    starts = [
+        c.args[0]
+        for c in bot.replay_recorder.record_snapshot.call_args_list
+        if c.args[0].get("event") == "observation_start"
+    ]
+    assert [(s["mint"], s["held"]) for s in starts] == [
+        (SAMPLE_PUMP_MINT, False),
+        (SAMPLE_MINT, True),
+    ]

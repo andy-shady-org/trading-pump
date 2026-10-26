@@ -1,4 +1,4 @@
-"""Record-only curve observation lists (rc.3, rc.5).
+"""Record-only curve and pool observation lists (rc.3, rc.5, FEAT-73).
 
 Experiments that need curves the watch list never sees, without changing what
 the bot buys:
@@ -17,6 +17,9 @@ the bot buys:
 * ``post_exit`` (rc.5, FEAT-72): every position the bot fully closes, polled
   for ``post_exit_observation_seconds`` after the sell, so a capture shows
   whether a coin recovered after a stop or ran on after a take-profit.
+* ``graduation`` (FEAT-73): every coin that migrates to PumpSwap, its pool
+  polled for ``graduation_observation_seconds`` from the migration event,
+  held or not, so a capture shows what coins do after the curve.
 
 Entries here are polled and written to the capture only. They are never
 promoted to a trade subscription, never evaluated by the shadow book and never
@@ -35,8 +38,15 @@ REJECT_SAMPLE_SOURCE = "reject_sample"
 DISCOVERY_SOURCE = "discovery"
 LAUNCH_SAMPLE_SOURCE = "launch_sample"
 POST_EXIT_SOURCE = "post_exit"
+GRADUATION_SOURCE = "graduation"
 RECORD_ONLY_POLL_SOURCES = frozenset(
-    {REJECT_SAMPLE_SOURCE, DISCOVERY_SOURCE, LAUNCH_SAMPLE_SOURCE, POST_EXIT_SOURCE}
+    {
+        REJECT_SAMPLE_SOURCE,
+        DISCOVERY_SOURCE,
+        LAUNCH_SAMPLE_SOURCE,
+        POST_EXIT_SOURCE,
+        GRADUATION_SOURCE,
+    }
 )
 # Salt for the launch sample, so it is drawn independently of the reject sample.
 LAUNCH_SAMPLE_SALT = "launch_sample:"
@@ -266,6 +276,7 @@ def discovery_candidates(
 
 __all__ = [
     "DISCOVERY_SOURCE",
+    "GRADUATION_SOURCE",
     "LAUNCH_SAMPLE_SALT",
     "LAUNCH_SAMPLE_SOURCE",
     "OBSERVATION_END_EVENT",

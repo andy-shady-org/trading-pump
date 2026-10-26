@@ -1,4 +1,4 @@
-"""Record-only curve observations of the trading runtime (rc.3, rc.5).
+"""Record-only curve and pool observations of the trading runtime (rc.3, rc.5, FEAT-73).
 
 Lists of curves polled for the capture only (see ``strategies/observation.py``):
 
@@ -7,7 +7,9 @@ Lists of curves polled for the capture only (see ``strategies/observation.py``):
   API scan (rc.3);
 * both entry modes (rc.5, FEAT-72): a deterministic sample of every standard
   Pump.fun launch from its create event, and every fully closed position for
-  ``post_exit_observation_seconds`` after the sell.
+  ``post_exit_observation_seconds`` after the sell;
+* both entry modes (FEAT-73): every coin that migrates to PumpSwap, its pool
+  polled for ``graduation_observation_seconds`` from the migration event.
 
 They run in their own task (started by the watch poll loop), never take a
 trade subscription and never buy, so a run with them trades exactly like one
@@ -23,9 +25,11 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from pumpfun_trading.ops.events import EventCategory, EventSeverity
+from pumpfun_trading.sdk.pumpswap import canonical_pool_address
 from pumpfun_trading.strategies.graduation import GRADUATION_REAL_SOL
 from pumpfun_trading.strategies.observation import (
     DISCOVERY_SOURCE,
+    GRADUATION_SOURCE,
     LAUNCH_SAMPLE_SOURCE,
     OBSERVATION_END_EVENT,
     OBSERVATION_START_EVENT,
@@ -50,6 +54,9 @@ DISCOVERY_API_TIMEOUT_SECONDS = 10.0
 OBSERVATION_RATE_LIMIT_BACKOFF_SECONDS = 30.0
 # A brand-new account can lag on load-balanced RPCs; don't end it this early.
 MISSING_ACCOUNT_GRACE_SECONDS = 15.0
+# The pool is created by the migration itself, but a lagging RPC node may not
+# have it yet when the event arrives: keep asking this long before giving up.
+POOL_MISSING_GRACE_SECONDS = 60.0
 # Create-event fields copied onto a launch sample's observation_start row.
 LAUNCH_EVENT_FIELDS = {
     "traderPublicKey": "creator",
@@ -127,9 +134,28 @@ def post_exit_list(bot: TradingBot) -> CurveObservationList | None:
     return book
 
 
+def graduation_list(bot: TradingBot) -> CurveObservationList | None:
+    """Graduated coins' pools (FEAT-73), or ``None`` when
+    ``graduation_observation_seconds`` is 0."""
+    seconds = float(getattr(bot.config, "graduation_observation_seconds", 0.0) or 0.0)
+    if seconds <= 0.0:
+        return None
+    book: CurveObservationList | None = getattr(bot, "_graduation_list", None)
+    if book is None:
+        book = bot._graduation_list = CurveObservationList(
+            source=GRADUATION_SOURCE,
+            max_mints=int(bot.config.graduation_observation_max_mints),
+            ttl_seconds=seconds,
+            poll_interval_seconds=float(
+                bot.config.graduation_observation_poll_interval_seconds
+            ),
+        )
+    return book
+
+
 def active_lists(bot: TradingBot) -> list[CurveObservationList]:
     """The lists that run in this entry mode (the rc.3 ones need the watch list)."""
-    books = [launch_sample_list(bot), post_exit_list(bot)]
+    books = [launch_sample_list(bot), post_exit_list(bot), graduation_list(bot)]
     if bot._entry_mode() == "confirmed":
         books = [reject_sample_list(bot), discovery_list(bot), *books]
     return [b for b in books if b is not None]
@@ -157,6 +183,7 @@ def observation_status(bot: TradingBot) -> dict[str, Any]:
         ("discovery", getattr(bot, "_discovery_list", None)),
         ("launch_sample", getattr(bot, "_launch_sample_list", None)),
         ("post_exit", getattr(bot, "_post_exit_list", None)),
+        ("graduation", getattr(bot, "_graduation_list", None)),
     ):
         if isinstance(book, CurveObservationList):
             status[key] = book.snapshot()
@@ -319,6 +346,39 @@ def _start_post_exit(
     return True
 
 
+def start_graduation(bot: TradingBot, mint: str, *, now: float | None = None) -> bool:
+    """Follow a coin's PumpSwap pool from its migration (FEAT-73); never raises."""
+    return _guarded(
+        bot, "Graduation observation", lambda: _start_graduation(bot, mint, now=now)
+    )
+
+
+def _start_graduation(bot: TradingBot, mint: str, *, now: float | None) -> bool:
+    if bot.replay_recorder is None:
+        return False
+    book = graduation_list(bot)
+    if book is None:
+        return False
+    pool = str(canonical_pool_address(mint))
+    now = time.time() if now is None else float(now)
+    if book.add(mint, now=now) is None:
+        return False
+    _record(
+        bot,
+        {
+            "timestamp": now,
+            "mint": mint,
+            "event": OBSERVATION_START_EVENT,
+            "source": GRADUATION_SOURCE,
+            "migrated_at": now,
+            "pool": pool,
+            "held": mint in bot.active_positions,
+        },
+    )
+    bot._count_watch("graduation_observed")
+    return True
+
+
 def end_observation(
     bot: TradingBot, book: CurveObservationList, mint: str, cause: str, now: float
 ) -> None:
@@ -397,14 +457,17 @@ async def poll_observations(bot: TradingBot) -> None:
     discovery = discovery_list(bot) if bot._entry_mode() == "confirmed" else None
     if discovery is not None:
         await scan_discovery(bot, discovery, now)
-    # A mint in several lists is read once and recorded once per list.
-    due: dict[str, list[CurveObservationList]] = {}
+    # A mint in several lists is read once and recorded once per list; curves
+    # and graduated pools are read in separate batches.
+    curve_due: dict[str, list[CurveObservationList]] = {}
+    pool_due: dict[str, list[CurveObservationList]] = {}
     for book in books:
         for mint in book.expired(now):
             end_observation(bot, book, mint, "ttl", now)
+        due = pool_due if book.source == GRADUATION_SOURCE else curve_due
         for mint in book.due(now):
             due.setdefault(mint, []).append(book)
-    if not due:
+    if not curve_due and not pool_due:
         return
     pool = getattr(bot, "rpc_pool", None)
     if (
@@ -414,6 +477,26 @@ async def poll_observations(bot: TradingBot) -> None:
         # Trading reads first: skip this record-only poll (BUG-151).
         bot._count_watch("observation_polls_deferred")
         return
+    if curve_due:
+        await _poll_curves(bot, curve_due, now)
+    if pool_due:
+        await _poll_pools(bot, pool_due, now)
+
+
+def _poll_failed(bot: TradingBot, mints: int, exc: Exception) -> None:
+    bot._count_watch("observation_poll_errors")
+    if getattr(bot, "event_logger", None) is not None:
+        bot.event_logger.emit(
+            category=EventCategory.STRATEGY,
+            severity=EventSeverity.DEBUG,
+            event_name="observation_poll_failed",
+            data={"mints": mints, "error": str(exc)[:200]},
+        )
+
+
+async def _poll_curves(
+    bot: TradingBot, due: dict[str, list[CurveObservationList]], now: float
+) -> None:
     rejected: dict[str, str] = {}
     try:
         states = await asyncio.wait_for(
@@ -421,14 +504,7 @@ async def poll_observations(bot: TradingBot) -> None:
             timeout=OBSERVATION_RPC_TIMEOUT_SECONDS,
         )
     except Exception as exc:
-        bot._count_watch("observation_poll_errors")
-        if getattr(bot, "event_logger", None) is not None:
-            bot.event_logger.emit(
-                category=EventCategory.STRATEGY,
-                severity=EventSeverity.DEBUG,
-                event_name="observation_poll_failed",
-                data={"mints": len(due), "error": str(exc)[:200]},
-            )
+        _poll_failed(bot, len(due), exc)
         return
     skip_mayhem = bool(getattr(bot.config, "skip_mayhem_mode", True))
     for mint, state in states.items():
@@ -444,6 +520,63 @@ async def poll_observations(bot: TradingBot) -> None:
             ):
                 continue
             end_observation(bot, rejected_book, mint, reason, now)
+
+
+async def _poll_pools(
+    bot: TradingBot, due: dict[str, list[CurveObservationList]], now: float
+) -> None:
+    """One batched read of the graduated coins' PumpSwap pools (FEAT-73)."""
+    rejected: dict[str, str] = {}
+    try:
+        states = await asyncio.wait_for(
+            bot.execution.get_pumpswap_pool_states(list(due), rejected=rejected),
+            timeout=OBSERVATION_RPC_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        _poll_failed(bot, len(due), exc)
+        return
+    for mint, state in states.items():
+        for book in due.get(mint, ()):
+            _record_pool(bot, book, mint, state, now)
+    for mint, reason in rejected.items():
+        for book in due.get(mint, ()):
+            entry = book.get(mint)
+            if (
+                reason == "missing"
+                and entry is not None
+                and now - entry.added_at < POOL_MISSING_GRACE_SECONDS
+            ):
+                continue
+            end_observation(bot, book, mint, reason, now)
+
+
+def _record_pool(
+    bot: TradingBot,
+    book: CurveObservationList,
+    mint: str,
+    state: dict[str, Any],
+    now: float,
+) -> None:
+    """One ``curve_poll`` row for a polled pool. A drained pool is written too
+    (market cap 0): a rug is the result, not a gap."""
+    market_cap = float(state.get("market_cap_sol", 0.0) or 0.0)
+    pool_sol = int(state.get("quote_reserve", 0) or 0) / 1e9
+    pool_tokens = int(state.get("base_reserve", 0) or 0) / 1e6
+    if getattr(bot.config, "capture_curve_polls", True):
+        _record(
+            bot,
+            {
+                "timestamp": now,
+                "mint": mint,
+                "event": "curve_poll",
+                "source": book.source,
+                "price": market_cap / 1_000_000_000.0,
+                "market_cap_sol": round(market_cap, 6),
+                "pool_sol": round(pool_sol, 9),
+                "pool_tokens": round(pool_tokens, 6),
+            },
+        )
+    book.update(mint, real_sol=pool_sol, now=now)
 
 
 def _record_polled(
@@ -505,6 +638,7 @@ __all__ = [
     "active_lists",
     "discovery_list",
     "end_observation",
+    "graduation_list",
     "launch_sample_list",
     "maybe_sample_launch",
     "maybe_sample_rejected",
@@ -516,5 +650,6 @@ __all__ = [
     "reject_sample_list",
     "run_observation_loop",
     "scan_discovery",
+    "start_graduation",
     "start_post_exit",
 ]

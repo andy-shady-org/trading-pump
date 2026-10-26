@@ -1459,7 +1459,9 @@ def test_shadow_entry_rows_are_never_market_data() -> None:
     assert with_shadow["trades"] == plain["trades"]
 
 
-@pytest.mark.parametrize("source", ["reject_sample", "discovery"])
+@pytest.mark.parametrize(
+    "source", ["reject_sample", "discovery", "launch_sample", "post_exit", "graduation"]
+)
 def test_record_only_observation_polls_are_never_market_data(source: str) -> None:
     """rc.3 observation rows are analysis data: a poll of the mint right after
     the fill is due must not price the fill (the bot never reads it)."""

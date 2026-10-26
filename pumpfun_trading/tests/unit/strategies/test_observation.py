@@ -12,6 +12,7 @@ from pumpfun_trading.strategies.observation import (
     POST_EXIT_SOURCE,
     REJECT_SAMPLE_SOURCE,
     SOL_QUOTE_MINT,
+    GRADUATION_SOURCE,
     CurveObservationList,
     discovery_candidates,
     in_launch_sample,
@@ -37,6 +38,7 @@ def test_record_only_rows_are_observation_events_and_their_polls() -> None:
     assert is_record_only_row({"event": OBSERVATION_END_EVENT})
     assert is_record_only_row({"event": "curve_poll", "source": REJECT_SAMPLE_SOURCE})
     assert is_record_only_row({"event": "curve_poll", "source": DISCOVERY_SOURCE})
+    assert is_record_only_row({"event": "curve_poll", "source": GRADUATION_SOURCE})
     assert not is_record_only_row({"event": "curve_poll", "source": "watch"})
     assert not is_record_only_row({"event": "curve_poll"})
     assert not is_record_only_row({"mint": "M", "signal": "buy"})

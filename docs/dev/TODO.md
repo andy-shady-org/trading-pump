@@ -120,6 +120,12 @@ Done: the record-only launch sample and post-exit tracking ([`DONE.md`](DONE.md#
 - [ ] Launch-sample read-out: share of all launches that reach 1.1 / 1.3 / 1.5× and when, by creator buy size, by screen verdict and by UTC hour; what a buy at launch earns after costs with the A / B exits; record it in `STRATEGY-PIVOT.md` §6
 - [ ] Trade data for sampled launches (buyer wallets, sizes, timing) only if the curve read-out shows a rule worth testing that needs it (a PumpPortal trade subscription per sampled mint)
 
+### Graduation Tracking (FEAT-73)
+Built: every migrated coin's PumpSwap pool followed for 4 h, record-only ([`DONE.md`](DONE.md#graduation-tracking-feat-73), [`FEATURES.md` §43](../FEATURES.md#43-graduation-tracking-feat-73)). Why: the operator sees many coins that graduate, crash and then run on PumpSwap, which the bot cannot trade; a 92-coin sample from public candles found no recovery after a crash, but too few coins and too coarse to settle it.
+- [ ] Run it for 24 h in one bot (`graduation_observation_seconds: 14400` at a 10 s interval, as in `configs/capture.json`); check `watch_list.graduation` stays below its cap and the Helius credit use matches [`COSTS.md` §3.1](COSTS.md#31-helius-rpc-credits)
+- [ ] Read-out: per graduate the path over 4 h relative to the graduation price (410.88 SOL), split into coins complete at creation, curve filled within 5 minutes and slower; how often a crash below 0.5× comes back above 1× / 2×; and whether any entry rule (after the first crash, after a new high, by pool SOL) beats PumpSwap costs in both halves of the run and the next. Record it in `STRATEGY-PIVOT.md` §6
+- [ ] PumpSwap buys only if that read-out finds such a rule (the sell path and pool reads exist since BUG-123)
+
 ## Phase 5: Platform Refactor (required before the Web UI)
 
 **Scheduling around income:** Sprints that change runtime behaviour start only after live capital Stage 1 has passed (see the Phase 4b rules); behaviour-neutral extractions (golden replay unchanged) may ship earlier, as 28a and 28b did.

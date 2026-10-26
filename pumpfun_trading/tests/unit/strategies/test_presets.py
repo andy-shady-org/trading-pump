@@ -725,3 +725,31 @@ def test_entry_curve_wait_defaults_reads_and_validates() -> None:
     assert cfg.entry_curve_wait_seconds == 3.5
     with pytest.raises(ValueError, match="entry_curve_wait_seconds"):
         resolve_strategy_config("balanced", overrides={"entry_curve_wait_seconds": 11})
+
+
+def test_graduation_observation_defaults_reads_and_validates() -> None:
+    # FEAT-73: off by default; bounded like the other record-only lists.
+    base = resolve_strategy_config("balanced")
+    assert (
+        base.graduation_observation_seconds,
+        base.graduation_observation_max_mints,
+        base.graduation_observation_poll_interval_seconds,
+    ) == (0.0, 300, 5.0)
+    cfg = resolve_strategy_config(
+        "balanced",
+        overrides={
+            "graduation_observation_seconds": 14_400,
+            "graduation_observation_max_mints": 250,
+            "graduation_observation_poll_interval_seconds": 2,
+        },
+    )
+    assert cfg.to_dict()["graduation_observation_seconds"] == 14_400.0
+    assert cfg.graduation_observation_max_mints == 250
+    assert cfg.graduation_observation_poll_interval_seconds == 2.0
+    for key, value in (
+        ("graduation_observation_seconds", -1),
+        ("graduation_observation_max_mints", -1),
+        ("graduation_observation_poll_interval_seconds", 0.5),
+    ):
+        with pytest.raises(ValueError, match=key):
+            resolve_strategy_config("balanced", overrides={key: value})

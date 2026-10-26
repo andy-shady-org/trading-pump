@@ -13,6 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
+from pumpfun_trading.bot.handlers import observe
 from pumpfun_trading.bot.strategy import ArbitrageOpportunity, RaydiumPoolKeys
 from pumpfun_trading.ops.events import EventCategory
 from pumpfun_trading.sdk.costs import (
@@ -343,6 +344,8 @@ async def exit_graduated_position(bot: TradingBot, mint: str) -> bool:
         return False
     if mint not in bot._migrating_mints:
         bot._migrating_mints.add(mint)
+        # A held coin whose migration event was missed is followed too (FEAT-73).
+        observe.start_graduation(bot, mint)
         bot._exit_retry_queue.pop(mint, None)
         bot._market_regime().record_graduation(mint)
         bot.graduation_engine.record_graduation(
@@ -357,7 +360,8 @@ async def exit_graduated_position(bot: TradingBot, mint: str) -> bool:
 
 
 async def handle_ws_migration(bot: TradingBot, mint: str) -> None:
-    """PumpPortal migration event: count it, drop a watched mint, exit a held one."""
+    """PumpPortal migration event: count it, follow its pool (record-only),
+    drop a watched mint, exit a held one."""
     if bot._market_regime().record_graduation(mint) and (
         bot.replay_recorder is not None
     ):
@@ -365,6 +369,7 @@ async def handle_ws_migration(bot: TradingBot, mint: str) -> None:
         bot.replay_recorder.record_snapshot(
             {"timestamp": time.time(), "mint": mint, "event": "migration"}
         )
+    observe.start_graduation(bot, mint)
     if bot._stop_requested:
         return
     engine = bot.order_flow_engine
