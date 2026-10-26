@@ -1055,3 +1055,92 @@ def test_record_cli_bar_since_needs_binance_and_a_date(
     with pytest.raises(SystemExit):
         build_record_parser().parse_args(["--bar-since", "01/01/2024"])
     assert record_cli.utc_date("2024-01-01") == 1_704_067_200.0
+
+
+def test_record_cli_market_writes_its_own_file_and_resumes_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    # FEAT-74: its own directory, its own rotation, a state file by default.
+    _SlowLaneHttp.instances.clear()
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    monkeypatch.chdir(tmp_path)
+    seen: dict[str, Any] = {}
+
+    async def fake_run(self: Any, *, stop: Any, duration_seconds: Any) -> Any:
+        seen.update(
+            chains=self.config.chains,
+            sample=self.config.sample,
+            lists=self.config.lists,
+            max_followed=self.config.max_followed,
+            state=self.state_path,
+            duration=duration_seconds,
+            policy=self.sink.policy,
+        )
+        self.sink.record_snapshot({"event": "market_stats", "venue": "market"})
+        self.stats.new_pools = 4
+        self.stats.ended = {"dead": 1}
+        return self.stats
+
+    monkeypatch.setattr(record_cli.market_recorder.MarketRecorder, "run", fake_run)
+    args = build_record_parser().parse_args(
+        [
+            "--market",
+            "--market-chains",
+            "solana,base",
+            "--market-sample",
+            "solana:pump-fun=0.05",
+            "--market-max-followed",
+            "500",
+            "--market-no-lists",
+            "--duration",
+            "5",
+            "--flush-interval",
+            "0.01",
+        ]
+    )
+    run_record_cli(args)
+
+    assert seen["chains"] == ("solana", "base")
+    assert seen["sample"] == {"solana:pump-fun": 0.05}
+    assert (seen["lists"], seen["max_followed"], seen["duration"]) == (False, 500, 5.0)
+    assert seen["state"] == Path(record_cli.DEFAULT_MARKET_STATE)
+    assert seen["policy"].max_age_days == 0 and seen["policy"].max_files == 300
+    path = tmp_path / record_cli.DEFAULT_MARKET_OUTPUT
+    assert [json.loads(line)["venue"] for line in path.read_text().splitlines()] == [
+        "market"
+    ]
+    assert not (tmp_path / "market_replay.jsonl").exists()
+    assert _SlowLaneHttp.instances[0].closed
+    text = output.export_text()
+    assert "Market Recorder (FEAT-74, record-only)" in text
+    assert "Chains: solana, base" in text and "Lists: off" in text
+    assert "Market Recorder Summary" in text and "dead 1" in text
+
+
+def test_record_cli_market_refuses_an_unknown_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+    args = build_record_parser().parse_args(
+        ["--market", "--market-chains", "tron", "-o", str(tmp_path / "m.jsonl")]
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_record_cli(args)
+    assert exc.value.code == 2
+    assert "unknown chain" in output.export_text()
+
+
+def test_record_cli_market_without_state_stops_on_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
+) -> None:
+    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
+
+    async def interrupted(*_: Any, **__: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(record_cli.market_recorder.MarketRecorder, "run", interrupted)
+    args = build_record_parser().parse_args(
+        ["--market", "--market-state", "", "-o", str(tmp_path / "m.jsonl")]
+    )
+    run_record_cli(args)
+    assert "(no state file)" in output.export_text()

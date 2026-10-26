@@ -370,6 +370,30 @@ Record-only data for the slow lane ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FE
    Many `status: 429` rows mean the keyless limit changed: raise `--request-gap` or `--quote-interval`. Edit the token list only between runs, and keep the edited file with the data.
 4. Reading the data (BUG-139). The sell leg is quoted a pacing gap after the buy leg, so each `round_trip_cost_bps` also holds the price move in between; sell rows carry `buy_gap_seconds` and `buy_gap_slots`. Judge costs on the distribution, `pumpfun_trading.services.slow_lane.round_trip_cost_summary(rows)` (median and quartiles per token and size), never on one row. Bars are USD (`currency: "usd"`): GeckoTerminal's from each token's top pool as chosen when the backfill ran, Binance's from the `<SYMBOL>USDT` pair (`quote_asset: "USDT"`, closed bars only); `bars_in_sol(rows)` re-prices them against SOL's own bar from the same venue, the baseline a SOL wallet has to beat.
 
+### 6.5 Cross-chain market recorder (FEAT-74, from rc.8)
+
+Record-only data on the coins the Pump.fun lanes never see: other Solana launchpads (Meteora, Raydium LaunchLab, PumpSwap pools), Base and BSC, and old coins when they start trending ([`FEATURES.md` §44](../FEATURES.md#44-cross-chain-market-recorder-feat-74)). It is a separate process with no wallet and no RPC: GeckoTerminal and DexScreener, keyless and paced, so it costs no Helius credits and cannot change the paper runs.
+
+1. Start it next to the bots, in its own window, and leave it running:
+   ```bash
+   cd runtime && mkdir -p market
+   .venv/bin/pumpfun-recorder --market -o market/market.jsonl     # Ctrl-C / SIGTERM stops it cleanly
+   ```
+   Defaults: Solana, Base and BSC (`--market-chains solana,base,bsc,eth` adds Ethereum); every new pool followed except Pump.fun curves, of which 10% are (`--market-sample solana:pump-fun=0.1`); trending (5 min, 1 h) and top 24 h volume lists every 5 minutes (`--market-no-lists` turns them off). The follow list is saved to `market/state.json` every minute, so a restart resumes it; the first minutes after a start fill the lists at GeckoTerminal's pace (about one chain a minute).
+2. Health checks: a `market_stats` row every 10 minutes.
+   ```bash
+   jq -c 'select(.event=="market_stats") | {following, by_chain, snapshots, errors, rate_limited, discovery_gaps, token_matched}' market/market.jsonl | tail -n 3
+   ```
+   `rate_limited` climbing means a free limit changed: stop it and raise the gaps in `services/market_recorder.py`. `discovery_gaps` counts discovery passes where every page was new (Solana launches outran four pages a minute); a few a day are fine. `following` should settle in the thousands, below the 20,000 cap (`--market-max-followed`).
+3. Disk: about 600 bytes a row, roughly 1 GB a day before compression; parts rotate at 100 MB and are gzipped, and all 300 are kept (no age limit). Move old parts into `archive/` with the paper runs they belong to.
+4. Reading the data:
+   ```bash
+   jq -c 'select(.event=="market_pool" and .followed) | {chain, source, dex, pool, created_at, liquidity_usd}' market/market.jsonl   # what was picked, and why
+   jq -c 'select(.event=="market_snapshot") | {timestamp, chain, pool, age_seconds, price_usd, liquidity_usd, txns}' market/market.jsonl
+   jq -c 'select(.event=="market_end") | {chain, pool, source, cause, followed_seconds}' market/market.jsonl
+   ```
+   A rule counts only on what it could have seen when it fired: join snapshots to `market_pool` rows by `chain` + `pool`, enter at the first snapshot that meets the rule, use the later snapshots for the outcome, and include the pools that ended `dead`. Rows with `matched: "token"` price the coin's most liquid pair (`pair_address`), not the pool GeckoTerminal listed.
+
 ## 7. Incident drills
 
 Run these in paper mode before Stage 1 and after any release that touches lifecycle, persistence or execution.
@@ -457,6 +481,7 @@ Hardening checklist:
 | Replay a capture | `pumpfun-replay --path data/replay_capture.jsonl` |
 | Record market data | `pumpfun-recorder --help` |
 | Slow-lane quotes / bars (FEAT-65) | `pumpfun-recorder --jupiter-quotes`, `pumpfun-recorder --backfill-bars` (§6.4) |
+| Cross-chain market data (FEAT-74) | `pumpfun-recorder --market` (§6.5) |
 
 Full flag reference: [`../CLI-COMMANDS.md`](../CLI-COMMANDS.md).
 

@@ -25,7 +25,7 @@ from pumpfun_trading.engines.generators import (
 from pumpfun_trading.ops.logging import get_configured_console
 from pumpfun_trading.ops.redact import redact_url
 from pumpfun_trading.ops.retention import RetentionPolicy
-from pumpfun_trading.services import slow_lane
+from pumpfun_trading.services import market_recorder, slow_lane
 from pumpfun_trading.streams.geyser import (
     BondingCurveStateUpdate,
     CompleteEventUpdate,
@@ -46,6 +46,14 @@ BACKFILL_RETENTION = RetentionPolicy(
 )
 # Binance bars get their own file, so the two venues' rows never mix.
 DEFAULT_BINANCE_BARS_OUTPUT = "slow_lane/binance_bars.jsonl"
+# FEAT-74 market rows live in their own directory too.
+DEFAULT_MARKET_OUTPUT = "market/market.jsonl"
+DEFAULT_MARKET_STATE = "market/state.json"
+# About 1 GB of rows a day before compression: 100 MB parts, kept until the
+# operator archives them (no age limit; 300 parts).
+MARKET_RETENTION = RetentionPolicy(
+    max_bytes=100 * 1024 * 1024, max_files=300, max_age_days=0, compress_archives=True
+)
 BAR_SOURCE_LABELS = {
     slow_lane.BAR_VENUE: "GeckoTerminal",
     slow_lane.BINANCE_VENUE: "Binance",
@@ -86,7 +94,8 @@ def build_record_parser(
             "Destination path for the .jsonl dataset (default: market_replay.jsonl; "
             f"{DEFAULT_QUOTES_OUTPUT} with --jupiter-quotes; "
             f"{DEFAULT_BARS_OUTPUT} with --backfill-bars; "
-            f"{DEFAULT_BINANCE_BARS_OUTPUT} with --bar-source binance)"
+            f"{DEFAULT_BINANCE_BARS_OUTPUT} with --bar-source binance; "
+            f"{DEFAULT_MARKET_OUTPUT} with --market)"
         ),
     )
     parser.add_argument(
@@ -237,6 +246,51 @@ def build_record_parser(
         metavar="YYYY-MM-DD",
         help="Binance only: first bar date, UTC (default: each pair's listing)",
     )
+    market = parser.add_argument_group(
+        "FEAT-74 cross-chain market data (record-only, runs next to pumpbot, "
+        "never inside it; free public APIs, no RPC credits)"
+    )
+    market.add_argument(
+        "--market",
+        action="store_true",
+        help="Record new pools and momentum lists on several chains and follow "
+        "each pool for up to 7 days (GeckoTerminal + DexScreener)",
+    )
+    market.add_argument(
+        "--market-chains",
+        type=str,
+        default=",".join(market_recorder.DEFAULT_CHAINS),
+        help=f"Comma-separated chains: {', '.join(market_recorder.CHAINS)} "
+        "(default: %(default)s)",
+    )
+    market.add_argument(
+        "--market-sample",
+        type=str,
+        default=None,
+        metavar="CHAIN:DEX=SHARE,...",
+        help="Share of new pools followed per GeckoTerminal dex id; others are "
+        "all followed (default: "
+        + ",".join(f"{k}={v:g}" for k, v in market_recorder.DEFAULT_SAMPLE.items())
+        + ")",
+    )
+    market.add_argument(
+        "--market-state",
+        type=str,
+        default=DEFAULT_MARKET_STATE,
+        help="Follow-list file, so a restart resumes it (default: %(default)s; "
+        "'' = none)",
+    )
+    market.add_argument(
+        "--market-max-followed",
+        type=int,
+        default=market_recorder.DEFAULT_MAX_FOLLOWED,
+        help="Most pools followed at once (default: %(default)s)",
+    )
+    market.add_argument(
+        "--market-no-lists",
+        action="store_true",
+        help="New pools only: skip the trending / top-volume lists",
+    )
     return parser
 
 
@@ -347,6 +401,75 @@ async def run_jupiter_quotes(args: argparse.Namespace, output_path: Path) -> Non
             ("Rate limited", str(stats.rate_limited)),
             ("Price rows", str(stats.price_rows)),
             ("Fee samples", str(stats.fee_samples)),
+            ("Rows written", str(recorder.records_written)),
+            ("Output File", str(output_path.resolve())),
+        ],
+    )
+
+
+async def run_market(args: argparse.Namespace, output_path: Path) -> None:
+    """FEAT-74: record pools on several chains until the duration, a signal or Ctrl-C."""
+    try:
+        config = market_recorder.MarketRecorderConfig(
+            chains=market_recorder.parse_chains(getattr(args, "market_chains", None)),
+            sample=market_recorder.parse_sample(getattr(args, "market_sample", None)),
+            max_followed=int(
+                getattr(args, "market_max_followed", None)
+                or market_recorder.DEFAULT_MAX_FOLLOWED
+            ),
+            lists=not getattr(args, "market_no_lists", False),
+        )
+    except ValueError as exc:
+        console.print(f"[bold red]--market: {exc}[/bold red]")
+        raise SystemExit(2) from exc
+    state = getattr(args, "market_state", DEFAULT_MARKET_STATE) or None
+    http = slow_lane.AiohttpJson()
+    recorder = ReplayRecorder(
+        output_path=output_path,
+        batch_size=args.batch_size,
+        flush_interval_seconds=args.flush_interval,
+        policy=MARKET_RETENTION,
+    )
+    market = market_recorder.MarketRecorder(http, recorder, config, state_path=state)
+    resumed = market.load_state()
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+    console.print(
+        Panel(
+            "[bold cyan]Market Recorder (FEAT-74, record-only)[/bold cyan]\n"
+            f"Chains: [yellow]{', '.join(config.chains)}[/yellow] | "
+            f"Lists: [green]{'on' if config.lists else 'off'}[/green] | "
+            "Sampled: [yellow]"
+            + (", ".join(f"{k}={v:g}" for k, v in config.sample.items()) or "none")
+            + "[/yellow]\n"
+            f"Resumed: [yellow]{resumed}[/yellow] pools from "
+            f"[magenta]{state or '(no state file)'}[/magenta]\n"
+            f"Output: [magenta]{output_path}[/magenta]",
+            title="Market data",
+        )
+    )
+    await recorder.start()
+    try:
+        stats = await market.run(stop=stop, duration_seconds=args.duration)
+    finally:
+        await recorder.close()
+        await http.close()
+    _summary(
+        "Market Recorder Summary",
+        [
+            ("New pools seen", str(stats.new_pools)),
+            ("Pools followed", str(stats.followed)),
+            ("Still following", str(len(market.followed))),
+            ("Snapshots written", str(stats.snapshots)),
+            ("Unchanged (skipped)", str(stats.snapshots_unchanged)),
+            ("Ended", ", ".join(f"{k} {v}" for k, v in stats.ended.items()) or "0"),
+            ("Discovery gaps", str(stats.discovery_gaps)),
+            ("Errors (429s)", f"{stats.errors} ({stats.rate_limited})"),
             ("Rows written", str(recorder.records_written)),
             ("Output File", str(output_path.resolve())),
         ],
@@ -474,6 +597,13 @@ async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None
 def run_record_cli(args: argparse.Namespace) -> None:
     """Execute the record CLI handler."""
     output = getattr(args, "output", None)
+    if getattr(args, "market", False):
+        try:
+            asyncio.run(run_market(args, Path(output or DEFAULT_MARKET_OUTPUT)))
+        except (KeyboardInterrupt, SystemExit) as exc:
+            if isinstance(exc, SystemExit) and exc.code not in (None, 0):
+                raise
+        return
     if getattr(args, "jupiter_quotes", False):
         path = Path(output or DEFAULT_QUOTES_OUTPUT)
         try:

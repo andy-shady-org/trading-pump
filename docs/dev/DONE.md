@@ -858,6 +858,12 @@ Open items and the sprint table are in [`TODO.md`](TODO.md#phase-4c-strategy-piv
 - [x] Launch sample followed to graduation: `launch_sample_extend_seconds` keeps a sampled launch with at least `launch_sample_extend_min_real_sol` (1.0) past its TTL, polled every 15 s, until it completes, fades (`faded`) or ages out; `observation_end` carries `extended: true` *(tests: `unit/strategies/test_observation.py`, `unit/bot/handlers/test_observe.py`, `unit/strategies/test_presets.py`)*
 - [x] Replay and the shadow scan skip the new rows like every record-only source *(tests: `unit/engines/test_replay.py`, `unit/strategies/test_observation.py`)*
 
+### Cross-Chain Market Recorder (FEAT-74)
+- [x] `pumpfun-recorder --market`: new pools (paged until a known one) and trending / top-volume lists from GeckoTerminal on Solana, Base and BSC; every new pool followed except a 10% sample of Pump.fun curves; list entries followed however old *(tests: `unit/services/test_market_recorder.py`)*
+- [x] Following on DexScreener, 30 pools per call, on an age-based cadence (30 s / 2 min / 10 min, up to 7 days), unchanged snapshots skipped up to a 30-minute heartbeat; ends `dead`, `missing` (with a 10-minute grace for pools not indexed yet) or `max_age`; pools missed by the pair lookup found by their token (four.meme `:4meme` ids, unindexed BSC pools) *(tests: `unit/services/test_market_recorder.py`)*
+- [x] Follow list saved to and resumed from `market/state.json`; own output directory and rotation (100 MB parts, 300 kept, no age limit); CLI options and summary *(tests: `unit/services/test_market_recorder.py`, `unit/cli/test_record.py`)*
+- [x] Live check, 2026-10-26: two runs of 2–2.5 minutes against the real APIs from the operator's machine (no rate limits, no errors; 3 of 79 tried BSC pools still missing after the token lookup)
+
 ## Phase 5: Platform Refactor (required before the Web UI)
 
 Open sprints (28c–31) and the findings table are in [`TODO.md`](TODO.md#phase-5-platform-refactor-required-before-the-web-ui).
