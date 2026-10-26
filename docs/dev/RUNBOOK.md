@@ -172,6 +172,7 @@ Every price, paper fill and sell goes through the RPC pool. In the rc.5 launch-m
 
 - **The breaker stops traffic.** An endpoint that rate limits (HTTP 429) or fails three times in a row gets no requests for 1 s, then 2, 4 … up to `rpc_pool_circuit_breaker_cooldown_seconds` (60 s) while it keeps failing, with one probe request when each wait ends. Requests made meanwhile fail at once without being sent (`RpcPoolUnavailableError`, counted as `rejected_requests`).
 - **No buys** while every endpoint is open (`last_event` "buy blocked: no healthy RPC endpoint", `entry_refusals.rpc_unavailable`). Exits keep trying.
+- **New curves get time to appear.** A launch's curve account reaches the RPC a few hundred milliseconds after the create event; a buy re-reads it every 0.25 s for up to `entry_curve_wait_seconds` (3 s) before refusing it (`curve_missing`). `entry_curve_wait` in the status shows how long fills waited; raise the setting if `curve_missing` is more than a few percent of buy attempts (BUG-154).
 - **No invented paper fills.** A paper buy whose curve read fails is refused (`curve_unreadable`), as a live buy would be; so is a paper sell, which goes to the exit retry queue and is retried as the same exit (BUG-152, BUG-153). A coin whose create event already shows a full curve (410.88 SOL market cap) is never bought (`complete_at_create`), and a complete curve at the fill is refused (`curve_complete`).
 - **Graduated positions** are priced from their PumpSwap pool only. While the pool can't be read the position is marked `price_stale` (dashboard `… SOL (stale)`), the read is retried after 2 s doubling to 60 s, and `bot.log` gets a warning naming the cause (`PumpSwap pool for … unreadable (n tries): …`).
 - **Record-only polls** (launch sample, post-exit, reject sample, discovery) wait while no endpoint is open or for 30 s after any rate limit (`watch_list.stats.observation_polls_deferred`).
@@ -186,6 +187,8 @@ jq '.rpc_pool_telemetry | {healthy_endpoints, rejected_requests, requests_by_met
     open_streak, last_success_time, last_rate_limited_time}]}' data/bot_status.json
 # Entries refused, by cause
 jq '.entry_refusals' data/bot_status.json
+# How filled buys found their curve; curve_missing above counts launches still missing (BUG-154)
+jq '.entry_curve_wait' data/bot_status.json
 grep -E "unreadable|rate limited|One RPC endpoint|connection is stale" data/bot.log | tail
 ```
 
