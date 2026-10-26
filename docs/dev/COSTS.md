@@ -2,7 +2,7 @@
 
 What building and running `pumpfun-trading` has cost so far, and what each running bot costs to keep going. Record every new payment here as it happens, in the currency it was paid in. Amounts are not converted: the project pays in USD, EUR, GBP and SOL, and an exchange rate picked later would make the totals look more exact than they are.
 
-Last updated: 2026-10-25.
+Last updated: 2026-10-26.
 
 ---
 
@@ -37,6 +37,9 @@ Last updated: 2026-10-25.
 | Date | Payee | Amount | Note |
 | :--- | :--- | ---: | :--- |
 | – | [PumpPortal](https://pumpportal.fun/) API key, wallet `C2CU8UW9mvbTY4D3uBvbPfTnpRfP2SFFc4idVWkCoBcA` | 0.03 SOL | Funds the key's trade-data metering (§3.2). Operator's rate at payment: 0.01 SOL = $1.00. |
+| 2026-10-26 15:49 UTC | PumpPortal key wallet (top-up) | 0.02 SOL | After the rc.7 runs lost their trade feed (§3.2). |
+| 2026-10-26 16:05 UTC | PumpPortal key wallet (top-up) | 0.01 SOL | |
+| 2026-10-26 16:07 UTC | PumpPortal key wallet (top-up) | 0.05 SOL | Balance afterwards 0.099985 SOL. |
 
 ### 2.3 On-chain trading
 
@@ -71,8 +74,12 @@ PumpPortal meters token-trade messages against the API key's wallet: 0.01 SOL pe
 | :--- | ---: | ---: | ---: |
 | rc.5 launch-mode A/B (13.85 h), capture bot | 14,786 | 0.0148 SOL | ≈ 0.77 SOL |
 | same run, pilot bot | 16,995 | 0.0170 SOL | ≈ 0.88 SOL |
+| rc.7 launch-mode A/B (5.75 h until the feed stopped, 2026-10-26), capture bot | 7,592 | 0.0076 SOL | ≈ 0.95 SOL |
+| same run, pilot bot | 6,069 | 0.0061 SOL | ≈ 0.76 SOL |
 
-(Trade rows with a `user` in the replay capture.) Launch mode subscribes to every held coin, so this grows with `max_active_positions` and how busy the held coins are. At the operator's rate of 0.01 SOL = $1.00, two bots like these cost about $165 a month in trade data, more than the Helius plan.
+(Trade rows with a `user` in the replay capture.) Launch mode subscribes to every held coin, so this grows with `max_active_positions` and how busy the held coins are.
+
+**The 0.02 SOL floor.** PumpPortal serves trade data only while the key's wallet holds at least 0.02 SOL, so only the balance above 0.02 SOL is usable. On 2026-10-26 a 0.010015 SOL charge at 15:10:59 UTC left 0.019985 SOL; PumpPortal closed the connection at 15:35:05 and refused every trade subscription after it, and both rc.7 bots (one shared key) stopped buying. A 0.02 SOL top-up at 15:49:16 was not picked up by the bot's retry on the same connection at 15:50:21, and the bots were stopped at 15:51 ([`RUNBOOK.md` §5.7](RUNBOOK.md#57-trade-feed-circuit-breaker-pumpportal-api-key-funds-bug-116)). Plan funding as 0.02 SOL plus the run's use: at rc.7's rate two bots use about 0.0024 SOL an hour, so a 72 h run needs about 0.17 SOL above the floor. The wallet's on-chain history shows the charges (one 0.01 SOL debit per 10,000 messages). At the operator's rate of 0.01 SOL = $1.00, two bots like these cost about $165 a month in trade data, more than the Helius plan.
 
 ---
 
@@ -95,4 +102,4 @@ Helius gives each key an HTTPS endpoint and a WebSocket one (`wss://mainnet.heli
 | USD | $49.00 / month (Helius) | – |
 | EUR | €22.59 / month (Claude) | €544.07 (JetBrains AI credits) |
 | GBP | £376.00 / year (JetBrains) | – |
-| SOL | ≈ 0.8 SOL / month per bot (PumpPortal, measured) | 0.03 SOL (PumpPortal key funding) |
+| SOL | ≈ 0.8 SOL / month per bot (PumpPortal, measured) | 0.11 SOL (PumpPortal key funding: 0.03 SOL, then 0.08 SOL on 2026-10-26) |
