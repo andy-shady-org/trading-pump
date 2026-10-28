@@ -268,3 +268,41 @@ async def test_token_program_errors_raise_and_success_is_cached():
     second = await client.get_token_program_for_mint(MINT_REGRESSIONS)
     assert str(first) == str(second) == TOKEN_2022_PROGRAM_ID_STR
     assert client.rpc_pool.request.await_count == 1
+
+
+@pytest.mark.regression("BUG-158")
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"result": None},
+        {"result": {}},
+        {"result": {"value": -1}},
+        {"result": {"value": True}},
+    ],
+)
+async def test_a_balance_read_without_a_balance_raises_instead_of_reading_zero(
+    answer: dict[str, Any],
+) -> None:
+    client = PumpFunExecutionClient(private_key_b58=str(Keypair()))
+    client._request_rpc_json = AsyncMock(return_value=answer)
+    with pytest.raises(RuntimeError, match="getBalance returned no balance"):
+        await client.get_wallet_balance_sol()
+    client._request_rpc_json = AsyncMock(return_value={"result": {"value": 0}})
+    assert await client.get_wallet_balance_sol() == 0.0
+
+
+async def test_a_given_rpc_pool_is_used_and_names_the_rpc_url() -> None:
+    from trading_pump.infra.rpc_pool import RpcConnectionPool
+
+    pooled = PumpFunExecutionClient(
+        str(Keypair()), rpc_pool=RpcConnectionPool(endpoints=["https://p.example"])
+    )
+    assert pooled.rpc_url == "https://p.example"
+    empty = PumpFunExecutionClient(str(Keypair()), rpc_pool=RpcConnectionPool())
+    assert empty.rpc_url == "https://api.mainnet-beta.solana.com"
+    named = PumpFunExecutionClient(
+        str(Keypair()), "https://named.example", rpc_pool=RpcConnectionPool()
+    )
+    assert named.rpc_url == "https://named.example"
+    for client in (pooled, empty, named):
+        await client.close()

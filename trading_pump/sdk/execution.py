@@ -17,17 +17,18 @@ from solders.pubkey import Pubkey
 from solders.system_program import TransferParams, transfer
 from solders.transaction import VersionedTransaction
 from spl.token.constants import TOKEN_PROGRAM_ID
-from spl.token.models import CloseAccountParams, SyncNativeParams
 from spl.token.instructions import (
     close_account,
     create_idempotent_associated_token_account,
     get_associated_token_address,
     sync_native,
 )
+from spl.token.models import CloseAccountParams, SyncNativeParams
 
 from trading_pump.infra.rpc_pool import (
     RpcConnectionPool,
 )
+
 from .costs import (
     TransactionCosts,
     model_transaction_costs,
@@ -44,42 +45,42 @@ from .curve import (
     calculate_spot_price,
     curve_reserve_anomaly,
 )
+from .execution_types import (
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+    BUY_DISCRIMINATOR,
+    BUY_V2_DISCRIMINATOR,
+    BUYBACK_FEE_RECIPIENT,
+    COMPUTE_BUDGET_PROGRAM_ID,
+    EVENT_AUTHORITY,
+    FEE_CONFIG_KEY,
+    FEE_RECIPIENT,
+    GET_MULTIPLE_ACCOUNTS_LIMIT,
+    GLOBAL_STATE,
+    MAYHEM_FEE_RECIPIENT,
+    PUMP_DEFAULT_FEE_BPS,
+    PUMP_FEE_PROGRAM_ID,
+    PUMP_PROGRAM_ID,
+    RENT_PROGRAM_ID,
+    SELL_DISCRIMINATOR,
+    SELL_V2_DISCRIMINATOR,
+    SYSTEM_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID_STR,
+    TOKEN_PROGRAM_ID_STR,
+    WSOL_MINT_STR,
+    CurveAccountMissingError,
+    CurveCompleteError,
+    CurveStateUnavailableError,
+    MayhemModeCurveError,
+    NonStandardCurveError,
+    NotPumpFunCurveError,
+    TokenBalanceUnavailableError,
+    TokenProgramUnavailableError,
+)
 from .jito import (
     JITO_BLOCK_ENGINE_ENDPOINTS,
     JITO_TIP_ACCOUNTS,
     JitoClient,
     JitoTipConfig,
-)
-from .execution_types import (
-    PUMP_PROGRAM_ID,
-    GET_MULTIPLE_ACCOUNTS_LIMIT,
-    GLOBAL_STATE,
-    FEE_RECIPIENT,
-    MAYHEM_FEE_RECIPIENT,
-    BUYBACK_FEE_RECIPIENT,
-    PUMP_FEE_PROGRAM_ID,
-    WSOL_MINT_STR,
-    ASSOCIATED_TOKEN_PROGRAM_ID,
-    SYSTEM_PROGRAM_ID,
-    RENT_PROGRAM_ID,
-    EVENT_AUTHORITY,
-    TOKEN_PROGRAM_ID_STR,
-    TOKEN_2022_PROGRAM_ID_STR,
-    COMPUTE_BUDGET_PROGRAM_ID,
-    BUY_DISCRIMINATOR,
-    SELL_DISCRIMINATOR,
-    BUY_V2_DISCRIMINATOR,
-    SELL_V2_DISCRIMINATOR,
-    FEE_CONFIG_KEY,
-    PUMP_DEFAULT_FEE_BPS,
-    TokenBalanceUnavailableError,
-    TokenProgramUnavailableError,
-    CurveAccountMissingError,
-    CurveCompleteError,
-    CurveStateUnavailableError,
-    NonStandardCurveError,
-    MayhemModeCurveError,
-    NotPumpFunCurveError,
 )
 from .pumpfun_execution import PumpFunCurveMixin
 from .pumpswap import PumpSwapPoolUnavailableError
@@ -159,7 +160,7 @@ __all__ = [
 ]
 
 
-class PumpFunExecutionClient(
-    PumpFunCurveMixin, PumpSwapExecutionMixin
-):
-    """Build and broadcast real Pump.fun transactions using the program instruction pattern."""
+class PumpFunExecutionClient(PumpFunCurveMixin, PumpSwapExecutionMixin):
+    """Build and broadcast real Pump.fun transactions using the program instruction
+    pattern.
+    """

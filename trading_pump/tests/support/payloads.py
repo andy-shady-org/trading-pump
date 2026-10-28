@@ -17,7 +17,6 @@ from trading_pump.tests.support.constants import (
     INITIAL_REAL_TOKEN_RESERVES,
     INITIAL_VIRTUAL_SOL_RESERVES,
     INITIAL_VIRTUAL_TOKEN_RESERVES,
-    SAMPLE_MINT,
     TOKEN_TOTAL_SUPPLY,
     WSOL_MINT,
 )

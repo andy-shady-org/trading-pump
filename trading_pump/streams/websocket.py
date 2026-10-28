@@ -179,7 +179,7 @@ async def run_websocket_stream(host: WebSocketStreamHost) -> None:
                             msg = await _next_message(messages, idle_timeout)
                         except StopAsyncIteration:
                             break
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             host.on_stream_error(
                                 f"No WebSocket message for {idle_timeout:g}s: the "
                                 "connection is stale; reconnecting"

@@ -173,7 +173,9 @@ def test_sell_instruction_matches_a_mainnet_pumpswap_sell() -> None:
     )
     keys = [str(meta.pubkey) for meta in ix.accounts]
     assert len(keys) == len(MAINNET_SELL_ACCOUNTS)
-    for index, (ours, theirs) in enumerate(zip(keys, MAINNET_SELL_ACCOUNTS)):
+    for index, (ours, theirs) in enumerate(
+        zip(keys, MAINNET_SELL_ACCOUNTS, strict=True)
+    ):
         if index != 5:
             assert ours == theirs, index
     assert str(ix.program_id) == ps.PUMP_AMM_PROGRAM_ID

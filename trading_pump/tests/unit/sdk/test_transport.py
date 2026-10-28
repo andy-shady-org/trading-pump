@@ -1,4 +1,5 @@
-"""Unit tests for ``sdk/transport.py``: compute budget and Jito tip instructions, sending,
+"""Unit tests for ``sdk/transport.py``: compute budget and Jito tip instructions,
+sending,
 Jito bundles with RPC fallback, confirmation and transaction costs (FEAT-49)."""
 
 from __future__ import annotations
@@ -596,11 +597,80 @@ async def test_jito_pending_bundle_falls_back_instead_of_reporting_success():
     client = _client_regressions(use_jito=True, jito_fallback_to_rpc=True)
     tx = MagicMock()
     tx.signatures = ["sig1"]
-    client.jito_client.send_bundle = AsyncMock(return_value="bundle")
-    client.jito_client.wait_for_bundle_confirmation = AsyncMock(
+    jito = client.jito_client
+    assert jito is not None
+    jito.send_bundle = AsyncMock(return_value="bundle")
+    jito.wait_for_bundle_confirmation = AsyncMock(
         return_value=JitoBundleStatus(bundle_id="bundle", status="Pending")
     )
     client.send_transaction = AsyncMock(return_value="rpc_sig")
     assert await client.send_jito_bundle_with_fallback([tx]) == "rpc_sig"
     client.send_transaction.assert_awaited_once()
     await client.close()
+
+
+async def test_the_dynamic_tip_comes_from_the_jito_floor() -> None:
+    client = _client_regressions(use_jito=True)
+    jito = client.jito_client
+    assert jito is not None
+    jito.fetch_tip_floor = AsyncMock(return_value="floor")
+    jito.calculate_tip_lamports = MagicMock(return_value=77_000)
+    assert await client.calculate_dynamic_jito_tip(0.5, 2.0) == 77_000
+    jito.calculate_tip_lamports.assert_called_once_with(
+        trade_amount_sol=0.5, conviction_score=2.0, tip_floor="floor"
+    )
+
+
+async def test_a_landed_bundle_returns_its_signature() -> None:
+    client = _client_regressions(use_jito=True)
+    with pytest.raises(ValueError, match="empty transaction list"):
+        await client.send_jito_bundle_with_fallback([])
+    jito = client.jito_client
+    assert jito is not None
+    jito.send_bundle = AsyncMock(return_value="bundle")
+    jito.wait_for_bundle_confirmation = AsyncMock(
+        return_value=JitoBundleStatus(bundle_id="bundle", status="Landed")
+    )
+    tx = MagicMock()
+    tx.signatures = ["sig-landed"]
+    assert await client.send_jito_bundle_with_fallback([tx]) == "sig-landed"
+    unsigned = MagicMock()
+    unsigned.signatures = []
+    assert await client.send_jito_bundle_with_fallback([unsigned]) == ""
+
+
+async def test_without_a_jito_client_a_confirmed_bundle_returns_its_signature() -> None:
+    client = _client_regressions(use_jito=False, jito_fallback_to_rpc=False)
+    client.send_jito_bundle = AsyncMock(return_value="bundle")
+    client.confirm_transaction = AsyncMock(return_value=True)
+    tx = MagicMock()
+    tx.signatures = ["sig-rpc"]
+    assert await client.send_jito_bundle_with_fallback([tx]) == "sig-rpc"
+    client.confirm_transaction = AsyncMock(return_value=False)
+    with pytest.raises(TimeoutError, match="not confirmed within timeout"):
+        await client.send_jito_bundle_with_fallback([tx], timeout_seconds=2.0)
+
+
+async def test_send_transaction_broadcasts_over_several_endpoints() -> None:
+    client = PumpFunExecutionClient(
+        str(Keypair()), rpc_urls=["https://a.invalid", "https://b.invalid"]
+    )
+    client.rpc_pool.broadcast_transaction = AsyncMock(return_value="S" * 64)
+    tx = MagicMock()
+    tx.__bytes__ = MagicMock(return_value=b"raw")
+    assert await client.send_transaction(tx) == "S" * 64
+    client.rpc_pool.broadcast_transaction = AsyncMock(return_value="short")
+    with pytest.raises(RuntimeError, match="Invalid sendTransaction result"):
+        await client.send_transaction(tx)
+
+
+async def test_confirmation_waits_through_empty_statuses() -> None:
+    client = _client_regressions()
+    answers = [
+        {"result": {"value": None}},
+        {"result": {"value": [None]}},
+        {"result": {"value": [{"confirmationStatus": "confirmed", "err": None}]}},
+    ]
+    client._request_rpc_json = AsyncMock(side_effect=answers)
+    with patch("trading_pump.sdk.transport.asyncio.sleep", AsyncMock()):
+        assert await client.confirm_transaction("sig", max_retries=3, interval=0)

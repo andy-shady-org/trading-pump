@@ -12,18 +12,18 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
 from trading_pump.api.client import PumpFunApiClient
+from trading_pump.sdk.execution import PumpFunExecutionClient
 from trading_pump.strategies.enrichment import (
     SCREENING_EVENT,
     TokenEnricher,
     count_launches_last_24h,
     creator_initial_buy_pct,
-    merge_token_data,
     mayhem_mode_reason,
+    merge_token_data,
     non_pump_launch_reason,
     resolve_creator,
     screening_snapshot,
 )
-from trading_pump.sdk.execution import PumpFunExecutionClient
 from trading_pump.strategies.filters import (
     DevWalletProfile,
     HolderDistribution,
@@ -272,8 +272,7 @@ def test_creator_initial_buy_pct(
 
 
 async def test_token_enricher_disabled():
-    config = make_screening(
-        enable_anti_rug_filters=False)
+    config = make_screening(enable_anti_rug_filters=False)
     enricher = TokenEnricher(config=config)
     verdict = await enricher.enrich_and_screen("Mint111")
     assert verdict.passed
@@ -285,8 +284,7 @@ async def test_token_enricher_cache_hit():
     cached = TokenScreeningVerdict(mint="Mint111", passed=True, risk_score=10.0)
     cache.set("Mint111", cached)
 
-    config = make_screening(
-        enable_anti_rug_filters=True)
+    config = make_screening(enable_anti_rug_filters=True)
     enricher = TokenEnricher(config=config, screening_cache=cache)
     verdict = await enricher.enrich_and_screen("Mint111")
     assert verdict is cached
@@ -602,3 +600,58 @@ def test_mayhem_mode_reason_table(
     data: dict[str, Any] | None, expected: str | None
 ) -> None:
     assert mayhem_mode_reason(data) == expected
+
+
+def test_timestamps_and_launch_counts_ignore_junk() -> None:
+    from trading_pump.strategies.enrichment import _timestamp_ms
+
+    assert _timestamp_ms("not a time") == 0.0
+    assert count_launches_last_24h(["junk", {"created_timestamp": None}]) == 0
+
+
+def test_a_snapshot_keeps_the_market_regime() -> None:
+    verdict = TokenScreeningVerdict(mint=SAMPLE_MINT, passed=True, risk_score=1.0)
+    record = screening_snapshot(verdict, market_regime={"hour": 3})
+    assert record["market_regime"] == {"hour": 3}
+
+
+@pytest.mark.parametrize(
+    "creator_coins",
+    [
+        {"coins": [{"created_timestamp": 1}]},
+        "unexpected",
+        RuntimeError("api down"),
+    ],
+)
+async def test_creator_profiles_from_any_answer_shape(creator_coins: Any) -> None:
+    api = MagicMock(spec=PumpFunApiClient)
+    api.get_coin = AsyncMock(
+        return_value={
+            "creator": CREATOR,
+            "holders": [
+                "junk",
+                {"address": "", "amount": 5},
+                {"address": "H", "amount": 9},
+            ],
+        }
+    )
+    if isinstance(creator_coins, Exception):
+        api.get_creator_coins = AsyncMock(side_effect=creator_coins)
+    else:
+        api.get_creator_coins = AsyncMock(return_value=creator_coins)
+    enricher = TokenEnricher(api_client=api, config=make_screening())
+    verdict = await enricher.enrich_and_screen(SAMPLE_MINT)
+    assert verdict.holder_distribution is not None
+    assert verdict.holder_distribution.top_holders == [("H", 9)]
+    if creator_coins == "unexpected":
+        assert verdict.dev_profile is None
+    else:
+        assert verdict.dev_profile is not None
+
+
+async def test_no_holder_data_at_all_leaves_the_distribution_empty() -> None:
+    api = MagicMock(spec=PumpFunApiClient)
+    api.get_coin = AsyncMock(return_value={"name": "x"})
+    enricher = TokenEnricher(api_client=api, config=make_screening())
+    verdict = await enricher.enrich_and_screen(SAMPLE_PUMP_MINT)
+    assert verdict.holder_distribution is None

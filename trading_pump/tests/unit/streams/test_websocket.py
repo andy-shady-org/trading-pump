@@ -245,7 +245,7 @@ async def test_stop_request_between_messages_ends_without_reconnect() -> None:
         host.messages.append(data)
         host._stop_after = 0
 
-    host.on_stream_message = stop_on_first  # type: ignore[method-assign]
+    host.on_stream_message = stop_on_first
     session = _session_for(FakeSocket([_text({"n": 1}), _text({"n": 2})]))
     with patch.object(ws_module.aiohttp, "ClientSession", return_value=session):
         await run_websocket_stream(host)
@@ -299,7 +299,7 @@ async def test_write_to_a_closing_socket_reconnects_quietly() -> None:
         if calls == 1:
             raise ConnectionResetError("Cannot write to closing transport")
 
-    host.on_stream_message = send_fails  # type: ignore[method-assign]
+    host.on_stream_message = send_fails
     session = _session_for(FakeSocket([_text({"n": 1})]), FakeSocket([]))
     sleep = AsyncMock()
     with (
@@ -312,7 +312,8 @@ async def test_write_to_a_closing_socket_reconnects_quietly() -> None:
     assert ("exception", 1.0) not in host.calls  # not reported as a fault
     assert (
         "log",
-        "WebSocket closed while sending (Cannot write to closing transport); reconnecting.",
+        "WebSocket closed while sending (Cannot write to closing transport); "
+        "reconnecting.",
     ) in host.calls
     assert host.calls.count(("ended", None)) == 2
     assert [c.args[0] for c in sleep.await_args_list] == [1.0, 1.0]
@@ -326,7 +327,7 @@ async def test_closing_socket_after_a_stop_request_does_not_reconnect() -> None:
         host._stop_after = 0
         raise ConnectionResetError("Cannot write to closing transport")
 
-    host.on_stream_message = stop_and_fail  # type: ignore[method-assign]
+    host.on_stream_message = stop_and_fail
     session = _session_for(FakeSocket([_text({"n": 1})]))
     with patch.object(ws_module.aiohttp, "ClientSession", return_value=session):
         await run_websocket_stream(host)
@@ -338,7 +339,7 @@ async def test_closing_socket_after_a_stop_request_does_not_reconnect() -> None:
     async def fail(data: Any, ws: Any) -> None:
         raise ConnectionResetError("closing")
 
-    host.on_stream_message = fail  # type: ignore[method-assign]
+    host.on_stream_message = fail
     session = _session_for(FakeSocket([_text({"n": 1})]))
     with (
         patch.object(ws_module.aiohttp, "ClientSession", return_value=session),
@@ -430,3 +431,8 @@ def test_split_stream_api_key(url: str | None, clean: str, key: str | None) -> N
 )
 def test_stream_connect_url(url: str, api_key: str | None, expected: str) -> None:
     assert stream_connect_url(url, api_key) == expected
+
+
+def test_a_pumpportal_url_with_other_parameters_only_keeps_them() -> None:
+    url = "wss://pumpportal.fun/api/data?x=1"
+    assert split_stream_api_key(url) == (url, None)

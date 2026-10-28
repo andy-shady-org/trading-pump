@@ -11,9 +11,10 @@ import base64
 import json
 import random
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from time import monotonic as _monotonic
-from typing import Any, Optional, Sequence, Union
+from typing import Any
 
 import aiohttp
 from solders.instruction import AccountMeta, Instruction
@@ -62,7 +63,9 @@ class JitoTipFloor:
     fetched_at: float = field(default_factory=_monotonic)
 
     def get_percentile_sol(self, percentile: str = "50th") -> float:
-        """Return tip in SOL for the given percentile (25th, 50th, 75th, 95th, 99th, ema)."""
+        """Return tip in SOL for the given percentile (25th, 50th, 75th, 95th, 99th,
+        ema).
+        """
         key = (
             percentile.lower()
             .replace("_percentile", "")
@@ -106,9 +109,9 @@ class JitoBundleStatus:
 
     bundle_id: str
     status: str  # "Pending", "Landed", "Failed", "Invalid", "Unknown"
-    slot: Optional[int] = None
-    confirmation_status: Optional[str] = None  # "processed", "confirmed", "finalized"
-    err: Optional[Any] = None
+    slot: int | None = None
+    confirmation_status: str | None = None  # "processed", "confirmed", "finalized"
+    err: Any | None = None
     transactions: list[str] = field(default_factory=list)
 
     @property
@@ -130,7 +133,8 @@ class JitoBundleStatus:
 
 
 def bundle_err_is_ok(err: Any) -> bool:
-    """Jito reports success as ``null`` or ``{"Ok": null}``; anything else is an error."""
+    """Jito reports success as ``null`` or ``{"Ok": null}``; anything else is an
+    error."""
     if err is None:
         return True
     return isinstance(err, dict) and set(err.keys()) == {"Ok"} and err["Ok"] is None
@@ -143,7 +147,7 @@ class JitoBundle:
     transactions: list[VersionedTransaction]
     tip_lamports: int
     tip_account: str
-    bundle_id: Optional[str] = None
+    bundle_id: str | None = None
 
 
 class JitoClient:
@@ -151,13 +155,13 @@ class JitoClient:
 
     def __init__(
         self,
-        wallet: Optional[Union[Keypair, Pubkey, str]] = None,
+        wallet: Keypair | Pubkey | str | None = None,
         *,
         block_engine_url: str = JITO_BLOCK_ENGINE_ENDPOINTS["mainnet"],
         tip_floor_url: str = DEFAULT_TIP_FLOOR_URL,
-        tip_accounts: Optional[Sequence[str]] = None,
-        config: Optional[JitoTipConfig] = None,
-        session: Optional[aiohttp.ClientSession] = None,
+        tip_accounts: Sequence[str] | None = None,
+        config: JitoTipConfig | None = None,
+        session: aiohttp.ClientSession | None = None,
         request_timeout: float = 10.0,
     ) -> None:
         self.wallet = self._parse_wallet_pubkey(wallet) if wallet is not None else None
@@ -171,11 +175,11 @@ class JitoClient:
         self._session = session
         self._owns_session = session is None
         self._tip_account_index = 0
-        self._cached_tip_floor: Optional[JitoTipFloor] = None
+        self._cached_tip_floor: JitoTipFloor | None = None
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def _parse_wallet_pubkey(wallet: Union[Keypair, Pubkey, str]) -> Pubkey:
+    def _parse_wallet_pubkey(wallet: Keypair | Pubkey | str) -> Pubkey:
         if isinstance(wallet, Keypair):
             return wallet.pubkey()
         if isinstance(wallet, Pubkey):
@@ -299,10 +303,12 @@ class JitoClient:
         trade_amount_sol: float = 0.0,
         conviction_score: float = 1.0,
         *,
-        percentile: Optional[str] = None,
-        tip_floor: Optional[JitoTipFloor] = None,
+        percentile: str | None = None,
+        tip_floor: JitoTipFloor | None = None,
     ) -> int:
-        """Calculate dynamic tip in Lamports based on trade size, percentile floor, and conviction."""
+        """Calculate dynamic tip in Lamports based on trade size, percentile floor, and
+        conviction.
+        """
         target_percentile = percentile or self.config.tip_percentile
         floor = tip_floor or self._cached_tip_floor
 
@@ -334,11 +340,13 @@ class JitoClient:
 
     def build_tip_instruction(
         self,
-        payer: Union[Pubkey, str],
+        payer: Pubkey | str,
         tip_lamports: int,
-        tip_account: Optional[Union[Pubkey, str]] = None,
+        tip_account: Pubkey | str | None = None,
     ) -> Instruction:
-        """Construct SystemProgram transfer instruction sending tip lamports to validator account."""
+        """Construct SystemProgram transfer instruction sending tip lamports to
+        validator account.
+        """
         if tip_lamports <= 0:
             raise ValueError(
                 f"Tip lamports must be strictly positive, got {tip_lamports}"
@@ -354,7 +362,8 @@ class JitoClient:
             else Pubkey.from_string(str(recipient))
         )
 
-        # System Program Transfer instruction: index 2 (4 bytes little endian) + lamports u64
+        # System Program Transfer instruction: index 2 (4 bytes little endian) +
+        # lamports u64
         data = bytes([2, 0, 0, 0]) + tip_lamports.to_bytes(
             8, byteorder="little", signed=False
         )
@@ -371,7 +380,7 @@ class JitoClient:
     async def _send_json_rpc(
         self,
         payload: dict[str, Any],
-        endpoint_url: Optional[str] = None,
+        endpoint_url: str | None = None,
     ) -> Any:
         url = endpoint_url or f"{self.block_engine_url}/api/v1/bundles"
         session = await self._get_session()
@@ -383,7 +392,8 @@ class JitoClient:
             text = await resp.text()
             if resp.status != 200:
                 raise RuntimeError(
-                    f"Jito Block Engine JSON-RPC failed (HTTP {resp.status}): {text[:500]}"
+                    f"Jito Block Engine JSON-RPC failed (HTTP {resp.status}): "
+                    f"{text[:500]}"
                 )
             try:
                 parsed = json.loads(text)
@@ -398,11 +408,12 @@ class JitoClient:
 
     async def send_bundle(
         self,
-        transactions: Sequence[Union[VersionedTransaction, str]],
+        transactions: Sequence[VersionedTransaction | str],
         *,
-        endpoint_url: Optional[str] = None,
+        endpoint_url: str | None = None,
     ) -> str:
-        """Serialize and submit an atomic bundle of transactions to Jito Block Engine."""
+        """Serialize and submit an atomic bundle of transactions to the Jito Block
+        Engine."""
         if not transactions:
             raise ValueError("Cannot submit an empty Jito bundle")
         if len(transactions) > 5:
@@ -436,7 +447,7 @@ class JitoClient:
         self,
         bundle_ids: Sequence[str],
         *,
-        endpoint_url: Optional[str] = None,
+        endpoint_url: str | None = None,
     ) -> list[JitoBundleStatus]:
         """Fetch confirmation statuses for a list of bundle IDs."""
         if not bundle_ids:
@@ -482,7 +493,7 @@ class JitoClient:
         self,
         bundle_ids: Sequence[str],
         *,
-        endpoint_url: Optional[str] = None,
+        endpoint_url: str | None = None,
     ) -> list[JitoBundleStatus]:
         """Fetch in-flight statuses for active bundles."""
         if not bundle_ids:

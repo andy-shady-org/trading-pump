@@ -737,7 +737,7 @@ async def test_sell_quotes_record_the_gap_after_their_buy_quote() -> None:
     buys = [q for q in quotes if q["side"] == "buy"]
     sells = [q for q in quotes if q["side"] == "sell"]
     assert all("buy_gap_seconds" not in q for q in buys)
-    for buy, sell in zip(buys, sells):
+    for buy, sell in zip(buys, sells, strict=True):
         assert sell["buy_gap_seconds"] == pytest.approx(
             sell["timestamp"] - buy["timestamp"], abs=1e-3
         )
@@ -1009,3 +1009,45 @@ def test_bars_in_sol_never_mixes_venues() -> None:
     ]
     by_venue = {b["venue"]: b["close"] for b in slow_lane.bars_in_sol(rows)}
     assert by_venue == {"binance": 0.005, "geckoterminal": 0.01}
+
+
+def test_float_reads_numbers_and_refuses_the_rest() -> None:
+    assert slow_lane._float("1.5") == 1.5
+    assert slow_lane._float(None) is None
+    assert slow_lane._float("n/a") is None
+
+
+async def test_prices_without_decimals_and_empty_fee_samples_record_nothing_extra() -> (
+    None
+):
+    def prices(_url: str, _params: Any, _body: Any) -> Any:
+        return {JUP.mint: {"usdPrice": 1.0}}
+
+    def fees(_url: str, _params: Any, _body: Any) -> Any:
+        return {"result": []}
+
+    http = FakeHttp({"/price/v3": prices, "rpc.example": fees})
+    sink = Sink()
+    clock = FakeClock()
+    recorder = _recorder(http, sink, clock, rpc_http=http, rpc_url=RPC)
+    await recorder.sample_prices()
+    assert JUP.mint not in recorder.decimals
+    assert [r["symbol"] for r in sink.events("price")] == ["JUP"]
+    await recorder.sample_fees()
+    assert sink.events("fee_sample") == []
+    assert recorder.stats.fee_samples == 0
+
+
+async def test_a_round_trip_without_slots_records_the_gap_in_seconds_only() -> None:
+    def quote(_url: str, params: Mapping[str, Any], _body: Any) -> Any:
+        answer = _quote(6_000_000, ("Orca", "PoolA"))
+        answer.pop("contextSlot")
+        return answer
+
+    http = FakeHttp({"/swap/v1/quote": quote})
+    sink = Sink()
+    recorder = _recorder(http, sink, FakeClock())
+    await recorder.sample_quotes(JUP)
+    sells = [q for q in sink.events("quote") if q["side"] == "sell"]
+    assert sells and all("buy_gap_seconds" in q for q in sells)
+    assert not any("buy_gap_slots" in q for q in sells)

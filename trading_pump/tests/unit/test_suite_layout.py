@@ -19,12 +19,12 @@ BUGS_MD = PACKAGE_ROOT.parent / "docs" / "dev" / "BUGS.md"
 # Resolved bugs with no tagged test yet. This list may only shrink: tag a
 # test (or add one) and remove the ID here. Reasons are kept next to each ID.
 KNOWN_UNTAGGED: dict[str, str] = {
-    "BUG-05": "dashboard clock source; no behaviour test pins monotonic uptime yet",
     "BUG-09": "pytest addopts packaging issue; process fix, not runtime behaviour",
-    "BUG-11": "Rich alternate-screen rendering; needs a terminal to observe",
-    "BUG-20": "replay exit-multiplier maths was rewritten by BUG-61 live fidelity",
-    "BUG-31": "zero-reserve quoting superseded by BUG-101 (tagged)",
 }
+# BUGS.md "Where each fix lives" lists the resolved bugs whose fix (and test)
+# is in trading-core or left with code that was not ported; they need no tag
+# here.
+ELSEWHERE_LINE = re.compile(r"^\* \*\*(trading-core|Retired)[^*]*\*\*:(.*)$", re.M)
 
 COVERAGE_NAMED = re.compile(r"^test_(coverage_.*|.*boost.*|.*_full)\.py$")
 STATUS_ROW = re.compile(
@@ -35,9 +35,15 @@ STATUS_ROW = re.compile(
 def _source_modules() -> list[Path]:
     return sorted(
         path
-        for path in PACKAGE_ROOT.glob("*/*.py")
-        if path.name != "__init__.py" and path.parent.name != "tests"
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if path.name != "__init__.py"
+        and "tests" not in path.relative_to(PACKAGE_ROOT).parts
     )
+
+
+def _mirror(module: Path) -> Path:
+    relative = module.relative_to(PACKAGE_ROOT)
+    return TESTS_ROOT / "unit" / relative.parent / f"test_{module.name}"
 
 
 def _test_files() -> list[Path]:
@@ -64,11 +70,20 @@ def _bug_statuses() -> dict[str, str]:
 
 
 @pytest.mark.parametrize(
-    "module", _source_modules(), ids=lambda p: f"{p.parent.name}/{p.name}"
+    "module",
+    _source_modules(),
+    ids=lambda p: p.relative_to(PACKAGE_ROOT).as_posix(),
 )
 def test_layout_every_source_module_has_mirrored_unit_test(module: Path) -> None:
-    mirror = TESTS_ROOT / "unit" / module.parent.name / f"test_{module.name}"
+    mirror = _mirror(module)
     assert mirror.is_file(), f"missing {mirror.relative_to(TESTS_ROOT)}"
+
+
+def _elsewhere() -> set[str]:
+    found: set[str] = set()
+    for _, ids in ELSEWHERE_LINE.findall(BUGS_MD.read_text()):
+        found.update(re.findall(r"BUG-\d+", ids))
+    return found
 
 
 def test_layout_tests_root_holds_only_conftest() -> None:
@@ -97,8 +112,12 @@ def test_layout_no_coverage_named_test_files() -> None:
 def test_regression_every_resolved_bug_has_a_tagged_test() -> None:
     statuses = _bug_statuses()
     resolved = {bug for bug, status in statuses.items() if status == "RESOLVED"}
-    untagged = resolved - _regression_tags()
+    untagged = resolved - _regression_tags() - _elsewhere()
     assert sorted(untagged - set(KNOWN_UNTAGGED)) == []
+
+
+def test_regression_a_bug_tested_here_is_not_listed_as_elsewhere() -> None:
+    assert sorted(_regression_tags() & _elsewhere()) == []
 
 
 def test_regression_known_untagged_list_only_shrinks() -> None:

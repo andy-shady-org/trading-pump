@@ -1,4 +1,6 @@
-"""Unit and integration tests for On-Chain Funding Cluster Graph & Sybil Wash-Trading Detector (FEAT-26)."""
+"""Unit and integration tests for On-Chain Funding Cluster Graph & Sybil Wash-Trading
+Detector (FEAT-26).
+"""
 
 import time
 
@@ -467,3 +469,63 @@ def test_cluster_graph_and_sybil_detector_edge_cases():
     )
     eval_res = analyzer.evaluate("mint123", graph, trades=trades, now=now)
     assert eval_res.mint == "mint123"
+
+
+def test_syndicate_members_trading_count_as_sybil_volume() -> None:
+    graph = FundingClusterGraph()
+    graph.add_wallet("A", token_balance=10)
+    graph.add_wallet("B", token_balance=10)
+    graph.add_funding_link("A", "Boss")
+    graph.add_funding_link("B", "Boss")
+    trades = [
+        {"user": "A", "is_buy": True, "sol_amount": 1.0, "timestamp": 100.0},
+        {"user": "Outsider", "is_buy": True, "sol_amount": 1.0, "timestamp": 100.0},
+        {"user": "", "is_buy": True, "sol_amount": 1.0, "timestamp": 100.0},
+    ]
+    verdict = SybilWashTradingDetector().analyze_trades(
+        trades, cluster_graph=graph, now=110.0
+    )
+    assert verdict.sybil_wallets == ["A"]
+    assert verdict.sybil_trade_count == 1
+
+
+def test_a_busy_one_sided_wallet_is_not_churn() -> None:
+    trades = [
+        {"user": "Buyer", "is_buy": True, "sol_amount": 0.1, "timestamp": 100.0 + i}
+        for i in range(5)
+    ]
+    verdict = SybilWashTradingDetector().analyze_trades(trades, now=110.0)
+    assert verdict.sybil_wallets == [] and verdict.detected_cycles_count == 0
+
+
+def test_the_graph_is_built_from_whatever_is_known() -> None:
+    analyzer = FundingClusterAnalyzer()
+    bare = analyzer.build_graph()
+    assert bare.nodes == {}
+    graph = analyzer.build_graph(
+        top_holders=[("", 5), ("H1", 10)],
+        funding_links=[("", "F", 1.0), ("H1", "", 1.0), ("H1", "F", 1.0)],
+    )
+    assert set(graph.nodes) == {"H1", "F"}
+
+
+def test_a_quiet_sybil_verdict_adds_no_reason_or_flag() -> None:
+    analyzer = FundingClusterAnalyzer()
+    quiet = SybilWashVerdict(
+        is_wash_trading=False,
+        wash_volume_sol=0.0,
+        total_volume_sol=1.0,
+        wash_volume_ratio=0.0,
+        sybil_trade_count=0,
+        sybil_wallets=[],
+        detected_cycles_count=0,
+        reasons=[],
+        risk_penalty=0.0,
+    )
+    original = SybilWashTradingDetector.analyze_trades
+    try:
+        SybilWashTradingDetector.analyze_trades = lambda self, *a, **k: quiet
+        verdict = analyzer.evaluate("M", FundingClusterGraph(), trades=[{"user": "x"}])
+    finally:
+        SybilWashTradingDetector.analyze_trades = original
+    assert verdict.passed and "sybil_wash_detected" not in verdict.flags

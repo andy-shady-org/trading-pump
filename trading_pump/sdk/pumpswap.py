@@ -92,7 +92,9 @@ def fee_config_address() -> Pubkey:
 
 
 def canonical_pool_address(mint: str, quote_mint: str = WSOL_MINT_STR) -> Pubkey:
-    """The pool a Pump.fun migration creates: index 0, owned by the curve's pool authority."""
+    """The pool a Pump.fun migration creates: index 0, owned by the curve's pool
+    authority.
+    """
     base = Pubkey.from_string(mint)
     pool_authority = Pubkey.find_program_address(
         [b"pool-authority", bytes(base)], Pubkey.from_string(PUMP_PROGRAM_ID)
@@ -130,7 +132,9 @@ class PumpSwapPool:
 
 
 def decode_pool(address: str, data: bytes) -> PumpSwapPool:
-    """Decode a pool account. Fields added by later program versions default when absent."""
+    """Decode a pool account. Fields added by later program versions default when
+    absent.
+    """
     if len(data) < POOL_MIN_LENGTH:
         raise PumpSwapPoolUnavailableError(
             f"PumpSwap pool {address} too short: {len(data)} bytes"
@@ -228,7 +232,9 @@ def pumpswap_sell_quote(
     fee_bps: int = 0,
     slippage_bps: int = 0,
 ) -> int:
-    """Quote lamports out for selling ``base_amount_in`` raw tokens (constant product, fee on output)."""
+    """Quote lamports out for selling ``base_amount_in`` raw tokens (constant product,
+    fee on output).
+    """
     if base_amount_in <= 0 or base_reserve <= 0 or quote_reserve <= 0:
         return 0
     gross = (quote_reserve * base_amount_in) // (base_reserve + base_amount_in)

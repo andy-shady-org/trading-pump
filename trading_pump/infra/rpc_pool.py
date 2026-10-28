@@ -1,24 +1,28 @@
-"""Multi-RPC connection pool, latency tracking, circuit breaking, and transaction broadcasting.
+"""Multi-RPC connection pool, latency tracking, circuit breaking, and transaction
+broadcasting.
 
 This module provides high-availability infrastructure for Solana JSON-RPC interactions,
-supporting rolling latency percentiles (p50, p95, p99), dynamic circuit breaking on rate limits
-(HTTP 429) and server errors (5xx), lowest-latency read routing, and concurrent transaction broadcasting.
+supporting rolling latency percentiles (p50, p95, p99), dynamic circuit breaking on rate
+limits
+(HTTP 429) and server errors (5xx), lowest-latency read routing, and concurrent
+transaction broadcasting.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import re
 import time
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Optional, Sequence
+from enum import StrEnum
+from typing import Any
 
 import aiohttp
-
 from trading_core.ops.redact import redact_text, redact_url
 
 # JSON-RPC errors caused by the request itself (bad params, missing account,
@@ -45,7 +49,7 @@ class _RecordedRpcError(RuntimeError):
     """An endpoint error (HTTP status, bad JSON, node error) the pool recorded."""
 
 
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     """Circuit breaker states for an RPC endpoint."""
 
     HEALTHY = "healthy"
@@ -66,9 +70,9 @@ class RpcEndpoint:
     total_requests: int = 0
     total_errors: int = 0
     rate_limited_count: int = 0
-    last_error_time: Optional[float] = None
-    last_success_time: Optional[float] = None
-    last_rate_limited_time: Optional[float] = None
+    last_error_time: float | None = None
+    last_success_time: float | None = None
+    last_rate_limited_time: float | None = None
     cooldown_until: float = 0.0
     # Times the breaker opened in a row without a success in between; each
     # opening waits twice as long, up to the full cooldown (BUG-151).
@@ -149,7 +153,7 @@ class RpcEndpoint:
         else:
             self.state = CircuitState.DEGRADED
 
-    def check_health_and_cooldown(self, now: Optional[float] = None) -> CircuitState:
+    def check_health_and_cooldown(self, now: float | None = None) -> CircuitState:
         """Check and transition circuit state if cooldown window has expired."""
         current_time = time.time() if now is None else now
         if self.state == CircuitState.OPEN:
@@ -157,7 +161,7 @@ class RpcEndpoint:
                 self.state = CircuitState.HALF_OPEN
         return self.state
 
-    def is_available(self, now: Optional[float] = None) -> bool:
+    def is_available(self, now: float | None = None) -> bool:
         """Return True if endpoint can accept traffic (HEALTHY, DEGRADED, or a
         HALF_OPEN endpoint with no probe already in flight)."""
         current_state = self.check_health_and_cooldown(now)
@@ -311,19 +315,21 @@ class RpcPoolConfig:
 
 
 class RpcConnectionPool:
-    """Asynchronous multi-provider Solana RPC connection pool with latency routing and broadcast."""
+    """Asynchronous multi-provider Solana RPC connection pool with latency routing and
+    broadcast.
+    """
 
     def __init__(
         self,
-        endpoints: Optional[Sequence[str | RpcEndpoint] | str] = None,
-        config: Optional[RpcPoolConfig] = None,
-        session: Optional[aiohttp.ClientSession] = None,
+        endpoints: Sequence[str | RpcEndpoint] | str | None = None,
+        config: RpcPoolConfig | None = None,
+        session: aiohttp.ClientSession | None = None,
     ) -> None:
         self.config = config or RpcPoolConfig()
         self._endpoints: list[RpcEndpoint] = []
-        self._health_check_task: Optional[asyncio.Task] = None
+        self._health_check_task: asyncio.Task | None = None
         self._running: bool = False
-        self._session: Optional[aiohttp.ClientSession] = session
+        self._session: aiohttp.ClientSession | None = session
         self._lock = asyncio.Lock()
         # Requests by JSON-RPC method, and requests refused unsent because
         # every breaker was open (BUG-151).
@@ -382,14 +388,12 @@ class RpcConnectionPool:
         self._endpoints = [ep for ep in self._endpoints if ep.url != url]
         return len(self._endpoints) < initial_len
 
-    def get_healthy_endpoints(self, now: Optional[float] = None) -> list[RpcEndpoint]:
+    def get_healthy_endpoints(self, now: float | None = None) -> list[RpcEndpoint]:
         """Return available endpoints sorted by routing score (best first)."""
         available = [ep for ep in self._endpoints if ep.is_available(now)]
         return sorted(available, key=lambda ep: ep.get_score())
 
-    def under_pressure(
-        self, window_seconds: float, now: Optional[float] = None
-    ) -> bool:
+    def under_pressure(self, window_seconds: float, now: float | None = None) -> bool:
         """True when no endpoint is available or one was rate limited within
         ``window_seconds``: record-only reads should wait (BUG-151)."""
         current = time.time() if now is None else now
@@ -401,12 +405,13 @@ class RpcConnectionPool:
             for ep in self._endpoints
         )
 
-    def get_best_endpoint(self, now: Optional[float] = None) -> Optional[RpcEndpoint]:
+    def get_best_endpoint(self, now: float | None = None) -> RpcEndpoint | None:
         """Return the optimal endpoint with the lowest score."""
         healthy = self.get_healthy_endpoints(now)
         if healthy:
             return healthy[0]
-        # If no endpoint is healthy/half-open, fallback to the one with soonest cooldown expiry
+        # If no endpoint is healthy/half-open, fallback to the one with soonest cooldown
+        # expiry
         if self._endpoints:
             return min(
                 self._endpoints,
@@ -424,7 +429,9 @@ class RpcConnectionPool:
             error_type=error_type,
             cooldown_seconds=self.config.circuit_breaker_cooldown_seconds,
             circuit_breaker_threshold=self.config.circuit_breaker_threshold,
-            initial_cooldown_seconds=self.config.circuit_breaker_initial_cooldown_seconds,
+            initial_cooldown_seconds=(
+                self.config.circuit_breaker_initial_cooldown_seconds
+            ),
         )
 
     def _unavailable_error(self, now: float) -> RpcPoolUnavailableError:
@@ -442,10 +449,11 @@ class RpcConnectionPool:
         self,
         payload: dict[str, Any],
         *,
-        max_retries: Optional[int] = None,
-        timeout_seconds: Optional[float] = None,
+        max_retries: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        """Route a JSON-RPC request to the lowest-latency available endpoint, with failover.
+        """Route a JSON-RPC request to the lowest-latency available endpoint, with
+        failover.
 
         A request is never sent to an endpoint whose breaker is open: when
         none is available it fails at once with :class:`RpcPoolUnavailableError`,
@@ -606,10 +614,12 @@ class RpcConnectionPool:
         *,
         skip_preflight: bool = True,
         preflight_commitment: str = "confirmed",
-        max_concurrency: Optional[int] = None,
-        timeout_seconds: Optional[float] = None,
+        max_concurrency: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> str:
-        """Concurrently broadcast signed transaction across healthy RPC endpoints using scatter-gather."""
+        """Concurrently broadcast signed transaction across healthy RPC endpoints using
+        scatter-gather.
+        """
         if not self._endpoints:
             raise RuntimeError("No RPC endpoints configured for broadcast")
 
@@ -624,15 +634,12 @@ class RpcConnectionPool:
             else self.config.request_timeout_seconds
         )
 
-        healthy = self.get_healthy_endpoints()
-        if not healthy:
-            best_ep = self.get_best_endpoint()
-            if best_ep:
-                healthy = [best_ep]
-
+        # With endpoints configured there is always a best one (the soonest
+        # out of cooldown), so the selection is never empty.
+        healthy = self.get_healthy_endpoints() or [
+            ep for ep in (self.get_best_endpoint(),) if ep is not None
+        ]
         selected = healthy[: max(1, concurrency)]
-        if not selected:
-            raise RuntimeError("No available RPC endpoints to broadcast transaction")
 
         payload = {
             "jsonrpc": "2.0",
@@ -781,7 +788,7 @@ class RpcConnectionPool:
         tasks = [self.check_endpoint_health(ep) for ep in self._endpoints]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         health_map: dict[str, bool] = {}
-        for ep, res in zip(self._endpoints, results):
+        for ep, res in zip(self._endpoints, results, strict=True):
             health_map[ep.url] = bool(res is True)
         return health_map
 
@@ -812,10 +819,8 @@ class RpcConnectionPool:
             self._running = False
             if self._health_check_task is not None:
                 self._health_check_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._health_check_task
-                except asyncio.CancelledError:
-                    pass
                 self._health_check_task = None
 
     async def close(self) -> None:

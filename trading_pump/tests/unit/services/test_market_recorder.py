@@ -433,7 +433,8 @@ async def test_a_full_follow_list_refuses_new_pools_and_errors_are_counted() -> 
     assert await recorder.snapshot_due() == 0
     assert (recorder.stats.errors, recorder.stats.rate_limited) == (2, 1)
     # An empty or odd answer counts as missing, not as an error.
-    recorder.http.routes["/latest/dex/pairs/"] = lambda _u, _p: []  # type: ignore[attr-defined]
+    routes: Any = recorder.http
+    routes.routes["/latest/dex/pairs/"] = lambda _u, _p: []
     recorder.followed[("solana", "A")].last_snapshot_at = 0.0
     await recorder.snapshot_due()
     assert recorder.followed[("solana", "A")].missing == 1
@@ -650,3 +651,43 @@ async def test_pools_the_pair_call_misses_are_found_by_their_token() -> None:
         )
         assert await again.snapshot_due() == 0
         assert again.followed[("bsc", curve)].missing == 1
+
+
+async def test_an_expired_pool_is_not_resumed(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    recorder, _, _, clock = _recorder({}, chains=("solana",), state_path=state)
+    recorder._follow("solana", {"pool": "Ancient"}, source="new", rank=None, now=START)
+    assert recorder.save_state(force=True)
+    clock.advance(recorder.config.max_age_seconds + 1.0)
+    again, _, _, _ = _recorder({}, clock=clock, chains=("solana",), state_path=state)
+    assert again.load_state() == 0
+
+
+def test_trade_counts_are_summed_only_from_numbers() -> None:
+    assert mr._trades(None) == 0
+    assert mr._trades([1, "x", 2.0]) == 3
+
+
+async def test_list_entries_without_a_pool_address_are_skipped() -> None:
+    recorder, _, sink, _ = _recorder(
+        {
+            "/trending_pools": lambda _u, _p: {"data": [{"id": "x", "attributes": {}}]},
+            "/pools": lambda _u, _p: {"data": []},
+        },
+        chains=("bsc",),
+    )
+    assert await recorder.refresh_lists("bsc") == 0
+    assert all(not r["pools"] for r in sink.events(mr.LIST_EVENT))
+
+
+async def test_a_failing_list_refresh_is_counted_and_discovery_goes_on() -> None:
+    recorder, _, _, _ = _recorder(
+        {"/new_pools": lambda _u, _p: {"data": []}}, chains=("solana",)
+    )
+
+    async def broken(chain: str) -> int:
+        raise RuntimeError("lists down")
+
+    recorder.refresh_lists = broken
+    await recorder.discovery_pass()
+    assert recorder.stats.errors == 1

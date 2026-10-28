@@ -133,12 +133,13 @@ def select_fee_tier(tiers: tuple[FeeTier, ...], market_cap_lamports: int) -> Fee
     """The tier a curve at ``market_cap_lamports`` pays (``calculateFeeTier``)."""
     if not tiers:
         raise ValueError("no fee tiers")
-    if market_cap_lamports < tiers[0].market_cap_lamports_threshold:
-        return tiers[0].fees
-    for tier in reversed(tiers):
+    # The last tier whose threshold the market cap meets; below the first
+    # threshold, the first tier.
+    chosen = tiers[0].fees
+    for tier in tiers:
         if market_cap_lamports >= tier.market_cap_lamports_threshold:
-            return tier.fees
-    return tiers[0].fees
+            chosen = tier.fees
+    return chosen
 
 
 def bonding_curve_fee_bps(

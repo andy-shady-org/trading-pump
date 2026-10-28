@@ -405,3 +405,24 @@ def test_record_cli_market_without_state_stops_on_interrupt(
     )
     run_record_cli(args)
     assert "(no state file)" in output.export_text()
+
+
+def test_stop_on_signals_skips_loops_without_signal_support() -> None:
+    import asyncio
+
+    class Loop:
+        def __init__(self, error: type[Exception] | None) -> None:
+            self.error = error
+            self.handlers: list[Any] = []
+
+        def add_signal_handler(self, sig: Any, callback: Any) -> None:
+            if self.error is not None:
+                raise self.error
+            self.handlers.append(sig)
+
+    stop = asyncio.Event()
+    working = Loop(None)
+    record_cli.stop_on_signals(stop, working)
+    assert len(working.handlers) == 2
+    for error in (NotImplementedError, RuntimeError):
+        record_cli.stop_on_signals(stop, Loop(error))

@@ -1,9 +1,11 @@
-"""Deterministic constant-product AMM bonding curve pricing and price impact calculations.
+"""Deterministic constant-product AMM bonding curve pricing and price impact
+calculations.
 
 This module implements exact constant-product invariant (k = x * y) math for Pump.fun
 bonding curves. In Pump.fun:
   - Initial virtual SOL reserve (x_0) = 30.0 SOL (30_000_000_000 Lamports)
-  - Initial virtual token reserve (y_0) = 1,073,000,000 tokens (1_073_000_000_000_000 raw units)
+  - Initial virtual token reserve (y_0) = 1,073,000,000 tokens (1_073_000_000_000_000
+  raw units)
   - Total token supply = 1,000,000,000 tokens (1_000_000_000_000_000 raw units)
 
 When buying tokens with SOL:
@@ -21,13 +23,7 @@ When selling tokens for SOL:
 
 from __future__ import annotations
 
-import math
-from collections import deque
-from dataclasses import dataclass
-from time import monotonic as _monotonic
-from typing import Deque, Union
-
-Number = Union[int, float]
+Number = int | float
 
 INITIAL_VIRTUAL_SOL_LAMPORTS: int = 30_000_000_000
 INITIAL_VIRTUAL_TOKEN_RAW: int = 1_073_000_000_000_000
@@ -51,16 +47,6 @@ COMPLETE_CURVE_MARKET_CAP_SOL: float = (
     / (INITIAL_VIRTUAL_TOKEN_RAW - INITIAL_REAL_TOKEN_RAW)
     / 1_000_000_000.0
 ) * (TOTAL_TOKEN_SUPPLY_RAW / (INITIAL_VIRTUAL_TOKEN_RAW - INITIAL_REAL_TOKEN_RAW))
-# A create event at (or within the curve tolerance of) the full-curve market
-# cap graduated in its own transaction: nothing is left to buy (BUG-146).
-COMPLETE_AT_CREATE_MARKET_CAP_SOL: float = COMPLETE_CURVE_MARKET_CAP_SOL * (
-    1.0 - CURVE_OFFSET_TOLERANCE
-)
-
-
-def complete_at_create(market_cap_sol: float) -> bool:
-    """Whether a create event's market cap shows a curve already sold out."""
-    return float(market_cap_sol or 0.0) >= COMPLETE_AT_CREATE_MARKET_CAP_SOL
 
 
 def curve_reserve_anomaly(
@@ -97,7 +83,8 @@ def calculate_spot_price(
     virtual_sol_reserves: Number,
     virtual_token_reserves: Number,
 ) -> float:
-    """Calculate instantaneous spot price P = virtual_sol_reserves / virtual_token_reserves.
+    """Calculate instantaneous spot price P = virtual_sol_reserves /
+    virtual_token_reserves.
 
     Args:
         virtual_sol_reserves: Virtual SOL reserves (in SOL or Lamports).
@@ -116,7 +103,8 @@ def calculate_market_cap_sol(
     virtual_token_reserves: Number,
     total_supply: Number = TOTAL_TOKEN_SUPPLY_RAW,
 ) -> float:
-    """Calculate market capitalization in SOL based on current spot price and total token supply.
+    """Calculate market capitalization in SOL based on current spot price and total
+    token supply.
 
     The SOL side is *guessed*: a value of at least 1,000,000 is read as lamports.
     ``virtual_token_reserves`` and ``total_supply`` must be in the same unit
@@ -173,7 +161,8 @@ def calculate_buy_tokens_out(
     the curve input; it is removed from ``sol_amount`` before pricing (BUG-66).
 
     Formula:
-        Delta_y = (virtual_token_reserves * sol_amount) / (virtual_sol_reserves + sol_amount)
+        Delta_y = (virtual_token_reserves * sol_amount) / (virtual_sol_reserves +
+        sol_amount)
 
     Args:
         sol_amount: SOL or Lamports input amount.
@@ -210,7 +199,8 @@ def calculate_sell_sol_out(
     ``fee_bps`` is the total Pump.fun fee deducted from the curve output (BUG-66).
 
     Formula:
-        Delta_x = (virtual_sol_reserves * token_amount) / (virtual_token_reserves + token_amount)
+        Delta_x = (virtual_sol_reserves * token_amount) / (virtual_token_reserves +
+        token_amount)
 
     Args:
         token_amount: Token input amount.
@@ -254,7 +244,8 @@ def calculate_buy_price_impact(
         virtual_token_reserves: Virtual token reserves.
 
     Returns:
-        Positive float representing relative spot price increase (e.g., 0.0201 for +2.01%).
+        Positive float representing relative spot price increase (e.g., 0.0201 for
+        +2.01%).
     """
     if sol_amount <= 0 or virtual_sol_reserves <= 0 or virtual_token_reserves <= 0:
         return 0.0
@@ -285,7 +276,8 @@ def calculate_sell_price_impact(
         virtual_token_reserves: Virtual token reserves.
 
     Returns:
-        Negative float representing relative spot price decrease (e.g., -0.0184 for -1.84%).
+        Negative float representing relative spot price decrease (e.g., -0.0184 for
+        -1.84%).
     """
     if token_amount <= 0 or virtual_sol_reserves <= 0 or virtual_token_reserves <= 0:
         return 0.0
@@ -338,198 +330,3 @@ def calculate_sell_execution_slippage(
     y = float(virtual_token_reserves)
     dy = float(token_amount)
     return -dy / (y + dy)
-
-
-@dataclass(frozen=True)
-class CurveObservation:
-    """Snapshot of bonding curve state at a specific point in time."""
-
-    timestamp: float
-    spot_price: float
-    virtual_sol_reserves: float
-    virtual_token_reserves: float
-    sol_amount: float = 0.0
-    is_buy: bool = True
-
-
-class BondingCurveVolatilityEstimator:
-    """Estimates real-time price velocity, rolling volatility, depth consumption, and dynamic slippage."""
-
-    def __init__(
-        self,
-        window_seconds: float = 60.0,
-        *,
-        default_slippage_bps: int = 250,
-        min_slippage_bps: int = 100,
-        max_slippage_bps: int = 500,
-        alpha_volatility: float = 1.0,
-        beta_impact: float = 1.0,
-    ) -> None:
-        self.window_seconds = max(1.0, float(window_seconds))
-        self.default_slippage_bps = int(default_slippage_bps)
-        self.min_slippage_bps = int(min_slippage_bps)
-        self.max_slippage_bps = int(max_slippage_bps)
-        self.alpha_volatility = float(alpha_volatility)
-        self.beta_impact = float(beta_impact)
-        self._history: Deque[CurveObservation] = deque()
-
-    def record_observation(
-        self,
-        virtual_sol_reserves: Number,
-        virtual_token_reserves: Number,
-        timestamp: float | None = None,
-        *,
-        sol_amount: float = 0.0,
-        is_buy: bool = True,
-    ) -> CurveObservation:
-        """Record a curve reserve update or trade event and prune expired history."""
-        ts = _monotonic() if timestamp is None else float(timestamp)
-        spot = calculate_spot_price(virtual_sol_reserves, virtual_token_reserves)
-        obs = CurveObservation(
-            timestamp=ts,
-            spot_price=spot,
-            virtual_sol_reserves=float(virtual_sol_reserves),
-            virtual_token_reserves=float(virtual_token_reserves),
-            sol_amount=float(sol_amount),
-            is_buy=bool(is_buy),
-        )
-        self._history.append(obs)
-        self._prune(ts)
-        return obs
-
-    def _prune(self, current_time: float) -> None:
-        cutoff = current_time - self.window_seconds
-        while self._history and self._history[0].timestamp < cutoff:
-            self._history.popleft()
-
-    def get_observations(
-        self, window_seconds: float | None = None, as_of: float | None = None
-    ) -> list[CurveObservation]:
-        """Return history snapshots within the requested time window."""
-        ref_time = _monotonic() if as_of is None else float(as_of)
-        win = self.window_seconds if window_seconds is None else float(window_seconds)
-        cutoff = ref_time - win
-        return [obs for obs in self._history if obs.timestamp >= cutoff]
-
-    def calculate_price_velocity(
-        self, window_seconds: float = 10.0, as_of: float | None = None
-    ) -> float:
-        """Calculate absolute price velocity (Delta P / Delta t) over the window."""
-        obs = self.get_observations(window_seconds, as_of=as_of)
-        if len(obs) < 2:
-            return 0.0
-        p_first = obs[0].spot_price
-        p_last = obs[-1].spot_price
-        dt = obs[-1].timestamp - obs[0].timestamp
-        if dt <= 1e-6:
-            return 0.0
-        return (p_last - p_first) / dt
-
-    def calculate_relative_velocity(
-        self, window_seconds: float = 10.0, as_of: float | None = None
-    ) -> float:
-        """Calculate relative price velocity ((Delta P / P_0) / Delta t) per second."""
-        obs = self.get_observations(window_seconds, as_of=as_of)
-        if len(obs) < 2:
-            return 0.0
-        p_first = obs[0].spot_price
-        if p_first <= 0.0:
-            return 0.0
-        p_last = obs[-1].spot_price
-        dt = obs[-1].timestamp - obs[0].timestamp
-        if dt <= 1e-6:
-            return 0.0
-        return ((p_last - p_first) / p_first) / dt
-
-    def calculate_volatility(
-        self, window_seconds: float = 30.0, as_of: float | None = None
-    ) -> float:
-        """Calculate rolling standard deviation of consecutive percentage price returns."""
-        obs = self.get_observations(window_seconds, as_of=as_of)
-        if len(obs) < 2:
-            return 0.0
-        returns: list[float] = []
-        for i in range(1, len(obs)):
-            p_prev = obs[i - 1].spot_price
-            p_curr = obs[i].spot_price
-            if p_prev > 0.0:
-                ret = (p_curr - p_prev) / p_prev
-                returns.append(ret)
-        if not returns:
-            return 0.0
-        mean_ret = sum(returns) / len(returns)
-        variance = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
-        return math.sqrt(variance)
-
-    def calculate_depth_consumption(
-        self, sol_amount: float, virtual_sol_reserves: Number
-    ) -> float:
-        """Calculate fraction of virtual SOL reserve depth consumed (Delta x / x_virtual)."""
-        if sol_amount <= 0.0 or virtual_sol_reserves <= 0:
-            return 0.0
-        return float(sol_amount) / float(virtual_sol_reserves)
-
-    def estimate_dynamic_slippage(
-        self,
-        trade_amount_sol: float,
-        virtual_sol_reserves: Number,
-        virtual_token_reserves: Number,
-        *,
-        is_buy: bool = True,
-        urgency_tier: str = "normal",
-        base_slippage_bps: int | None = None,
-        min_slippage_bps: int | None = None,
-        max_slippage_bps: int | None = None,
-    ) -> int:
-        """Estimate dynamic slippage BPS scaled by volatility, price impact, and urgency."""
-        base_bps = (
-            self.default_slippage_bps
-            if base_slippage_bps is None
-            else int(base_slippage_bps)
-        )
-        min_bps = (
-            self.min_slippage_bps if min_slippage_bps is None else int(min_slippage_bps)
-        )
-        max_bps = (
-            self.max_slippage_bps if max_slippage_bps is None else int(max_slippage_bps)
-        )
-
-        vol = self.calculate_volatility(window_seconds=30.0)
-        vol_bps = vol * 10_000.0 * self.alpha_volatility
-
-        # The slippage a fill pays is the gap between its average price and
-        # the pre-trade spot (dx/x on a buy), not the post-trade spot move,
-        # which is about twice that (BUG-134).
-        if is_buy:
-            impact = calculate_buy_execution_slippage(
-                trade_amount_sol, virtual_sol_reserves
-            )
-        else:
-            token_est = 0.0
-            if virtual_sol_reserves > 0:
-                spot = calculate_spot_price(
-                    virtual_sol_reserves, virtual_token_reserves
-                )
-                token_est = (trade_amount_sol / spot) if spot > 0 else 0.0
-            impact = abs(
-                calculate_sell_execution_slippage(token_est, virtual_token_reserves)
-            )
-
-        impact_bps = impact * 10_000.0 * self.beta_impact
-
-        urgency = urgency_tier.lower()
-        multiplier = 1.0
-        if urgency in {"high_conviction", "high"}:
-            multiplier = 1.25
-        elif urgency in {"graduation", "graduation_snipe"}:
-            multiplier = 1.5
-        elif urgency in {"emergency", "emergency_exit"}:
-            multiplier = 2.0
-
-        raw_dynamic = (base_bps + vol_bps + impact_bps) * multiplier
-        clamped = max(min_bps, min(int(round(raw_dynamic)), max_bps))
-        return clamped
-
-    def clear(self) -> None:
-        """Clear observation history."""
-        self._history.clear()

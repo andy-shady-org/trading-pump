@@ -29,8 +29,9 @@ bought; replay skips their rows (``RECORD_ONLY_POLL_SOURCES``).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 # ``curve_poll`` sources that are analysis data only: replay, the shadow report
 # and the shadow scan skip them, so a capture with them replays like one without.

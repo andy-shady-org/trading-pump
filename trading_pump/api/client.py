@@ -2,7 +2,7 @@ import asyncio
 import inspect
 import json as json_module
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import aiohttp
 
@@ -55,8 +55,8 @@ class PumpFunApiClient:
         base_url: str = "https://frontend-api-v3.pump.fun",
         *,
         timeout: float = 20.0,
-        session: Optional[aiohttp.ClientSession] = None,
-        headers: Optional[Dict[str, str]] = None,
+        session: aiohttp.ClientSession | None = None,
+        headers: dict[str, str] | None = None,
         max_retries: int = 3,
         retry_backoff_seconds: float = 0.5,
         circuit_breaker_threshold: int = 5,
@@ -116,10 +116,10 @@ class PumpFunApiClient:
         method: str,
         path: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        data: Optional[Any] = None,
-        headers: Optional[Dict[str, str]] = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        data: Any | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         session = await self._get_session()
         url = self._build_url(path)
@@ -130,7 +130,8 @@ class PumpFunApiClient:
             text = await resp.text()
             if resp.status >= 400:
                 raise PumpFunApiHttpError(
-                    f"PumpFun API {method.upper()} {path} failed: HTTP {resp.status} :: {text[:500]}",
+                    f"PumpFun API {method.upper()} {path} failed: HTTP {resp.status} "
+                    f":: {text[:500]}",
                     resp.status,
                 )
             try:
@@ -143,17 +144,17 @@ class PumpFunApiClient:
         method: str,
         path: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        data: Optional[Any] = None,
-        headers: Optional[Dict[str, str]] = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        data: Any | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         if self._circuit_open_until > time.monotonic():
             raise RuntimeError(
-                "PumpFun API circuit open; market data requests are temporarily disabled."
+                "PumpFun API circuit open; market data requests are temporarily "
+                "disabled."
             )
 
-        last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 result = await self._request_once(
@@ -171,30 +172,26 @@ class PumpFunApiClient:
                 # ~3.5 s of backoff and must not trip the circuit (BUG-95).
                 if not exc.is_retryable:
                     raise
-                last_error = exc
                 if attempt >= self.max_retries:
                     self._record_circuit_failure()
                     raise
                 await asyncio.sleep(self._backoff_delay(attempt))
-            except (
-                Exception
-            ) as exc:  # pragma: no cover - retry path exercised via tests
-                last_error = exc
+            except Exception:
                 if attempt >= self.max_retries:
                     self._record_circuit_failure()
                     raise
                 await asyncio.sleep(self._backoff_delay(attempt))
 
-        if last_error is not None:
-            raise last_error
+        # Only reached with max_retries < 0 (no attempt at all): every attempt
+        # above either returns or raises on the last try.
         raise RuntimeError(f"PumpFun API request failed for {method.upper()} {path}.")
 
     async def get(
         self,
         path: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         return await self.request("GET", path, params=params, headers=headers)
 
@@ -202,10 +199,10 @@ class PumpFunApiClient:
         self,
         path: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        data: Optional[Any] = None,
-        headers: Optional[Dict[str, str]] = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        data: Any | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         return await self.request(
             "POST", path, params=params, json=json, data=data, headers=headers
@@ -375,7 +372,7 @@ class PumpFunApiClient:
         payload = await self._request_once("GET", url)
         return payload if isinstance(payload, dict) else {}
 
-    async def get_coin_info(self, mint: str) -> Dict[str, Any]:
+    async def get_coin_info(self, mint: str) -> dict[str, Any]:
         payload = await self.get_coin(mint)
         if isinstance(payload, dict):
             return payload

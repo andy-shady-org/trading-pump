@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from trading_pump.api.client import PumpFunApiClient
 from trading_pump.sdk.execution import PumpFunExecutionClient
@@ -266,17 +266,19 @@ def evaluate_cluster_graph(
 
 
 class TokenEnricher:
-    """Handles off-chain token metadata enrichment, creator profiling, and anti-rug screening."""
+    """Handles off-chain token metadata enrichment, creator profiling, and anti-rug
+    screening.
+    """
 
     # Pause between holder lookups that came back empty (BUG-107).
     holder_retry_delay_seconds: float = 0.25
 
     def __init__(
         self,
-        api_client: Optional[PumpFunApiClient] = None,
-        execution_client: Optional[PumpFunExecutionClient] = None,
-        config: Optional[ScreeningSettings] = None,
-        screening_cache: Optional[ScreeningCache] = None,
+        api_client: PumpFunApiClient | None = None,
+        execution_client: PumpFunExecutionClient | None = None,
+        config: ScreeningSettings | None = None,
+        screening_cache: ScreeningCache | None = None,
         lookup_timeout_seconds: float = DEFAULT_LOOKUP_TIMEOUT_SECONDS,
     ) -> None:
         self.api = api_client
@@ -292,10 +294,12 @@ class TokenEnricher:
     async def enrich_and_screen(
         self,
         mint: str,
-        token_data: Optional[dict[str, Any]] = None,
-        config: Optional[ScreeningSettings] = None,
+        token_data: dict[str, Any] | None = None,
+        config: ScreeningSettings | None = None,
     ) -> TokenScreeningVerdict:
-        """Enriches off-chain metadata, developer profile, and top holders, evaluating anti-rug heuristics."""
+        """Enriches off-chain metadata, developer profile, and top holders, evaluating
+        anti-rug heuristics.
+        """
         active_config = config or self.config
         if not active_config.enable_anti_rug_filters:
             return TokenScreeningVerdict(
@@ -412,9 +416,6 @@ class TokenEnricher:
                 coin_data.get("trades") or coin_data.get("recent_trades") or []
             )
             if funding_links or coin_data.get("cluster_analysis"):
-                if isinstance(coin_data.get("cluster_analysis"), dict):
-                    # Direct verdict passed
-                    pass
                 top_h = holder_distribution.top_holders if holder_distribution else []
                 total_supp = (
                     holder_distribution.total_supply
@@ -530,7 +531,7 @@ class TokenEnricher:
                 self._largest_holders_with_retry(mint),
                 timeout=self.lookup_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             holders, outcome = [], "timeout"
         self.holder_lookup_stats[outcome] = self.holder_lookup_stats.get(outcome, 0) + 1
         if not holders:

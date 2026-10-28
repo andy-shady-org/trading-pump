@@ -299,7 +299,8 @@ def test_sdk_validation_helpers(client):
 
 @pytest.mark.regression("BUG-01", "BUG-03")
 def test_bonding_curve_data_decoding_and_sell_calculation():
-    # 8 discriminator bytes + 8 u64 virtual token + 8 u64 virtual sol + 8 u64 real token + 8 u64 real sol + 8 u64 supply + 1 bool complete
+    # 8 discriminator bytes + 8 u64 virtual token + 8 u64 virtual sol + 8 u64 real token
+    # + 8 u64 real sol + 8 u64 supply + 1 bool complete
     raw = (
         b"\x17\xb7\xf8\x37\x60\xd8\xac\x60"
         + (1_073_000_000_000_000).to_bytes(8, "little")
@@ -1002,8 +1003,15 @@ async def test_execution_sdk_all_branches():
     client._request_rpc_json = AsyncMock(return_value={"result": {"value": 5000000000}})
     assert await client.get_balance_sol() == 5.0
 
-    client._request_rpc_json = AsyncMock(return_value={"result": None})
-    assert await client.get_balance_sol() == 0.0
+    answers: list[dict[str, Any]] = [
+        {"result": None},
+        {"result": {}},
+        {"result": {"value": "5"}},
+    ]
+    for answer in answers:
+        client._request_rpc_json = AsyncMock(return_value=answer)
+        with pytest.raises(RuntimeError, match="getBalance returned no balance"):
+            await client.get_balance_sol()
 
     # get_token_balance
     client._request_rpc_json = AsyncMock(
@@ -1011,7 +1019,8 @@ async def test_execution_sdk_all_branches():
     )
     assert await client.get_token_balance(SAMPLE_MINT) == 50000000
 
-    # get_token_balance when no accounts found: unreadable balance raises instead of reading as 0 (BUG-35)
+    # get_token_balance when no accounts found: unreadable balance raises instead of
+    # reading as 0 (BUG-35)
     client._request_rpc_json = AsyncMock(return_value={"result": {"value": None}})
     with pytest.raises(TokenBalanceUnavailableError):
         await client.get_token_balance(SAMPLE_MINT)
@@ -1128,7 +1137,7 @@ async def test_get_bonding_curve_state_non_standard_curve_raises(
     virtual_sol: int, real_sol: int
 ) -> None:
     client = _client()
-    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(
         return_value=_curve_account(virtual_sol, real_sol)
     )
 
@@ -1141,7 +1150,7 @@ async def test_get_bonding_curve_state_standard_curve_is_decoded(
     virtual_sol: int, real_sol: int
 ) -> None:
     client = _client()
-    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(
         return_value=_curve_account(virtual_sol, real_sol)
     )
 
@@ -1181,9 +1190,7 @@ async def test_build_buy_tx_non_standard_curve_refuses_to_build() -> None:
 @pytest.mark.regression("BUG-108")
 async def test_get_bonding_curve_state_missing_account_is_not_pump_fun() -> None:
     client = _client()
-    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
-        return_value={"result": {"value": None}}
-    )
+    client._request_rpc_json = AsyncMock(return_value={"result": {"value": None}})
 
     with pytest.raises(NotPumpFunCurveError, match="not found"):
         await client.get_bonding_curve_state(SAMPLE_MINT)
@@ -1194,7 +1201,7 @@ async def test_get_bonding_curve_state_foreign_owner_is_not_pump_fun() -> None:
     client = _client()
     account = _curve_account(*STANDARD_CURVE_RESERVES[0])
     account["result"]["value"]["owner"] = "11111111111111111111111111111111"
-    client._request_rpc_json = AsyncMock(return_value=account)  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(return_value=account)
 
     with pytest.raises(NotPumpFunCurveError, match="not the Pump.fun program"):
         await client.get_bonding_curve_state(SAMPLE_MINT)
@@ -1204,7 +1211,7 @@ async def test_get_bonding_curve_state_pump_owner_is_decoded() -> None:
     client = _client()
     account = _curve_account(*STANDARD_CURVE_RESERVES[0])
     account["result"]["value"]["owner"] = PUMP_PROGRAM_ID
-    client._request_rpc_json = AsyncMock(return_value=account)  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(return_value=account)
 
     state = await client.get_bonding_curve_state(SAMPLE_MINT)
 
@@ -1216,7 +1223,7 @@ async def test_fetch_trade_curve_state_foreign_owner_refuses_to_build() -> None:
     client = _client()
     account = _curve_account(*STANDARD_CURVE_RESERVES[0])
     account["result"]["value"]["owner"] = "11111111111111111111111111111111"
-    client.rpc_pool.request = AsyncMock(return_value=account)  # type: ignore[method-assign]
+    client.rpc_pool.request = AsyncMock(return_value=account)
 
     with pytest.raises(NotPumpFunCurveError):
         await client._fetch_trade_curve_state(SAMPLE_MINT)
@@ -1237,7 +1244,7 @@ async def test_get_bonding_curve_states_decodes_good_curves_and_rejects_the_rest
     client = _client()
     good, bad_owner, missing, odd, junk = (str(Pubkey.new_unique()) for _ in range(5))
     junk_value = {"owner": PUMP_PROGRAM_ID, "data": ["!!notbase64", "base64"]}
-    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(
         return_value={
             "result": {
                 "value": [
@@ -1280,7 +1287,7 @@ async def test_get_bonding_curve_states_reads_in_chunks_of_100() -> None:
         count = len(payload["params"][0])
         return {"result": {"value": [None] * (count - 1)}}  # short answer
 
-    client._request_rpc_json = AsyncMock(side_effect=reply)  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(side_effect=reply)
 
     states = await client.get_bonding_curve_states(mints)
 
@@ -1293,7 +1300,7 @@ async def test_get_bonding_curve_states_reads_in_chunks_of_100() -> None:
 
 async def test_get_bonding_curve_states_raises_on_rpc_failure() -> None:
     client = _client()
-    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(
         side_effect=RuntimeError("RPC request failed after retries: timeout")
     )
 
@@ -1343,9 +1350,35 @@ async def test_non_sol_quoted_curves_are_refused_as_non_standard() -> None:
         "owner": PUMP_PROGRAM_ID,
         "data": account_data_b64(_quoted_curve(USDC_MINT)),
     }
-    client._request_rpc_json = AsyncMock(  # type: ignore[method-assign]
-        return_value={"result": {"value": [usdc]}}
-    )
+    client._request_rpc_json = AsyncMock(return_value={"result": {"value": [usdc]}})
     rejected: dict[str, str] = {}
     assert await client.get_bonding_curve_states([SAMPLE_MINT], rejected=rejected) == {}
     assert rejected == {SAMPLE_MINT: "non_standard"}
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+async def test_curve_trades_go_through_a_jito_bundle_when_tipped(side: str) -> None:
+    client = PumpFunExecutionClient(str(Keypair()), use_jito=True)
+    client.resolve_trade_tip = AsyncMock(return_value=(True, 10_000))
+    client.build_buy_tx = AsyncMock(return_value="buy-tx")
+    client.build_sell_tx = AsyncMock(return_value="sell-tx")
+    client.send_jito_bundle_with_fallback = AsyncMock(return_value="jito-sig")
+    if side == "buy":
+        sig = await client.buy(SAMPLE_MINT, "Curve", 0.01)
+    else:
+        sig = await client.sell(SAMPLE_MINT, "Curve", 1_000)
+    assert sig == "jito-sig"
+    client.send_jito_bundle_with_fallback.assert_awaited_once_with([f"{side}-tx"])
+
+
+def test_curve_fee_falls_back_to_the_flat_fee_on_a_bad_tier_table() -> None:
+    from trading_pump.sdk.fee_config import FeeConfig
+
+    client = PumpFunExecutionClient(str(Keypair()))
+    from trading_pump.sdk.fee_config import Fees
+
+    flat = Fees(0, 95, 0)
+    client._fee_config_cache = (0.0, FeeConfig(1, "admin", flat, (), (), None))
+    assert client.curve_fee_bps(30_000_000_000, 1_073_000_000_000_000) == int(
+        client.pump_fee_bps
+    )

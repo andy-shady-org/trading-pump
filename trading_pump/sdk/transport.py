@@ -1,9 +1,10 @@
-"""Transaction assembly, fee/tip instructions, sending, Jito bundles and confirmation."""
+"""Transaction assembly, fee/tip instructions, sending, Jito bundles and
+confirmation."""
 
 import asyncio
 import base64
 import json
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
 from solders.instruction import AccountMeta, Instruction
@@ -16,18 +17,19 @@ from .costs import (
     model_transaction_costs,
     parse_transaction_costs,
 )
+from .execution_base import ExecutionClientBase
+from .execution_types import (
+    COMPUTE_BUDGET_PROGRAM_ID,
+    SYSTEM_PROGRAM_ID,
+)
 from .jito import (
     JITO_TIP_ACCOUNTS,
 )
-from .execution_types import (
-    SYSTEM_PROGRAM_ID,
-    COMPUTE_BUDGET_PROGRAM_ID,
-)
-from .execution_base import ExecutionClientBase
 
 
 class TransactionTransportMixin(ExecutionClientBase):
-    """Build, send and confirm transactions (RPC or Jito bundle) and read their costs."""
+    """Build, send and confirm transactions (RPC or Jito bundle) and read their
+    costs."""
 
     async def get_latest_blockhash(self) -> str:
         payload = {
@@ -63,7 +65,7 @@ class TransactionTransportMixin(ExecutionClientBase):
             )
         return max(0, int(unit_price * self.compute_unit_limit / 1_000_000))
 
-    def side_tip_override(self, *, is_buy: bool) -> Optional[int]:
+    def side_tip_override(self, *, is_buy: bool) -> int | None:
         """Fixed tip of one side (entry or exit), or ``None`` for the shared tip."""
         name = "jito_entry_tip_lamports" if is_buy else "jito_exit_tip_lamports"
         value = getattr(self, name, None)
@@ -75,8 +77,8 @@ class TransactionTransportMixin(ExecutionClientBase):
         is_buy: bool,
         trade_amount_sol: float = 0.0,
         conviction_score: float = 1.0,
-        use_jito: Optional[bool] = None,
-    ) -> tuple[bool, Optional[int]]:
+        use_jito: bool | None = None,
+    ) -> tuple[bool, int | None]:
         """``(send_via_jito, tip_lamports)`` for one trade.
 
         Without a side override the dynamic tip applies as before. A side tip of
@@ -100,7 +102,7 @@ class TransactionTransportMixin(ExecutionClientBase):
         *,
         rent_lamports: int = 0,
         signature: str | None = None,
-        is_buy: Optional[bool] = None,
+        is_buy: bool | None = None,
     ) -> TransactionCosts:
         """Modelled costs of one trade for paper/dry-run accounting (FEAT-49).
 
@@ -227,7 +229,8 @@ class TransactionTransportMixin(ExecutionClientBase):
         trade_amount_sol: float = 0.0,
         conviction_score: float = 1.0,
     ) -> int:
-        """Calculate dynamic Jito tip in Lamports based on trade amount and conviction."""
+        """Calculate dynamic Jito tip in Lamports based on trade amount and
+        conviction."""
         if self.jito_client is not None:
             try:
                 floor = await self.jito_client.fetch_tip_floor()
@@ -246,7 +249,7 @@ class TransactionTransportMixin(ExecutionClientBase):
         self,
         instructions,
         *,
-        tip_lamports: Optional[int] = None,
+        tip_lamports: int | None = None,
     ) -> VersionedTransaction:
         tx_instructions = []
         if self.compute_unit_limit > 0:
@@ -323,7 +326,7 @@ class TransactionTransportMixin(ExecutionClientBase):
         self,
         transactions: list[VersionedTransaction],
         *,
-        endpoint_url: Optional[str] = None,
+        endpoint_url: str | None = None,
     ) -> str:
         """Submit a bundle of versioned transactions to Jito Block Engine."""
         url = (
@@ -348,7 +351,8 @@ class TransactionTransportMixin(ExecutionClientBase):
                 body = await resp.text()
                 if resp.status != 200:
                     raise RuntimeError(
-                        f"Jito bundle submission failed (HTTP {resp.status}): {body[:500]}"
+                        f"Jito bundle submission failed (HTTP {resp.status}): "
+                        f"{body[:500]}"
                     )
                 parsed = json.loads(body)
                 result = parsed.get("result")
@@ -360,9 +364,11 @@ class TransactionTransportMixin(ExecutionClientBase):
         self,
         transactions: list[VersionedTransaction],
         *,
-        timeout_seconds: Optional[float] = None,
+        timeout_seconds: float | None = None,
     ) -> str:
-        """Submit transactions via Jito bundle with confirmation polling and direct RPC fallback."""
+        """Submit transactions via Jito bundle with confirmation polling and direct RPC
+        fallback.
+        """
         if not transactions:
             raise ValueError("Cannot submit empty transaction list as bundle")
 

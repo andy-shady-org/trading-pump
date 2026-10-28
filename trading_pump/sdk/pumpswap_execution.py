@@ -1,18 +1,19 @@
 """PumpSwap reads and sell transactions for graduated Pump.fun coins (BUG-123)."""
 
 import base64
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from solders.instruction import Instruction
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 from spl.token.constants import TOKEN_PROGRAM_ID
-from spl.token.models import CloseAccountParams
 from spl.token.instructions import (
     close_account,
     create_idempotent_associated_token_account,
     get_associated_token_address,
 )
+from spl.token.models import CloseAccountParams
 
 from .execution_types import GET_MULTIPLE_ACCOUNTS_LIMIT, WSOL_MINT_STR
 from .pumpswap import (
@@ -44,7 +45,7 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
 
     async def _get_accounts(
         self, addresses: list[str], *, timeout_seconds: float = 5.0
-    ) -> list[Optional[dict[str, Any]]]:
+    ) -> list[dict[str, Any] | None]:
         parsed = await self._request_rpc_json(
             {
                 "jsonrpc": "2.0",
@@ -65,7 +66,7 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
         ]
 
     @staticmethod
-    def _account_bytes(value: Optional[dict[str, Any]]) -> bytes:
+    def _account_bytes(value: dict[str, Any] | None) -> bytes:
         return base64.b64decode(((value or {}).get("data") or [""])[0])
 
     async def get_pumpswap_pool(
@@ -159,7 +160,7 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
             values = await self._get_accounts(
                 addresses, timeout_seconds=timeout_seconds
             )
-            for mint, address, value in zip(chunk, addresses, values):
+            for mint, address, value in zip(chunk, addresses, values, strict=True):
                 pool, reason = self._observed_pool(mint, address, value)
                 if pool is None:
                     reasons[mint] = reason
@@ -209,8 +210,8 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
         return states
 
     def _observed_pool(
-        self, mint: str, address: str, value: Optional[dict[str, Any]]
-    ) -> tuple[Optional[PumpSwapPool], str]:
+        self, mint: str, address: str, value: dict[str, Any] | None
+    ) -> tuple[PumpSwapPool | None, str]:
         """The decoded canonical pool of ``mint``, or ``None`` and why not."""
         if not value:
             return None, "missing"
@@ -242,11 +243,12 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
         mint: str,
         token_amount: int,
         *,
-        slippage_bps: Optional[int] = None,
-        tip_lamports: Optional[int] = None,
+        slippage_bps: int | None = None,
+        tip_lamports: int | None = None,
         close_token_account: bool = False,
     ) -> VersionedTransaction:
-        """PumpSwap sell into a WSOL ATA, then unwrap; optionally close the token account.
+        """PumpSwap sell into a WSOL ATA, then unwrap; optionally close the token
+        account.
 
         ``min_quote_amount_out`` always comes from the live pool reserves.
         """
@@ -323,8 +325,8 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
         mint: str,
         token_amount: int,
         *,
-        slippage_bps: Optional[int] = None,
-        use_jito: Optional[bool] = None,
+        slippage_bps: int | None = None,
+        use_jito: bool | None = None,
         conviction_score: float = 1.0,
         close_token_account: bool = False,
     ) -> str:

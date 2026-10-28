@@ -90,20 +90,16 @@ class ReplayRecorder:
                     )
                     batch.append(first_item)
                     self._queue.task_done()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
-                # Drain additional available items up to batch_size
+                # Drain what is already queued, up to batch_size. One event
+                # loop, no other consumer: a non-empty queue cannot be empty
+                # by the time get_nowait runs.
                 while len(batch) < self.batch_size and not self._queue.empty():
-                    try:
-                        item = self._queue.get_nowait()
-                        batch.append(item)
-                        self._queue.task_done()
-                    except asyncio.QueueEmpty:
-                        break
-
-                if batch:
-                    await self._write_batch(batch)
+                    batch.append(self._queue.get_nowait())
+                    self._queue.task_done()
+                await self._write_batch(batch)
             except asyncio.CancelledError:
                 break
             except Exception as err:
@@ -152,12 +148,8 @@ class ReplayRecorder:
         """Force flush all currently enqueued records to disk immediately."""
         batch: list[dict[str, Any]] = []
         while not self._queue.empty():
-            try:
-                item = self._queue.get_nowait()
-                batch.append(item)
-                self._queue.task_done()
-            except asyncio.QueueEmpty:
-                break
+            batch.append(self._queue.get_nowait())
+            self._queue.task_done()
         if batch:
             await self._write_batch(batch)
 

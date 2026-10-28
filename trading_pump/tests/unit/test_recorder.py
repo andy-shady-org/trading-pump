@@ -66,7 +66,7 @@ async def test_close_with_write_running_counts_it_before_closing_sink(
         release.wait(5.0)
         real_append(text)
 
-    recorder._sync_append = slow_append  # type: ignore[method-assign]
+    recorder._sync_append = slow_append
     recorder.record_snapshot({"mint": "Running1"})
     while not started.is_set():
         await asyncio.sleep(0.001)
@@ -260,3 +260,29 @@ async def test_replay_recorder_worker_error(tmp_path: Path):
         await asyncio.sleep(0.15)
 
     await recorder.close()
+
+
+async def test_the_worker_stops_by_itself_once_closed_is_set(tmp_path: Path) -> None:
+    recorder = ReplayRecorder(
+        output_path=tmp_path / "closed.jsonl", flush_interval_seconds=0.01
+    )
+    await recorder.start()
+    recorder._closed = True
+    await asyncio.sleep(0.05)
+    assert not recorder.is_running
+    await recorder.close()
+
+
+async def test_close_survives_a_sink_that_fails_to_close(tmp_path: Path) -> None:
+    recorder = ReplayRecorder(output_path=tmp_path / "sink.jsonl")
+    await recorder.start()
+    recorder.record_snapshot({"mint": "M"})
+    await recorder.flush()
+
+    class BrokenSink:
+        def close(self) -> None:
+            raise OSError("disk gone")
+
+    recorder._sink = BrokenSink()  # type: ignore[assignment]
+    await recorder.close()
+    assert recorder._sink is None and recorder.records_written == 1

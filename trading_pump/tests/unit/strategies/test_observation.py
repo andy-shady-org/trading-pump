@@ -6,13 +6,13 @@ import pytest
 
 from trading_pump.strategies.observation import (
     DISCOVERY_SOURCE,
+    GRADUATION_SOURCE,
     LAUNCH_SAMPLE_SOURCE,
     OBSERVATION_END_EVENT,
     OBSERVATION_START_EVENT,
     POST_EXIT_SOURCE,
     REJECT_SAMPLE_SOURCE,
     SOL_QUOTE_MINT,
-    GRADUATION_SOURCE,
     CurveObservationList,
     discovery_candidates,
     in_launch_sample,

@@ -293,3 +293,76 @@ class FakeAlertSink:
 
     async def send_alert_async(self, message: str) -> bool:
         return self.send_alert(message)
+
+
+class FakePoolSource:
+    """Stand-in for a ``PoolSource``: readings and fees the test sets.
+
+    ``set(mint, base, quote)`` makes the next read return those reserves at
+    the read time; ``reject(mint, reason)`` makes it refuse; ``fail`` makes
+    the whole read raise (RPC down). Every read is recorded in ``reads``.
+    """
+
+    def __init__(self, fee_bps: int = 30) -> None:
+        from trading_pump.market import SwapFee
+
+        self.reserves: dict[str, tuple[int, int]] = {}
+        self.rejections: dict[str, str] = {}
+        self.fail: Exception | None = None
+        self.fee_error: Exception | None = None
+        self.fee = SwapFee(fee_bps, "fake")
+        self.reads: list[tuple[list[str], float]] = []
+
+    def set(self, mint: str, base: int, quote: int) -> None:
+        self.rejections.pop(mint, None)
+        self.reserves[mint] = (int(base), int(quote))
+
+    def reject(self, mint: str, reason: str = "missing") -> None:
+        self.reserves.pop(mint, None)
+        self.rejections[mint] = reason
+
+    async def read_pools(self, mints: Sequence[str], *, now: float) -> Any:
+        from trading_pump.market import PoolReading
+
+        self.reads.append((list(mints), now))
+        if self.fail is not None:
+            raise self.fail
+        found = {}
+        rejected = {}
+        for mint in mints:
+            if mint in self.reserves:
+                base, quote = self.reserves[mint]
+                found[mint] = PoolReading(
+                    mint=mint, at=now, base_reserve=base, quote_reserve=quote, pool="P"
+                )
+            else:
+                rejected[mint] = self.rejections.get(mint, "missing")
+        return found, rejected
+
+    async def swap_fee(self, reading: Any) -> Any:
+        if self.fee_error is not None:
+            raise self.fee_error
+        return self.fee
+
+
+@dataclass
+class FakeHost:
+    """Stand-in for trading-core's ``ModuleHost`` (the engine's callbacks)."""
+
+    market_data: int = 0
+    events: list[tuple[str, bool]] = field(default_factory=list)
+    degraded: dict[str, str] = field(default_factory=dict)
+    changes: list[tuple[str, bool, str]] = field(default_factory=list)
+
+    def notify_market_data(self) -> None:
+        self.market_data += 1
+
+    def record_event(self, message: str, *, alert: bool = False) -> None:
+        self.events.append((message, alert))
+
+    def set_degraded(self, name: str, degraded: bool, detail: str = "") -> None:
+        self.changes.append((name, degraded, detail))
+        if degraded:
+            self.degraded[name] = detail
+        else:
+            self.degraded.pop(name, None)

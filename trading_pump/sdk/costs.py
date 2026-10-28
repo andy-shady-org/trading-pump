@@ -8,8 +8,9 @@ amounts are lamports; ``rent_lamports`` is signed: positive when rent was paid
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable
+from typing import Any
 
 LAMPORTS_PER_SOL = 1_000_000_000
 BASE_FEE_LAMPORTS_PER_SIGNATURE = 5_000
@@ -22,6 +23,7 @@ TOKEN_ACCOUNT_RENT_LAMPORTS = 1_513_840
 
 COST_SOURCE_TRANSACTION_META = "transaction_meta"
 COST_SOURCE_MODELLED = "modelled"
+
 
 @dataclass(frozen=True)
 class TransactionCosts:

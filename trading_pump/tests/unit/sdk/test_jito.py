@@ -1,6 +1,9 @@
-"""Unit tests for Jito Block Engine JSON-RPC client, tip floor calculations, and bundle builder."""
+"""Unit tests for Jito Block Engine JSON-RPC client, tip floor calculations, and bundle
+builder.
+"""
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -201,7 +204,8 @@ def test_jito_client_calculate_tip_lamports():
         p95_landed_tip_sol=0.001,
     )
 
-    # Small trade: 0.001 SOL -> 1% is 10,000 lamports. Base tip = max(50_000, 10_000) = 50_000.
+    # Small trade: 0.001 SOL -> 1% is 10,000 lamports. Base tip = max(50_000, 10_000) =
+    # 50_000.
     # Conviction 1.0 -> 50_000.
     tip = client.calculate_tip_lamports(0.001, conviction_score=1.0, tip_floor=floor)
     assert tip == 50_000
@@ -212,7 +216,8 @@ def test_jito_client_calculate_tip_lamports():
     )
     assert tip_high == 100_000
 
-    # Large trade: 1.0 SOL -> 1% is 10,000,000 lamports. Base tip = max(50_000, 10_000_000) = 10_000_000.
+    # Large trade: 1.0 SOL -> 1% is 10,000,000 lamports. Base tip = max(50_000,
+    # 10_000_000) = 10_000_000.
     # Max cap is 5_000_000 -> clamped to 5_000_000.
     tip_large = client.calculate_tip_lamports(
         1.0, conviction_score=1.0, tip_floor=floor
@@ -544,3 +549,64 @@ async def test_jito_get_bundle_statuses_parses_ok_and_err():
     assert ok.status == "Landed" and ok.is_landed
     assert bad.status == "Failed" and not bad.is_landed
     await jito.close()
+
+
+def _response(method: str, *, status: int = 200, body: Any = None) -> MagicMock:
+    session = MagicMock()
+    resp = AsyncMock()
+    resp.status = status
+    resp.json = AsyncMock(return_value=body)
+    resp.text = AsyncMock(return_value=body if isinstance(body, str) else "")
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=None)
+    setattr(session, method, MagicMock(return_value=resp))
+    return session
+
+
+async def test_an_open_session_is_reused() -> None:
+    client = JitoClient()
+    first = await client._get_session()
+    assert await client._get_session() is first
+    await client.close()
+
+
+async def test_an_unusable_tip_account_answer_keeps_the_known_accounts() -> None:
+    client = JitoClient()
+    known = list(client.tip_accounts)
+    with patch.object(client, "_send_json_rpc", new=AsyncMock(return_value=[1, 2])):
+        assert await client.refresh_tip_accounts() == known
+
+
+@pytest.mark.parametrize(
+    ("status", "body"), [(503, None), (200, ["not-a-dict"]), (200, "text")]
+)
+async def test_a_bad_tip_floor_answer_falls_back_to_the_default(
+    status: int, body: Any
+) -> None:
+    client = JitoClient()
+    session = _response("get", status=status, body=body)
+    with patch.object(client, "_get_session", new=AsyncMock(return_value=session)):
+        floor = await client.fetch_tip_floor()
+    assert floor.p50_landed_tip_sol == pytest.approx(0.00005)
+
+
+async def test_invalid_json_and_a_missing_bundle_id_raise() -> None:
+    client = JitoClient()
+    tx = create_dummy_versioned_transaction()
+    session = _response("post", body="not json")
+    with patch.object(client, "_get_session", new=AsyncMock(return_value=session)):
+        with pytest.raises(RuntimeError, match="Invalid JSON returned"):
+            await client.send_bundle([tx])
+    with patch.object(client, "_send_json_rpc", new=AsyncMock(return_value="")):
+        with pytest.raises(RuntimeError, match="Missing bundle ID"):
+            await client.send_bundle([tx])
+
+
+async def test_status_lists_skip_entries_that_are_not_objects() -> None:
+    client = JitoClient()
+    answer = {"value": ["junk", {"bundle_id": "b1", "status": "Landed"}]}
+    with patch.object(client, "_send_json_rpc", new=AsyncMock(return_value=answer)):
+        statuses = await client.get_bundle_statuses(["b1"])
+        inflight = await client.get_inflight_bundle_statuses(["b1"])
+    assert [s.bundle_id for s in statuses] == ["b1"]
+    assert [s.bundle_id for s in inflight] == ["b1"]

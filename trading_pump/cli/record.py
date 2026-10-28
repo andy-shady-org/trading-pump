@@ -15,19 +15,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import signal
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from rich.panel import Panel
 from rich.table import Table
-
 from trading_core.ops.logging import get_configured_console
 from trading_core.ops.redact import redact_url
 from trading_core.ops.retention import RetentionPolicy
+
 from trading_pump.recorder import ReplayRecorder
 from trading_pump.services import market_recorder, slow_lane
 
@@ -66,21 +66,18 @@ def utc_date(text: str) -> float:
         raise argparse.ArgumentTypeError(
             f"expected a UTC date as YYYY-MM-DD, got {text!r}"
         ) from exc
-    return day.replace(tzinfo=timezone.utc).timestamp()
+    return day.replace(tzinfo=UTC).timestamp()
 
 
 def build_record_parser(
     subparsers: argparse._SubParsersAction | None = None,
-    parser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
+    description = "Record market data for research (record-only, no trading)"
     if subparsers is not None:
-        parser = subparsers.add_parser(
-            "record",
-            description="Record market data for research (record-only, no trading)",
-        )
-    elif parser is None:
+        parser = subparsers.add_parser("record", description=description)
+    else:
         parser = argparse.ArgumentParser(
-            description="Record market data for research (record-only, no trading)"
+            prog="trading-pump-recorder", description=description
         )
 
     parser.add_argument(
@@ -121,7 +118,8 @@ def build_record_parser(
     slow.add_argument(
         "--jupiter-quotes",
         action="store_true",
-        help="Sample Jupiter buy/sell quotes, prices and priority fees for a token list",
+        help="Sample Jupiter buy/sell quotes, prices and priority fees for a "
+        "token list",
     )
     slow.add_argument(
         "--backfill-bars",
@@ -132,7 +130,8 @@ def build_record_parser(
         "--tokens",
         type=str,
         default=None,
-        help="Token list JSON ({'tokens': [{'symbol', 'mint'}]}); default: built-in list "
+        help="Token list JSON ({'tokens': [{'symbol', 'mint'}]}); default: "
+        "built-in list "
         "(same as configs/slow_lane_tokens.json)",
     )
     slow.add_argument(
@@ -248,6 +247,14 @@ def build_record_parser(
     return parser
 
 
+def stop_on_signals(stop: asyncio.Event, loop: Any = None) -> None:
+    """Set ``stop`` on SIGINT / SIGTERM where the event loop supports it."""
+    running = loop or asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError, RuntimeError):
+            running.add_signal_handler(sig, stop.set)
+
+
 def _summary(title: str, rows: list[tuple[str, str]]) -> None:
     table = Table(title=title, show_lines=False)
     table.add_column("Metric", style="bold cyan")
@@ -284,12 +291,7 @@ async def run_jupiter_quotes(args: argparse.Namespace, output_path: Path) -> Non
         rpc_url=rpc_url,
     )
     stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, stop.set)
-        except (NotImplementedError, RuntimeError):
-            pass
+    stop_on_signals(stop)
     console.print(
         Panel(
             f"[bold cyan]Jupiter Quote Recorder (FEAT-65, record-only)[/bold cyan]\n"
@@ -330,7 +332,8 @@ async def run_jupiter_quotes(args: argparse.Namespace, output_path: Path) -> Non
 
 
 async def run_market(args: argparse.Namespace, output_path: Path) -> None:
-    """FEAT-74: record pools on several chains until the duration, a signal or Ctrl-C."""
+    """FEAT-74: record pools on several chains until the duration, a signal or
+    Ctrl-C."""
     try:
         config = market_recorder.MarketRecorderConfig(
             chains=market_recorder.parse_chains(getattr(args, "market_chains", None)),
@@ -355,12 +358,7 @@ async def run_market(args: argparse.Namespace, output_path: Path) -> None:
     market = market_recorder.MarketRecorder(http, recorder, config, state_path=state)
     resumed = market.load_state()
     stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, stop.set)
-        except (NotImplementedError, RuntimeError):
-            pass
+    stop_on_signals(stop)
     console.print(
         Panel(
             "[bold cyan]Market Recorder (FEAT-74, record-only)[/bold cyan]\n"
@@ -436,13 +434,14 @@ async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None
         policy=BACKFILL_RETENTION,
     )
     since_text = (
-        datetime.fromtimestamp(since, tz=timezone.utc).strftime("%Y-%m-%d")
+        datetime.fromtimestamp(since, tz=UTC).strftime("%Y-%m-%d")
         if since is not None
         else "listing"
     )
     console.print(
         Panel(
-            f"[bold cyan]{BAR_SOURCE_LABELS[source]} Bar Backfill (FEAT-65)[/bold cyan]\n"
+            f"[bold cyan]{BAR_SOURCE_LABELS[source]} Bar Backfill (FEAT-65)[/bold "
+            "cyan]\n"
             f"Tokens: [yellow]{len(tokens)}[/yellow] | "
             f"Timeframes: [yellow]{', '.join(timeframes)}[/yellow] | "
             f"Max pages: [yellow]{max_pages}[/yellow]"
@@ -553,5 +552,5 @@ def main() -> None:
     run_record_cli(args)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

@@ -1,4 +1,6 @@
-"""Unit tests for Pump.fun constant-product bonding curve math and price impact calculations (BUG-13)."""
+"""Unit tests for Pump.fun constant-product bonding curve math and price impact
+calculations (BUG-13).
+"""
 
 import pytest
 
@@ -63,7 +65,8 @@ def test_buy_tokens_out_and_constant_product_invariant():
     assert tokens_out == expected_out
     assert tokens_out == 10_623_762_376_237  # ~10.62M tokens
 
-    # Verify constant product invariant: (x + dx) * (y - dy) == x * y (within integer rounding)
+    # Verify constant product invariant: (x + dx) * (y - dy) == x * y (within integer
+    # rounding)
     k_initial = x * y
     k_post = (x + dx) * (y - tokens_out)
     assert abs(k_post - k_initial) < (

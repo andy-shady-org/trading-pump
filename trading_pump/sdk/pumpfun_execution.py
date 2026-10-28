@@ -4,17 +4,17 @@ import base64
 import logging
 import time
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import Any
 
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
-from spl.token.models import CloseAccountParams
 from spl.token.instructions import (
     close_account,
     create_idempotent_associated_token_account,
     get_associated_token_address,
 )
+from spl.token.models import CloseAccountParams
 
 from .curve import (
     calculate_buy_execution_slippage,
@@ -28,23 +28,23 @@ from .curve import (
     curve_reserve_anomaly,
 )
 from .execution_types import (
-    PUMP_PROGRAM_ID,
+    BUY_DISCRIMINATOR,
+    BUYBACK_FEE_RECIPIENT,
+    EVENT_AUTHORITY,
+    FEE_CONFIG_KEY,
+    FEE_RECIPIENT,
     GET_MULTIPLE_ACCOUNTS_LIMIT,
     GLOBAL_STATE,
-    FEE_RECIPIENT,
     MAYHEM_FEE_RECIPIENT,
-    BUYBACK_FEE_RECIPIENT,
     PUMP_FEE_PROGRAM_ID,
+    PUMP_PROGRAM_ID,
+    SELL_DISCRIMINATOR,
     SYSTEM_PROGRAM_ID,
-    EVENT_AUTHORITY,
     TOKEN_PROGRAM_ID_STR,
     WSOL_MINT_STR,
-    BUY_DISCRIMINATOR,
-    SELL_DISCRIMINATOR,
-    FEE_CONFIG_KEY,
+    CurveAccountMissingError,
     CurveStateUnavailableError,
     NonStandardCurveError,
-    CurveAccountMissingError,
     NotPumpFunCurveError,
 )
 from .fee_config import FeeConfig, bonding_curve_fee_bps, decode_fee_config
@@ -62,7 +62,8 @@ logger = logging.getLogger(__name__)
 
 
 class PumpFunCurveMixin(TransactionTransportMixin):
-    """Pump.fun bonding-curve reads plus buy/sell instruction and transaction builders."""
+    """Pump.fun bonding-curve reads plus buy/sell instruction and transaction
+    builders."""
 
     _fee_config_cache: tuple[float, FeeConfig] | None = None
 
@@ -146,7 +147,8 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         """
         if len(data) < 49:
             raise ValueError(
-                f"Bonding curve account data too short: {len(data)} bytes (expected >= 49)"
+                f"Bonding curve account data too short: {len(data)} bytes (expected "
+                ">= 49)"
             )
         virtual_token_reserves = int.from_bytes(
             data[8:16], byteorder="little", signed=False
@@ -164,13 +166,8 @@ class PumpFunCurveMixin(TransactionTransportMixin):
             data[40:48], byteorder="little", signed=False
         )
         complete = bool(data[48])
-        creator = None
-        if len(data) >= 81:
-            try:
-                creator_pk = Pubkey.from_bytes(data[49:81])
-                creator = str(creator_pk)
-            except Exception:
-                creator = None
+        # Any 32 bytes are a valid public key, so this cannot fail.
+        creator = str(Pubkey.from_bytes(data[49:81])) if len(data) >= 81 else None
         is_mayhem_mode = bool(data[81]) if len(data) >= 82 else False
         quote_mint = None
         if len(data) >= CURVE_QUOTE_MINT_END:
@@ -229,7 +226,9 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         *,
         slippage_bps: int = 0,
     ) -> int:
-        """Calculate minimum output Lamports for selling a token amount on the bonding curve."""
+        """Calculate minimum output Lamports for selling a token amount on the bonding
+        curve.
+        """
         return calculate_sell_sol_out(
             token_amount=token_amount,
             virtual_token_reserves=virtual_token_reserves,
@@ -619,7 +618,8 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         quote_mint = curve_state.get("quote_mint")
         if quote_mint and str(quote_mint) not in SOL_QUOTE_MINTS:
             raise NonStandardCurveError(
-                f"Non-standard bonding curve for {mint}: quote mint {quote_mint} is not SOL"
+                f"Non-standard bonding curve for {mint}: quote mint {quote_mint} is "
+                "not SOL"
             )
         anomaly = curve_reserve_anomaly(
             int(curve_state.get("virtual_sol_reserves", 0) or 0),
@@ -638,9 +638,9 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         bonding_curve: str,
         sol_amount: float,
         *,
-        token_amount: Optional[int] = None,
-        slippage_bps: Optional[int] = None,
-        tip_lamports: Optional[int] = None,
+        token_amount: int | None = None,
+        slippage_bps: int | None = None,
+        tip_lamports: int | None = None,
     ) -> VersionedTransaction:
         slippage_bps = (
             self.default_slippage_bps
@@ -711,7 +711,7 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         *,
         min_sol_output: int | float = 0,
         slippage_bps: int | None = None,
-        tip_lamports: Optional[int] = None,
+        tip_lamports: int | None = None,
         close_token_account: bool = False,
     ) -> VersionedTransaction:
         """Pump.fun bonding-curve sell.
@@ -791,9 +791,9 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         bonding_curve: str,
         sol_amount: float,
         *,
-        token_amount: Optional[int] = None,
-        slippage_bps: Optional[int] = None,
-        use_jito: Optional[bool] = None,
+        token_amount: int | None = None,
+        slippage_bps: int | None = None,
+        use_jito: bool | None = None,
         conviction_score: float = 1.0,
     ) -> str:
         should_jito, tip_lamports = await self.resolve_trade_tip(
@@ -821,8 +821,8 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         token_amount: int,
         *,
         min_sol_output: int | float = 0,
-        slippage_bps: Optional[int] = None,
-        use_jito: Optional[bool] = None,
+        slippage_bps: int | None = None,
+        use_jito: bool | None = None,
         conviction_score: float = 1.0,
         close_token_account: bool = False,
     ) -> str:

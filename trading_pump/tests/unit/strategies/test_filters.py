@@ -2,13 +2,14 @@ import pytest
 
 from trading_pump.strategies import filters as filters_module
 from trading_pump.strategies.filters import (
-    ScreeningSettings,
     DevWalletProfile,
     HolderDistribution,
     ScreeningCache,
+    ScreeningSettings,
     TokenMetadata,
     TokenScreeningVerdict,
     calculate_gini_coefficient,
+    evaluate_cluster_heuristics,
     evaluate_creator_holdings,
     evaluate_dev_wallet,
     evaluate_holder_distribution,
@@ -68,7 +69,8 @@ def test_token_metadata_parsing():
     # Regex extraction from description text
     text_data = {
         "name": "RegexCoin",
-        "description": "Check us out at https://x.com/regex_sol and join https://t.me/regex_portal or visit https://regexcoin.org",
+        "description": "Check us out at https://x.com/regex_sol and join "
+        "https://t.me/regex_portal or visit https://regexcoin.org",
     }
     extracted_meta = TokenMetadata.from_dict(text_data)
     assert extracted_meta.twitter is not None and "regex_sol" in extracted_meta.twitter
@@ -443,15 +445,17 @@ def test_screening_presets_and_mapping() -> None:
     assert ScreeningSettings.from_mapping({"preset": "aggressive"}) == (
         ScreeningSettings.preset("aggressive")
     )
-    assert ScreeningSettings.from_mapping(
-        {"preset": "balanced", "min_holder_count": 6, "_note": "comment"}
-    ).min_holder_count == 6
+    assert (
+        ScreeningSettings.from_mapping(
+            {"preset": "balanced", "min_holder_count": 6, "_note": "comment"}
+        ).min_holder_count
+        == 6
+    )
     assert ScreeningSettings.from_mapping(None) == ScreeningSettings()
     with pytest.raises(ValueError, match="Unknown screening keys: bogus"):
         ScreeningSettings.from_mapping({"bogus": 1})
     with pytest.raises(ValueError, match="Unknown screening preset"):
         ScreeningSettings.preset("reckless")
-
 
 
 @pytest.mark.regression("BUG-77")
@@ -597,3 +601,63 @@ def test_bundle_metrics_needs_holder_data() -> None:
         total_supply=100, top_holders=[("A", 10)]
     )
     assert bundle_metrics(verdict) == {"early_holders": 1, "early_holder_pct": 0.1}
+
+
+def test_socials_are_found_in_the_description_and_social_links_are_not_websites() -> (
+    None
+):
+    meta = TokenMetadata.from_dict(
+        {"description": "follow https://x.com/abc and https://t.me/abcgroup"}
+    )
+    assert meta.twitter and meta.telegram and meta.website is None
+    plain = TokenMetadata.from_dict({"description": "no links here"})
+    assert plain.twitter is None and plain.website is None
+
+
+def test_gini_of_nothing_is_zero() -> None:
+    assert calculate_gini_coefficient([0, 0, 0]) == 0.0
+    assert calculate_gini_coefficient([5]) == 1.0
+
+
+def test_an_expired_cache_entry_is_dropped() -> None:
+    cache = ScreeningCache(default_ttl=60.0)
+    cache.set("M", TokenScreeningVerdict(mint="M", passed=True, risk_score=0.0), ttl=-1)
+    assert cache.get("M") is None and cache.size() == 0
+
+
+def test_sybil_wash_below_and_above_the_ratio() -> None:
+    from trading_pump.strategies.cluster import ClusterAnalysisVerdict
+
+    def verdict(ratio: float) -> ClusterAnalysisVerdict:
+        return ClusterAnalysisVerdict(
+            mint="M",
+            passed=True,
+            risk_score=0.0,
+            cluster_concentration_index=0.0,
+            max_single_cluster_fraction=0.0,
+            total_clustered_wallets=0,
+            is_sybil_wash=True,
+            wash_volume_ratio=ratio,
+        )
+
+    passed, penalty, _, flags = evaluate_cluster_heuristics(verdict(0.4))
+    assert not passed and flags["sybil_wash_detected"] and penalty >= 35.0
+    passed, penalty, _, flags = evaluate_cluster_heuristics(verdict(0.1))
+    assert passed and penalty == pytest.approx(2.5) and flags == {}
+
+
+def test_disabled_screening_is_cached_and_optional_socials_do_not_fail() -> None:
+    cache = ScreeningCache()
+    off = make_screening(enable_anti_rug_filters=False)
+    first = evaluate_token_heuristics(off, "CachedMint", cache=cache)
+    assert cache.get("CachedMint") is first
+
+    lenient = make_screening(require_social_links=False, min_social_links_count=1)
+    verdict = evaluate_token_heuristics(
+        lenient,
+        "NoSocials",
+        dev_profile=DevWalletProfile(creator_address="Dev", tokens_launched_24h=0),
+        holder_distribution=HolderDistribution(creator_initial_pct=0.01),
+        use_cache=False,
+    )
+    assert "missing_socials" not in verdict.flags

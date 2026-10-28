@@ -30,6 +30,7 @@ import statistics
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -303,7 +304,8 @@ def _binance_field(
 
 
 def load_token_list(path: str | Path | None) -> list[SlowLaneToken]:
-    """Read ``{"tokens": [{"symbol", "mint", "binance"?}]}``; ``None`` gives the default list.
+    """Read ``{"tokens": [{"symbol", "mint", "binance"?}]}``; ``None`` gives the default
+    list.
 
     ``"binance"`` is optional: a pair such as ``"SOLUSDT"`` overrides the
     default ``<SYMBOL>USDT``, and ``null`` skips the token on Binance.
@@ -979,7 +981,7 @@ async def backfill_bars(
         stats.tokens += 1
         try:
             stats.requests += 1
-            pool = await _paced(pacer, lambda: gecko.top_pool(token.mint), sleep)
+            pool = await _paced(pacer, partial(gecko.top_pool, token.mint), sleep)
         except Exception as exc:
             stats.fail(f"{token.symbol} pool", exc)
             continue
@@ -994,7 +996,8 @@ async def backfill_bars(
                     stats.requests += 1
                     page = await _paced(
                         pacer,
-                        lambda: gecko.ohlcv(
+                        partial(
+                            gecko.ohlcv,
                             pool["address"],
                             timeframe=timeframe,
                             before_timestamp=before,
@@ -1096,7 +1099,9 @@ async def backfill_binance_bars(
                     stats.requests += 1
                     page = await _paced(
                         pacer,
-                        lambda: binance.klines(pair, interval=interval, start_ms=start),
+                        partial(
+                            binance.klines, pair, interval=interval, start_ms=start
+                        ),
                         sleep,
                     )
                 except HttpStatusError as exc:

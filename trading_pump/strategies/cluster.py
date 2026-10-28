@@ -10,8 +10,9 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +161,8 @@ class FundingClusterGraph:
         return curr, depth
 
     def compute_clusters(self, max_depth: int = 10) -> list[FundingCluster]:
-        """Compute all connected funding clusters and their aggregated supply fractions."""
+        """Compute all connected funding clusters and their aggregated supply
+        fractions."""
         # 1. Resolve root ancestor and depth for all registered nodes
         root_to_wallets: dict[str, list[str]] = defaultdict(list)
         for addr, node in self.nodes.items():
@@ -215,7 +217,8 @@ class FundingClusterGraph:
         """Calculate the Insider Cluster Concentration Index (0.0 to 1.0).
 
         Measures what fraction of the total token supply is held by multi-wallet
-        clusters (clusters with >= min_cluster_wallets token holders or creator-linked clusters).
+        clusters (clusters with >= min_cluster_wallets token holders or creator-linked
+        clusters).
         """
         active_clusters = clusters if clusters is not None else self.compute_clusters()
         clustered_supply = 0.0
@@ -239,7 +242,8 @@ class FundingClusterGraph:
         self,
         clusters: Sequence[FundingCluster] | None = None,
     ) -> float:
-        """Return the maximum supply fraction held by any single multi-wallet cluster."""
+        """Return the maximum supply fraction held by any single multi-wallet
+        cluster."""
         active_clusters = clusters if clusters is not None else self.compute_clusters()
         multi_holder_clusters = [
             c
@@ -290,7 +294,9 @@ class SybilWashVerdict:
 
 
 class SybilWashTradingDetector:
-    """Analyzes trade streams on a bonding curve for circular and sybil wash-trading patterns."""
+    """Analyzes trade streams on a bonding curve for circular and sybil wash-trading
+    patterns.
+    """
 
     def __init__(
         self,
@@ -361,7 +367,8 @@ class SybilWashTradingDetector:
                         sybil_wallets.add(user)
                         sybil_trade_indices.add(i)
 
-        # 2. Cyclic buy/sell pattern detection (e.g. A buys -> B buys -> A sells -> B sells)
+        # 2. Cyclic buy/sell pattern detection (e.g. A buys -> B buys -> A sells -> B
+        # sells)
         wallet_sequence = [
             (
                 str(t.get("user") or t.get("wallet_address") or "").strip(),
@@ -388,7 +395,8 @@ class SybilWashTradingDetector:
                     sybil_trade_indices.add(i + 1)
                     detected_cycles += 1
 
-        # 3. Detect rapid round-trip churn: Same wallet buying and selling repeatedly with near zero profit
+        # 3. Detect rapid round-trip churn: Same wallet buying and selling repeatedly
+        # with near zero profit
         wallet_actions: dict[str, list[tuple[int, bool, float]]] = defaultdict(list)
         for idx, (w, is_buy, amt, _) in enumerate(wallet_sequence):
             if w:
@@ -426,12 +434,15 @@ class SybilWashTradingDetector:
         if is_wash:
             penalty = min(60.0, 30.0 + wash_ratio * 40.0)
             reasons.append(
-                f"Sybil wash-trading detected: {wash_ratio:.1%} of volume is coordinated across {len(sybil_wallets)} wallets ({detected_cycles} cycles)"
+                f"Sybil wash-trading detected: {wash_ratio:.1%} of volume is "
+                f"coordinated across {len(sybil_wallets)} wallets ({detected_cycles} "
+                "cycles)"
             )
         elif wash_ratio > 0.10:
             penalty = wash_ratio * 20.0
             reasons.append(
-                f"Elevated wash trading activity: {wash_ratio:.1%} volume churn detected"
+                f"Elevated wash trading activity: {wash_ratio:.1%} volume churn "
+                "detected"
             )
 
         return SybilWashVerdict(
@@ -513,7 +524,8 @@ class FundingClusterAnalyzer:
         total_supply: int = 1_000_000_000_000_000,
         funding_links: Sequence[tuple[str, str, float]] | None = None,
     ) -> FundingClusterGraph:
-        """Construct a FundingClusterGraph from top holders, creator, and funding edges."""
+        """Construct a FundingClusterGraph from top holders, creator, and funding
+        edges."""
         graph = FundingClusterGraph(total_supply=total_supply)
 
         if creator_wallet:
@@ -593,14 +605,17 @@ class FundingClusterAnalyzer:
             )
             risk_score += penalty
             reasons.append(
-                f"Insider cluster concentration {concentration_index:.1%} exceeds limit {self.max_cluster_concentration_pct:.1%} ({len(multi_wallet_clusters)} syndicate clusters detected)"
+                f"Insider cluster concentration {concentration_index:.1%} exceeds "
+                f"limit {self.max_cluster_concentration_pct:.1%} "
+                f"({len(multi_wallet_clusters)} syndicate clusters detected)"
             )
             flags["insider_cluster_detected"] = True
             hard_failed = True
         elif concentration_index > 0.10:
             risk_score += concentration_index * 30.0
             reasons.append(
-                f"Moderate insider cluster concentration: {concentration_index:.1%} of supply in linked wallets"
+                f"Moderate insider cluster concentration: {concentration_index:.1%} "
+                "of supply in linked wallets"
             )
 
         # 2. Single dominant cluster evaluation
@@ -612,7 +627,8 @@ class FundingClusterAnalyzer:
             )
             risk_score += penalty_single
             reasons.append(
-                f"Dominant single funding cluster holds {max_single_fraction:.1%} of supply (cap: {self.max_single_cluster_pct:.1%})"
+                f"Dominant single funding cluster holds {max_single_fraction:.1%} of "
+                f"supply (cap: {self.max_single_cluster_pct:.1%})"
             )
             flags["dominant_cluster_detected"] = True
             hard_failed = True

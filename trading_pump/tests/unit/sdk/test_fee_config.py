@@ -1,4 +1,5 @@
-"""Tests for the Pump fee program ``FeeConfig`` decoder (`sdk/fee_config.py`, BUG-138)."""
+"""Tests for the Pump fee program ``FeeConfig`` decoder (``sdk/fee_config.py``,
+BUG-138)."""
 
 from __future__ import annotations
 
@@ -17,8 +18,8 @@ from trading_pump.sdk.curve import (
 from trading_pump.sdk.execution_types import PUMP_FEE_PROGRAM_ID
 from trading_pump.sdk.fee_config import (
     FEE_CONFIG_DISCRIMINATOR,
-    FeeTier,
     Fees,
+    FeeTier,
     bonding_curve_fee_bps,
     curve_market_cap_lamports,
     decode_fee_config,
@@ -144,7 +145,7 @@ class _Client(PumpFunCurveMixin):
 
     def __init__(self, response: dict) -> None:
         self.rpc = AsyncMock(return_value=response)
-        self._request_rpc_json = self.rpc  # type: ignore[method-assign]
+        self._request_rpc_json = self.rpc
 
 
 def _response(data: bytes, owner: str = PUMP_FEE_PROGRAM_ID) -> dict:
@@ -196,5 +197,5 @@ async def test_client_falls_back_to_the_flat_fee_when_the_config_is_unusable(
 async def test_client_keeps_the_last_good_config_when_a_refresh_fails() -> None:
     client = _Client(_response(_account()))
     first = await client.get_pump_fee_config()
-    client._request_rpc_json = AsyncMock(side_effect=RuntimeError("rpc down"))  # type: ignore[method-assign]
+    client._request_rpc_json = AsyncMock(side_effect=RuntimeError("rpc down"))
     assert await client.get_pump_fee_config(max_age_seconds=0.0) is first

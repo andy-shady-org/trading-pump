@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -165,7 +166,7 @@ async def test_market_overview_wrapper():
 async def test_request_retries_and_recovers():
     session = _RetrySession()
     client = PumpFunApiClient(
-        session=session,
+        session=session,  # type: ignore[arg-type]
         max_retries=3,
         retry_backoff_seconds=0.01,
     )
@@ -180,7 +181,7 @@ async def test_request_retries_and_recovers():
 async def test_request_opens_circuit_after_failures():
     session = _FailingSession()
     client = PumpFunApiClient(
-        session=session,
+        session=session,  # type: ignore[arg-type]
         max_retries=0,
         circuit_breaker_threshold=1,
         circuit_cooldown_seconds=30.0,
@@ -525,3 +526,69 @@ async def test_api_client_retry_and_error_branches():
 
     await api.close()
 
+
+async def test_no_attempt_at_all_is_an_error() -> None:
+    client = PumpFunApiClient(max_retries=-1)
+    with pytest.raises(RuntimeError, match="request failed for GET /health"):
+        await client.request("GET", "/health")
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        ["not-a-dict"],
+        {"data": ["not-a-dict"]},
+        {"items": ["not-a-dict"]},
+        {"data": [], "items": []},
+    ],
+)
+async def test_get_coin_fallback_skips_answers_that_are_not_coins(payload: Any) -> None:
+    from trading_pump.api.client import PumpFunApiClient
+
+    api = PumpFunApiClient()
+    api.get = AsyncMock(side_effect=RuntimeError("HTTP 404"))
+    api.post = AsyncMock(return_value=payload)
+    with pytest.raises(RuntimeError, match="not found via the public"):
+        await api.get_coin(SAMPLE_MINT)
+    await api.close()
+
+
+async def test_trade_history_and_creator_coins_fallback() -> None:
+    from trading_pump.api.client import PumpFunApiClient
+
+    api = PumpFunApiClient()
+    calls: list[tuple[str, Any]] = []
+
+    async def get(path: str, params: Any = None, headers: Any = None) -> Any:
+        calls.append((path, params))
+        if path.startswith("/coins/user-created-coins/"):
+            raise RuntimeError("HTTP 404")
+        return {"path": path}
+
+    api.get = get
+    assert await api.get_trade_history(SAMPLE_MINT, limit=5) == {
+        "path": f"/trades/all/{SAMPLE_MINT}"
+    }
+    assert await api.get_creator_coins("Creator1", limit=3) == {"path": "/coins"}
+    assert calls[-1] == ("/coins", {"creator": "Creator1", "limit": 3, "offset": 0})
+    await api.close()
+
+
+async def test_transport_errors_are_retried_then_trip_the_circuit() -> None:
+    from trading_pump.api.client import PumpFunApiClient
+
+    api = PumpFunApiClient(max_retries=1, circuit_breaker_threshold=1)
+    attempts: list[int] = []
+
+    async def broken(*_: Any, **__: Any) -> Any:
+        attempts.append(1)
+        raise ConnectionError("reset by peer")
+
+    api._request_once = broken
+    with pytest.raises(ConnectionError):
+        await api.request("GET", "/health")
+    assert len(attempts) == 2
+    with pytest.raises(RuntimeError, match="circuit open"):
+        await api.request("GET", "/health")
+    await api.close()

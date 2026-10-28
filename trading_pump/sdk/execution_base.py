@@ -1,7 +1,6 @@
 """Execution client core: wallet, RPC access, shared helpers and account queries."""
 
 import asyncio
-from typing import Optional
 
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -12,17 +11,18 @@ from spl.token.instructions import (
 from trading_pump.infra.rpc_pool import (
     RpcConnectionPool,
 )
+
+from .execution_types import (
+    PUMP_DEFAULT_FEE_BPS,
+    TOKEN_2022_PROGRAM_ID_STR,
+    TOKEN_PROGRAM_ID_STR,
+    TokenBalanceUnavailableError,
+    TokenProgramUnavailableError,
+)
 from .jito import (
     JITO_BLOCK_ENGINE_ENDPOINTS,
     JitoClient,
     JitoTipConfig,
-)
-from .execution_types import (
-    TOKEN_PROGRAM_ID_STR,
-    TOKEN_2022_PROGRAM_ID_STR,
-    PUMP_DEFAULT_FEE_BPS,
-    TokenBalanceUnavailableError,
-    TokenProgramUnavailableError,
 )
 
 
@@ -54,7 +54,8 @@ class ExecutionClientBase:
     ) -> dict[str, int | str | float | bool]:
         """Classify a fill event as full, partial, or failed.
 
-        This is intentionally lightweight and reusable by the bot when a transaction result
+        This is intentionally lightweight and reusable by the bot when a transaction
+        result
         indicates only a subset of the requested tokens were filled.
         """
         expected = max(0, int(expected_amount))
@@ -94,7 +95,9 @@ class ExecutionClientBase:
         *,
         minimum_partial_ratio: float = 0.1,
     ) -> bool:
-        """Return True if a partial fill is material enough that it should be re-evaluated."""
+        """Return True if a partial fill is material enough that it should be re-
+        evaluated.
+        """
         if expected_amount <= 0 or actual_amount <= 0:
             return False
         ratio = actual_amount / expected_amount
@@ -145,23 +148,23 @@ class ExecutionClientBase:
     def __init__(
         self,
         private_key_b58: str,
-        rpc_url: Optional[str] = None,
+        rpc_url: str | None = None,
         *,
-        rpc_pool: Optional[RpcConnectionPool] = None,
-        rpc_urls: Optional[list[str] | tuple[str, ...]] = None,
+        rpc_pool: RpcConnectionPool | None = None,
+        rpc_urls: list[str] | tuple[str, ...] | None = None,
         priority_fee_lamports: int = 5000,
         compute_unit_limit: int = 200_000,
-        compute_unit_price_micro_lamports: Optional[int] = None,
+        compute_unit_price_micro_lamports: int | None = None,
         jito_tip_lamports: int = 0,
-        jito_block_engine_url: Optional[str] = None,
+        jito_block_engine_url: str | None = None,
         use_jito: bool = False,
         jito_fallback_to_rpc: bool = True,
         jito_confirmation_timeout: float = 12.0,
-        jito_client: Optional[JitoClient] = None,
-        jito_tip_config: Optional[JitoTipConfig] = None,
+        jito_client: JitoClient | None = None,
+        jito_tip_config: JitoTipConfig | None = None,
         default_slippage_bps: int = 500,
-        jito_entry_tip_lamports: Optional[int] = None,
-        jito_exit_tip_lamports: Optional[int] = None,
+        jito_entry_tip_lamports: int | None = None,
+        jito_exit_tip_lamports: int | None = None,
     ):
         self.private_key_b58 = private_key_b58
 
@@ -203,7 +206,7 @@ class ExecutionClientBase:
         self.execution_health_score = 100.0
         self.failed_execution_attempts = 0
         self.jito_tip_config = jito_tip_config or JitoTipConfig()
-        self.jito_client: Optional[JitoClient] = jito_client
+        self.jito_client: JitoClient | None = jito_client
         if self.jito_client is None and self.use_jito:
             self.jito_client = JitoClient(
                 wallet=self.wallet,
@@ -268,16 +271,21 @@ class ExecutionClientBase:
             "params": [str(self.wallet)],
         }
         parsed = await self._request_rpc_json(payload)
-        result = parsed.get("result") or {}
-        lamports = int(result.get("value", 0)) if isinstance(result, dict) else 0
-        return lamports / 1_000_000_000.0
+        result = parsed.get("result")
+        value = result.get("value") if isinstance(result, dict) else None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            # An answer without a balance is not a balance of 0 (BUG-158): a
+            # live run's day would start from it (BUG-130).
+            raise RuntimeError(f"getBalance returned no balance: {result!r}")
+        return value / 1_000_000_000.0
 
     async def get_wallet_balance_sol(self) -> float:
         """Alias for get_balance_sol for backward compatibility."""
         return await self.get_balance_sol()
 
     async def get_token_program_for_mint(self, mint: str) -> Pubkey:
-        """Query mint account to determine if it uses Token-2022 or legacy SPL Token program.
+        """Query mint account to determine if it uses Token-2022 or legacy SPL Token
+        program.
 
         Results are cached per mint. Raises if the owner cannot be read, because
         guessing SPL Token for a Token-2022 mint builds a failing trade (BUG-69).
@@ -360,7 +368,7 @@ class ExecutionClientBase:
     async def get_ata_address(
         self,
         mint: str,
-        owner: Optional[str] = None,
+        owner: str | None = None,
         token_program: Pubkey | str | None = None,
     ) -> str:
         owner_pubkey = self._to_pubkey(owner or str(self.wallet))
@@ -376,7 +384,7 @@ class ExecutionClientBase:
     async def get_ata_exists(
         self,
         mint: str,
-        owner: Optional[str] = None,
+        owner: str | None = None,
         token_program: Pubkey | str | None = None,
     ) -> bool:
         owner_pubkey = owner or str(self.wallet)
@@ -421,8 +429,9 @@ class ExecutionClientBase:
         if self.rpc_pool is not None:
             await self.rpc_pool.close()
 
-    async def get_token_balance(self, mint: str, owner: Optional[str] = None) -> int:
-        """Return the token balance for the wallet ATA for a given mint, in raw token units.
+    async def get_token_balance(self, mint: str, owner: str | None = None) -> int:
+        """Return the token balance for the wallet ATA for a given mint, in raw token
+        units.
 
         ``0`` is returned only when the RPC confirms there is no balance. Any RPC or
         parse failure raises :class:`TokenBalanceUnavailableError` so callers can

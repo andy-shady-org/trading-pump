@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from solders.keypair import Keypair
 
 from trading_pump.infra.rpc_pool import (
     CircuitState,
@@ -364,7 +365,7 @@ async def test_rpc_connection_pool_telemetry_and_health_probes() -> None:
 
 
 async def test_execution_client_with_rpc_pool() -> None:
-    dummy_key = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4JjaxnjfCebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
+    dummy_key = str(Keypair())
 
     # Single URL
     c1 = PumpFunExecutionClient(dummy_key, "https://api.mainnet-beta.solana.com")
@@ -443,7 +444,7 @@ async def test_rpc_pool_broadcast_and_health_branches():
     ep1 = RpcEndpoint(url="https://rpc1.solana.com", label="RPC 1")
     ep2 = RpcEndpoint(url="https://rpc2.solana.com", label="RPC 2")
     cfg = RpcPoolConfig(
-        endpoints=[ep1, ep2],
+        endpoints=(ep1, ep2),
         broadcast_concurrency=2,
         circuit_breaker_threshold=2,
     )
@@ -903,9 +904,7 @@ async def test_cancelled_probe_frees_the_endpoint() -> None:
 async def test_pool_backs_off_then_recovers_after_the_cooldown() -> None:
     pool, posts = _scripted_pool(429, 200, circuit_breaker_initial_cooldown_seconds=1.0)
     clock = [1000.0]
-    with patch(
-        "trading_pump.infra.rpc_pool.time.time", side_effect=lambda: clock[0]
-    ):
+    with patch("trading_pump.infra.rpc_pool.time.time", side_effect=lambda: clock[0]):
         with pytest.raises(RuntimeError):
             await pool.request({"method": "getSlot"}, max_retries=0)
         with pytest.raises(RpcPoolUnavailableError, match=r"next probe in 1\.0s"):
@@ -953,3 +952,157 @@ def test_pool_config_round_trips_the_initial_cooldown() -> None:
     cfg = RpcPoolConfig.from_dict({"circuit_breaker_initial_cooldown_seconds": 0.5})
     assert cfg.circuit_breaker_initial_cooldown_seconds == 0.5
     assert cfg.to_dict()["circuit_breaker_initial_cooldown_seconds"] == 0.5
+
+
+def test_config_from_dict_reads_strings_lists_and_ignores_other_shapes() -> None:
+    assert RpcPoolConfig.from_dict({"endpoints": "a, b,"}).endpoints == ("a", "b")
+    assert RpcPoolConfig.from_dict({"endpoints": 5}).endpoints == ()
+    pool = RpcConnectionPool("https://a.invalid, https://b.invalid")
+    assert pool.endpoint_count == 2
+    from_config = RpcConnectionPool(
+        config=RpcPoolConfig(endpoints=("https://c.invalid",))
+    )
+    assert [e.url for e in from_config.endpoints] == ["https://c.invalid"]
+    assert RpcConnectionPool().get_best_endpoint() is None
+
+
+async def test_no_attempt_at_all_and_no_endpoint_to_broadcast_to() -> None:
+    pool = RpcConnectionPool(endpoints=["https://a.invalid"])
+    with pytest.raises(RuntimeError, match="failed without captured error"):
+        await pool.request({"method": "getHealth"}, max_retries=-1)
+    with pytest.raises(RuntimeError, match="No RPC endpoints configured"):
+        await RpcConnectionPool().broadcast_transaction("dHg=")
+    await pool.close()
+
+
+def _session_answering(*responses: Any) -> MagicMock:
+    class Ctx:
+        def __init__(self, resp: Any) -> None:
+            self.resp = resp
+
+        async def __aenter__(self) -> Any:
+            return self.resp
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    session = MagicMock()
+    session.closed = False
+    session.close = AsyncMock()
+    session.post = MagicMock(side_effect=[Ctx(r) for r in responses])
+    return session
+
+
+def _resp(*, text: Any = None, json_value: Any = None, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status = status
+    resp.text = (
+        AsyncMock(side_effect=text)
+        if isinstance(text, Exception)
+        else AsyncMock(return_value=text)
+    )
+    resp.json = (
+        AsyncMock(side_effect=json_value)
+        if isinstance(json_value, Exception)
+        else AsyncMock(return_value=json_value)
+    )
+    return resp
+
+
+async def test_a_body_that_is_neither_text_nor_json_is_an_invalid_answer() -> None:
+    pool = RpcConnectionPool(endpoints=["https://a.invalid"])
+    pool._session = _session_answering(
+        _resp(text=ValueError("no text"), json_value=ValueError("no json"))
+    )
+    with pytest.raises(RuntimeError, match="All RPC pool query attempts failed"):
+        await pool.request({"method": "getHealth"}, max_retries=0)
+
+    broadcast = RpcConnectionPool(endpoints=["https://a.invalid"])
+    broadcast._session = _session_answering(
+        _resp(text=ValueError("no text"), json_value=ValueError("no json"))
+    )
+    with pytest.raises(RuntimeError, match="Invalid JSON"):
+        await broadcast.broadcast_transaction("dHg=")
+
+
+async def test_an_error_body_that_cannot_be_read_is_empty() -> None:
+    resp = _resp(text=ValueError("gone"))
+    assert await RpcConnectionPool._error_body(resp) == ""
+
+
+async def test_the_first_signature_wins_and_slower_sends_are_cancelled() -> None:
+    import asyncio
+
+    pool = RpcConnectionPool(endpoints=["https://a.invalid", "https://b.invalid"])
+    gate = asyncio.Event()
+
+    class Slow:
+        async def __aenter__(self) -> Any:
+            await gate.wait()
+            return _resp(text=json.dumps({"result": "B" * 64}))
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    class Fast:
+        async def __aenter__(self) -> Any:
+            return _resp(text=json.dumps({"result": "A" * 64}))
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    session = MagicMock()
+    session.closed = False
+    session.close = AsyncMock()
+    session.post = MagicMock(side_effect=[Fast(), Slow()])
+    pool._session = session
+    assert await pool.broadcast_transaction("dHg=") == "A" * 64
+
+
+async def test_the_health_loop_survives_errors_and_stops_when_told() -> None:
+
+    pool = RpcConnectionPool(
+        endpoints=["https://a.invalid"],
+        config=RpcPoolConfig(health_check_interval_seconds=0.001),
+    )
+    calls: list[int] = []
+
+    async def check() -> dict[str, bool]:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("probe failed")
+        pool._running = False  # the loop condition ends it
+        return {}
+
+    pool.check_all_health = check
+    pool._running = True
+    await pool._health_loop()
+    assert len(calls) == 2
+
+    pool._running = True
+
+    async def stop_while_sleeping(_: float) -> None:
+        pool._running = False
+
+    with patch("trading_pump.infra.rpc_pool.asyncio.sleep", stop_while_sleeping):
+        await pool._health_loop()
+    assert len(calls) == 2
+
+
+async def test_a_body_without_text_is_read_as_json() -> None:
+    pool = RpcConnectionPool(endpoints=["https://a.invalid"])
+    pool._session = _session_answering(_resp(text=None, json_value={"result": 7}))
+    assert await pool.request({"method": "getSlot"}, max_retries=0) == {"result": 7}
+
+    broadcast = RpcConnectionPool(endpoints=["https://a.invalid"])
+    broadcast._session = _session_answering(
+        _resp(text=ValueError("no text"), json_value={"result": "S" * 64})
+    )
+    assert await broadcast.broadcast_transaction("dHg=") == "S" * 64
+
+
+async def test_a_json_body_that_is_not_an_object_is_refused() -> None:
+    pool = RpcConnectionPool(endpoints=["https://a.invalid"])
+    pool._session = _session_answering(_resp(text=None, json_value=[1, 2]))
+    with pytest.raises(RuntimeError, match="not a JSON dict"):
+        await pool.request({"method": "getSlot"}, max_retries=0)

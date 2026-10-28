@@ -17,6 +17,7 @@ from trading_pump.sdk.execution import (
     PumpFunExecutionClient,
     PumpSwapPoolUnavailableError,
 )
+from trading_pump.tests.support.constants import SAMPLE_PUMP_MINT
 from trading_pump.tests.support.payloads import (
     GRADUATED_BASE_VAULT_ADDRESS,
     GRADUATED_BASE_VAULT_B64,
@@ -32,7 +33,6 @@ from trading_pump.tests.support.payloads import (
     GRADUATED_QUOTE_VAULT_B64,
     GRADUATED_QUOTE_VAULT_OWNER,
 )
-from trading_pump.tests.support.constants import SAMPLE_PUMP_MINT
 
 BASE_RESERVE = 193_377_869_697_216
 QUOTE_RESERVE = 73_700_738_380 + 17_584_505_289
@@ -211,7 +211,8 @@ async def test_pumpswap_sell_sends_over_rpc_or_jito(use_jito: bool) -> None:
         sig = await client.pumpswap_sell(
             GRADUATED_MINT, 5, use_jito=use_jito, close_token_account=True
         )
-        tip = client.build_pumpswap_sell_tx.await_args.kwargs["tip_lamports"]  # type: ignore[attr-defined]
+        built: Any = client.build_pumpswap_sell_tx
+        tip = built.await_args.kwargs["tip_lamports"]
     assert sig == ("jito-sig" if use_jito else "rpc-sig")
     assert tip == (1_000 if use_jito else None)
 

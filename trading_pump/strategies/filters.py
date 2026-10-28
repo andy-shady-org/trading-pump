@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Sequence
-
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from trading_pump.strategies.cluster import ClusterAnalysisVerdict
@@ -177,15 +177,13 @@ class TokenMetadata:
             discord = discord or extensions.get("discord")
 
         # Also search in description or raw text if not found explicitly
-        if not twitter and description and _TWITTER_PATTERN.search(description):
-            match = _TWITTER_PATTERN.search(description)
-            if match:
-                twitter = match.group(0)
-        if not telegram and description and _TELEGRAM_PATTERN.search(description):
-            match = _TELEGRAM_PATTERN.search(description)
-            if match:
-                telegram = match.group(0)
-        if not website and description and _WEBSITE_PATTERN.search(description):
+        found = _TWITTER_PATTERN.search(description) if description else None
+        if not twitter and found:
+            twitter = found.group(0)
+        found = _TELEGRAM_PATTERN.search(description) if description else None
+        if not telegram and found:
+            telegram = found.group(0)
+        if not website and description:
             for match in _WEBSITE_PATTERN.finditer(description):
                 candidate_url = match.group(0)
                 candidate_lower = candidate_url.lower()
@@ -266,9 +264,7 @@ def calculate_gini_coefficient(balances: Sequence[int | float]) -> float:
         return 0.0 if n == 0 else 1.0
 
     cleaned.sort()
-    total = sum(cleaned)
-    if total <= 0.0:
-        return 0.0
+    total = sum(cleaned)  # positive: only positive balances are kept
 
     # Standard formula: G = sum((2*i - n - 1) * y_i) / (n * sum(y_i))
     weighted_sum = sum((2 * (i + 1) - n - 1) * val for i, val in enumerate(cleaned))
@@ -476,7 +472,8 @@ def evaluate_dev_wallet(
         excess = profile.tokens_launched_24h - max_24h_launches
         penalty += min(40.0, 25.0 + excess * 5.0)
         reasons.append(
-            f"Serial launcher: {profile.tokens_launched_24h} tokens launched in last 24h (max allowed: {max_24h_launches})"
+            f"Serial launcher: {profile.tokens_launched_24h} tokens launched in last "
+            f"24h (max allowed: {max_24h_launches})"
         )
         passed = False
 
@@ -495,7 +492,10 @@ def evaluate_creator_holdings(
     if creator_initial_pct > max_pct:
         excess = creator_initial_pct - max_pct
         penalty = min(50.0, 30.0 + (excess / max_pct) * 20.0)
-        reason = f"Creator initial holding {creator_initial_pct:.1%} exceeds safety cap {max_pct:.1%}"
+        reason = (
+            f"Creator initial holding {creator_initial_pct:.1%} exceeds safety cap "
+            f"{max_pct:.1%}"
+        )
         return False, penalty, [reason]
 
     return True, 0.0, []
@@ -521,7 +521,8 @@ def evaluate_holder_distribution(
         excess = top5_pct - max_top5_pct
         penalty += min(35.0, 20.0 + (excess / max_top5_pct) * 15.0)
         reasons.append(
-            f"Top 5 non-curve wallets hold {top5_pct:.1%} of supply (cap: {max_top5_pct:.1%})"
+            f"Top 5 non-curve wallets hold {top5_pct:.1%} of supply (cap: "
+            f"{max_top5_pct:.1%})"
         )
         passed = False
 
@@ -555,7 +556,10 @@ def evaluate_metadata_socials(
     social_count = metadata.social_links_count()
     if social_count < min_social_links_count:
         penalty = 20.0 + (min_social_links_count - social_count) * 5.0
-        reason = f"Insufficient social links: found {social_count}, required at least {min_social_links_count}"
+        reason = (
+            f"Insufficient social links: found {social_count}, required at least "
+            f"{min_social_links_count}"
+        )
         return False, penalty, [reason]
 
     return True, 0.0, []
@@ -583,14 +587,16 @@ def evaluate_cluster_heuristics(
         p = min(50.0, 30.0 + (excess / max(0.01, max_cluster_concentration_pct)) * 20.0)
         penalty += p
         reasons.append(
-            f"Insider cluster concentration {concentration:.1%} exceeds limit {max_cluster_concentration_pct:.1%}"
+            f"Insider cluster concentration {concentration:.1%} exceeds limit "
+            f"{max_cluster_concentration_pct:.1%}"
         )
         flags["insider_cluster_detected"] = True
         passed = False
     elif concentration > 0.10:
         penalty += concentration * 30.0
         reasons.append(
-            f"Moderate insider cluster concentration: {concentration:.1%} of supply in linked wallets"
+            f"Moderate insider cluster concentration: {concentration:.1%} of supply "
+            "in linked wallets"
         )
 
     max_single = cluster_analysis.max_single_cluster_fraction
@@ -601,7 +607,8 @@ def evaluate_cluster_heuristics(
         )
         penalty += p_single
         reasons.append(
-            f"Dominant single funding cluster holds {max_single:.1%} of supply (cap: {max_single_cluster_pct:.1%})"
+            f"Dominant single funding cluster holds {max_single:.1%} of supply (cap: "
+            f"{max_single_cluster_pct:.1%})"
         )
         flags["dominant_cluster_detected"] = True
         passed = False
@@ -611,7 +618,8 @@ def evaluate_cluster_heuristics(
         if wash_ratio >= max_sybil_wash_ratio:
             penalty += min(60.0, 35.0 + wash_ratio * 30.0)
             reasons.append(
-                f"Sybil wash-trading confirmed: {wash_ratio:.1%} volume churn exceeds threshold {max_sybil_wash_ratio:.1%}"
+                f"Sybil wash-trading confirmed: {wash_ratio:.1%} volume churn exceeds "
+                f"threshold {max_sybil_wash_ratio:.1%}"
             )
             flags["sybil_wash_detected"] = True
             passed = False
@@ -735,15 +743,12 @@ def evaluate_token_heuristics(
     total_risk_score += social_penalty
     all_reasons.extend(social_reasons)
     if not social_pass:
+        # Only fails when require_social_links is on: a hard reject.
         flags["missing_socials"] = True
-        if config.require_social_links:
-            hard_failed = True
+        hard_failed = True
 
     # 5. On-Chain Funding Cluster Graph & Sybil Wash-Trading (FEAT-26)
-    if (
-        config.enable_cluster_analysis
-        and cluster_analysis is not None
-    ):
+    if config.enable_cluster_analysis and cluster_analysis is not None:
         cluster_pass, cluster_penalty, cluster_reasons, cluster_flags = (
             evaluate_cluster_heuristics(
                 cluster_analysis,
@@ -766,7 +771,8 @@ def evaluate_token_heuristics(
 
     if not passed and normalized_risk_score > config.max_acceptable_risk_score:
         all_reasons.append(
-            f"Composite risk score {normalized_risk_score:.1f} exceeds threshold {config.max_acceptable_risk_score:.1f}"
+            f"Composite risk score {normalized_risk_score:.1f} exceeds threshold "
+            f"{config.max_acceptable_risk_score:.1f}"
         )
 
     verdict = TokenScreeningVerdict(
