@@ -344,3 +344,48 @@ def test_tests_never_write_event_logs_or_reach_a_proxy(tmp_path: Path) -> None:
     assert not any(os.environ.get(name) for name in ("HTTPS_PROXY", "https_proxy"))
     with pytest.raises(socket.gaierror, match="external network disabled"):
         socket.getaddrinfo("discord.com", 443)
+
+
+@pytest.mark.regression("BUG-157")
+def test_the_replay_capture_is_pruned_with_its_own_policy(tmp_path: Path) -> None:
+    # rc.8: PUMPFUN_REPLAY_BACKUP_COUNT was 40, but the shared manager pruned
+    # every *.jsonl* archive in the folder to the audit count (20), deleting
+    # the first 14-21 h of the 37 h captures.
+    import os
+    import time as _time
+
+    from pumpfun_trading.ops.retention import RetentionPolicy
+
+    audit = RetentionPolicy(max_bytes=0, max_files=2, max_age_days=0)
+    replay = RetentionPolicy(max_bytes=0, max_files=5, max_age_days=0)
+    for name in (
+        "replay_capture.jsonl",
+        "audit_trail.jsonl",
+        "events.jsonl",
+        "market.jsonl",
+    ):
+        (tmp_path / name).write_text("{}\n")
+        for i in range(1, 7):
+            part = tmp_path / f"{name}.{i}.gz"
+            part.write_bytes(b"x")
+            os.utime(part, (_time.time() - i * 60, _time.time() - i * 60))
+    managers = factory.build_retention_managers(
+        (
+            tmp_path / "bot.log",
+            tmp_path / "audit_trail.jsonl",
+            tmp_path / "events.jsonl",
+        ),
+        audit,
+        per_file={tmp_path / "replay_capture.jsonl": replay, "": replay},
+    )
+    assert len(managers) == 2
+    for manager in managers:
+        manager.prune_expired()
+
+    def kept(name: str) -> int:
+        return len(list(tmp_path.glob(f"{name}.*.gz")))
+
+    assert kept("replay_capture.jsonl") == 5  # its own policy
+    assert kept("audit_trail.jsonl") == 2 and kept("events.jsonl") == 2
+    assert kept("market.jsonl") == 6  # another tool's file: never touched
+    assert (tmp_path / "replay_capture.jsonl").exists()  # live files stay
