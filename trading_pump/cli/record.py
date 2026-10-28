@@ -511,7 +511,7 @@ async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None
             f"[red]Binance refused this host (HTTP {stats.blocked_status}: "
             "403 = firewall, 418 = IP ban after rate limiting, 451 = restricted "
             "region); the run stopped. Try another network or --bar-base-url "
-            "(RUNBOOK §6.4).[/red]"
+            "(docs/dev/RUNBOOK.md §5.1).[/red]"
         )
 
 

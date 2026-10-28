@@ -5,8 +5,8 @@ the operator sees running are mostly elsewhere: other Solana launchpads, Base
 and BSC, and coins days or weeks old. This collector records that market so
 entry rules can be tested on it before anything is built to trade there.
 
-Run by ``pumpfun-recorder --market`` as its own process, next to (never
-inside) ``pumpbot``. Nothing here signs, sends or trades, and no RPC credits
+Run by ``trading-pump record --market`` as its own process, next to (never
+inside) a trading-core run. Nothing here signs, sends or trades, and no RPC credits
 are used: both data sources are free public APIs, used keyless and paced.
 
 * **Discovery** (GeckoTerminal): every new pool on each chain

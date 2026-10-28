@@ -1,7 +1,7 @@
 """Record-only data for the FEAT-65 slow lane (phase 0, rc.3).
 
-Two collectors, both run by ``pumpfun-recorder`` as their own process, next to
-(never inside) ``pumpbot``:
+Two collectors, both run by ``trading-pump record`` as their own process, next
+to (never inside) a trading-core run:
 
 * :class:`QuoteRecorder` samples Jupiter swap quotes for a fixed token list at
   a few SOL sizes, buy and sell side, plus Jupiter's price / liquidity and the

@@ -138,9 +138,14 @@ REPLACED_ENV_VARS: dict[str, str] = {
             "PUMPFUN_PRESET",
             "PUMPFUN_BASE_BUY_SOL",
             "PUMPFUN_BUY_AMOUNT_SOL",
+            "PUMPFUN_SLIPPAGE_BPS",
+            "PUMPFUN_USE_JITO",
+            "PUMPFUN_COMPUTE_UNIT_LIMIT",
         ),
         f"capture, costs and screening are settings: use {_MODULE}",
     ),
+    "PUMPFUN_GIT_COMMIT": f"run provenance is the engine's: use {_ENGINE}",
+    "PUMPFUN_HEADLESS": "use trading-core run --headless",
     **dict.fromkeys(
         (
             "PUMPFUN_GEYSER_ENDPOINT",
@@ -192,6 +197,16 @@ REPLACED_ENV_VARS: dict[str, str] = {
             "PUMPFUN_RPC_POOL_ENABLED",
             "PUMPFUN_DIAGNOSTIC_EVENTS_ENABLED",
             "PUMPFUN_EVENT_LOG_SUBSYSTEMS",
+            # Live execution and the reconcile tool wait for the live gate.
+            "PUMPFUN_JITO_BLOCK_ENGINE_URL",
+            "PUMPFUN_JITO_CONFIRMATION_TIMEOUT",
+            "PUMPFUN_JITO_FALLBACK_TO_RPC",
+            "PUMPFUN_BASE_EXIT_SLIPPAGE_BPS",
+            "PUMPFUN_MAX_EXIT_RETRIES",
+            "PUMPFUN_RECONCILE_STATUS_PATH",
+            # The migration feed reconnects for as long as the run lasts.
+            "PUMPFUN_STREAM_MAX_RETRIES",
+            "PUMPFUN_WS_MAX_RETRIES",
         ),
         "a pumpbot feature that was not ported (docs/dev/TODO.md, Not ported)",
     ),
