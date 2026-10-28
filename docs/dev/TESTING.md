@@ -22,7 +22,7 @@ checkout path (default `../trading-core`) or any pip requirement, e.g.
 Outside nox, with trading-core installed editable, mypy needs
 `MYPYPATH=../trading-core`.
 
-The suite (774 tests) runs in about 7 seconds and **never touches the
+The suite (779 tests) runs in about 7 seconds and **never touches the
 network**. pumpbot's suite had 2,208 tests at v0.3.0rc8; the difference is
 the retired runtime and lanes (their tests are in the history at that tag,
 and the bugs they guarded are accounted for in

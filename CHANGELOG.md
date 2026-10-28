@@ -31,7 +31,7 @@ pumpfun-trading becomes `trading-pump`, the Pump.fun / PumpSwap module for tradi
 - The stream URL helpers (`stream_url_has_api_key`, `split_stream_api_key`, `stream_connect_url`) moved from the retired trade feed to `streams/websocket.py`, with their BUG-117 / BUG-118 tests.
 - `recorder.py` (was `bot/recorder.py`) writes through trading-core's `RotatedFileSink`.
 - Tooling as in trading-core: Python 3.11–3.14, Black, Ruff, flake8, mypy, **100%** statement and branch coverage (was ≥ 95%), the CI matrix checks out trading-core with `TRADING_CORE_TOKEN`; `python-dotenv` dropped.
-- The suite has 774 tests (pumpbot's had 2,208): the rest guarded retired or moved code; every bug they covered is accounted for in `BUGS.md`, Where each fix lives.
+- The suite has 779 tests (pumpbot's had 2,208): the rest guarded retired or moved code; every bug they covered is accounted for in `BUGS.md`, Where each fix lives.
 - pumpfun-trading's documents are archived unchanged in `docs/archive/pumpfun-trading/`; BUGS, CHANGELOG, DONE, STRATEGY-PIVOT, COSTS and ARCHITECTURE-DECISIONS continue in place.
 
 ### Moved to trading-core

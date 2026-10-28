@@ -28,7 +28,7 @@ Done: the history import, the module and lane, 100% coverage on 3.14, the
 docs split, the replay of the rc.8 graduation rows through the new stack
 ([STRATEGY-PIVOT §6.14](STRATEGY-PIVOT.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28)).
 
-- [ ] `nox` green on Python 3.11, 3.12, 3.13 and 3.14 locally and in CI (`tests.yml` matrix), plus `nox -s package` (the wheel ships no tests)
+- [ ] `nox` green in CI (`tests.yml` matrix on 3.11–3.14, needs the `TRADING_CORE_TOKEN` secret). *Done locally on Linux, 2026-10-28:* `nox -s tests lint mypy package`, 100% coverage on 3.11, 3.12, 3.13 and 3.14, wheel without tests
 - [ ] trading-core's `feat/pumpfun-module-support` merged and tagged (the module needs `CLOSES_POSITION` on sells and `trading-core check` building the module); then pin `trading-core>=` that version in `pyproject.toml`
 - [ ] A paper run of at least 24 h on the new stack with `configs/paper.example.json` (copied to the runtime folder): check after an hour that the capture's oldest row is the start time (BUG-157), `degraded` conditions stay clear, the dashboard rows move, and the capture replays with `trading-pump replay` to the same positions as the run (fills at the same readings, within the fee difference)
 - [ ] Move the runtime data that is still wanted (rc.6 to rc.8 captures, analysis scripts, `runtime/archive/`) out of the pumpfun-trading checkout, if it lives there
