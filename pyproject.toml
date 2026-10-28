@@ -37,14 +37,19 @@ dependencies = [
   "trading-core>=0.1.0",
   "aiohttp>=3.9.0",
   "base58>=2.1.0",
-  "python-dotenv>=1.0.1",
   "rich>=13.7.0",
   "solana>=0.36.1",
   "solders>=0.29.0",
 ]
 
 [project.scripts]
+trading-pump = "trading_pump.cli.main:main"
 trading-pump-recorder = "trading_pump.cli.record:main"
+
+# The module, for trading-core (`"module": "pumpfun"`, trading-core
+# docs/MODULE-GUIDE.md §6).
+[project.entry-points."trading_core.modules"]
+pumpfun = "trading_pump.module:PumpModule"
 
 [project.urls]
 Repository = "https://github.com/andy-shady-org/trading-pump"
@@ -69,13 +74,41 @@ dev = [
     "build>=1.3.0",
 ]
 
+[tool.black]
+line-length = 88
+target-version = ["py311", "py312", "py313", "py314"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C", "I", "B", "UP"]
+# C901 (complexity) is reviewed by hand; B008 flags dataclass field defaults.
+ignore = ["C901", "B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trading_pump"]
+
 [tool.mypy]
-# Type-check against the oldest supported interpreter so 3.12+-only stdlib APIs
-# are caught on the 3.14 tooling session.
+# Type-check against the oldest supported interpreter so 3.12+-only stdlib
+# APIs are caught.
 python_version = "3.11"
+packages = ["trading_pump"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["trading_pump.tests.*"]
+disallow_untyped_defs = false
+# The SDK tests stub client methods on instances (``client.x = AsyncMock()``).
+disable_error_code = ["method-assign"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["trading_pump/tests"]
 addopts = "-q --strict-markers"
 # `unit` / `integration` / `property` are applied by directory in
@@ -91,10 +124,14 @@ markers = [
 [tool.coverage.run]
 source = ["trading_pump"]
 branch = true
-omit = [
-    "*/tests/*",
-]
+omit = ["*/tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 95
+skip_covered = true
+fail_under = 100
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+    "raise NotImplementedError",
+]

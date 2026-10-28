@@ -1,69 +1,89 @@
+"""Quality gates for trading-pump (docs/dev/TESTING.md).
+
+Tests run on every supported interpreter (``requires-python = ">=3.11"``);
+tooling sessions run once, on the newest. trading-core is private, so every
+session installs it first from ``TRADING_CORE_SOURCE``: a local checkout path
+(default ``../trading-core``) or any pip requirement such as
+``git+ssh://git@github.com/andy-shady-org/trading-core.git@main``.
+"""
+
+import os
 import zipfile
 from pathlib import Path
 
 import nox
 
-# Supported interpreters (pyproject `requires-python = ">=3.11"`). Tooling-only
-# sessions run on the newest one. Locally, missing interpreters are skipped; on CI
-# (`CI` set) nox treats them as errors.
 PYTHON_VERSIONS = ["3.11", "3.12", "3.13", "3.14"]
 TOOLING_PYTHON = "3.14"
+nox.options.sessions = ["lint", "mypy", "tests"]
+
+
+def _install(session):
+    source = os.environ.get("TRADING_CORE_SOURCE", "../trading-core")
+    if Path(source).is_dir():
+        session.install(str(Path(source).resolve()))
+    else:
+        session.install(source)
+    session.install("-e", ".[dev]")
 
 
 @nox.session(python=PYTHON_VERSIONS)
 def tests(session):
-    session.install("-e", ".[dev]")
+    """Full suite with the 100% statement and branch coverage gate."""
+    _install(session)
     session.run(
         "pytest",
         "-q",
         "--cov=trading_pump",
         "--cov-report=term-missing",
         "--cov-report=xml",
-        "--cov-fail-under=95",
+        "--cov-fail-under=100",
+        *session.posargs,
     )
 
 
-@nox.session(name="tests-fast", python=[TOOLING_PYTHON], default=False)
+@nox.session(name="tests-fast", python=PYTHON_VERSIONS, default=False)
 def tests_fast(session):
-    """Quick feedback loop: unit tests only, no coverage gate (Sprint 26)."""
-    session.install("-e", ".[dev]")
+    _install(session)
     session.run("pytest", "-q", "-m", "not slow and not integration", *session.posargs)
 
 
 @nox.session(python=[TOOLING_PYTHON])
 def lint(session):
-    session.install("-e", ".[dev]")
+    _install(session)
     session.run("ruff", "check", ".")
     session.run("black", "--check", ".")
-
-
-@nox.session(python=[TOOLING_PYTHON])
-def audit(session):
-    session.install("-e", ".[dev]")
-    session.run("pip-audit")
+    session.run("flake8", ".")
 
 
 @nox.session(python=[TOOLING_PYTHON])
 def mypy(session):
-    session.install("-e", ".[dev]")
-    session.run("mypy", "trading_pump")
+    _install(session)
+    session.run("mypy")
 
 
-@nox.session(python=[TOOLING_PYTHON])
+@nox.session(python=[TOOLING_PYTHON], default=False)
 def format(session):
-    session.install("-e", ".[dev]")
+    _install(session)
+    session.run("ruff", "check", "--select", "I", "--fix", ".")
     session.run("black", ".")
 
 
-@nox.session(python=[TOOLING_PYTHON])
+@nox.session(python=[TOOLING_PYTHON], default=False)
+def audit(session):
+    _install(session)
+    # trading-core is a private, locally installed package: pip-audit cannot
+    # look it up on PyPI, so it is skipped by name.
+    session.run("pip-audit", "--skip-editable")
+
+
+@nox.session(python=[TOOLING_PYTHON], default=False)
 def package(session):
-    """Build the wheel and check it is private and ships no tests (Sprint 25, T8)."""
+    """Build the wheel and check it is private and ships no tests."""
     session.install("build")
     out_dir = Path(session.create_tmp()) / "dist"
     for stale in out_dir.glob("*"):
         stale.unlink()
-    # sdist first, then the wheel from the unpacked sdist: a stale local `build/`
-    # directory can never leak old files (e.g. tests) into the checked wheel.
     session.run("python", "-m", "build", "--outdir", str(out_dir))
     wheels = sorted(out_dir.glob("*.whl"))
     if len(wheels) != 1:
