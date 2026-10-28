@@ -394,22 +394,35 @@ def retention_check_interval_seconds(config: TradingBotConfig) -> float:
 
 
 def build_retention_managers(
-    paths: Iterable[str | Path | None], policy: RetentionPolicy
+    paths: Iterable[str | Path | None],
+    policy: RetentionPolicy,
+    per_file: Mapping[str | Path, RetentionPolicy] | None = None,
 ) -> list[LogRetentionManager]:
-    """One pruning manager per directory holding a log, audit, event or replay file."""
-    managed_dirs: set[Path] = set()
-    for p in paths:
-        if p:
-            p_path = Path(p)
-            parent = p_path.parent if str(p_path.parent) != "" else Path(".")
-            managed_dirs.add(parent)
+    """Pruning managers for the bot's log, audit, event and replay files.
+
+    One manager per directory and policy, matching only the archives of the
+    files it manages (``<name>*``). ``per_file`` gives a file its own policy:
+    the replay capture's ``replay_backup_count`` used to be overridden by the
+    audit policy, which pruned every ``*.jsonl*`` archive in the folder and
+    deleted the first 14-21 h of the 37 h rc.8 captures (BUG-157).
+    """
+    overrides = {Path(k): v for k, v in (per_file or {}).items() if k}
+    groups: dict[tuple[Path, int], tuple[RetentionPolicy, set[str]]] = {}
+    for p in [*paths, *overrides]:
+        if not p:
+            continue
+        p_path = Path(p)
+        parent = p_path.parent if str(p_path.parent) != "" else Path(".")
+        file_policy = overrides.get(p_path, policy)
+        key = (parent, id(file_policy))
+        groups.setdefault(key, (file_policy, set()))[1].add(f"{p_path.name}*")
     return [
         LogRetentionManager(
-            target_directory=d,
-            policy=policy,
-            file_patterns=("*.log*", "*.jsonl*"),
+            target_directory=directory,
+            policy=file_policy,
+            file_patterns=tuple(sorted(patterns)),
         )
-        for d in managed_dirs
+        for (directory, _), (file_policy, patterns) in groups.items()
     ]
 
 

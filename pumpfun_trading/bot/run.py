@@ -467,14 +467,16 @@ class TradingBot:
         self.retention_check_interval_seconds = retention_check_interval_seconds(
             self.config
         )
+        # Each file keeps its own policy: the replay capture is pruned with the
+        # replay policy, not the audit one (BUG-157).
         self.retention_managers = build_retention_managers(
-            (
-                effective_log_file,
-                self.audit_log_path,
-                effective_event_log_path,
-                self.replay_log_path,
-            ),
+            (effective_log_file, self.audit_log_path, effective_event_log_path),
             self.audit_policy,
+            per_file=(
+                {self.replay_log_path: self.replay_policy}
+                if self.replay_log_path
+                else None
+            ),
         )
 
         self.api = PumpFunApiClient(base_url=self.api_base_url)

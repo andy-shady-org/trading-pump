@@ -8,6 +8,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Fixed
+- Replay captures keep `PUMPFUN_REPLAY_BACKUP_COUNT` parts: the periodic archive prune used the audit trail's limit for every `*.jsonl*` archive in the folder and deleted the oldest replay parts (the rc.8 captures lost their first 14–21 h); each file is now pruned with its own policy, and other tools' files are left alone (BUG-157).
+
 ## [0.3.0-rc.8] - 2026-10-26
 
 Eighth release candidate of v0.3.0 (this release branch, off `main` at the merge of `feat/launch-entry-filters`): a **data release** from the 5.75 h rc.7 launch-mode A/B. rc.7 bought most launches (1,274 per bot) and lost 3.9% per trade; no exit rule and no create-time feature made launch buying pay on the rc.6 or rc.7 data, and the coins the operator saw running were on PumpSwap after graduation, on other launchpads and chains, or weeks old, none of which the bot recorded. rc.8 records them (FEAT-73, FEAT-74), adds the two launch entry filters that held on every dataset (FEAT-75) and fixes the trade feed that did not come back after a top-up (BUG-156, [`BUGS.md` §28](docs/dev/BUGS.md#28-rc7-paper-run-findings-2026-10-26)). Branches: `feat/graduation-observer`, `feat/graduation-entry-data`, `feat/market-recorder`, `docs/pumpportal-topup`, `fix/trade-feed-reconnect`, `feat/launch-entry-filters`.

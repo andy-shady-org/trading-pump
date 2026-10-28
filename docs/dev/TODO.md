@@ -8,7 +8,7 @@ Open work only. Finished phases, sprints and items are archived in [`DONE.md`](D
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | rc.8 data release: 72 h paper A/B (run A unchanged, run B with the FEAT-75 launch entry filters) with graduation tracking and followed launches in run A (FEAT-73), the cross-chain market recorder next to it (FEAT-74), and BUG-156 (a PumpPortal top-up is picked up without a restart); launch buying lost 3.9% per trade on rc.7, so the next strategy decision rests on the graduation and cross-chain data; momentum and pre-graduation are NO-GO on rc.3 ([`STRATEGY-PIVOT.md` §6.11](STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)) | [graduation tracking](#graduation-tracking-feat-73), [market recorder](#cross-chain-market-recorder-feat-74), [entry filters](#launch-entry-filters-feat-75), [rc.5 data](#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
+| **Now** | rc.8 read out ([`STRATEGY-PIVOT.md` §6.13](STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)): launch-mode Pump.fun buying is NO-GO (about 25,000 paper trades, every setting negative); the only positive signal is PumpSwap momentum 1–2 minutes after graduation (FEAT-76). Next: rc.9 with BUG-157 fixed, a 72 h graduation-only capture with a pre-registered rule, then a PumpSwap paper lane | [FEAT-76](PROPOSED-FEATURES.md#feat-76-pumpswap-post-graduation-momentum-lane), [graduation tracking](#graduation-tracking-feat-73), [market recorder](#cross-chain-market-recorder-feat-74), [entry filters](#launch-entry-filters-feat-75), [rc.5 data](#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
 | **Next** | Read out the launch A/B and the launch sample; Stage 0 only for a lane that passes the replay go / no-go (none on Pump.fun today); drills | [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd), [24D](#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110) |
 | **Then** | Smart-wallet evidence (24I), Phase 5 runtime and platform sprints (28c–31) | [Sprint 24I](#sprint-24i-smart-wallet-discovery--reviewed-watch-list-feat-54), [Phase 5](#phase-5-platform-refactor-required-before-the-web-ui) |
 | **Later** | Phase 6 Hosted Web UI, only after the funding gate | [Phase 6](#phase-6-hosted-web-ui-replaces-sprint-16) |
@@ -120,6 +120,14 @@ Done: the record-only launch sample and post-exit tracking ([`DONE.md`](DONE.md#
 - [ ] Launch-sample read-out: share of all launches that reach 1.1 / 1.3 / 1.5× and when, by creator buy size, by screen verdict and by UTC hour; what a buy at launch earns after costs with the A / B exits; record it in `STRATEGY-PIVOT.md` §6
 - [ ] Trade data for sampled launches (buyer wallets, sizes, timing) only if the curve read-out shows a rule worth testing that needs it (a PumpPortal trade subscription per sampled mint)
 
+### PumpSwap Post-Graduation Momentum Lane (FEAT-76)
+Proposed 2026-10-28 ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md#feat-76-pumpswap-post-graduation-momentum-lane)).
+- [ ] rc.9 with BUG-157 (replay retention) fixed; check after an hour that the capture's oldest row is the start time
+- [ ] 72 h graduation-only capture (graduation tracking on, no launch buys); pre-register the signal (60–120 s after migration, price ≥ 1.1–1.2× the first reading), exits (take profit 1.2×, stop 0.85) and the 2% a side cost before reading it; pass = both halves positive and the 90% interval above 0, against a random-entry baseline
+- [ ] If it passes: a PumpSwap paper executor (priced from pool reserves and the fee config) and the `pumpswap_momentum` lane, modelled in replay; 72 h paper with a pre-registered verdict
+- [ ] If that passes: a PumpSwap buy builder checked against mainnet transactions, one live round trip reconciled, then Stage 0
+- [ ] Market recorder before it can pick a venue: a sell-quote check per followed pool (Jupiter on Solana), coverage of Raydium LaunchLab / stonkfun / memefun pools (GeckoTerminal OHLCV or on-chain reads), and per-chain cost and gas at the trade size
+
 ### Graduation Tracking (FEAT-73)
 Built: every migrated coin's PumpSwap pool followed for 4 h, record-only ([`DONE.md`](DONE.md#graduation-tracking-feat-73), [`FEATURES.md` §43](../FEATURES.md#43-graduation-tracking-feat-73)). Why: the operator sees many coins that graduate, crash and then run on PumpSwap, which the bot cannot trade; a 92-coin sample from public candles found no recovery after a crash, but too few coins and too coarse to settle it.
 - [ ] Run it for 24 h in one bot (`graduation_observation_seconds: 14400` at a 10 s interval, as in `configs/capture.json`); check `watch_list.graduation` stays below its cap and the Helius credit use matches [`COSTS.md` §3.1](COSTS.md#31-helius-rpc-credits)
@@ -129,7 +137,7 @@ Built: every migrated coin's PumpSwap pool followed for 4 h, record-only ([`DONE
 
 ### Launch Entry Filters (FEAT-75)
 Built: skip tiny creator buys; the fill-drift guard applies in launch mode ([`DONE.md`](DONE.md#launch-entry-filters-feat-75), [`FEATURES.md` §45](../FEATURES.md#45-launch-entry-filters-from-the-rc6--rc7-data-feat-75)).
-- [ ] rc.8 A/B: run A unchanged (stop 0.80), run B with `launch_skip_creator_buy_below_sol: 0.05` and `momentum_max_entry_drift_pct: 0.15`; per-trade net A vs B, and how many buys each filter refused (`entry_refusals`)
+- [x] rc.8 A/B *(closed 2026-10-28: run B was started with the 0.90-stop config instead; applied offline to run A's 9,848 fills, the two filters gave −2.87% per trade against −4.69% (drift guard alone −3.27%), still a loss; [`STRATEGY-PIVOT.md` §6.13](STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28))*
 
 ### Cross-Chain Market Recorder (FEAT-74)
 Built: new pools and momentum lists on Solana, Base and BSC, each followed for up to 7 days, record-only ([`DONE.md`](DONE.md#cross-chain-market-recorder-feat-74), [`FEATURES.md` §44](../FEATURES.md#44-cross-chain-market-recorder-feat-74)). Why: Pump.fun is not profitable on paper, and the coins the operator saw running were on other launchpads, other chains or weeks old.
