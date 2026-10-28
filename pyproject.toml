@@ -41,24 +41,24 @@ dependencies = [
 ]
 
 [project.scripts]
-pumpbot = "pumpfun_trading.cli.bot:main"
-pumpfun = "pumpfun_trading.cli.main:main"
-pumpfun-cli = "pumpfun_trading.cli.main:main"
-pumpfun-arb = "pumpfun_trading.cli.arbitrage:main"
-pumpfun-drill = "pumpfun_trading.cli.drill:main"
-pumpfun-audit = "pumpfun_trading.cli.audit:run_audit_cli"
-pumpfun-events = "pumpfun_trading.cli.events:main"
-pumpfun-optimize = "pumpfun_trading.cli.optimize:main"
-pumpfun-replay = "pumpfun_trading.cli.replay:main"
-pumpfun-recorder = "pumpfun_trading.cli.record:main"
+pumpbot = "trading_pump.cli.bot:main"
+pumpfun = "trading_pump.cli.main:main"
+pumpfun-cli = "trading_pump.cli.main:main"
+pumpfun-arb = "trading_pump.cli.arbitrage:main"
+pumpfun-drill = "trading_pump.cli.drill:main"
+pumpfun-audit = "trading_pump.cli.audit:run_audit_cli"
+pumpfun-events = "trading_pump.cli.events:main"
+pumpfun-optimize = "trading_pump.cli.optimize:main"
+pumpfun-replay = "trading_pump.cli.replay:main"
+pumpfun-recorder = "trading_pump.cli.record:main"
 
 [project.urls]
 Repository = "https://github.com/andy-shady-org/pumpfun-trading"
 
 [tool.setuptools.packages.find]
-include = ["pumpfun_trading*"]
+include = ["trading_pump*"]
 # The test suite lives inside the package (AGENTS.md) but never ships in the wheel.
-exclude = ["pumpfun_trading.tests", "pumpfun_trading.tests.*"]
+exclude = ["trading_pump.tests", "trading_pump.tests.*"]
 
 [project.optional-dependencies]
 # Planned platform extras (Phase 5/6, docs/dev/ARCHITECTURE-DECISIONS.md). Nothing
@@ -97,7 +97,7 @@ python_version = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["pumpfun_trading/tests"]
+testpaths = ["trading_pump/tests"]
 addopts = "-q --strict-markers"
 # `unit` / `integration` / `property` are applied by directory in
 # tests/conftest.py; see docs/dev/TESTING.md for the taxonomy.
@@ -110,7 +110,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["pumpfun_trading"]
+source = ["trading_pump"]
 branch = true
 omit = [
     "*/tests/*",

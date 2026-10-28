@@ -16,7 +16,7 @@ def tests(session):
     session.run(
         "pytest",
         "-q",
-        "--cov=pumpfun_trading",
+        "--cov=trading_pump",
         "--cov-report=term-missing",
         "--cov-report=xml",
         "--cov-fail-under=95",
@@ -46,7 +46,7 @@ def audit(session):
 @nox.session(python=[TOOLING_PYTHON])
 def mypy(session):
     session.install("-e", ".[dev]")
-    session.run("mypy", "pumpfun_trading")
+    session.run("mypy", "trading_pump")
 
 
 @nox.session(python=[TOOLING_PYTHON])
@@ -72,7 +72,7 @@ def package(session):
         names = wheel.namelist()
         metadata_name = next(n for n in names if n.endswith(".dist-info/METADATA"))
         metadata = wheel.read(metadata_name).decode("utf-8")
-    leaked = [n for n in names if n.startswith("pumpfun_trading/tests/")]
+    leaked = [n for n in names if n.startswith("trading_pump/tests/")]
     if leaked:
         session.error(f"wheel ships {len(leaked)} test files, e.g. {leaked[0]}")
     if "Classifier: Private :: Do Not Upload" not in metadata:
