@@ -1,6 +1,6 @@
 # Documentation Plan: Gap Analysis & Material Docs Site
 
-This plan covers two things: the gaps found in the current documentation, and how the docs will be published as a Material Design styled site with **Zensical** (Material for MkDocs as fallback) and embedded in the Web UI at `/docs`. The decision is ADR-007 in [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md). All gap fixes are scheduled in **Sprint 31: Documentation Site & Gap Closure** in [`TODO.md`](TODO.md); the in-app embedding lands in Sprint 35 (FEAT-37).
+This plan covers two things: the gaps found in the current documentation, and how the docs will be published as a Material Design styled site with **Zensical** (Material for MkDocs as fallback) and embedded in the Web UI at `/docs`. The decision is ADR-007 in [`ARCHITECTURE-DECISIONS.md`](../../../dev/ARCHITECTURE-DECISIONS.md). All gap fixes are scheduled in **Sprint 31: Documentation Site & Gap Closure** in [`TODO.md`](TODO.md); the in-app embedding lands in Sprint 35 (FEAT-37).
 
 > Nothing in this plan is built yet. `mkdocs.yml` is outlined in §5 and will be created in Sprint 31.
 

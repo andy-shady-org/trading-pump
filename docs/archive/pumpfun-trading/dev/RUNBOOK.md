@@ -79,7 +79,7 @@ Watch for: reconnect loops, stale-stream or RPC-error health flags, the circuit 
 2. **Freeze state:** copy `data/` to `incidents/<timestamp>/` before anything else touches it.
 3. **Check the wallet on-chain:** SOL balance and every token account; compare against `active_positions` in the snapshot. Sell any untracked tokens by hand if needed.
 4. **Find the cause:** last valid state transition and trade in the audit trail; matching events in `events.jsonl`; replay the session from the replay capture if one was recorded.
-5. **Log it:** open or update an entry in [`BUGS.md`](BUGS.md) and, if it was a missed assumption, a rule in the `AGENTS.md` Learnings Log.
+5. **Log it:** open or update an entry in [`BUGS.md`](../../../dev/BUGS.md) and, if it was a missed assumption, a rule in the `AGENTS.md` Learnings Log.
 6. **Restart** only in `--paper-trade` mode until the fix is released and the release gate passes again. Apply the stage rules in [`RELEASE-GATE.md` §3.6](RELEASE-GATE.md#36-stop-triggers-any-stage).
 
 ### 5.3 Daily wallet reconciliation
@@ -160,7 +160,7 @@ PumpPortal meters token-trade data against the API key's linked wallet (0.01 SOL
 - dashboard `Trade feed: REFUSED (key funds?)`, `bot_status.json` → `trade_feed_breaker.open: true`;
 - no new buys (`require_trade_feed`); held positions keep exiting on the 1 s curve refresh.
 
-**Action:** top up the PumpPortal key's wallet. Only the balance above 0.02 SOL pays for messages, so keep the run's expected use on top of that floor (two launch-mode bots used about 0.0024 SOL an hour in rc.7; [`COSTS.md` §3.2](COSTS.md#32-pumpportal-trade-data)). No restart is needed: every `trade_feed_probe_seconds` (default 300 s) the bot retries. A connection that has already refused is not asked again (PumpPortal did not accept a top-up on it, BUG-156): the bot closes it (`trade-feed breaker open: reconnecting the stream …` in the events, `trade_feed_breaker.reconnects` in `bot_status.json`), and the fresh connection resubscribes the held coins and probes. Once PumpPortal confirms a subscription or trade data arrives, the breaker closes: `trade-feed circuit breaker CLOSED` is sent, buying resumes, and the dashboard shows `Trade feed: ok`, `Last status: monitoring active tokens` and the CLOSED notice as `Last event`. A reconnect alone never closes it. If the key itself changed, update `PUMPFUN_STREAM_API_KEY` and restart.
+**Action:** top up the PumpPortal key's wallet. Only the balance above 0.02 SOL pays for messages, so keep the run's expected use on top of that floor (two launch-mode bots used about 0.0024 SOL an hour in rc.7; [`COSTS.md` §3.2](../../../dev/COSTS.md#32-pumpportal-trade-data)). No restart is needed: every `trade_feed_probe_seconds` (default 300 s) the bot retries. A connection that has already refused is not asked again (PumpPortal did not accept a top-up on it, BUG-156): the bot closes it (`trade-feed breaker open: reconnecting the stream …` in the events, `trade_feed_breaker.reconnects` in `bot_status.json`), and the fresh connection resubscribes the held coins and probes. Once PumpPortal confirms a subscription or trade data arrives, the breaker closes: `trade-feed circuit breaker CLOSED` is sent, buying resumes, and the dashboard shows `Trade feed: ok`, `Last status: monitoring active tokens` and the CLOSED notice as `Last event`. A reconnect alone never closes it. If the key itself changed, update `PUMPFUN_STREAM_API_KEY` and restart.
 
 ```bash
 jq '.trade_feed_breaker | {open, refusals, reconnects, next_probe_at, last_confirmed_at}' data/bot_status.json
@@ -168,7 +168,7 @@ jq '.trade_feed_breaker | {open, refusals, reconnects, next_probe_at, last_confi
 
 ### 5.8 RPC and stream outages (BUG-145 to BUG-151)
 
-Every price, paper fill and sell goes through the RPC pool. In the rc.5 launch-mode run two bots shared one Helius key; the key stopped answering at 07:01 UTC and both bots carried on blind for an hour (§26 of [`BUGS.md`](BUGS.md#26-rc5-paper-run-findings-2026-10-25)). What the bot does now when the RPC fails:
+Every price, paper fill and sell goes through the RPC pool. In the rc.5 launch-mode run two bots shared one Helius key; the key stopped answering at 07:01 UTC and both bots carried on blind for an hour (§26 of [`BUGS.md`](../../../dev/BUGS.md#26-rc5-paper-run-findings-2026-10-25)). What the bot does now when the RPC fails:
 
 - **The breaker stops traffic.** An endpoint that rate limits (HTTP 429) or fails three times in a row gets no requests for 1 s, then 2, 4 … up to `rpc_pool_circuit_breaker_cooldown_seconds` (60 s) while it keeps failing, with one probe request when each wait ends. Requests made meanwhile fail at once without being sent (`RpcPoolUnavailableError`, counted as `rejected_requests`).
 - **No buys** while every endpoint is open (`last_event` "buy blocked: no healthy RPC endpoint", `entry_refusals.rpc_unavailable`). Exits keep trying.
@@ -260,10 +260,10 @@ In the first minutes check that `capture/bot.log` has "Successfully subscribed t
 
 ### 6.3 Confirmed entries: capture → Stage 0 → Stage 1 at 0.02 SOL (v0.3.0, Phase 4c)
 
-From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json` with `entry_mode: "confirmed"` ([`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)). Copy both into the runtime `configs/` (keep the v0.2.x files as `*.v0.2.json` for rollback, §5.4). Each step starts only if the one before passed; record every result in `STRATEGY-PIVOT.md` §6.
+From v0.3.0 the repository ships `configs/capture.json` and `configs/canary.json` with `entry_mode: "confirmed"` ([`STRATEGY-PIVOT.md`](../../../dev/STRATEGY-PIVOT.md)). Copy both into the runtime `configs/` (keep the v0.2.x files as `*.v0.2.json` for rollback, §5.4). Each step starts only if the one before passed; record every result in `STRATEGY-PIVOT.md` §6.
 
 0. **Before a new run.** Archive the previous run folders (`runtime/archive/paper-<tag>/capture/` and `.../pilot/`; `run-paper.sh` refuses a non-empty folder), pin `runtime/pumpfun-trading` to the new tag and reinstall it into the runtime venv, and copy `configs/capture.json`, `configs/canary.json`, `configs/pregrad_pilot.json` and `configs/verdict_rules.json` into the runtime `configs/`. After each run starts, check its `run_provenance` in the status file (§3 step 4).
-1. **Capture (48 h from rc.3, paper).** Run `configs/capture.json` as in §6.2. One day was too few trades to tell a 0.0001 SOL-per-position edge from noise or to test the time-of-day effect ([`STRATEGY-PIVOT.md` §6.10](STRATEGY-PIVOT.md#610-v030-rc2-capture-and-pilot-momentum-no-go-stop-092-adopted-2026-10-21)). Checks while it runs:
+1. **Capture (48 h from rc.3, paper).** Run `configs/capture.json` as in §6.2. One day was too few trades to tell a 0.0001 SOL-per-position edge from noise or to test the time-of-day effect ([`STRATEGY-PIVOT.md` §6.10](../../../dev/STRATEGY-PIVOT.md#610-v030-rc2-capture-and-pilot-momentum-no-go-stop-092-adopted-2026-10-21)). Checks while it runs:
    - dashboard `Watch list: N watched, S/20 subscribed`: N stays ≤ `watch_max_mints` (300) and S ≤ `watch_max_trade_subscriptions`;
    - `watch_list.stats` in `capture/bot_status.json`: `watched` and `promoted` grow, `poll_errors` stays near 0, `dropped_not_pump_fun` / `dropped_non_standard` are counted, not bought;
    - no `watch_poll_failed` events for more than a few minutes (`pumpfun-events --path capture/events.jsonl --tail`), no loop stalls (`Last status` keeps changing);
@@ -435,7 +435,7 @@ Attach the `--report` JSON to the release record. The scripted drills cover the 
 
 ## 8. Supervised deployment and hardening (Sprint 24D)
 
-Run the headless bot under a process supervisor so a crash or reboot does not quietly end a pilot or canary. Templates live in [`deploy/`](../../deploy/) (operator slice of FEAT-46; a container image is still planned):
+Run the headless bot under a process supervisor so a crash or reboot does not quietly end a pilot or canary. Templates lived in `deploy/` (retired with the pumpbot runtime; in the history at tag `v0.3.0rc8`) (operator slice of FEAT-46; a container image is still planned):
 
 | File | Purpose |
 |---|---|
@@ -488,7 +488,7 @@ Full flag reference: [`../CLI-COMMANDS.md`](../CLI-COMMANDS.md).
 ## 10. Related documentation
 
 - [`RELEASE-GATE.md`](RELEASE-GATE.md) – release checklist and live capital gate.
-- [`BUGS.md`](BUGS.md) – defect tracker.
+- [`BUGS.md`](../../../dev/BUGS.md) – defect tracker.
 - [`TODO.md`](TODO.md) – sprint backlog, including Sprint 24A (paper pilot and live canary).
 - [`../RISK.md`](../RISK.md) – risk controls and circuit breakers.
 - [`../USER-GUIDE.md`](../USER-GUIDE.md) – configuration and onboarding.

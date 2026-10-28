@@ -2,7 +2,7 @@
 
 The Web Dashboard (FEAT-10) is the planned hosted, multi-tenant control portal for `pumpfun-trading`. It follows **Material Design 3**, works in desktop browsers, and installs on mobile as a Progressive Web App (PWA). Users get real-time control, portfolio analytics, hot configuration changes, and embedded documentation without terminal access or shell permissions.
 
-> **Status: planned, gated on funding.** The terminal UI (`pumpbot`, see [`TERMINAL-UI.md`](TERMINAL-UI.md)) must first generate the income that pays for this work. Phase 6 starts only after the funding gate in [`dev/RELEASE-GATE.md` §3.7](dev/RELEASE-GATE.md#37-funding-gate-for-the-web-ui) passes, and the terminal UI stays the primary interface until the deprecation gate in Sprint 35. Architecture decisions are recorded in [`dev/ARCHITECTURE-DECISIONS.md`](dev/ARCHITECTURE-DECISIONS.md); the feature breakdown (FEAT-31…FEAT-37) is in [`dev/PROPOSED-FEATURES.md`](dev/PROPOSED-FEATURES.md); the schedule is Phase 6 in [`dev/TODO.md`](dev/TODO.md).
+> **Status: planned, gated on funding.** The terminal UI (`pumpbot`, see [`TERMINAL-UI.md`](TERMINAL-UI.md)) must first generate the income that pays for this work. Phase 6 starts only after the funding gate in [`dev/RELEASE-GATE.md` §3.7](dev/RELEASE-GATE.md#37-funding-gate-for-the-web-ui) passes, and the terminal UI stays the primary interface until the deprecation gate in Sprint 35. Architecture decisions are recorded in [`dev/ARCHITECTURE-DECISIONS.md`](../../dev/ARCHITECTURE-DECISIONS.md); the feature breakdown (FEAT-31…FEAT-37) is in [`dev/PROPOSED-FEATURES.md`](dev/PROPOSED-FEATURES.md); the schedule is Phase 6 in [`dev/TODO.md`](dev/TODO.md).
 
 ---
 

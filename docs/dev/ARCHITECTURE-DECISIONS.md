@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This file records the architecture decisions for the hosted Web UI platform (FEAT-10, re-scoped to FEAT-31…37 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)), the persistence strategy, documentation tooling, and the test suite layout. Delivery is scheduled in [`TODO.md`](TODO.md) (Phase 5: Sprints 25–31, Phase 6: Sprints 32–35). The user-facing specification is [`docs/WEB-UI.md`](../WEB-UI.md).
+This file records the architecture decisions for the hosted Web UI platform (FEAT-10, re-scoped to FEAT-31…37 in [`PROPOSED-FEATURES.md`](../archive/pumpfun-trading/dev/PROPOSED-FEATURES.md)), the persistence strategy, documentation tooling, and the test suite layout. Delivery is scheduled in [`TODO.md`](../archive/pumpfun-trading/dev/TODO.md) (Phase 5: Sprints 25–31, Phase 6: Sprints 32–35). The user-facing specification is [`docs/WEB-UI.md`](../archive/pumpfun-trading/WEB-UI.md).
 
 Each record uses the format **Context → Decision → Alternatives considered → Consequences**. Status values: `Accepted`, `Proposed`, `Superseded`.
 
@@ -32,7 +32,7 @@ These findings (from the Phase 5 review) motivate the decisions below.
 | R7 | `sdk/execution.py` mixes Pump.fun, Raydium and confirmation logic | ~1,650 lines | Suggested |
 | R8 | Packaging hygiene | unused `requests`; `Framework :: Django` classifier; no extras; nox only on 3.14 | Required (small) |
 | R9 | Repo hygiene | root `bot.log`, `events.jsonl`, `cov.json`, `coverage.xml`; stale `__pycache__` | Suggested |
-| R10 | Unstructured test suite (detail: T1–T9 in [`TESTING.md`](TESTING.md)) | 65 flat files, ~25k lines, 581 tests | Required |
+| R10 | Unstructured test suite (detail: T1–T9 in [`TESTING.md`](../archive/pumpfun-trading/dev/TESTING.md)) | 65 flat files, ~25k lines, 581 tests | Required |
 | R11 | No real Yellowstone gRPC transport | `streams/geyser.py:600` fails fast without `custom_transport` | Suggested (FEAT-39) |
 | R12 | JSON/JSONL-only persistence; ledger inlined in snapshot | `storage/status.py` | Required for hosted |
 
@@ -158,14 +158,14 @@ The browser talks only to the control plane. The control plane owns auth, the da
 
 * **Status:** Accepted
 * **Context:** Docs must be published as a Material-styled site and embedded in the Web UI. Material for MkDocs is in maintenance mode (security fixes until its announced end-of-life); **Zensical**, from the same team, is its successor and reads `mkdocs.yml` natively.
-* **Decision:** Author against a Material-compatible `mkdocs.yml`, build with **Zensical**, and keep Material for MkDocs as a fallback until EOL. The static output is served by the control plane at `/docs`, with deep links from config tooltips. This replaces the earlier "in-app Markdown renderer" idea. Details: [`DOCUMENTATION-PLAN.md`](DOCUMENTATION-PLAN.md).
+* **Decision:** Author against a Material-compatible `mkdocs.yml`, build with **Zensical**, and keep Material for MkDocs as a fallback until EOL. The static output is served by the control plane at `/docs`, with deep links from config tooltips. This replaces the earlier "in-app Markdown renderer" idea. Details: [`DOCUMENTATION-PLAN.md`](../archive/pumpfun-trading/dev/DOCUMENTATION-PLAN.md).
 * **Alternatives considered:** Sphinx (strong API docs, weaker Material look); in-app Markdown rendering (duplicates search/nav, no static build).
 * **Consequences:** Avoid exotic plugins Zensical does not yet support; the API reference uses mkdocstrings.
 
 ## ADR-008: Test Suite Mirrors the Source Tree
 
 * **Status:** Accepted
-* **Context:** The suite is 65 flat files with coverage-padding files, duplicated setup, and 24 files coupled to `bot.run.TradingBot` privates (findings T1–T9 in [`TESTING.md`](TESTING.md)). It must act as the safety net for the Sprint 28 `run.py` decomposition.
+* **Context:** The suite is 65 flat files with coverage-padding files, duplicated setup, and 24 files coupled to `bot.run.TradingBot` privates (findings T1–T9 in [`TESTING.md`](../archive/pumpfun-trading/dev/TESTING.md)). It must act as the safety net for the Sprint 28 `run.py` decomposition.
 * **Decision:**
   - Tests stay inside the package at `pumpfun_trading/tests/` (as AGENTS.md requires) but are excluded from the wheel.
   - Layout: `unit/` mirrors the source 1:1, `integration/` holds cross-component flows, `property/` holds Hypothesis tests, `support/` holds shared factories, fakes and payload builders.

@@ -44,7 +44,7 @@ Last updated: 2026-10-26.
 
 ### 2.3 On-chain trading
 
-None. Every run so far has been paper (`dry_run` / `paper_trade`): no transaction fees, priority fees, Jito tips or token-account rent have been paid. Live costs per trade are modelled in [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md) and booked in the audit trail once a funded wallet runs ([`RELEASE-GATE.md`](RELEASE-GATE.md)).
+None. Every run so far has been paper (`dry_run` / `paper_trade`): no transaction fees, priority fees, Jito tips or token-account rent have been paid. Live costs per trade are modelled in [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md) and booked in the audit trail once a funded wallet runs ([`RELEASE-GATE.md`](../archive/pumpfun-trading/dev/RELEASE-GATE.md)).
 
 ---
 
@@ -61,7 +61,7 @@ A standard RPC call costs 1 credit (`getAccountInfo`, `getMultipleAccounts`, `ge
 | rc.5 launch-mode A/B, 2026-10-24 18:16 → 2026-10-25 07:01 UTC (12.75 h with a working RPC), capture bot | 53,421 | ≈ 100,000 | ≈ 3.0 M |
 | same run, pilot bot | 58,606 | ≈ 110,000 | ≈ 3.3 M |
 
-(`rpc_pool_telemetry`: total requests less rate-limited ones; every request after 07:01 UTC failed.) That run read each held curve with its own call every second; since `fix/runtime-rpc-outage` all held curves are one call per second, so expect less. Two bots on the measured load use about 6.3 M credits a month: inside the Developer plan's 10 M, six times the Free plan's 1 M. Each bot should have its own key ([`RUNBOOK.md` §5.8](RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)); check on the Helius dashboard whether a second key draws on the same credits.
+(`rpc_pool_telemetry`: total requests less rate-limited ones; every request after 07:01 UTC failed.) That run read each held curve with its own call every second; since `fix/runtime-rpc-outage` all held curves are one call per second, so expect less. Two bots on the measured load use about 6.3 M credits a month: inside the Developer plan's 10 M, six times the Free plan's 1 M. Each bot should have its own key ([`RUNBOOK.md` §5.8](../archive/pumpfun-trading/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)); check on the Helius dashboard whether a second key draws on the same credits.
 
 The cross-chain market recorder (FEAT-74) uses no Helius credits: GeckoTerminal and DexScreener are free and keyless (about 7 and at most 240 requests a minute). Its cost is disk: about 1 GB of rows a day before compression, about a tenth of that gzipped.
 
@@ -71,7 +71,7 @@ Graduation tracking (FEAT-73, record-only) adds to one bot: at rc.6's rate (abou
 
 ### 3.2 PumpPortal trade data
 
-PumpPortal meters token-trade messages against the API key's wallet: 0.01 SOL per 10,000 messages; the create and migration feeds are free ([`RUNBOOK.md` §5.7](RUNBOOK.md#57-trade-feed-circuit-breaker-pumpportal-api-key-funds-bug-116)).
+PumpPortal meters token-trade messages against the API key's wallet: 0.01 SOL per 10,000 messages; the create and migration feeds are free ([`RUNBOOK.md` §5.7](../archive/pumpfun-trading/dev/RUNBOOK.md#57-trade-feed-circuit-breaker-pumpportal-api-key-funds-bug-116)).
 
 | Measured run | Trade messages received | Cost | Per bot per 30 days |
 | :--- | ---: | ---: | ---: |
@@ -83,7 +83,7 @@ PumpPortal meters token-trade messages against the API key's wallet: 0.01 SOL pe
 
 (Trade rows with a `user` in the replay capture.) Launch mode subscribes to every held coin, so this grows with `max_active_positions` and how busy the held coins are.
 
-**The 0.02 SOL floor.** PumpPortal serves trade data only while the key's wallet holds at least 0.02 SOL, so only the balance above 0.02 SOL is usable. On 2026-10-26 a 0.010015 SOL charge at 15:10:59 UTC left 0.019985 SOL; PumpPortal closed the connection at 15:35:05 and refused every trade subscription after it, and both rc.7 bots (one shared key) stopped buying. A 0.02 SOL top-up at 15:49:16 was not picked up by the bot's retry on the same connection at 15:50:21, and the bots were stopped at 15:51 ([`RUNBOOK.md` §5.7](RUNBOOK.md#57-trade-feed-circuit-breaker-pumpportal-api-key-funds-bug-116)). Plan funding as 0.02 SOL plus the run's use: at rc.7's rate two bots use about 0.0024 SOL an hour, so a 72 h run needs about 0.17 SOL above the floor. After the 16:49 UTC top-up the wallet holds 0.199985 SOL, about 0.18 SOL above the floor: about 75 h of both bots at rc.7's rate, so check the balance on day 3 of the rc.8 runs (FEAT-75's filters buy less, which helps). The wallet's on-chain history shows the charges (one 0.01 SOL debit per 10,000 messages). At the operator's rate of 0.01 SOL = $1.00, two bots like these cost about $165 a month in trade data, more than the Helius plan.
+**The 0.02 SOL floor.** PumpPortal serves trade data only while the key's wallet holds at least 0.02 SOL, so only the balance above 0.02 SOL is usable. On 2026-10-26 a 0.010015 SOL charge at 15:10:59 UTC left 0.019985 SOL; PumpPortal closed the connection at 15:35:05 and refused every trade subscription after it, and both rc.7 bots (one shared key) stopped buying. A 0.02 SOL top-up at 15:49:16 was not picked up by the bot's retry on the same connection at 15:50:21, and the bots were stopped at 15:51 ([`RUNBOOK.md` §5.7](../archive/pumpfun-trading/dev/RUNBOOK.md#57-trade-feed-circuit-breaker-pumpportal-api-key-funds-bug-116)). Plan funding as 0.02 SOL plus the run's use: at rc.7's rate two bots use about 0.0024 SOL an hour, so a 72 h run needs about 0.17 SOL above the floor. After the 16:49 UTC top-up the wallet holds 0.199985 SOL, about 0.18 SOL above the floor: about 75 h of both bots at rc.7's rate, so check the balance on day 3 of the rc.8 runs (FEAT-75's filters buy less, which helps). The wallet's on-chain history shows the charges (one 0.01 SOL debit per 10,000 messages). At the operator's rate of 0.01 SOL = $1.00, two bots like these cost about $165 a month in trade data, more than the Helius plan.
 
 ---
 

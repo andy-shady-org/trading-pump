@@ -1,10 +1,10 @@
 # Changelog
 
-All notable changes to `pumpfun-trading` are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow the SemVer policy in [`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy). While the version is `0.x`, a MINOR release may change config keys, CLI flags or file formats; such changes are listed under **Changed**.
+All notable changes to `pumpfun-trading` are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow the SemVer policy in [`docs/dev/RELEASE-GATE.md` §6](docs/archive/pumpfun-trading/dev/RELEASE-GATE.md#6-versioning-policy). While the version is `0.x`, a MINOR release may change config keys, CLI flags or file formats; such changes are listed under **Changed**.
 
 This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private git tags only: never published to PyPI or as public GitHub Releases. Only tagged versions run on a funded wallet.
 
-Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/dev/BUGS.md) and [`docs/dev/PROPOSED-FEATURES.md`](docs/dev/PROPOSED-FEATURES.md)) and ends with its release record ([`RELEASE-GATE.md` §5](docs/dev/RELEASE-GATE.md#5-release-record)).
+Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/dev/BUGS.md) and [`docs/dev/PROPOSED-FEATURES.md`](docs/archive/pumpfun-trading/dev/PROPOSED-FEATURES.md)) and ends with its release record ([`RELEASE-GATE.md` §5](docs/archive/pumpfun-trading/dev/RELEASE-GATE.md#5-release-record)).
 
 ## [Unreleased]
 
@@ -100,7 +100,7 @@ This is a **pre-release for paper testing only**, like rc.1 to rc.5. It must not
 ### Added
 - Config key `stream_heartbeat_seconds` (default `20`, `0` = no pings) (BUG-150).
 - `bot_status.json`: `entry_refusals` (refused entries by cause: `curve_unreadable`, `curve_complete`, `complete_at_create`, `rpc_unavailable`, …); `rpc_pool_telemetry.rejected_requests` and `requests_by_method`, and per endpoint `open_streak` and `last_rate_limited_time`; positions `price_stale` / `price_stale_since`; watch stats `position_refresh_errors` and `observation_polls_deferred`; exit retry entries `exit_reason`, `sell_fraction`, `sell_amount_tokens` and `target_tier` (BUG-145 to BUG-153).
-- A startup warning when the RPC pool has a single endpoint (BUG-151); [`RUNBOOK.md` §5.8](docs/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151) on RPC capacity and outages.
+- A startup warning when the RPC pool has a single endpoint (BUG-151); [`RUNBOOK.md` §5.8](docs/archive/pumpfun-trading/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151) on RPC capacity and outages.
 - Test support: `FakeCurves` and `standard_curve` (`tests/support/fakes.py`) give a paper bot curve reads.
 
 ### Known issues
@@ -120,7 +120,7 @@ This is a **pre-release for paper testing only**, like rc.1 to rc.5. It must not
 - Replay parity: golden replay changed only in the open position's token amount (above); live-fidelity replay now skips launches complete at creation (BUG-146)
 - Stream: PumpPortal answers WebSocket pings (pong in 115 ms, 2026-10-25), so the 20 s heartbeat is safe
 - Paper verdict (FEAT-67): `configs/verdict_rules.json` unchanged
-- Before the next run: the HTTPS Helius URL in `PUMPFUN_RPC_URL`, one RPC key per bot plus a fallback in `PUMPFUN_RPC_URLS` ([`RUNBOOK.md` §5.8](docs/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)), `EXPECTED_VERSION=0.3.0rc6` in `run-paper.sh`, and a 1 h check of `entry_refusals` and `rpc_pool_telemetry.requests_by_method`
+- Before the next run: the HTTPS Helius URL in `PUMPFUN_RPC_URL`, one RPC key per bot plus a fallback in `PUMPFUN_RPC_URLS` ([`RUNBOOK.md` §5.8](docs/archive/pumpfun-trading/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)), `EXPECTED_VERSION=0.3.0rc6` in `run-paper.sh`, and a 1 h check of `entry_refusals` and `rpc_pool_telemetry.requests_by_method`
 - Capital stage after this release: 0 (paper only)
 - Sign-off: –
 
@@ -134,7 +134,7 @@ This is a **pre-release for paper testing only**, like rc.1 to rc.4. It must not
 - Launch sample (FEAT-72): `launch_sample_pct` (0 = off), `launch_sample_max_mints` (300), `launch_sample_ttl_seconds` (900), `launch_sample_poll_interval_seconds` (5). A salted, deterministic share of every standard Pump.fun launch is polled from its create event as `curve_poll` rows with `source: "launch_sample"`, before screening and every entry gate, in both entry modes; `observation_start` carries `created_at`, `market_cap_sol`, `entry_mode` and the create event's `creator`, `creator_buy_sol`, `creator_buy_tokens`, `symbol` and `name`.
 - Post-exit tracking (FEAT-72): `post_exit_observation_seconds` (0 = off), `post_exit_max_mints` (100), `post_exit_poll_interval_seconds` (2). Every fully closed position keeps being polled as `source: "post_exit"` rows tagged with `exit_reason`, `entry_market_cap_sol` and `exit_market_cap_sol`; `observation_start` adds `strategy` and `held_seconds`.
 - Both hooks run inside the buy and sell paths, so they catch, count (`observation_hook_errors`) and log their own failures and never raise into trading.
-- `watch_list.launch_sample` / `watch_list.post_exit` in `bot_status.json`, counters `launch_sampled` and `post_exit_observed`; `jq` recipes in [`RUNBOOK.md` §6.3](docs/dev/RUNBOOK.md); [`FEATURES.md` §42](docs/FEATURES.md#42-launch-sample-and-post-exit-tracking-feat-72-rc5).
+- `watch_list.launch_sample` / `watch_list.post_exit` in `bot_status.json`, counters `launch_sampled` and `post_exit_observed`; `jq` recipes in [`RUNBOOK.md` §6.3](docs/archive/pumpfun-trading/dev/RUNBOOK.md); [`FEATURES.md` §42](docs/archive/pumpfun-trading/FEATURES.md#42-launch-sample-and-post-exit-tracking-feat-72-rc5).
 
 ### Changed
 - `configs/capture.json` samples 20% of launches and follows each closed position for 15 minutes; `configs/pregrad_pilot.json` follows its closed positions (the launch sample runs once per capture + pilot pair).
@@ -152,7 +152,7 @@ This is a **pre-release for paper testing only**, like rc.1 to rc.4. It must not
 - Tests: 2,112 collected (20 new for FEAT-72), all passed on 3.11–3.14; coverage 97.02–97.09% (statement + branch)
 - Replay parity: new rows are record-only (`RECORD_ONLY_POLL_SOURCES`), so replay of a capture is unchanged; golden replay unchanged
 - Paper verdict (FEAT-67): `configs/verdict_rules.json` unchanged from rc.4 (rules sha256 `0a9217ce71b1e16fe87f83eed5708f12b2410414c7e54177daa802c95aea14c0`)
-- First run on this build: the 24 h launch-mode A/B in the runtime folder (configs outside the repo, see [`TODO.md`](docs/dev/TODO.md#rc5-data-launch-sample-and-post-exit-tracking-feat-72)); run `run-paper.sh` with `EXPECTED_VERSION=0.3.0rc5`
+- First run on this build: the 24 h launch-mode A/B in the runtime folder (configs outside the repo, see [`TODO.md`](docs/archive/pumpfun-trading/dev/TODO.md#rc5-data-launch-sample-and-post-exit-tracking-feat-72)); run `run-paper.sh` with `EXPECTED_VERSION=0.3.0rc5`
 - Capital stage after this release: 0 (paper only)
 - Stage 0 paper pilot: not started on this build
 - Sign-off: –
@@ -294,8 +294,8 @@ The v0.3.0-rc.2 capture is a **NO-GO** for the momentum lane: paper +0.014 SOL o
 - Replay parity: rc.2 capture −0.028 SOL against paper; −0.007 with the BUG-126 exit haircut matched (allowed ±0.002); re-run on the rc.3 capture, whose paper sells pay the haircut
 - Money path changed (paper exit haircut, stop 0.92), so no earlier Stage 0 result carries over
 - Runtime settings: `configs/capture.json` (paper, confirmed, stop 0.92, exit haircut 100 bps, 8 shadow variants, 20% reject sample, stop crossings), `configs/pregrad_pilot.json` (stop 0.85, exit haircut, no shadow variants, discovery every 30 s, stop crossings), `configs/canary.json` (stop 0.92, exit haircut, stop crossings; pre-graduation off), and `configs/slow_lane_tokens.json` for the FEAT-65 recorder. Copy them into the runtime folder. The rc.2 runs are archived in `runtime/archive/paper-v0.3.0rc2/`
-- FEAT-65 recorder: smoke-tested against the live keyless endpoints on 2026-10-21 (quotes, prices, pool fee samples and bars written; no rate-limit failures at the default gaps). Start `pumpfun-recorder --jupiter-quotes` with the rc.3 runs and leave it running until the rc.3 verdict; run `pumpfun-recorder --backfill-bars` once ([RUNBOOK §6.4](docs/dev/RUNBOOK.md))
-- Next: pin `runtime/pumpfun-trading` to `v0.3.0rc3`; run the momentum capture for **48 h** with `capture.json` and the pre-graduation pilot alongside as a control ([RUNBOOK §6.3](docs/dev/RUNBOOK.md)); read out parity, shadow variants, `pnl --group-by hour`, the reject sample, the discovered curves and the stop crossings
+- FEAT-65 recorder: smoke-tested against the live keyless endpoints on 2026-10-21 (quotes, prices, pool fee samples and bars written; no rate-limit failures at the default gaps). Start `pumpfun-recorder --jupiter-quotes` with the rc.3 runs and leave it running until the rc.3 verdict; run `pumpfun-recorder --backfill-bars` once ([RUNBOOK §6.4](docs/archive/pumpfun-trading/dev/RUNBOOK.md))
+- Next: pin `runtime/pumpfun-trading` to `v0.3.0rc3`; run the momentum capture for **48 h** with `capture.json` and the pre-graduation pilot alongside as a control ([RUNBOOK §6.3](docs/archive/pumpfun-trading/dev/RUNBOOK.md)); read out parity, shadow variants, `pnl --group-by hour`, the reject sample, the discovered curves and the stop crossings
 - RUNBOOK §7 drills: not yet run
 - Capital stage after this release: 0 (paper only)
 - Stage 0 paper pilot: not started on this build
@@ -357,7 +357,7 @@ The full 24.2 h rc.1 capture confirms it: paper −0.099 SOL over 118 positions 
 - Replay parity: rc.1 capture +0.022 SOL vs paper (outside ±0.010); to re-run on the rc.2 capture
 - Money path changed (drift guard, PumpSwap exit, graduation backfill, per-side tips, quote-mint refusal), so no earlier Stage 0 result carries over
 - Runtime settings: `configs/capture.json` (paper, confirmed, drift guard 0.08, curve polls, 50 near-graduation curves, nine shadow variants, pre-graduation off), new `configs/pregrad_pilot.json` (paper, pre-graduation lane and near-graduation set on, no momentum subscriptions) and `configs/canary.json` (drift guard 0.08, pre-graduation off); copy them into the runtime folder. Archive the rc.1 capture first (`runtime/archive/capture-v0.3.0rc1/`)
-- Next: pin `runtime/pumpfun-trading` to `v0.3.0rc2`; run the 24 h momentum capture with `capture.json` and, in a second runtime folder, the 72 h pre-graduation paper pilot with `pregrad_pilot.json` ([RUNBOOK §6.3](docs/dev/RUNBOOK.md)); then `--compare-audit`, the shadow-variant read-out and the per-lane PnL. If the momentum lane is not clearly net positive with the drift guard on, stop tuning it ([`STRATEGY-PIVOT.md` §6.4](docs/dev/STRATEGY-PIVOT.md#64-v030-rc1-capture-full-24-h-still-no-go-drift-guard-added-2026-10-20))
+- Next: pin `runtime/pumpfun-trading` to `v0.3.0rc2`; run the 24 h momentum capture with `capture.json` and, in a second runtime folder, the 72 h pre-graduation paper pilot with `pregrad_pilot.json` ([RUNBOOK §6.3](docs/archive/pumpfun-trading/dev/RUNBOOK.md)); then `--compare-audit`, the shadow-variant read-out and the per-lane PnL. If the momentum lane is not clearly net positive with the drift guard on, stop tuning it ([`STRATEGY-PIVOT.md` §6.4](docs/dev/STRATEGY-PIVOT.md#64-v030-rc1-capture-full-24-h-still-no-go-drift-guard-added-2026-10-20))
 - RUNBOOK §7 drills: not yet run
 - Capital stage after this release: 0 (paper only)
 - Stage 0 paper pilot: not started on this build
@@ -367,7 +367,7 @@ The full 24.2 h rc.1 capture confirms it: paper −0.099 SOL over 118 positions 
 
 Release candidate for the strategy pivot (Phase 4c, Sprints 24E–24H; PR #22) plus the fixes from the v0.2.3 capture (BUG-118…120). With `entry_mode: "confirmed"` the bot no longer buys at the create event: it watches screened launches, polls their curves over RPC and buys only after follow-on demand is confirmed, with a pre-graduation lane fed by the same poller. The default `entry_mode` stays `"launch"`, so existing configs behave as before.
 
-This is a MINOR release under the [§6 versioning policy](docs/dev/RELEASE-GATE.md#6-versioning-policy) (new config keys). It is a **pre-release for paper testing only**: the capture run, the replay go/no-go and the 72 h Stage 0 run on this tag. `v0.3.0` is tagged only after Sprint 24G passes Stage 0 ([`STRATEGY-PIVOT.md` §5](docs/dev/STRATEGY-PIVOT.md#5-go--no-go)); until then this build must not run on a funded wallet.
+This is a MINOR release under the [§6 versioning policy](docs/archive/pumpfun-trading/dev/RELEASE-GATE.md#6-versioning-policy) (new config keys). It is a **pre-release for paper testing only**: the capture run, the replay go/no-go and the 72 h Stage 0 run on this tag. `v0.3.0` is tagged only after Sprint 24G passes Stage 0 ([`STRATEGY-PIVOT.md` §5](docs/dev/STRATEGY-PIVOT.md#5-go--no-go)); until then this build must not run on a funded wallet.
 
 ### Security
 - BUG-118: the dashboard's Coin Polling and Bot Status panels showed the PumpPortal API key inside the stream URL. The key now has its own variable, `PUMPFUN_STREAM_API_KEY`; `stream_url` stays key-free and the key is only added when connecting to `pumpportal.fun`. A key still in `PUMPFUN_STREAM_URL` is split out and used, with a warning. The dashboard also redacts the stream and Geyser URLs.
@@ -404,7 +404,7 @@ This is a MINOR release under the [§6 versioning policy](docs/dev/RELEASE-GATE.
 - Replay parity: not yet run on a confirmed-mode capture
 - Money path changed (entries in confirmed mode, cost guard, momentum exits, pre-graduation via the poller), so no earlier Stage 0 result carries over
 - Runtime settings: new `configs/capture.json` (paper, confirmed) and `configs/canary.json` (0.02 SOL, 2 positions, confirmed, pre-graduation off); copy them into the runtime folder
-- Next: pin `runtime/pumpfun-trading` to `v0.3.0-rc.1`, record a 24–72 h capture with `capture.json` (also the 24F exit gate), replay it with the frozen `canary.json` thresholds (no re-tuning; go/no-go), then a 72 h Stage 0 with the tip test (0 / 25k / 50k lamports) ([RUNBOOK §6.3](docs/dev/RUNBOOK.md)). Fixes found on paper ship as `rc.2`, `rc.3`, …; a money-path fix restarts Stage 0
+- Next: pin `runtime/pumpfun-trading` to `v0.3.0-rc.1`, record a 24–72 h capture with `capture.json` (also the 24F exit gate), replay it with the frozen `canary.json` thresholds (no re-tuning; go/no-go), then a 72 h Stage 0 with the tip test (0 / 25k / 50k lamports) ([RUNBOOK §6.3](docs/archive/pumpfun-trading/dev/RUNBOOK.md)). Fixes found on paper ship as `rc.2`, `rc.3`, …; a money-path fix restarts Stage 0
 - RUNBOOK §7 drills: not yet run
 - Capital stage after this release: 0 (paper only)
 - Stage 0 paper pilot: not started on this build
@@ -421,7 +421,7 @@ Tagged on 2026-10-17 (`6002806`, merge of PR #20, `release/v0.2.3` → `main`) w
 
 Fixes from the v0.2.1 Stage 0 close-out (PR #17) and a dashboard layout change, plus the trade-feed circuit breaker and mayhem-mode filter (PR #18). These change which tokens are bought and when exits see prices, so this build starts with a 24 h capture run and then a fresh 72 h Stage 0.
 
-Under the [§6 versioning policy](docs/dev/RELEASE-GATE.md#6-versioning-policy) the new config keys would make this a MINOR release (0.3.0); it is kept as 0.2.2 by operator decision, as with 0.2.1.
+Under the [§6 versioning policy](docs/archive/pumpfun-trading/dev/RELEASE-GATE.md#6-versioning-policy) the new config keys would make this a MINOR release (0.3.0); it is kept as 0.2.2 by operator decision, as with 0.2.1.
 
 ### Added
 - Trade-feed circuit breaker (`bot/trade_feed.py`, BUG-116): opens on PumpPortal's `subscribeTokenTrade` refusal, blocks new buys, survives reconnects and closes only on a confirmed subscription or trade data. The alert names the likely cause: the PumpPortal API key's wallet has run out of funds (it needs ≥ 0.02 SOL). While open a probe subscription is sent every `trade_feed_probe_seconds` (default `300`, minimum `30`), so a top-up is picked up without a restart; recovery is alerted. Status: `trade_feed_breaker`.
@@ -456,7 +456,7 @@ Under the [§6 versioning policy](docs/dev/RELEASE-GATE.md#6-versioning-policy) 
 - Mainnet checks (read-only): the funded PumpPortal API key got "Successfully subscribed to keys" for 3 of 3 `subscribeTokenTrade` requests and trade messages arrived; 2 of 4 mayhem-mode curves had left the 30 SOL virtual-reserve invariant within 2 s (46.0 SOL seen), all normal curves had not
 - Money path changed (creator resolution, buys blocked while the trade feed is refused, mayhem-mode refusals, 1 s position re-pricing), so earlier Stage 0 results don't carry over
 - Runtime settings: `capture.json` validated (canary settings plus `paper_trade: true`, `paper_starting_balance_sol` 2.0, `max_daily_drawdown_pct` 0.5, 5 positions / 0.05 SOL exposure, `stagnant_timeout_seconds` 120, `skip_mayhem_mode`, `trade_feed_probe_seconds` 300); `canary.json` `paper_entry_slippage_bps` lowered to 100
-- Next: pin `runtime/pumpfun-trading` to `v0.2.2`, run the 24 h capture ([RUNBOOK §6.2](docs/dev/RUNBOOK.md#62-24-h-capture-run)), build and tune the entry confirmation, freeze `canary.json`, then a 72 h Stage 0
+- Next: pin `runtime/pumpfun-trading` to `v0.2.2`, run the 24 h capture ([RUNBOOK §6.2](docs/archive/pumpfun-trading/dev/RUNBOOK.md#62-24-h-capture-run)), build and tune the entry confirmation, freeze `canary.json`, then a 72 h Stage 0
 - RUNBOOK §7 drills (incl. the new trade-feed breaker drill): not yet run
 - Capital stage after this release: 0
 - Stage 0 paper pilot: not started on this build
@@ -586,7 +586,7 @@ Sprint 24B of the Terminal Income Track: the bot now measures profit **after** c
 ### Known limitations
 - Positions removed as dust and exits on Raydium after graduation still leave the token account open (BUG-96 scope).
 - The bot's own trades have not yet been reconciled on mainnet; the cost parser was checked read-only against third-party mainnet sells. Closing this is the first task of the Stage 1 canary.
-- Arbitrage, pre-graduation harvesting, Raydium sniping and pyramiding stay off for the canary ([`RELEASE-GATE.md` §3.5](docs/dev/RELEASE-GATE.md)).
+- Arbitrage, pre-graduation harvesting, Raydium sniping and pyramiding stay off for the canary ([`RELEASE-GATE.md` §3.5](docs/archive/pumpfun-trading/dev/RELEASE-GATE.md)).
 
 ### Release record – v0.2.0 (2026-10-16)
 - Commit: `754822d` (merge of PR #6, `sprint-24b-net-pnl` → `main`; feature commit `99314ab`), plus the `release/v0.2.0` commits that add this record and make the tests network-free. The `v0.2.0` tag goes on the last of those once CI is green.

@@ -383,7 +383,7 @@ Without a command the audit records are listed (or summarised with `--summary`).
 | `--keep` | `METRIC<OP>VALUE` | `None` | `cuts`: an entry rule on the buy's `entry_metrics` (then `market_regime`), e.g. `top_buyer_share<0.3`, `hour_utc>=12`; operators `< <= > >= == !=`. Repeat for more rules; all of them together are tested too. |
 | `--strategy` | String | `None` | `cuts` / `verdict`: only positions of this lane (`momentum`, `pre_graduation`, `launch`). |
 | `--split-at` | `mid` / Timestamp | `None` | `cuts`: also report halves A and B, split at the middle of the entry times or at this Unix time. `verdict`: overrides the rule's `split_at`. |
-| `--rules` | File Path | built-in defaults | `verdict`: the pre-registered rule file, e.g. [`configs/verdict_rules.json`](../configs/verdict_rules.json). The flags below override single rules (and change the printed rule hash). |
+| `--rules` | File Path | built-in defaults | `verdict`: the pre-registered rule file, e.g. [`configs/verdict_rules.json`](../../../configs/verdict_rules.json). The flags below override single rules (and change the printed rule hash). |
 | `--min-positions` | Integer | `100` | `verdict`: closed positions needed. |
 | `--min-net-sol` | Float | `0.0` | `verdict`: adjusted net must be above this. |
 | `--exit-haircut-bps` | Float | `0` (file: `50`) | `verdict`: extra cut on every sell's proceeds, on top of the paper exit model. |

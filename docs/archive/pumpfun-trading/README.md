@@ -6,17 +6,17 @@ A high-performance, institutional-grade automated trading system for [Pump.fun](
 
 ## 📚 Central Documentation Portal
 
-All operational manuals, mathematical strategy guides, and architectural blueprints are organized in a structured knowledge hub centered on the [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](./docs/USER-GUIDE.md):
+All operational manuals, mathematical strategy guides, and architectural blueprints are organized in a structured knowledge hub centered on the [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](USER-GUIDE.md):
 
-* 📖 [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](./docs/USER-GUIDE.md) — Central directory, installation, operational workflows, and CLI matrix.
-* 📈 [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](./docs/STRATEGY.md) — Bonding curve math, fractional Kelly sizing, dynamic trailing stops, and anti-rug heuristics.
-* 🛡️ [**Capital Protection & Risk Management (`docs/RISK.md`)**](./docs/RISK.md) — Exposure caps, daily hard circuit breakers (FEAT-09), and startup on-chain reconciliation.
-* 🖥️ [**Terminal UI & Operator Observability (`docs/TERMINAL-UI.md`)**](./docs/TERMINAL-UI.md) — Live console monitor, sub-millisecond slot telemetry, and alerting webhooks.
-* 🌐 [**Web Dashboard & Hosted Architecture (`docs/WEB-UI.md`)**](./docs/WEB-UI.md) — FastAPI control portal (FEAT-10), volatile in-memory key upload vault, and hot config endpoints.
-* ⚙️ [**Standardized Feature Catalog (`docs/FEATURES.md`)**](./docs/FEATURES.md) — Comprehensive catalog of completed features (FEAT-01 through FEAT-30).
-* 🔄 [**Historical Replay Backtesting Engine (`docs/REPLAY-ENGINE.md`)**](./docs/REPLAY-ENGINE.md) — Market replay simulator and strategy performance analyzer.
-* 🔍 [**Forensic Audit & Accounting Tool (`docs/AUDIT-TOOL.md`)**](./docs/AUDIT-TOOL.md) — Structured audit trail query and inspection CLI.
-* 🛠️ [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](./docs/dev/README.md) — Sprint backlog, bug tracker, suggestions, release gates, and operations runbook.
+* 📖 [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](USER-GUIDE.md) — Central directory, installation, operational workflows, and CLI matrix.
+* 📈 [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](STRATEGY.md) — Bonding curve math, fractional Kelly sizing, dynamic trailing stops, and anti-rug heuristics.
+* 🛡️ [**Capital Protection & Risk Management (`docs/RISK.md`)**](RISK.md) — Exposure caps, daily hard circuit breakers (FEAT-09), and startup on-chain reconciliation.
+* 🖥️ [**Terminal UI & Operator Observability (`docs/TERMINAL-UI.md`)**](TERMINAL-UI.md) — Live console monitor, sub-millisecond slot telemetry, and alerting webhooks.
+* 🌐 [**Web Dashboard & Hosted Architecture (`docs/WEB-UI.md`)**](WEB-UI.md) — FastAPI control portal (FEAT-10), volatile in-memory key upload vault, and hot config endpoints.
+* ⚙️ [**Standardized Feature Catalog (`docs/FEATURES.md`)**](FEATURES.md) — Comprehensive catalog of completed features (FEAT-01 through FEAT-30).
+* 🔄 [**Historical Replay Backtesting Engine (`docs/REPLAY-ENGINE.md`)**](REPLAY-ENGINE.md) — Market replay simulator and strategy performance analyzer.
+* 🔍 [**Forensic Audit & Accounting Tool (`docs/AUDIT-TOOL.md`)**](AUDIT-TOOL.md) — Structured audit trail query and inspection CLI.
+* 🛠️ [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](dev/README.md) — Sprint backlog, bug tracker, suggestions, release gates, and operations runbook.
 
 ---
 
@@ -77,7 +77,7 @@ cp .envrc.sample .envrc
 # edit .envrc with your real values
 ```
 
-The sample file contains the supported environment variables for bot and execution setup. For an exhaustive, detailed reference of all 50+ configuration parameters, see [**`docs/ENVIRONMENTAL-VARIABLES.md`**](docs/ENVIRONMENTAL-VARIABLES.md).
+The sample file contains the supported environment variables for bot and execution setup. For an exhaustive, detailed reference of all 50+ configuration parameters, see [**`docs/ENVIRONMENTAL-VARIABLES.md`**](ENVIRONMENTAL-VARIABLES.md).
 
 | Variable                            | Description                                                                                              | Required?                          |
 |-------------------------------------|----------------------------------------------------------------------------------------------------------|------------------------------------|
@@ -214,11 +214,11 @@ pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --export ./audit-export.j
 pumpfun-audit verdict --path .data/pumpfun_trading_audit.jsonl --rules configs/verdict_rules.json --strategy momentum
 ```
 
-See [AUDIT-TOOL.md](./docs/AUDIT-TOOL.md) for the full audit investigation workflow and examples.
+See [AUDIT-TOOL.md](AUDIT-TOOL.md) for the full audit investigation workflow and examples.
 
 ## Risk drills
 
-`pumpfun-drill` runs four scripted drills of the circuit breaker on a paper bot (cumulative loss cap and operator reset, an emergency lock across midnight, a live start with the balance RPC down, a slow take-profit sell). It uses a throwaway key and no network, and exits 1 when a drill fails. See [RUNBOOK §7.1](./docs/dev/RUNBOOK.md#71-scripted-risk-drills-feat-69).
+`pumpfun-drill` runs four scripted drills of the circuit breaker on a paper bot (cumulative loss cap and operator reset, an emergency lock across midnight, a live start with the balance RPC down, a slow take-profit sell). It uses a throwaway key and no network, and exits 1 when a drill fails. See [RUNBOOK §7.1](dev/RUNBOOK.md#71-scripted-risk-drills-feat-69).
 
 ```bash
 pumpfun-drill --report drills.json
@@ -245,7 +245,7 @@ The replay mode loads JSON or JSONL snapshot data, runs a lightweight paper-trad
 
 With `--config` or `--preset` it replays the bot's own sizing, exits, modelled costs and circuit breaker from the paper wallet, and `--compare-audit` checks it against a paper run's audit trail.
 
-See [REPLAY-ENGINE.md](./docs/REPLAY-ENGINE.md) for the full replay workflow, dataset format, and UI separation details.
+See [REPLAY-ENGINE.md](REPLAY-ENGINE.md) for the full replay workflow, dataset format, and UI separation details.
 
 ## Hyperparameter strategy optimizer
 

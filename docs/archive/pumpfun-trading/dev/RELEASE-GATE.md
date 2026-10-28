@@ -4,7 +4,7 @@ This document defines what must be true **before a release ships** and **before 
 
 - **What to build** lives in [`TODO.md`](TODO.md). This file only says when something is safe to ship or fund.
 - **How to operate** (startup, paper pilot, drills, incidents, rollback) lives in [`RUNBOOK.md`](RUNBOOK.md).
-- Known defects and their status live in [`BUGS.md`](BUGS.md).
+- Known defects and their status live in [`BUGS.md`](../../../dev/BUGS.md).
 
 There are two independent gates:
 
@@ -23,9 +23,9 @@ Update this table whenever a gate run finishes. Link the release record rather t
 
 | Item | Status | Evidence |
 |---|---|---|
-| Release gate for `release/v0.3.0rc8` | PASS on Linux (2026-10-26): `nox -s format lint mypy tests package audit` on 3.11–3.14, 2,208 tests, coverage 97.2%, `pumpfun-drill` 4/4; CI matrix and the paper kill-and-restart drill still to run | [`CHANGELOG.md`](../../CHANGELOG.md) v0.3.0-rc.8 release record |
-| Earlier gate runs | PASS on `v0.3.0-rc.3` (2026-10-21): coverage 96.95%, `nox -s format lint mypy tests-3.14 package`, 3.11–3.13 in CI. **`rc4/implementation`** (rc.4 fixes BUG-127…143 and pre-flight FEAT-66…69): not yet run through the gate. A local run on Linux with the dev venv's pinned packages gave ruff / black / mypy clean and 2,075 tests passing on 3.14 and 3.11, coverage 97.05%; still to do: `nox -s tests` and `nox -s package` on the Mac, the CI matrix, `pumpfun-drill --report` | [`CHANGELOG.md`](../../CHANGELOG.md) v0.3.0-rc.3 release record; Unreleased section |
-| Live capital stage | **Stage 0 – Paper pilot: not passed.** v0.2.1 Stage 0 closed as FAIL (2026-10-17). v0.3.0-rc.1 and rc.2 paper runs were momentum NO-GO; the rc.3 72 h paper runs (capture and pre-graduation pilot) started on 2026-10-21 and are not read out yet. rc.4 adds the pre-registered verdict (FEAT-67), so the next Stage 0 is judged by `configs/verdict_rules.json` | [v0.2.1 Stage 0 log](releases/v0.2.1-stage0.md#close-out--2026-10-17-1314-t--1-h-33-min); [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log) |
+| Release gate for `release/v0.3.0rc8` | PASS on Linux (2026-10-26): `nox -s format lint mypy tests package audit` on 3.11–3.14, 2,208 tests, coverage 97.2%, `pumpfun-drill` 4/4; CI matrix and the paper kill-and-restart drill still to run | [`CHANGELOG.md`](../../../../CHANGELOG.md) v0.3.0-rc.8 release record |
+| Earlier gate runs | PASS on `v0.3.0-rc.3` (2026-10-21): coverage 96.95%, `nox -s format lint mypy tests-3.14 package`, 3.11–3.13 in CI. **`rc4/implementation`** (rc.4 fixes BUG-127…143 and pre-flight FEAT-66…69): not yet run through the gate. A local run on Linux with the dev venv's pinned packages gave ruff / black / mypy clean and 2,075 tests passing on 3.14 and 3.11, coverage 97.05%; still to do: `nox -s tests` and `nox -s package` on the Mac, the CI matrix, `pumpfun-drill --report` | [`CHANGELOG.md`](../../../../CHANGELOG.md) v0.3.0-rc.3 release record; Unreleased section |
+| Live capital stage | **Stage 0 – Paper pilot: not passed.** v0.2.1 Stage 0 closed as FAIL (2026-10-17). v0.3.0-rc.1 and rc.2 paper runs were momentum NO-GO; the rc.3 72 h paper runs (capture and pre-graduation pilot) started on 2026-10-21 and are not read out yet. rc.4 adds the pre-registered verdict (FEAT-67), so the next Stage 0 is judged by `configs/verdict_rules.json` | [v0.2.1 Stage 0 log](../../../dev/releases/v0.2.1-stage0.md#close-out--2026-10-17-1314-t--1-h-33-min); [`STRATEGY-PIVOT.md` §6](../../../dev/STRATEGY-PIVOT.md#6-results-log) |
 | Net PnL measurement | Shipped in v0.2.0 (Sprint 24B, FEAT-49): fees, tips and rent per trade, `pumpfun-audit pnl` / `reconcile`, last result on the dashboard. The cost parser was checked read-only on mainnet sells; the bot's own canary trades are not yet reconciled (no live trade yet) | Sprint 24B; [`TODO.md`](TODO.md) Sprint 24B open item |
 | Unattended operation | Shipped in v0.2.1 (Sprint 24D, FEAT-50, FEAT-42): operator pause (`SIGUSR1`), daily summary / degradation / reconciliation-gap alerts, non-blocking alerts (BUG-110), profit sweep (off by default), systemd / launchd templates in `deploy/`. The breaker drills are scripted from rc.4 (`pumpfun-drill`, [`RUNBOOK.md` §7.1](RUNBOOK.md#71-scripted-risk-drills-feat-69)); the pause, sweep, supervisor-restart and degradation drills on a paper deployment (§7.2) are not yet run, so keep the sweep off on a funded wallet | Sprint 24D (FEAT-50, FEAT-42) |
 | Funding gate for the Web UI ([§3.7](#37-funding-gate-for-the-web-ui)) | Not passed | – |
@@ -124,7 +124,7 @@ Start from the conservative preset and override only these fields in a dedicated
 
 Run with `pumpbot --config <canary.json> --headless` from a dedicated runtime directory (never the repository root) so status, audit and event files belong only to the canary.
 
-**v0.3.0 canary (strategy pivot, [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md)).** From v0.3.0 the canary buys on confirmed momentum, not at the create event, at **0.02 SOL** (one 2× step from 0.01, within the §3.1 scaling rule) with a lower Jito tip chosen by the paper tip experiment (0 / 25k / 50k lamports, set through `PUMPFUN_JITO_TIP_LAMPORTS`). Override these fields on top of the block above:
+**v0.3.0 canary (strategy pivot, [`STRATEGY-PIVOT.md`](../../../dev/STRATEGY-PIVOT.md)).** From v0.3.0 the canary buys on confirmed momentum, not at the create event, at **0.02 SOL** (one 2× step from 0.01, within the §3.1 scaling rule) with a lower Jito tip chosen by the paper tip experiment (0 / 25k / 50k lamports, set through `PUMPFUN_JITO_TIP_LAMPORTS`). Override these fields on top of the block above:
 
 ```json
 {
@@ -190,7 +190,7 @@ If net profit turns negative for 2 consecutive weeks after the gate has passed, 
 
 ## 4. Hosted Web UI Security Gate (from Sprint 34)
 
-Required before any hosted tenant uses real funds (see [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md) ADR-003/ADR-004 and [`docs/WEB-UI.md`](../WEB-UI.md)):
+Required before any hosted tenant uses real funds (see [`ARCHITECTURE-DECISIONS.md`](../../../dev/ARCHITECTURE-DECISIONS.md) ADR-003/ADR-004 and [`docs/WEB-UI.md`](../WEB-UI.md)):
 - [ ] Wallet keys reach the worker only as an X25519 envelope; plaintext never touches the control plane, database, logs or disk
 - [ ] Key buffers are zeroed after signer setup (Volatile Key Erasure norm)
 - [ ] Tenant isolation tests pass: no cross-tenant reads via API, database or container network
@@ -228,7 +228,7 @@ Keep one record per release (or capital stage) in the `CHANGELOG.md` entry, or i
 - **PATCH:** bug fixes with no config or format change.
 - **MINOR:** new features, new config keys (with safe defaults), or changes to defaults.
 - **MAJOR:** reserved for `1.0.0` (first release that passes Stage 2) and later breaking changes.
-- `CHANGELOG.md` follows *Keep a Changelog*; every entry lists the BUG/FEAT IDs it covers and links its release record. It lives at the repo root ([`CHANGELOG.md`](../../CHANGELOG.md)); write the entry before tagging.
+- `CHANGELOG.md` follows *Keep a Changelog*; every entry lists the BUG/FEAT IDs it covers and links its release record. It lives at the repo root ([`CHANGELOG.md`](../../../../CHANGELOG.md)); write the entry before tagging.
 - Tag releases as `vX.Y.Z` on the commit that passed the release gate. Only tagged versions run on a funded wallet.
 
 ---
@@ -237,6 +237,6 @@ Keep one record per release (or capital stage) in the `CHANGELOG.md` entry, or i
 
 - [`RUNBOOK.md`](RUNBOOK.md) – operator procedures, paper pilot, drills, incident response and rollback.
 - [`TODO.md`](TODO.md) – sprint backlog and acceptance criteria.
-- [`BUGS.md`](BUGS.md) – defect tracker and resolution matrix.
+- [`BUGS.md`](../../../dev/BUGS.md) – defect tracker and resolution matrix.
 - [`TESTING.md`](TESTING.md) – test layout and markers used by the release gate.
 - [`../RISK.md`](../RISK.md) – risk controls exercised by the gates.

@@ -80,7 +80,7 @@ $ nox -s package        # builds the wheel and checks it is private and ships no
 
 Ruff (`target-version = "py311"`) and mypy (`python_version = "3.11"`) check against the oldest supported Python, so 3.12+-only syntax or stdlib APIs fail lint/typing even on 3.14.
 
-Tests follow [`docs/dev/TESTING.md`](docs/dev/TESTING.md): one mirrored `tests/unit/<pkg>/test_<module>.py` per source module, and a `@pytest.mark.regression("BUG-xx")` test for every bug marked RESOLVED in `docs/dev/BUGS.md` (`tests/unit/test_suite_layout.py` enforces both). If a change alters bot decisions on purpose, regenerate the golden files with `PUMPFUN_UPDATE_GOLDEN=1 pytest pumpfun_trading/tests/integration/test_golden_replay.py` and explain the JSON diff in the PR.
+Tests follow [`docs/dev/TESTING.md`](dev/TESTING.md): one mirrored `tests/unit/<pkg>/test_<module>.py` per source module, and a `@pytest.mark.regression("BUG-xx")` test for every bug marked RESOLVED in `docs/dev/BUGS.md` (`tests/unit/test_suite_layout.py` enforces both). If a change alters bot decisions on purpose, regenerate the golden files with `PUMPFUN_UPDATE_GOLDEN=1 pytest pumpfun_trading/tests/integration/test_golden_replay.py` and explain the JSON diff in the PR.
 
 Useful one-off checks:
 
@@ -121,7 +121,7 @@ The repository has one GitHub Actions workflow, `tests.yml`, which runs on push 
 * `test` job: `nox -s tests-<version>` on Python 3.11, 3.12, 3.13 and 3.14 (coverage uploaded from 3.14)
 * `checks` job: `nox -s lint mypy audit package` on Python 3.14
 
-This is a proprietary project (see `LICENSE`): there is no release workflow and nothing is ever published to PyPI or another index. A release is an annotated **private** git tag on the release commit, with its `CHANGELOG.md` entry and release record ([`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy)). Don't create GitHub Releases.
+This is a proprietary project (see `LICENSE`): there is no release workflow and nothing is ever published to PyPI or another index. A release is an annotated **private** git tag on the release commit, with its `CHANGELOG.md` entry and release record ([`docs/dev/RELEASE-GATE.md` §6](dev/RELEASE-GATE.md#6-versioning-policy)). Don't create GitHub Releases.
 
 ```bash
 $ git tag -a v0.2.1 -m "v0.2.1"

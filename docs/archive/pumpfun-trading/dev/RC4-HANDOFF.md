@@ -2,7 +2,7 @@
 
 A briefing for an AI coding agent (for example Junie in PyCharm) that picks up this repository after the 2026-10-22 work session. It explains what changed for v0.3.0-rc.4, where the code is, which rules apply and what is still open. All of it is on `main` (PR #37 `rc4/implementation`, PR #38 this file, merged 2026-10-22).
 
-**Read [`AGENTS.md`](../../AGENTS.md) first.** It is the binding rule set (Local Norms and Learnings Log). This file adds the context of the rc.4 changes only. When the two disagree, `AGENTS.md` wins, and this file should be fixed.
+**Read [`AGENTS.md`](../AGENTS.md) first.** It is the binding rule set (Local Norms and Learnings Log). This file adds the context of the rc.4 changes only. When the two disagree, `AGENTS.md` wins, and this file should be fixed.
 
 ---
 
@@ -55,7 +55,7 @@ Gate status of the rc.4 code (same tree as `main` at `77b937d`): ruff, black and
 
 ## 3. Already on `main`: the 2026-10-22 code-review fixes (BUG-127 to BUG-140)
 
-Full write-ups are in [`BUGS.md` §24](BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22). What an agent needs to know when touching these areas:
+Full write-ups are in [`BUGS.md` §24](../../../dev/BUGS.md#24-code-review-risk-execution-and-maths-2026-10-22). What an agent needs to know when touching these areas:
 
 | Bug | Area | What the code does now | Where |
 |---|---|---|---|
@@ -181,7 +181,7 @@ Full write-ups are in [`BUGS.md` §24](BUGS.md#24-code-review-risk-execution-and
 
 ## 5. Bugs found during rc.4 (BUG-141 to BUG-143)
 
-Full entries are in [`BUGS.md` §25](BUGS.md#25-rc4-pre-flight-findings-2026-10-22).
+Full entries are in [`BUGS.md` §25](../../../dev/BUGS.md#25-rc4-pre-flight-findings-2026-10-22).
 
 - **BUG-141 (Medium):** the ratchet floor used today's *net* realized PnL, so a closed loss after a win lowered it. `DailyEquityTracker` now keeps `peak_realized_daily_pnl_sol`:
   - updated in `record_realized_trade`;

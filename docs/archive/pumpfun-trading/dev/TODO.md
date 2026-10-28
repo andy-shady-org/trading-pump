@@ -1,6 +1,6 @@
 # Production Trading Bot TODO
 
-Open work only. Finished phases, sprints and items are archived in [`DONE.md`](DONE.md) under their original headings; release-by-release changes are in [`CHANGELOG.md`](../../CHANGELOG.md), and strategy evidence and results in [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log). This file says what to do, not what was found.
+Open work only. Finished phases, sprints and items are archived in [`DONE.md`](../../../dev/DONE.md) under their original headings; release-by-release changes are in [`CHANGELOG.md`](../../../../CHANGELOG.md), and strategy evidence and results in [`STRATEGY-PIVOT.md` §6](../../../dev/STRATEGY-PIVOT.md#6-results-log). This file says what to do, not what was found.
 
 **Keeping it current.** When a sprint's last box is ticked, move it to `DONE.md` with its CHANGELOG release. In a sprint that is only partly done, move the ticked items to `DONE.md` and leave one "Done:" line here. Check a completion against the code before ticking or moving it.
 
@@ -8,7 +8,7 @@ Open work only. Finished phases, sprints and items are archived in [`DONE.md`](D
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | rc.8 read out ([`STRATEGY-PIVOT.md` §6.13](STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)): launch-mode Pump.fun buying is NO-GO (about 25,000 paper trades, every setting negative); the only positive signal is PumpSwap momentum 1–2 minutes after graduation (FEAT-76). Next: rc.9 with BUG-157 fixed, a 72 h graduation-only capture with a pre-registered rule, then a PumpSwap paper lane | [FEAT-76](PROPOSED-FEATURES.md#feat-76-pumpswap-post-graduation-momentum-lane), [graduation tracking](#graduation-tracking-feat-73), [market recorder](#cross-chain-market-recorder-feat-74), [entry filters](#launch-entry-filters-feat-75), [rc.5 data](#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
+| **Now** | rc.8 read out ([`STRATEGY-PIVOT.md` §6.13](../../../dev/STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)): launch-mode Pump.fun buying is NO-GO (about 25,000 paper trades, every setting negative); the only positive signal is PumpSwap momentum 1–2 minutes after graduation (FEAT-76). Next: rc.9 with BUG-157 fixed, a 72 h graduation-only capture with a pre-registered rule, then a PumpSwap paper lane | [FEAT-76](PROPOSED-FEATURES.md#feat-76-pumpswap-post-graduation-momentum-lane), [graduation tracking](#graduation-tracking-feat-73), [market recorder](#cross-chain-market-recorder-feat-74), [entry filters](#launch-entry-filters-feat-75), [rc.5 data](#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd) |
 | **Next** | Read out the launch A/B and the launch sample; Stage 0 only for a lane that passes the replay go / no-go (none on Pump.fun today); drills | [Sprint 24A](#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd), [24D](#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110) |
 | **Then** | Smart-wallet evidence (24I), Phase 5 runtime and platform sprints (28c–31) | [Sprint 24I](#sprint-24i-smart-wallet-discovery--reviewed-watch-list-feat-54), [Phase 5](#phase-5-platform-refactor-required-before-the-web-ui) |
 | **Later** | Phase 6 Hosted Web UI, only after the funding gate | [Phase 6](#phase-6-hosted-web-ui-replaces-sprint-16) |
@@ -17,7 +17,7 @@ Open work only. Finished phases, sprints and items are archived in [`DONE.md`](D
 
 **Funding model.** The terminal UI (`pumpbot`) must generate the income that pays for the Web UI. Phase 6 does not start until the funding gate below passes, so every sprint in this phase outranks Phases 5 and 6.
 
-Done: net PnL accounting and reconciliation (24B), backtest fidelity (24C), unattended operation (24D) and the v0.2.x Stage 0 fixes; see [`DONE.md`](DONE.md#phase-4b-terminal-income-track-highest-priority).
+Done: net PnL accounting and reconciliation (24B), backtest fidelity (24C), unattended operation (24D) and the v0.2.x Stage 0 fixes; see [`DONE.md`](../../../dev/DONE.md#phase-4b-terminal-income-track-highest-priority).
 
 **Rules while the income track runs**
 - Money-path changes (execution, SDK, sizing, exits, risk, stream handlers) are limited to bug fixes and Phase 4b / 4c items. Each one goes back through Stage 0 ([`RELEASE-GATE.md` §3.1](RELEASE-GATE.md#31-stages)).
@@ -31,9 +31,9 @@ Done: net PnL accounting and reconciliation (24B), backtest fidelity (24C), unat
 - [ ] Decision and figures recorded in the release record ([`RELEASE-GATE.md` §3.7](RELEASE-GATE.md#37-funding-gate-for-the-web-ui))
 
 ### Sprint 24A: Paper Pilot & Live Canary — see [`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate) and [`RUNBOOK.md`](RUNBOOK.md)
-Done: release tagging, runtime directory, the v0.2.0 / v0.2.1 Stage 0 runs (invalid / FAIL) and their fixes, the v0.2.3 capture run ([`DONE.md`](DONE.md#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd)).
+Done: release tagging, runtime directory, the v0.2.0 / v0.2.1 Stage 0 runs (invalid / FAIL) and their fixes, the v0.2.3 capture run ([`DONE.md`](../../../dev/DONE.md#sprint-24a-paper-pilot--live-canary--see-release-gatemd-3-and-runbookmd)).
 - [ ] Run the incident drills in paper mode ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills)): `pumpfun-drill --report` for the scripted breaker drills (§7.1, FEAT-69) on the release build, then the manual drills (§7.2) on the paper deployment
-- [ ] Stage 0: 72 h paper pilot on the live stream with replay recording, on the build and lane that pass the replay go/no-go ([`STRATEGY-PIVOT.md` §5](STRATEGY-PIVOT.md#5-go--no-go)); record the rule hash before it starts and judge it with `pumpfun-audit verdict --rules configs/verdict_rules.json` (FEAT-67); record the summary and the run's `run_provenance` (FEAT-68) in the release record
+- [ ] Stage 0: 72 h paper pilot on the live stream with replay recording, on the build and lane that pass the replay go/no-go ([`STRATEGY-PIVOT.md` §5](../../../dev/STRATEGY-PIVOT.md#5-go--no-go)); record the rule hash before it starts and judge it with `pumpfun-audit verdict --rules configs/verdict_rules.json` (FEAT-67); record the summary and the run's `run_provenance` (FEAT-68) in the release record
 - [ ] Test `min_holder_count: 6` on a capture it was not picked from; only if it stays positive in replay put it in `canary.json`
 - [ ] Stage 1: live canary on a dedicated hot wallet with the canary config ([`RELEASE-GATE.md` §3.3](RELEASE-GATE.md#33-stage-1--live-canary-configuration): 0.02 SOL buys, `entry_mode: confirmed`, lower tip; arbitrage, back-running, pre-graduation harvesting, Raydium sniping and copy trading off until their own paper runs)
 - [ ] Daily wallet reconciliation (on-chain Δ SOL vs audit realized PnL) logged for every canary day ([`RUNBOOK.md` §5.3](RUNBOOK.md#53-daily-wallet-reconciliation))
@@ -41,25 +41,25 @@ Done: release tagging, runtime directory, the v0.2.0 / v0.2.1 Stage 0 runs (inva
 - **Acceptance:** Stage 1 exit criteria met — ≥ 100 closed trades, net PnL after fees and tips positive, reconciliation gap within tolerance every day, 0 lost or double-sold positions. Only then increase capital (Stage 2) or plan Phase 5–6 spending around bot income.
 
 ### Sprint 24B: Net PnL Accounting & Reconciliation (FEAT-49, BUG-96)
-Done: per-trade costs, net PnL records, `pumpfun-audit pnl` / `reconcile`, dashboard and reconciliation status ([`DONE.md`](DONE.md#sprint-24b-net-pnl-accounting--reconciliation-feat-49-bug-96)).
+Done: per-trade costs, net PnL records, `pumpfun-audit pnl` / `reconcile`, dashboard and reconciliation status ([`DONE.md`](../../../dev/DONE.md#sprint-24b-net-pnl-accounting--reconciliation-feat-49-bug-96)).
 - [ ] Verify on mainnet with the first canary trades: `pumpfun-audit reconcile` passes and every full exit shows a negative `rent_sol`. *Partly done (read-only):* the cost parser reads rent refund, fee and priority fee correctly on third-party Pump.fun sells; only the bot's own canary trades can close this item
 - **Acceptance:** for a paper/devnet session, `pumpfun-audit reconcile` reproduces the wallet delta within tolerance; net PnL on the dashboard equals the audit `pnl` total; coverage ≥ 95%
 
 ### Sprint 24C: Backtest Fidelity & Strategy Tuning (BUG-61, BUG-102)
-Done: phases 1–4 (secret redaction, live-fidelity replay, replay costs, parity tooling and its first run) ([`DONE.md`](DONE.md#sprint-24c-backtest-fidelity--strategy-tuning-bug-61-bug-102)).
+Done: phases 1–4 (secret redaction, live-fidelity replay, replay costs, parity tooling and its first run) ([`DONE.md`](../../../dev/DONE.md#sprint-24c-backtest-fidelity--strategy-tuning-bug-61-bug-102)).
 - [ ] **(phase 5, operations)** Tune with `pumpfun-optimize` on recorded **live** captures (train/test split by day; BUG-60 selection on `train_fitness` only); promote a tuned config only through Stage 0. Procedure: [`RUNBOOK.md` §6.1](RUNBOOK.md#61-replay-parity-and-tuning-on-captures-sprint-24c); needs ≥ 2 days of capture and a passing parity check first
 - [ ] **(phase 5, partly)** Per-filter attribution report (which filters reject winners) built on the captures' `event: "screening"` records. *Available:* per-exit net PnL (`pumpfun-audit pnl --group-by reason`), entry rules against a random cut (`pumpfun-audit cuts`, `pumpfun-replay --keep`), per-risk-limit entry rejections in the replay summary
 - **Acceptance:** replay of a live capture matches live net PnL within an agreed tolerance; a tuned config beats the canary config out-of-sample before it is promoted
 
 ### Sprint 24D: Unattended Operation & Capital Protection (FEAT-50, FEAT-42, BUG-110)
-Done: operator pause, BUG-110, daily summary and degradation alerts, profit sweep (off by default), supervised deployment templates ([`DONE.md`](DONE.md#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110)).
+Done: operator pause, BUG-110, daily summary and degradation alerts, profit sweep (off by default), supervised deployment templates ([`DONE.md`](../../../dev/DONE.md#sprint-24d-unattended-operation--capital-protection-feat-50-feat-42-bug-110)).
 - [ ] Run the new drills in paper mode: operator pause, profit sweep, supervisor restart, degradation alert ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills))
 - [ ] Optional, if latency is shown to cost entries: FEAT-39 Yellowstone gRPC transport (isolated in `streams/`). *Not started:* decide on the first clean Stage 0 / canary capture
 - **Acceptance:** 7 days unattended at the current capital stage with no manual restarts; pause and sweep exercised in drills ([`RUNBOOK.md` §7](RUNBOOK.md#7-incident-drills))
 
 ## Phase 4c: Strategy Pivot (income track, ahead of Phase 5)
 
-Launch sniping lost money because it buys tokens no one else buys ([`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md) §1). Phase 4c replaces it with **confirmed momentum** plus a **pre-graduation lane** fed by a cheap RPC curve poller. Launch sniping stays available as `entry_mode: "launch"` (default), so the golden replay is unchanged. Rationale, cost model and go/no-go rules: [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md).
+Launch sniping lost money because it buys tokens no one else buys ([`STRATEGY-PIVOT.md`](../../../dev/STRATEGY-PIVOT.md) §1). Phase 4c replaces it with **confirmed momentum** plus a **pre-graduation lane** fed by a cheap RPC curve poller. Launch sniping stays available as `entry_mode: "launch"` (default), so the golden replay is unchanged. Rationale, cost model and go/no-go rules: [`STRATEGY-PIVOT.md`](../../../dev/STRATEGY-PIVOT.md).
 
 | Sprint | Priority | Goal | Money path? | Exit gate |
 |---|---|---|---|---|
@@ -69,26 +69,26 @@ Launch sniping lost money because it buys tokens no one else buys ([`STRATEGY-PI
 | 24H | P1 – second lane | Pre-graduation lane via the poller (FEAT-53), Stage 1 canary at 0.02 SOL with a lower tip | Yes | Lane positive in 72 h paper; Stage 1 criteria |
 | 24I | P2 – after 24H | Smart-wallet discovery, copy simulation, reviewed wallet list used as momentum evidence (FEAT-54) | Entry evidence only; no copy lane | Our simulated copy PnL net > 0 on an unseen capture; momentum + wallet evidence beats momentum alone in replay and a 72 h paper run |
 
-Sprint 24F is complete and archived in [`DONE.md`](DONE.md#sprint-24f-watch-list--batch-curve-poller-feat-51).
+Sprint 24F is complete and archived in [`DONE.md`](../../../dev/DONE.md#sprint-24f-watch-list--batch-curve-poller-feat-51).
 
 ### Sprint 24E: Branch & Strategy Pivot Documentation
-Done: branch, `STRATEGY-PIVOT.md`, FEAT / STRATEGY / RELEASE-GATE / CHANGELOG / AGENTS updates ([`DONE.md`](DONE.md#sprint-24e-branch--strategy-pivot-documentation)).
+Done: branch, `STRATEGY-PIVOT.md`, FEAT / STRATEGY / RELEASE-GATE / CHANGELOG / AGENTS updates ([`DONE.md`](../../../dev/DONE.md#sprint-24e-branch--strategy-pivot-documentation)).
 - [ ] Tip experiment on paper/landing: 0 / 25k / 50k lamports, shared and split by side (`PUMPFUN_JITO_ENTRY_TIP_LAMPORTS` / `PUMPFUN_JITO_EXIT_TIP_LAMPORTS`; e.g. entry 0, exit 25k / 50k). Tips were 83% of the separately listed costs at 0.01 SOL
 
 ### Sprint 24G: Momentum Confirmation Entry & Exit Tuning (FEAT-52)
-Done: entry and exits, replay support, v0.2.3 tuning, rc.1 NO-GO, BUG-121/122, drift guard, stop-loss sweep, capture-rule tooling, market regime, FEAT-55/56/57/58 inputs, curve polls in captures, rc.3 inputs (FEAT-59/60/61), the read-out tooling, the rc.2 read-out (**NO-GO**), BUG-126, `stop_loss` 0.92, recording of the reject sample and stop crossings, and the rc.3 read-out ([`DONE.md`](DONE.md#sprint-24g-momentum-confirmation-entry--exit-tuning-feat-52)). **Closed 2026-10-23: the momentum lane is NO-GO** ([`STRATEGY-PIVOT.md` §6.11](STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)); no open items, the acceptance below was not met.
+Done: entry and exits, replay support, v0.2.3 tuning, rc.1 NO-GO, BUG-121/122, drift guard, stop-loss sweep, capture-rule tooling, market regime, FEAT-55/56/57/58 inputs, curve polls in captures, rc.3 inputs (FEAT-59/60/61), the read-out tooling, the rc.2 read-out (**NO-GO**), BUG-126, `stop_loss` 0.92, recording of the reject sample and stop crossings, and the rc.3 read-out ([`DONE.md`](../../../dev/DONE.md#sprint-24g-momentum-confirmation-entry--exit-tuning-feat-52)). **Closed 2026-10-23: the momentum lane is NO-GO** ([`STRATEGY-PIVOT.md` §6.11](../../../dev/STRATEGY-PIVOT.md#611-v030-rc3-interim-read-out-455-h-both-pumpfun-lanes-no-go-2026-10-23)); no open items, the acceptance below was not met.
 - **Acceptance:** replay net > 0 on an unseen capture, then 72 h Stage 0 net > 0; golden replay unchanged in launch mode
 
 ### Sprint 24H: Pre-Graduation Lane via the RPC Poller (FEAT-53)
-Done: entry helper on both transports, polled acceleration, PumpSwap exit (BUG-123), quote-mint refusal (BUG-124), near-graduation set, graduation backfill, BUG-125, RUNBOOK §6.3, recording of discovered curves, and the rc.3 discovery read-out ([`DONE.md`](DONE.md#sprint-24h-pre-graduation-lane-via-the-rpc-poller-feat-53)). **The lane is NO-GO on the rc.3 data** (§6.11); the items below stay open only for the end of the 72 h control run.
+Done: entry helper on both transports, polled acceleration, PumpSwap exit (BUG-123), quote-mint refusal (BUG-124), near-graduation set, graduation backfill, BUG-125, RUNBOOK §6.3, recording of discovered curves, and the rc.3 discovery read-out ([`DONE.md`](../../../dev/DONE.md#sprint-24h-pre-graduation-lane-via-the-rpc-poller-feat-53)). **The lane is NO-GO on the rc.3 data** (§6.11); the items below stay open only for the end of the 72 h control run.
 - [ ] One live PumpSwap sell at the smallest size before any lane relies on it with real capital (the instruction is pinned to mainnet accounts, but no transaction from this code has landed yet)
 - [ ] 72 h paper pilot of the pre-graduation lane (rc.3 runs it unchanged as a control); Stage 1 canary
 - **Acceptance:** lane positive in a 72 h paper pilot; Stage 1: ≥ 100 trades, net > 0, reconciled
 
 ### Sprint 24I: Smart-Wallet Discovery & Reviewed Watch List (FEAT-54)
-Starts after 24H. Needs at least two captures recorded with `configs/capture.json` (trade flow for watched mints): one to find wallets, a later one to test them. Wallets are **never** added to live copy trading automatically: high win rate is not net profit, a wide scan finds lucky wallets, and our copy fills later and at a worse price than the wallet ([`STRATEGY-PIVOT.md` §2.4](STRATEGY-PIVOT.md#24-lane-3--reviewed-smart-wallets-feat-54-p2)).
+Starts after 24H. Needs at least two captures recorded with `configs/capture.json` (trade flow for watched mints): one to find wallets, a later one to test them. Wallets are **never** added to live copy trading automatically: high win rate is not net profit, a wide scan finds lucky wallets, and our copy fills later and at a worse price than the wallet ([`STRATEGY-PIVOT.md` §2.4](../../../dev/STRATEGY-PIVOT.md#24-lane-3--reviewed-smart-wallets-feat-54-p2)).
 
-Done: the phase 1 scorer, `pumpfun-replay --wallet-scores` ([`DONE.md`](DONE.md#sprint-24i-smart-wallet-discovery--reviewed-watch-list-feat-54)); copying every captured wallet lost on both captures, so no wallet list is made yet.
+Done: the phase 1 scorer, `pumpfun-replay --wallet-scores` ([`DONE.md`](../../../dev/DONE.md#sprint-24i-smart-wallet-discovery--reviewed-watch-list-feat-54)); copying every captured wallet lost on both captures, so no wallet list is made yet.
 
 | Phase | Scope | Touches money path? |
 |---|---|---|
@@ -110,12 +110,12 @@ Done: the phase 1 scorer, `pumpfun-replay --wallet-scores` ([`DONE.md`](DONE.md#
 - **Acceptance:** on a capture not used for discovery, our simulated copy PnL of the reviewed wallets is net > 0, and momentum with wallet evidence beats momentum alone in replay and in a 72 h paper run (`pumpfun-audit pnl --group-by strategy`); if not, leave `momentum_tracked_wallet_bonus` at 0 and record the result in `STRATEGY-PIVOT.md` §6
 
 ### FEAT-65 Slow Lane: Phase 0 Data (contingency, record-only)
-Done: the keyless quote / fee recorder and the bar backfill (`pumpfun-recorder --jupiter-quotes` / `--backfill-bars`, rc.3; [`DONE.md`](DONE.md#feat-65-slow-lane-phase-0-data-contingency-record-only); how to run it: [`RUNBOOK.md` §6.4](RUNBOOK.md#64-slow-lane-data-recorder-feat-65-phase-0-from-rc3)). The lane itself starts only if the rc.3 Pump.fun lanes are NO-GO too ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)).
+Done: the keyless quote / fee recorder and the bar backfill (`pumpfun-recorder --jupiter-quotes` / `--backfill-bars`, rc.3; [`DONE.md`](../../../dev/DONE.md#feat-65-slow-lane-phase-0-data-contingency-record-only); how to run it: [`RUNBOOK.md` §6.4](RUNBOOK.md#64-slow-lane-data-recorder-feat-65-phase-0-from-rc3)). The lane itself starts only if the rc.3 Pump.fun lanes are NO-GO too ([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)).
 - [ ] Walk-forward test of the §6.12 trend rules on the Binance history (`pumpfun-recorder --backfill-bars --bar-source binance`, 2020–2026), in SOL terms with the measured costs, against a random-entry baseline and on at least two unseen periods; only if it passes, build the FEAT-65 backtester and lane
 
 ### rc.5 Data: Launch Sample And Post-Exit Tracking (FEAT-72)
-Done: the record-only launch sample and post-exit tracking ([`DONE.md`](DONE.md#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [`FEATURES.md` §42](../FEATURES.md#42-launch-sample-and-post-exit-tracking-feat-72-rc5)).
-- [ ] Re-run the A/B on rc.7 (BUG-145 to BUG-155 fixed; the rc.6 run bought only the fifth of launches whose curve the RPC already had, BUG-154) ([`BUGS.md` §26](BUGS.md#26-rc5-paper-run-findings-2026-10-25)): both earlier rc.5 A/B runs are void (fills invented when the curve read failed, coins complete at creation bought, an hour with no working RPC). Give each bot its own RPC key plus a fallback (`PUMPFUN_RPC_URLS`, [`RUNBOOK.md` §5.8](RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)), check `entry_refusals` and `rpc_pool_telemetry.requests_by_method` in the first hour, and leave any window with `healthy_endpoints` 0 out of the verdict
+Done: the record-only launch sample and post-exit tracking ([`DONE.md`](../../../dev/DONE.md#rc5-data-launch-sample-and-post-exit-tracking-feat-72), [`FEATURES.md` §42](../FEATURES.md#42-launch-sample-and-post-exit-tracking-feat-72-rc5)).
+- [ ] Re-run the A/B on rc.7 (BUG-145 to BUG-155 fixed; the rc.6 run bought only the fifth of launches whose curve the RPC already had, BUG-154) ([`BUGS.md` §26](../../../dev/BUGS.md#26-rc5-paper-run-findings-2026-10-25)): both earlier rc.5 A/B runs are void (fills invented when the curve read failed, coins complete at creation bought, an hour with no working RPC). Give each bot its own RPC key plus a fallback (`PUMPFUN_RPC_URLS`, [`RUNBOOK.md` §5.8](RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)), check `entry_refusals` and `rpc_pool_telemetry.requests_by_method` in the first hour, and leave any window with `healthy_endpoints` 0 out of the verdict
 - [ ] 24 h launch-mode paper A/B on rc.5 (runtime `configs/launch_fast_exit.json` and `configs/launch_hold_stop.json`, anti-rug screen off, all out at 1.10×, stop 0.80 from the start vs held 90 s with a 0.40 floor), with `post_exit_observation_seconds: 900` in both and `launch_sample_pct: 0.2` in run A (the draw is deterministic, so one copy is enough): `pumpfun-audit verdict --rules configs/verdict_rules.json` per run, per-trade net A vs B, and from the `post_exit` rows how many stopped or stalled coins came back above their exit within 15 minutes
 - [ ] Launch-sample read-out: share of all launches that reach 1.1 / 1.3 / 1.5× and when, by creator buy size, by screen verdict and by UTC hour; what a buy at launch earns after costs with the A / B exits; record it in `STRATEGY-PIVOT.md` §6
 - [ ] Trade data for sampled launches (buyer wallets, sizes, timing) only if the curve read-out shows a rule worth testing that needs it (a PumpPortal trade subscription per sampled mint)
@@ -129,18 +129,18 @@ Proposed 2026-10-28 ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md#feat-76-pumps
 - [ ] Market recorder before it can pick a venue: a sell-quote check per followed pool (Jupiter on Solana), coverage of Raydium LaunchLab / stonkfun / memefun pools (GeckoTerminal OHLCV or on-chain reads), and per-chain cost and gas at the trade size
 
 ### Graduation Tracking (FEAT-73)
-Built: every migrated coin's PumpSwap pool followed for 4 h, record-only ([`DONE.md`](DONE.md#graduation-tracking-feat-73), [`FEATURES.md` §43](../FEATURES.md#43-graduation-tracking-feat-73)). Why: the operator sees many coins that graduate, crash and then run on PumpSwap, which the bot cannot trade; a 92-coin sample from public candles found no recovery after a crash, but too few coins and too coarse to settle it.
-- [ ] Run it for 24 h in one bot (`graduation_observation_seconds: 14400` at a 10 s interval, as in `configs/capture.json`); check `watch_list.graduation` stays below its cap and the Helius credit use matches [`COSTS.md` §3.1](COSTS.md#31-helius-rpc-credits)
+Built: every migrated coin's PumpSwap pool followed for 4 h, record-only ([`DONE.md`](../../../dev/DONE.md#graduation-tracking-feat-73), [`FEATURES.md` §43](../FEATURES.md#43-graduation-tracking-feat-73)). Why: the operator sees many coins that graduate, crash and then run on PumpSwap, which the bot cannot trade; a 92-coin sample from public candles found no recovery after a crash, but too few coins and too coarse to settle it.
+- [ ] Run it for 24 h in one bot (`graduation_observation_seconds: 14400` at a 10 s interval, as in `configs/capture.json`); check `watch_list.graduation` stays below its cap and the Helius credit use matches [`COSTS.md` §3.1](../../../dev/COSTS.md#31-helius-rpc-credits)
 - [ ] Read-out of the curve before graduation: for the sampled launches followed to graduation (`observation_end` with `extended: true` or `cause: "complete"`), how fast they filled, the creator buy and the curve path, joined by `mint` with their `graduation` rows: does anything before graduation predict how the pool does after it?
 - [ ] Read-out: per graduate the path over 4 h relative to the graduation price (410.88 SOL), split into coins complete at creation, curve filled within 5 minutes and slower; how often a crash below 0.5× comes back above 1× / 2×; and whether any entry rule (after the first crash, after a new high, by pool SOL) beats PumpSwap costs in both halves of the run and the next. Record it in `STRATEGY-PIVOT.md` §6
 - [ ] PumpSwap buys only if that read-out finds such a rule (the sell path and pool reads exist since BUG-123)
 
 ### Launch Entry Filters (FEAT-75)
-Built: skip tiny creator buys; the fill-drift guard applies in launch mode ([`DONE.md`](DONE.md#launch-entry-filters-feat-75), [`FEATURES.md` §45](../FEATURES.md#45-launch-entry-filters-from-the-rc6--rc7-data-feat-75)).
-- [x] rc.8 A/B *(closed 2026-10-28: run B was started with the 0.90-stop config instead; applied offline to run A's 9,848 fills, the two filters gave −2.87% per trade against −4.69% (drift guard alone −3.27%), still a loss; [`STRATEGY-PIVOT.md` §6.13](STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28))*
+Built: skip tiny creator buys; the fill-drift guard applies in launch mode ([`DONE.md`](../../../dev/DONE.md#launch-entry-filters-feat-75), [`FEATURES.md` §45](../FEATURES.md#45-launch-entry-filters-from-the-rc6--rc7-data-feat-75)).
+- [x] rc.8 A/B *(closed 2026-10-28: run B was started with the 0.90-stop config instead; applied offline to run A's 9,848 fills, the two filters gave −2.87% per trade against −4.69% (drift guard alone −3.27%), still a loss; [`STRATEGY-PIVOT.md` §6.13](../../../dev/STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28))*
 
 ### Cross-Chain Market Recorder (FEAT-74)
-Built: new pools and momentum lists on Solana, Base and BSC, each followed for up to 7 days, record-only ([`DONE.md`](DONE.md#cross-chain-market-recorder-feat-74), [`FEATURES.md` §44](../FEATURES.md#44-cross-chain-market-recorder-feat-74)). Why: Pump.fun is not profitable on paper, and the coins the operator saw running were on other launchpads, other chains or weeks old.
+Built: new pools and momentum lists on Solana, Base and BSC, each followed for up to 7 days, record-only ([`DONE.md`](../../../dev/DONE.md#cross-chain-market-recorder-feat-74), [`FEATURES.md` §44](../FEATURES.md#44-cross-chain-market-recorder-feat-74)). Why: Pump.fun is not profitable on paper, and the coins the operator saw running were on other launchpads, other chains or weeks old.
 - [ ] Run it next to the rc.8 bots for at least 72 h ([`RUNBOOK.md` §6.5](RUNBOOK.md#65-cross-chain-market-recorder-feat-74-from-rc8)); check `market_stats` (no rate limits, few discovery gaps, `following` below the cap) and the disk use in the first day
 - [ ] Read-out per chain and launchpad: what share of new pools reach 2× / 5× from their first snapshot and when, how many die within an hour, and what liquidity a 0.02-SOL-sized trade would meet
 - [ ] Momentum read-out: for pools entering a trending or top-volume list, the move over the next 1 / 6 / 24 h from the first snapshot after entry; whether list rank, age or liquidity at entry separate the runs from the dumps, in both halves of the run and on a second run
@@ -150,9 +150,9 @@ Built: new pools and momentum lists on Solana, Base and BSC, each followed for u
 
 **Scheduling around income:** Sprints that change runtime behaviour start only after live capital Stage 1 has passed (see the Phase 4b rules); behaviour-neutral extractions (golden replay unchanged) may ship earlier, as 28a and 28b did.
 
-The bot is in production. Phase 5 pays down the structural debt that blocks the hosted Web UI without touching trading behaviour. Every sprint keeps the standard gates: **coverage ≥ 95% (`fail_under` never lowered)**, `nox -s lint`, `nox -s format`, `nox -s mypy` clean, and replay parity (identical decisions on the recorded datasets in `test-data/`) for any runtime change. Finding IDs (R1–R12, T1–T9) are defined in [`TESTING.md`](TESTING.md) and [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md).
+The bot is in production. Phase 5 pays down the structural debt that blocks the hosted Web UI without touching trading behaviour. Every sprint keeps the standard gates: **coverage ≥ 95% (`fail_under` never lowered)**, `nox -s lint`, `nox -s format`, `nox -s mypy` clean, and replay parity (identical decisions on the recorded datasets in `test-data/`) for any runtime change. Finding IDs (R1–R12, T1–T9) are defined in [`TESTING.md`](TESTING.md) and [`ARCHITECTURE-DECISIONS.md`](../../../dev/ARCHITECTURE-DECISIONS.md).
 
-Done: Sprints 25 (packaging), 26–27 (test restructure) and 28a / 28b ([`DONE.md`](DONE.md#phase-5-platform-refactor-required-before-the-web-ui)).
+Done: Sprints 25 (packaging), 26–27 (test restructure) and 28a / 28b ([`DONE.md`](../../../dev/DONE.md#phase-5-platform-refactor-required-before-the-web-ui)).
 
 | Finding | Summary | Sprint |
 |---|---|---|
@@ -167,8 +167,8 @@ Done: Sprints 25 (packaging), 26–27 (test restructure) and 28a / 28b ([`DONE.m
 R6–R10 and T1–T9 are closed (Sprints 25–28b).
 
 ### Sprint 28: Runtime Decomposition II (R1, R6, R7)
-Done: 28a (`bot/factory.py`, `execution/sell_pipeline.py`, `ops/metrics.py`, `streams/websocket.py`, the `sdk/execution.py` split) and 28b (`bot/handlers/`) ([`DONE.md`](DONE.md#sprint-28-runtime-decomposition-ii-r1-r6-r7)).
-- [ ] **28c** the rest of the < 800-line target: `__init__`, the buy and sell paths, `get_status_snapshot`, `start`, the supervision loops and `_handle_message`; widen `unit/test_suite_layout.py` from `*/*.py` to `**/*.py` so sub-packages such as `bot/handlers/` need mirrored tests. This also closes the re-opened facade item from Phase 4 item 25 / Sprint 15 ([`DONE.md`](DONE.md#25-core-runtime-decomposition--solid-architecture-refactoring-feat-12))
+Done: 28a (`bot/factory.py`, `execution/sell_pipeline.py`, `ops/metrics.py`, `streams/websocket.py`, the `sdk/execution.py` split) and 28b (`bot/handlers/`) ([`DONE.md`](../../../dev/DONE.md#sprint-28-runtime-decomposition-ii-r1-r6-r7)).
+- [ ] **28c** the rest of the < 800-line target: `__init__`, the buy and sell paths, `get_status_snapshot`, `start`, the supervision loops and `_handle_message`; widen `unit/test_suite_layout.py` from `*/*.py` to `**/*.py` so sub-packages such as `bot/handlers/` need mirrored tests. This also closes the re-opened facade item from Phase 4 item 25 / Sprint 15 ([`DONE.md`](../../../dev/DONE.md#25-core-runtime-decomposition--solid-architecture-refactoring-feat-12))
 - **Acceptance:** `bot/run.py` < 800 lines; golden replay tests from Sprint 27 unchanged; coverage ≥ 95%; mypy clean
 
 ### Sprint 29: Typed State, Lifecycle Control & Event Bus (R2–R5)
@@ -194,7 +194,7 @@ Done: 28a (`bot/factory.py`, `execution/sell_pipeline.py`, `ops/metrics.py`, `st
 - **Acceptance:** `zensical build` (or `mkdocs build --strict`) passes with zero warnings
 
 ### Carried over from the archived roadmap
-Open items left in the Phase 0–4 roadmap and the repo-specific work items when they were archived ([`DONE.md`](DONE.md#repo-specific-work-items)). Schedule each into a sprint before starting it.
+Open items left in the Phase 0–4 roadmap and the repo-specific work items when they were archived ([`DONE.md`](../../../dev/DONE.md#repo-specific-work-items)). Schedule each into a sprint before starting it.
 - [ ] Geyser event pipeline: route parsed Yellowstone updates directly into bot state and the strategy decision loops (needs the FEAT-39 transport; `bot/event_router.py` handles the WebSocket path today)
 - [ ] Terminal dashboard: show per-endpoint RPC latencies, Jito bundle status and Geyser stream health (today only the average latency is shown)
 
@@ -209,7 +209,7 @@ Standing practices with no end date, carried over from the archived work items; 
 
 **Entry condition:** the Phase 4b funding gate has passed. Until then the terminal UI is the only product and Phase 6 stays planned, not started.
 
-Architecture: [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md) and [`docs/WEB-UI.md`](../WEB-UI.md). Features: FEAT-31…FEAT-37 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md). The superseded Sprint 16 / FEAT-10 items (Telegram bot, FastAPI in `ui/`) are archived in [`DONE.md`](DONE.md#sprint-16-full-featured-web-control-dashboard-fastapi-portal--mobile-telegram-bot--superseded); the Telegram bot is FEAT-45 (P3).
+Architecture: [`ARCHITECTURE-DECISIONS.md`](../../../dev/ARCHITECTURE-DECISIONS.md) and [`docs/WEB-UI.md`](../WEB-UI.md). Features: FEAT-31…FEAT-37 in [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md). The superseded Sprint 16 / FEAT-10 items (Telegram bot, FastAPI in `ui/`) are archived in [`DONE.md`](../../../dev/DONE.md#sprint-16-full-featured-web-control-dashboard-fastapi-portal--mobile-telegram-bot--superseded); the Telegram bot is FEAT-45 (P3).
 
 ### Sprint 32: Agent API & Control Plane, Single Tenant (FEAT-31, FEAT-32)
 - [ ] `pumpfun_trading/agent/` aiohttp Agent API (`/health`, `/status`, `/commands/*`, `/config`, `/events` WS) backed by `BotController` and `ops/bus.py`

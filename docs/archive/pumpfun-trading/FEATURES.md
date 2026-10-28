@@ -490,7 +490,7 @@ Shipped in v0.3.0-rc.1 (Sprint 24F); extended in rc.2.
 
 ## 34. Confirmed Momentum Entry & Momentum Exits (FEAT-52)
 
-Shipped in v0.3.0-rc.1 (Sprint 24G); drift guard in rc.2. The lane is still a paper-only **NO-GO** ([`STRATEGY-PIVOT.md` §6](dev/STRATEGY-PIVOT.md)).
+Shipped in v0.3.0-rc.1 (Sprint 24G); drift guard in rc.2. The lane is still a paper-only **NO-GO** ([`STRATEGY-PIVOT.md` §6](../../dev/STRATEGY-PIVOT.md)).
 
 - **Confirmation** (`bot/handlers/trade.py`): a promoted watched mint is bought only inside the token-age window and market-cap band (`momentum_min/max_token_age_seconds`, `min_market_cap_sol` to `momentum_max_market_cap_sol`), when `OrderFlowEngine` confirms buyers, inflow, buy ratio and z-score (creator and our wallet left out), and `_should_buy` passes.
 - **Cost Guard**: refuses buys whose modelled fixed round-trip costs exceed `max_entry_cost_share_pct` of the position.
@@ -593,7 +593,7 @@ Record-only, like §42: nothing here changes what the bot buys or sells, and rep
 - **Fast Phase** (`graduation_observation_fast_seconds` 300, `graduation_observation_fast_poll_interval_seconds` 2): the first 5 minutes after a migration are polled every 2 s, because most of the move after graduation happens in the first minutes (in the rc.6 candles the coins complete at creation were already about 9× within one); `0` turns it off. The observation task then polls every 2 s; each list still reads only the mints due on its own intervals.
 - **Rows**: `observation_start` carries `migrated_at`, `pool` and `held`; `observation_end` gives `cause` (`ttl`; `missing` once the pool has not been readable for 60 s; `not_pumpswap`, `not_sol_pair`, `decode_error`), `polls`, and the pool's first / last / peak SOL in `first_real_sol` / `last_real_sol` / `peak_real_sol`.
 - **One Batched Read**: the first poll of a coin resolves its pool and caches the vault addresses; every poll then reads the pool and both vaults, 33 coins per `getMultipleAccounts` call (`get_pumpswap_pool_states`). Pools and curves are read in separate batches; both wait while the RPC is rate limited, as the other lists do (BUG-151).
-- **Cost**: at rc.6's rate (about 930 migrations a day, about 155 followed at once for 4 h) it is about one call a second at a 5 s interval, about 2.6 M Helius credits per 30 days; at 10 s about 1.3 M, plus about 1.25 M for the fast phase (about 3 coins in their first 5 minutes at any time, one call every 2 s) ([`dev/COSTS.md` §3.1](dev/COSTS.md#31-helius-rpc-credits)). Run it in one bot only: `configs/capture.json` follows every graduation for 4 h at 10 s.
+- **Cost**: at rc.6's rate (about 930 migrations a day, about 155 followed at once for 4 h) it is about one call a second at a 5 s interval, about 2.6 M Helius credits per 30 days; at 10 s about 1.3 M, plus about 1.25 M for the fast phase (about 3 coins in their first 5 minutes at any time, one call every 2 s) ([`dev/COSTS.md` §3.1](../../dev/COSTS.md#31-helius-rpc-credits)). Run it in one bot only: `configs/capture.json` follows every graduation for 4 h at 10 s.
 - **Status**: `watch_list.graduation` in `bot_status.json` (size, cap, counters); counter `graduation_observed` in `watch_list.stats`.
 - **Not built**: the pool's trades (buyers, sizes, timing), other pools of the same mint (Meteora and the like; Pump.fun graduates keep their liquidity in the canonical pool) and any buying on PumpSwap. Buying there is worth building only if a rule tested on this data beats costs in both halves of a capture and the next.
 

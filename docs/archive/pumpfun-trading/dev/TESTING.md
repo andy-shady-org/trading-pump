@@ -1,6 +1,6 @@
 # Test Architecture & Migration Plan
 
-This document defines how the `pumpfun_trading` test suite is organised, the conventions every new test must follow, and the file-by-file plan for moving the current flat suite into that structure. The migration was scheduled as **Sprint 26 (Test Foundation)** and **Sprint 27 (Test Consolidation)**, both before the **Sprint 28** `bot/run.py` decomposition, so the restructured suite can act as its safety net. Both sprints are done and archived in [`DONE.md`](DONE.md#phase-5-platform-refactor-required-before-the-web-ui). The decision is recorded as ADR-008 in [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md).
+This document defines how the `pumpfun_trading` test suite is organised, the conventions every new test must follow, and the file-by-file plan for moving the current flat suite into that structure. The migration was scheduled as **Sprint 26 (Test Foundation)** and **Sprint 27 (Test Consolidation)**, both before the **Sprint 28** `bot/run.py` decomposition, so the restructured suite can act as its safety net. Both sprints are done and archived in [`DONE.md`](../../../dev/DONE.md#phase-5-platform-refactor-required-before-the-web-ui). The decision is recorded as ADR-008 in [`ARCHITECTURE-DECISIONS.md`](../../../dev/ARCHITECTURE-DECISIONS.md).
 
 ---
 
@@ -10,7 +10,7 @@ This document defines how the `pumpfun_trading` test suite is organised, the con
 2. **Test behaviour, not coverage.** No file is organised by a coverage percentage. A failing test must point at a module and a behaviour.
 3. **One source of truth for fixtures.** Configs, bots, positions, pool keys, payload bytes and key constants come from `tests/support/`; nothing is copied between files.
 4. **Deterministic.** No real sleeps, network, or wall clock. Use `FakeClock`, fakes from `support/fakes.py`, and `await` instead of nested `asyncio.run`. `tests/conftest.py` blocks DNS for non-local hosts for the whole session, removes proxy variables, and points the status file, audit trail, `bot.log` and `events.jsonl` into the test's `tmp_path` (BUG-143); a test that enables alerts must capture them (`bot._send_alert = sent.append`), never post them.
-5. **Regressions are linked to bugs.** Every resolved bug in [`BUGS.md`](BUGS.md) has at least one test tagged `@pytest.mark.regression("BUG-xx")`, placed beside the module it guards.
+5. **Regressions are linked to bugs.** Every resolved bug in [`BUGS.md`](../../../dev/BUGS.md) has at least one test tagged `@pytest.mark.regression("BUG-xx")`, placed beside the module it guards.
 6. **Public seams first.** Tests drive `TradingBot` through public entry points (factory, handlers, controller), not private attributes, so the runtime can be refactored safely.
 7. **Gates never move.** Coverage stays **≥ 95%** at every step; `fail_under` is never lowered.
 
