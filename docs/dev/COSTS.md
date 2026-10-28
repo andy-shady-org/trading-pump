@@ -65,6 +65,8 @@ A standard RPC call costs 1 credit (`getAccountInfo`, `getMultipleAccounts`, `ge
 
 The cross-chain market recorder (FEAT-74) uses no Helius credits: GeckoTerminal and DexScreener are free and keyless (about 7 and at most 240 requests a minute). Its cost is disk: about 1 GB of rows a day before compression, about a tenth of that gzipped.
 
+Measured in rc.8 (37.2 h, Developer plan, no rate limits): the capture bot (launch buying plus graduation tracking and followed launches) made 305,836 requests (258,548 `getMultipleAccounts`), about 5.9 M per 30 days; the pilot (launch buying only) 205,986, about 4.0 M. Together about 9.9 M per 30 days: at the plan's 10 M, so a third bot or a faster graduation poll needs the next plan or a second Helius key on its own plan.
+
 Graduation tracking (FEAT-73, record-only) adds to one bot: at rc.6's rate (about 930 migrations a day, about 155 pools followed at once for 4 h, 33 pools per call) about one `getMultipleAccounts` call a second at a 5 s interval, ≈ 86,000 credits a day or ≈ 2.6 M per 30 days; at the 10 s interval in `configs/capture.json` about half that, ≈ 1.3 M. Its fast phase (every 2 s for the first 5 minutes after each migration; about 3 coins in it at any time, so about one call every 2 s) adds ≈ 1.25 M, and following sampled launches past 15 minutes (about 8% of the sample, 15 s interval, batched with the other curve reads) adds little. With the two bots above that is about 8.8 M of the Developer plan's 10 M: turn it on in one bot only, watch the Helius dashboard in the first day, and raise `graduation_observation_fast_poll_interval_seconds` to 3 (≈ 0.85 M) or the slow interval if it runs high.
 
 ### 3.2 PumpPortal trade data
@@ -77,6 +79,7 @@ PumpPortal meters token-trade messages against the API key's wallet: 0.01 SOL pe
 | same run, pilot bot | 16,995 | 0.0170 SOL | ≈ 0.88 SOL |
 | rc.7 launch-mode A/B (5.75 h until the feed stopped, 2026-10-26), capture bot | 7,592 | 0.0076 SOL | ≈ 0.95 SOL |
 | same run, pilot bot | 6,069 | 0.0061 SOL | ≈ 0.76 SOL |
+| rc.8 launch-mode A/B (37.2 h, 2026-10-26 → 28; one shared key), both bots | 90,652 (52,495 + 38,157) | 0.050 SOL charged (wallet 0.199985 → 0.149910) | ≈ 0.97 SOL for both |
 
 (Trade rows with a `user` in the replay capture.) Launch mode subscribes to every held coin, so this grows with `max_active_positions` and how busy the held coins are.
 

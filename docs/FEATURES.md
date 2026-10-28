@@ -607,7 +607,7 @@ Record-only, in its own process (`pumpfun-recorder --market`, [`dev/RUNBOOK.md` 
 - **Ends** (`market_end`): `dead` (after an hour, no trades in the last hour and below $1,000 liquidity), `missing` (not found five times in a row, never in the first 10 minutes), `max_age` (7 days). Coins that re-enter a list later are followed again.
 - **Restarts**: the follow list and the recently seen pools are saved to `market/state.json` every minute and read at start.
 - **Volume**: a 2-minute live run on 2026-10-26 saw 112 new pools on the three chains and followed 235 (with the lists); no rate limits. About 1 GB of rows a day before compression; rotation keeps 300 parts of 100 MB, gzipped, with no age limit.
-- **Not built**: anything that trades on these chains; per-trade data (wallets, sizes); Ethereum by default (gas makes small trades uneconomic; `--market-chains` adds it).
+- **Not built**: anything that trades on these chains; per-trade data (wallets, sizes); Ethereum by default (gas makes small trades uneconomic; `--market-chains` adds it); a sell-quote check, so a snapshot's price is not proven executable (honeypots, sell taxes and Meteora DAMM v2 launch fees are invisible in it; rc.8 showed groups with 90–96% "wins" that are most likely that); coverage of Raydium LaunchLab, stonkfun and memefun pools, which DexScreener did not return in rc.8 (98–99% missing), and of about a third of Uniswap v4 pools on Base / BSC.
 
 ## 45. Launch Entry Filters From The rc.6 / rc.7 Data (FEAT-75)
 
