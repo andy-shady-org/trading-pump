@@ -1,4 +1,4 @@
-"""Unit tests for ``config/env.py``."""
+"""Unit tests for ``config/env.py``: credentials, keypairs, unread variables."""
 
 from __future__ import annotations
 
@@ -10,227 +10,116 @@ import pytest
 from solders.keypair import Keypair
 
 from trading_pump.config.env import (
-    UNREAD_ENV_VARS,
-    resolve_bot_log_path,
+    MODULE_ENV_VARS,
+    PUBLIC_RPC_URL,
+    PUMPPORTAL_URL,
+    REPLACED_ENV_VARS,
+    Credentials,
     decode_keypair,
-    get_env_bool,
-    get_env_float,
-    get_env_int,
-    get_runtime_env,
-    load_keypair_from_env,
-    mask_secret,
-    sanitize_env_for_logging,
+    known_env_names,
+    load_credentials,
     unread_env_warnings,
-    validate_required_runtime_env,
 )
-from trading_pump.ops.logging import log_runtime_event, setup_structured_logging
-from trading_pump.tests.support.factories import make_screening
+
+REPO = Path(__file__).parents[4]
 
 
-def test_runtime_env_and_logging_helpers(monkeypatch, tmp_path):
-    monkeypatch.setenv("PUMPFUN_PRIVATE_KEY", "supersecretkey123")
-    monkeypatch.setenv("PUMPFUN_RPC_URL", "https://example.com/rpc")
-    assert get_env_bool("PUMPFUN_USE_SSL", True) is True
-    assert get_env_bool("PUMPFUN_USE_SSL", False) is False
-    assert get_env_float("PUMPFUN_TEST_FLOAT", 2.5) == 2.5
-    assert get_env_float("PUMPFUN_TEST_FLOAT_BAD", 3.5) == 3.5
-    assert get_env_int("PUMPFUN_TEST_INT", 7) == 7
-    assert get_env_int("PUMPFUN_TEST_INT_BAD", 9) == 9
-    assert mask_secret("") == "<unset>"
-    assert mask_secret("abc") == "********"
-    assert "supersecretkey123" not in str(sanitize_env_for_logging())
-    validate_required_runtime_env()
+def test_credentials_default_to_the_public_endpoints() -> None:
+    creds = load_credentials({})
 
-    logger = setup_structured_logging(
-        logger_name="trading_pump.coverage_test",
-        log_file=str(tmp_path / "audit.log"),
-        console=False,
+    assert creds.private_key is None and not creds.has_private_key
+    assert creds.rpc_urls == (PUBLIC_RPC_URL,)
+    assert creds.stream_url == PUMPPORTAL_URL
+    assert creds.stream_connect_url() == PUMPPORTAL_URL
+    with pytest.raises(ValueError, match="PUMPFUN_PRIVATE_KEY is not set"):
+        creds.keypair()
+
+
+def test_primary_names_beat_their_aliases_and_urls_are_deduplicated() -> None:
+    creds = load_credentials(
+        {
+            "PUMPFUN_RPC_URL": "https://a.example",
+            "HELIUS_RPC_URL": "https://ignored.example",
+            "PUMPFUN_RPC_URLS": "https://b.example, https://a.example,,",
+            "PUMPFUN_WS_URL": "wss://alias.example/ws",
+            "SOLANA_PRIVATE_KEY": "alias-key",
+        }
     )
-    log_runtime_event(logger, "coverage_check", component="tests", ok=True)
-    assert (tmp_path / "audit.log").exists()
+
+    assert creds.rpc_urls == ("https://a.example", "https://b.example")
+    assert creds.stream_url == "wss://alias.example/ws"
+    assert creds.private_key == "alias-key"
 
 
-def test_runtime_env_is_masked_and_validated(monkeypatch):
-    monkeypatch.setenv("PUMPFUN_PRIVATE_KEY", "supersecretkey123456")
-    monkeypatch.setenv("PUMPFUN_RPC_URL", "https://example.com/rpc")
-    env = validate_required_runtime_env()
-    assert env["PUMPFUN_PRIVATE_KEY"] == "supersecretkey123456"
-    masked = sanitize_env_for_logging()
-    assert "supersecretkey123456" not in str(masked)
-    assert "PUMPFUN_PRIVATE_KEY" in masked
+def test_aliases_are_read_when_the_primary_is_blank() -> None:
+    creds = load_credentials(
+        {"PUMPFUN_RPC_URL": "  ", "HELIUS_RPC_URL": "https://h.example"}
+    )
+
+    assert creds.rpc_urls == ("https://h.example",)
 
 
-def test_decode_and_load_keypair_from_env(monkeypatch):
-    # Unset case
-    monkeypatch.delenv("PUMPFUN_PRIVATE_KEY", raising=False)
-    monkeypatch.delenv("SOLANA_PRIVATE_KEY", raising=False)
-    assert load_keypair_from_env() is None
+@pytest.mark.regression("BUG-118")
+def test_the_stream_key_is_added_for_pumpportal_only_and_never_shown() -> None:
+    creds = load_credentials({"PUMPFUN_STREAM_API_KEY": "k1"})
 
-    # Valid 32-byte seed
+    assert creds.stream_connect_url() == f"{PUMPPORTAL_URL}?api-key=k1"
+    assert creds.stream_display_url == PUMPPORTAL_URL
+    assert not creds.stream_key_in_url
+    assert "k1" not in repr(creds)
+
+    in_url = load_credentials({"PUMPFUN_STREAM_URL": f"{PUMPPORTAL_URL}?api-key=k2"})
+    assert in_url.stream_key_in_url
+    assert in_url.stream_display_url == PUMPPORTAL_URL
+    assert in_url.stream_connect_url() == f"{PUMPPORTAL_URL}?api-key=k2"
+
+    other = load_credentials(
+        {"PUMPFUN_STREAM_URL": "wss://other.test/feed", "PUMPFUN_STREAM_API_KEY": "k1"}
+    )
+    assert other.stream_connect_url() == "wss://other.test/feed"
+
+
+def test_repr_hides_every_value() -> None:
+    creds = Credentials(
+        private_key="secret-key", rpc_urls=("https://rpc/?api-key=x",)
+    )
+
+    text = repr(creds)
+    assert "secret-key" not in text and "api-key=x" not in text
+    assert "private_key=set" in text and "rpc_urls=1" in text
+
+
+def test_decode_keypair_seed_secret_and_bad_lengths() -> None:
     seed = b"12345678901234567890123456789012"
     kp = Keypair.from_seed(seed)
     b58_seed = base58.b58encode(seed).decode("ascii")
     b58_full = base58.b58encode(kp.to_bytes()).decode("ascii")
 
-    # From 32-byte seed
-    decoded_seed_kp = decode_keypair(b58_seed)
-    assert decoded_seed_kp.pubkey() == kp.pubkey()
-
-    # From 64-byte secret key
-    decoded_full_kp = decode_keypair(b58_full)
-    assert decoded_full_kp.pubkey() == kp.pubkey()
-
-    # From PUMPFUN_PRIVATE_KEY
-    monkeypatch.setenv("PUMPFUN_PRIVATE_KEY", b58_seed)
-    loaded_kp = load_keypair_from_env()
-    assert loaded_kp is not None
-    assert loaded_kp.pubkey() == kp.pubkey()
-
-    # From SOLANA_PRIVATE_KEY fallback
-    monkeypatch.delenv("PUMPFUN_PRIVATE_KEY", raising=False)
-    monkeypatch.setenv("SOLANA_PRIVATE_KEY", b58_full)
-    loaded_kp2 = load_keypair_from_env()
-    assert loaded_kp2 is not None
-    assert loaded_kp2.pubkey() == kp.pubkey()
-
-    # Custom env var
-    monkeypatch.setenv("CUSTOM_WALLET_KEY", b58_seed)
-    loaded_kp3 = load_keypair_from_env("CUSTOM_WALLET_KEY")
-    assert loaded_kp3 is not None
-    assert loaded_kp3.pubkey() == kp.pubkey()
-
-    # Invalid key length raises ValueError
+    assert decode_keypair(b58_seed).pubkey() == kp.pubkey()
+    assert decode_keypair(b58_full).pubkey() == kp.pubkey()
+    # 64 bytes that are not a valid secret key: the first 32 are the seed.
+    bogus = base58.b58encode(seed + b"\x00" * 32).decode("ascii")
+    assert decode_keypair(bogus).pubkey() == kp.pubkey()
+    # Longer than 32 (and not 64): the first 32 are the seed.
+    longer = base58.b58encode(seed + b"\x01" * 8).decode("ascii")
+    assert decode_keypair(longer).pubkey() == kp.pubkey()
+    assert (
+        load_credentials({"PUMPFUN_PRIVATE_KEY": b58_seed}).keypair().pubkey()
+        == kp.pubkey()
+    )
     with pytest.raises(ValueError, match="Private key must be a base58-encoded"):
         decode_keypair(base58.b58encode(b"short").decode("ascii"))
 
 
-@pytest.mark.regression("BUG-87")
-def test_status_and_audit_env_aliases(monkeypatch, tmp_path):
-    """BUG-87: primary names and aliases resolve in env and the bot."""
-    for name in (
-        "PUMPFUN_STATUS_PATH",
-        "PUMPFUN_AUDIT_LOG_PATH",
-        "PUMPFUN_BOT_STATUS_PATH",
-        "PUMPFUN_AUDIT_LOG",
-    ):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("PUMPFUN_BOT_STATUS_PATH", str(tmp_path / "s.json"))
-    monkeypatch.setenv("PUMPFUN_AUDIT_LOG", str(tmp_path / "a.jsonl"))
-    env = get_runtime_env()
-    assert env["PUMPFUN_STATUS_PATH"] == str(tmp_path / "s.json")
-    assert env["PUMPFUN_AUDIT_LOG_PATH"] == str(tmp_path / "a.jsonl")
-
-    from trading_pump.bot.run import TradingBot
-
-    bot = TradingBot(
-        private_key_b58="1" * 64,
-        rpc_url="https://api.mainnet-beta.solana.com",
-        config=make_screening(dry_run=True),
-    )
-    assert bot.bot_status_path == str(tmp_path / "s.json")
-    assert bot.audit_log_path == str(tmp_path / "a.jsonl")
-
-    monkeypatch.setenv("PUMPFUN_STATUS_PATH", str(tmp_path / "p.json"))
-    assert get_runtime_env()["PUMPFUN_STATUS_PATH"] == str(tmp_path / "p.json")
-
-
-@pytest.mark.parametrize(
-    ("name", "default", "value", "expected"),
-    [
-        ("PUMPFUN_USE_SSL", False, "true", True),
-        ("PUMPFUN_USE_SSL", False, "0", False),
-        ("PUMPFUN_USE_SSL", True, "yes", True),
-        ("PUMPFUN_USE_SSL", False, "on", True),
-        ("PUMPFUN_USE_SSL", False, "false", False),
-    ],
-)
-def test_env_helpers_cover_all_branch_paths(
-    monkeypatch, name, default, value, expected
-):
-    monkeypatch.setenv(name, value)
-    assert get_env_bool(name, default) is expected
-    assert get_env_float("PUMPFUN_TEST_FLOAT", 2.5) == 2.5
-    assert get_env_int("PUMPFUN_TEST_INT", 7) == 7
-
-    monkeypatch.delenv(name, raising=False)
-    assert get_env_bool(name, default) is default
-    assert get_env_float("PUMPFUN_TEST_FLOAT_MISSING", 3.5) == 3.5
-    assert get_env_int("PUMPFUN_TEST_INT_MISSING", 9) == 9
-
-    monkeypatch.setenv("PUMPFUN_TEST_FLOAT_BAD", "not-a-number")
-    monkeypatch.setenv("PUMPFUN_TEST_INT_BAD", "nope")
-    assert get_env_float("PUMPFUN_TEST_FLOAT_BAD", 4.5) == 4.5
-    assert get_env_int("PUMPFUN_TEST_INT_BAD", 11) == 11
-
-    assert mask_secret(None) == "<unset>"
-    assert mask_secret("abc") == "********"
-    assert mask_secret("abcdefgh") == "********"
-    assert mask_secret("abcdefghij") == "abcd...ij"
-
-    env = sanitize_env_for_logging()
-    assert isinstance(env, dict)
-
-
-def test_required_runtime_env_accepts_standard_names(monkeypatch):
-    monkeypatch.setenv("PUMPFUN_PRIVATE_KEY", "abc123")
-    monkeypatch.setenv("PUMPFUN_RPC_URL", "https://rpc.example")
-    result = validate_required_runtime_env()
-    assert result["PUMPFUN_PRIVATE_KEY"] == "abc123"
-    assert result["PUMPFUN_RPC_URL"] == "https://rpc.example"
-
-    monkeypatch.delenv("PUMPFUN_PRIVATE_KEY", raising=False)
-    monkeypatch.delenv("PUMPFUN_RPC_URL", raising=False)
-    with pytest.raises(ValueError, match="Missing required environment variables"):
-        validate_required_runtime_env()
-
-
-@pytest.mark.parametrize(
-    "explicit, env, configured, expected",
-    [
-        (None, None, "bot.log", "bot.log"),
-        (None, "data/bot.log", "bot.log", "data/bot.log"),
-        ("arg.log", "data/bot.log", "bot.log", "arg.log"),
-        (None, "  ", "bot.log", "bot.log"),
-        (None, " data/bot.log ", "bot.log", "data/bot.log"),
-        (None, "none", "bot.log", None),
-        (None, "OFF", "bot.log", None),
-        ("off", "data/bot.log", "bot.log", None),
-        (None, None, None, None),
-        (None, None, "", None),
-    ],
-)
-def test_resolve_bot_log_path_precedence(
-    monkeypatch: pytest.MonkeyPatch,
-    explicit: str | None,
-    env: str | None,
-    configured: str | None,
-    expected: str | None,
-) -> None:
-    if env is None:
-        monkeypatch.delenv("PUMPFUN_BOT_LOG_PATH", raising=False)
-    else:
-        monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", env)
-
-    assert resolve_bot_log_path(explicit, configured) == expected
-
-
-def test_runtime_env_reports_bot_log_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", "data/bot.log")
-
-    assert get_runtime_env()["PUMPFUN_BOT_LOG_PATH"] == "data/bot.log"
-
-
 # --- Documented variables must be read (BUG-142) -----------------------------
-
-REPO = Path(__file__).parents[4]
 
 
 def _source_text() -> str:
-    """The package source, without the UNREAD_ENV_VARS table itself."""
+    """The package source, without the env tables themselves."""
     package = REPO / "trading_pump"
     env_py = package / "config" / "env.py"
-    head, rest = env_py.read_text(encoding="utf-8").split("UNREAD_ENV_VARS: dict", 1)
-    tail = rest.split("def unread_env_warnings", 1)[1]
+    head, rest = env_py.read_text(encoding="utf-8").split("REPLACED_ENV_VARS: dict", 1)
+    tail = rest.split("def _first", 1)[1]
     others = "\n".join(
         path.read_text(encoding="utf-8")
         for path in package.rglob("*.py")
@@ -240,55 +129,57 @@ def _source_text() -> str:
 
 
 @pytest.mark.regression("BUG-142")
-def test_unread_variables_are_reported_by_name_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_unread_variables_are_reported_by_name_only() -> None:
     env = {
         "PUMPFUN_DRY_RUN": "true",
         "PUMPFUN_STOP_LOSS": "0.9",
         "PUMPFUN_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/1/SECRET",
         "PUMPFUN_PRESET": "  ",  # blank: not set
-        "PUMPFUN_RPC_URL": "https://example.invalid",
+        "PUMPFUN_RPC_URL": "https://example.invalid",  # read
+        "PUMPFUN_SOMETHING_NEW": "1",
+        "OTHER_VARIABLE": "x",
     }
     warnings = unread_env_warnings(env)
 
     assert [w.split(" ")[0] for w in warnings] == [
-        "PUMPFUN_DRY_RUN",
         "PUMPFUN_ALERT_WEBHOOK_URL",
+        "PUMPFUN_DRY_RUN",
+        "PUMPFUN_SOMETHING_NEW",
         "PUMPFUN_STOP_LOSS",
     ]
-    assert "does NOT stop live trading" in warnings[0]
+    assert "TRADING_CORE_ALERT_" in warnings[0]
+    assert "not read by trading-pump" in warnings[2]
     assert not any("SECRET" in w for w in warnings)
 
-    monkeypatch.setenv("PUMPFUN_CONFIG_PATH", "configs/canary.json")
+
+def test_unread_env_warnings_reads_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PUMPFUN_GEYSER_ENDPOINT", "grpc.example:443")
+
     assert unread_env_warnings() == [
-        "PUMPFUN_CONFIG_PATH is set but not read: use pumpbot --config <path>"
+        "PUMPFUN_GEYSER_ENDPOINT is set but not read: a pumpbot feature that was "
+        "not ported (docs/dev/TODO.md, Not ported)"
     ]
 
 
 @pytest.mark.regression("BUG-142")
-def test_unread_names_really_are_unread() -> None:
+def test_every_listed_variable_is_read_and_no_replaced_one_is() -> None:
     source = _source_text()
-    read = [n for n in UNREAD_ENV_VARS if re.search(rf"[\"']{n}[\"']", source)]
-    assert read == [], "now read by the code: drop them from UNREAD_ENV_VARS"
+    for name in known_env_names():
+        assert re.search(rf"[\"']{name}[\"']", source), name
+    read = [n for n in REPLACED_ENV_VARS if re.search(rf"[\"']{n}[\"']", source)]
+    assert read == [], "now read by the code: drop them from REPLACED_ENV_VARS"
+    assert not set(REPLACED_ENV_VARS) & known_env_names()
 
 
 @pytest.mark.regression("BUG-142")
-def test_every_variable_in_the_manual_matrix_is_read() -> None:
-    manual = (REPO / "docs" / "ENVIRONMENTAL-VARIABLES.md").read_text(encoding="utf-8")
-    matrix = manual.split("## 2.")[1].split("## 3.")[0]
-    documented = set(re.findall(r"\| \[`([A-Z][A-Z0-9_]+)`\]", matrix))
-    aliases = {
-        alias
-        for cell in re.findall(r"\]\([^)]*\) \| ([^|]+) \|", matrix)
-        for alias in re.findall(r"`([A-Z][A-Z0-9_]+)`", cell)
-    }
-    source = _source_text()
-    unread = sorted(
-        name
-        for name in documented | aliases
-        if name != "NO_COLOR" and not re.search(rf"[\"']{name}[\"']", source)
-    )
-    assert len(documented) > 40
-    assert unread == []
-    assert not (documented | aliases) & set(UNREAD_ENV_VARS)
+def test_the_manual_lists_exactly_the_variables_that_are_read() -> None:
+    manual = (REPO / "docs" / "ENVIRONMENT.md").read_text(encoding="utf-8")
+    table = manual.split("## 1.")[1].split("## 2.")[0]
+    documented = set(re.findall(r"^\| `([A-Z][A-Z0-9_]+)`", table, re.MULTILINE))
+    assert documented == set(MODULE_ENV_VARS)
+    for name, (aliases, _) in MODULE_ENV_VARS.items():
+        row = next(line for line in table.splitlines() if f"| `{name}`" in line)
+        for alias in aliases:
+            assert f"`{alias}`" in row, (name, alias)

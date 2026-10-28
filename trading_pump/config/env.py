@@ -1,154 +1,231 @@
-"""Environment-backed configuration helpers."""
+"""The module's environment: credentials and endpoints, never settings.
+
+Credentials (the wallet key, RPC URLs that carry API keys, the PumpPortal
+key) come from ``PUMPFUN_*`` variables only, never from ``module_settings``:
+the settings file is hashed and recorded in run provenance
+(trading-core ``docs/MODULE-GUIDE.md`` §7). Everything else is a setting.
+
+``MODULE_ENV_VARS`` is the single list of variables this package reads
+(pumpfun BUG-142: 51 documented variables were read by nothing).
+``unread_env_warnings`` names any other ``PUMPFUN_*`` variable that is set,
+with what replaces it, so an operator moving from pumpbot sees at start-up
+which of their old variables no longer do anything.
+"""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Mapping
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 import base58
 from solders.keypair import Keypair
+from trading_pump.streams.websocket import split_stream_api_key, stream_connect_url
 
-# Names that earlier docs listed but no code reads (BUG-142), with what to use.
-UNREAD_ENV_VARS: dict[str, str] = {
-    "PUMPFUN_DRY_RUN": (
-        "it does NOT stop live trading; use pumpbot --dry-run or --paper-trade"
+PRIVATE_KEY_ENV = "PUMPFUN_PRIVATE_KEY"
+RPC_URL_ENV = "PUMPFUN_RPC_URL"
+RPC_URLS_ENV = "PUMPFUN_RPC_URLS"
+STREAM_URL_ENV = "PUMPFUN_STREAM_URL"
+STREAM_API_KEY_ENV = "PUMPFUN_STREAM_API_KEY"
+JUPITER_API_KEY_ENV = "PUMPFUN_JUPITER_API_KEY"
+
+# name -> (legacy aliases, what it is). Read in this order: the name, then
+# each alias.
+MODULE_ENV_VARS: dict[str, tuple[tuple[str, ...], str]] = {
+    PRIVATE_KEY_ENV: (
+        ("SOLANA_PRIVATE_KEY",),
+        "wallet key (base58 seed or secret key); live mode only",
     ),
-    "PUMPFUN_CONFIG_PATH": "use pumpbot --config <path>",
-    "PUMPFUN_CONFIG": "use pumpbot --config <path>",
-    "PUMPFUN_STRATEGY_PRESET": "use pumpbot --preset, or strategy_preset in the config",
-    "PUMPFUN_PRESET": "use pumpbot --preset, or strategy_preset in the config",
-    "PUMPFUN_BASE_BUY_SOL": "use buy_amount_sol in the config or --buy-amount-sol",
-    "PUMPFUN_BUY_AMOUNT_SOL": "use buy_amount_sol in the config or --buy-amount-sol",
-    "PUMPFUN_ALERT_WEBHOOK_URL": "use PUMPFUN_ALERT_DISCORD_WEBHOOK_URL",
-    "PUMPFUN_TELEGRAM_BOT_TOKEN": "use PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN",
-    "PUMPFUN_TELEGRAM_CHAT_ID": "use PUMPFUN_ALERT_TELEGRAM_CHAT_ID",
+    RPC_URL_ENV: (("HELIUS_RPC_URL",), "primary Solana RPC endpoint"),
+    RPC_URLS_ENV: (
+        ("SOLANA_RPC_URLS",),
+        "comma-separated extra RPC endpoints for failover",
+    ),
+    STREAM_URL_ENV: (("PUMPFUN_WS_URL",), "PumpPortal WebSocket URL"),
+    STREAM_API_KEY_ENV: ((), "PumpPortal API key, appended to the stream URL"),
+    JUPITER_API_KEY_ENV: ((), "Jupiter API key for the quote recorder"),
+}
+
+PUMPPORTAL_URL = "wss://pumpportal.fun/api/data"
+PUBLIC_RPC_URL = "https://api.mainnet-beta.solana.com"
+
+_ENGINE = "trading-core settings / TRADING_CORE_* variables (trading-core docs/ENVIRONMENT.md)"
+_MODULE = "a module_settings key (docs/CONFIGURATION.md)"
+# pumpbot-era variables and what replaces them. Names only: some held
+# webhook URLs, so a value is never echoed.
+REPLACED_ENV_VARS: dict[str, str] = {
     **dict.fromkeys(
         (
+            "PUMPFUN_ALERT_PROVIDER",
+            "PUMPFUN_ALERT_DISCORD_WEBHOOK_URL",
+            "PUMPFUN_ALERT_SLACK_WEBHOOK_URL",
+            "PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN",
+            "PUMPFUN_ALERT_TELEGRAM_CHAT_ID",
+            "PUMPFUN_ALERT_WEBHOOK_URL",
+            "PUMPFUN_TELEGRAM_BOT_TOKEN",
+            "PUMPFUN_TELEGRAM_CHAT_ID",
+        ),
+        "alerts are the engine's: use TRADING_CORE_ALERT_* (trading-core docs/ENVIRONMENT.md)",
+    ),
+    **dict.fromkeys(
+        (
+            "PUMPFUN_AUDIT_LOG_PATH",
+            "PUMPFUN_AUDIT_LOG",
+            "PUMPFUN_STATUS_PATH",
+            "PUMPFUN_BOT_STATUS_PATH",
+            "PUMPFUN_EVENT_LOG_PATH",
+            "PUMPFUN_BOT_LOG_PATH",
+            "PUMPFUN_AUDIT_MAX_BYTES",
+            "PUMPFUN_AUDIT_BACKUP_COUNT",
+            "PUMPFUN_AUDIT_RETENTION_DAYS",
+            "PUMPFUN_AUDIT_COMPRESS",
+            "PUMPFUN_LOG_MAX_BYTES",
+            "PUMPFUN_LOG_BACKUP_COUNT",
+            "PUMPFUN_LOG_ROTATION_TYPE",
+            "PUMPFUN_LOG_COMPRESS",
+            "PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS",
+            "PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS",
+            "PUMPFUN_EVENT_SUBSYSTEMS",
+            "PUMPFUN_DRAWDOWN_MODE",
+            "PUMPFUN_PROFIT_RATCHET_RATIO",
+            "PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT",
+            "PUMPFUN_MAX_DAILY_DRAWDOWN",
+            "PUMPFUN_MAX_POSITIONS",
+            "PUMPFUN_MAX_TOTAL_EXPOSURE_SOL",
+            "PUMPFUN_STOP_LOSS",
+            "PUMPFUN_TRAILING_STOP_ENABLED",
+            "PUMPFUN_TRAILING_ACTIVATION_PCT",
+            "PUMPFUN_TRAILING_DROP_PCT",
+            "PUMPFUN_DRY_RUN",
+            "PUMPFUN_CONFIG",
+            "PUMPFUN_CONFIG_PATH",
+        ),
+        f"files, risk and exits are the engine's: use {_ENGINE}",
+    ),
+    **dict.fromkeys(
+        (
+            "PUMPFUN_REPLAY_LOG_PATH",
+            "PUMPFUN_RECORD_REPLAY",
+            "PUMPFUN_REPLAY_MAX_BYTES",
+            "PUMPFUN_REPLAY_BACKUP_COUNT",
+            "PUMPFUN_REPLAY_RETENTION_DAYS",
+            "PUMPFUN_REPLAY_COMPRESS",
+            "PUMPFUN_JITO_TIP_LAMPORTS",
+            "PUMPFUN_JITO_ENTRY_TIP_LAMPORTS",
+            "PUMPFUN_JITO_EXIT_TIP_LAMPORTS",
+            "PUMPFUN_PRIORITY_FEE_MODE",
+            "PUMPFUN_DYNAMIC_SLIPPAGE_ENABLED",
+            "PUMPFUN_ENABLE_DYNAMIC_SLIPPAGE",
+            "PUMPFUN_MIN_SLIPPAGE_BPS",
+            "PUMPFUN_MAX_SLIPPAGE_BPS",
+            "PUMPFUN_MAX_EXIT_SLIPPAGE_BPS",
+            "PUMPFUN_CLUSTER_ANALYSIS_ENABLED",
+            "PUMPFUN_ENABLE_CLUSTER_ANALYSIS",
+            "PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT",
+            "PUMPFUN_MAX_SINGLE_CLUSTER_PCT",
+            "PUMPFUN_MAX_SYBIL_WASH_RATIO",
+            "PUMPFUN_CLUSTER_TRACE_DEPTH",
             "PUMPFUN_ANTI_RUG_ENABLED",
+            "PUMPFUN_MAX_CREATOR_HOLDING_PCT",
+            "PUMPFUN_MAX_GINI_COEFFICIENT",
+            "PUMPFUN_MAX_RISK_SCORE",
+            "PUMPFUN_STRATEGY_PRESET",
+            "PUMPFUN_PRESET",
+            "PUMPFUN_BASE_BUY_SOL",
+            "PUMPFUN_BUY_AMOUNT_SOL",
+        ),
+        f"capture, costs and screening are settings: use {_MODULE}",
+    ),
+    **dict.fromkeys(
+        (
+            "PUMPFUN_GEYSER_ENDPOINT",
+            "PUMPFUN_GEYSER_X_TOKEN",
+            "PUMPFUN_GEYSER_TOKEN",
+            "PUMPFUN_ARB_ENABLED",
+            "PUMPFUN_ENABLE_CROSS_VENUE_ARBITRAGE",
+            "PUMPFUN_ARB_BACKRUNNING_ENABLED",
+            "PUMPFUN_ENABLE_MEMPOOL_BACKRUNNING",
+            "PUMPFUN_ARB_MIN_PROFIT_SOL",
+            "PUMPFUN_ARB_MIN_SPREAD_PCT",
+            "PUMPFUN_ARB_MAX_INPUT_SOL",
+            "PUMPFUN_ARB_MIN_INPUT_SOL",
+            "PUMPFUN_ARB_JITO_TIP_SHARE_PCT",
+            "PUMPFUN_CAPITAL_ROTATION_ENABLED",
+            "PUMPFUN_ENABLE_CAPITAL_ROTATION",
+            "PUMPFUN_DISPLACEMENT_MIN_CONVICTION_PERCENTILE",
+            "PUMPFUN_DISPLACEMENT_HURDLE_RATE_PCT",
+            "PUMPFUN_DISPLACEMENT_HURDLE_PCT",
+            "PUMPFUN_DISPLACEMENT_MIN_CONVICTION",
+            "PUMPFUN_MIN_HOLD_BEFORE_DISPLACEMENT",
+            "PUMPFUN_PRE_GRADUATION_ENABLED",
+            "PUMPFUN_ENABLE_PRE_GRADUATION_HARVESTING",
+            "PUMPFUN_PRE_GRADUATION_ENTRY_PROGRESS_PCT",
+            "PUMPFUN_PRE_GRAD_ENTRY_PROGRESS",
+            "PUMPFUN_PRE_GRAD_MAX_ENTRY_PROGRESS",
             "PUMPFUN_COPY_TRADING_ENABLED",
             "PUMPFUN_COPY_TRADING_SCALE_FACTOR",
             "PUMPFUN_COPY_TRADING_SIZING_MODE",
             "PUMPFUN_COPY_TRADING_WALLETS",
-            "PUMPFUN_DIAGNOSTIC_EVENTS_ENABLED",
-            "PUMPFUN_DISPLACEMENT_HURDLE_PCT",
-            "PUMPFUN_DISPLACEMENT_MIN_CONVICTION",
-            "PUMPFUN_EVENT_LOG_SUBSYSTEMS",
-            "PUMPFUN_MAX_CREATOR_HOLDING_PCT",
-            "PUMPFUN_MAX_DAILY_DRAWDOWN",
-            "PUMPFUN_MAX_GINI_COEFFICIENT",
-            "PUMPFUN_MAX_MARKET_CAP_SOL",
-            "PUMPFUN_MAX_POSITIONS",
-            "PUMPFUN_MAX_RISK_SCORE",
-            "PUMPFUN_MAX_TOTAL_EXPOSURE_SOL",
-            "PUMPFUN_MIN_HOLD_BEFORE_DISPLACEMENT",
-            "PUMPFUN_MIN_MARKET_CAP_SOL",
             "PUMPFUN_MOMENTUM_ENABLED",
             "PUMPFUN_MOMENTUM_MIN_BUY_RATIO",
             "PUMPFUN_MOMENTUM_MIN_NET_INFLOW_SOL",
             "PUMPFUN_MOMENTUM_MIN_UNIQUE_BUYERS",
             "PUMPFUN_MOMENTUM_MIN_Z_SCORE",
-            "PUMPFUN_PRE_GRAD_ENTRY_PROGRESS",
-            "PUMPFUN_PRE_GRAD_MAX_ENTRY_PROGRESS",
             "PUMPFUN_RAYDIUM_BUY_SOL",
             "PUMPFUN_RAYDIUM_SLIPPAGE_BPS",
             "PUMPFUN_RAYDIUM_SNIPE_ENABLED",
-            "PUMPFUN_RPC_ENDPOINTS",
-            "PUMPFUN_RPC_POOL_CONCURRENCY",
-            "PUMPFUN_RPC_POOL_ENABLED",
-            "PUMPFUN_STAGNANT_TIMEOUT",
-            "PUMPFUN_STOP_LOSS",
+            "PUMPFUN_TIERED_TP_ENABLED",
             "PUMPFUN_TIER1_TP_FRACTION",
             "PUMPFUN_TIER1_TP_MULT",
             "PUMPFUN_TIER2_TP_FRACTION",
             "PUMPFUN_TIER2_TP_MULT",
-            "PUMPFUN_TIERED_TP_ENABLED",
-            "PUMPFUN_TRAILING_ACTIVATION_PCT",
-            "PUMPFUN_TRAILING_DROP_PCT",
-            "PUMPFUN_TRAILING_STOP_ENABLED",
+            "PUMPFUN_STAGNANT_TIMEOUT",
+            "PUMPFUN_MIN_MARKET_CAP_SOL",
+            "PUMPFUN_MAX_MARKET_CAP_SOL",
+            "PUMPFUN_RPC_ENDPOINTS",
+            "PUMPFUN_RPC_POOL_CONCURRENCY",
+            "PUMPFUN_RPC_POOL_ENABLED",
+            "PUMPFUN_DIAGNOSTIC_EVENTS_ENABLED",
+            "PUMPFUN_EVENT_LOG_SUBSYSTEMS",
         ),
-        "strategy settings are config keys; set the matching key in the config",
+        "a pumpbot feature that was not ported (docs/dev/TODO.md, Not ported)",
     ),
 }
 
 
+def _first(env: Mapping[str, str], name: str) -> str | None:
+    aliases, _ = MODULE_ENV_VARS[name]
+    for candidate in (name, *aliases):
+        value = (env.get(candidate) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def known_env_names() -> frozenset[str]:
+    """Every variable this package reads, aliases included."""
+    names: set[str] = set()
+    for name, (aliases, _) in MODULE_ENV_VARS.items():
+        names.update((name, *aliases))
+    return frozenset(names)
+
+
 def unread_env_warnings(env: Mapping[str, str] | None = None) -> list[str]:
-    """One warning per set variable that nothing reads (BUG-142).
+    """One warning per set ``PUMPFUN_*`` variable that nothing reads (BUG-142).
 
     Only names are reported, never values: some of these held webhook URLs.
     """
     source = os.environ if env is None else env
-    return [
-        f"{name} is set but not read: {hint}"
-        for name, hint in UNREAD_ENV_VARS.items()
-        if source.get(name, "").strip()
-    ]
-
-
-def get_env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def get_env_float(name: str, default: float = 0.0) -> float:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        return default
-
-
-def get_env_int(name: str, default: int = 0) -> int:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-
-def get_env_list(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
-    """Parse comma-separated environment variable into tuple of strings."""
-    value = os.getenv(name)
-    if not value:
-        return default
-    return tuple(part.strip() for part in value.split(",") if part.strip())
-
-
-BOT_LOG_PATH_ENV = "PUMPFUN_BOT_LOG_PATH"
-_LOG_FILE_DISABLED = {"none", "off", "false", "0", "-"}
-
-
-def resolve_bot_log_path(
-    explicit: str | None = None, configured: str | None = "bot.log"
-) -> str | None:
-    """Where the bot's application log (``bot.log``) is written, or ``None``.
-
-    Precedence: an explicit ``log_file=`` argument, then ``PUMPFUN_BOT_LOG_PATH``,
-    then the config's ``log_file``. The config always carries ``bot.log`` as its
-    default, so the environment must win over it, as ``PUMPFUN_EVENT_LOG_PATH``
-    does. ``none`` / ``off`` (in the argument or the variable) turn the file
-    off; an empty variable is ignored.
-    """
-    for candidate in (explicit, os.getenv(BOT_LOG_PATH_ENV)):
-        if candidate is None or not candidate.strip():
+    known = known_env_names()
+    warnings: list[str] = []
+    for name in sorted(source):
+        if not name.startswith("PUMPFUN_") or name in known:
             continue
-        value = candidate.strip()
-        return None if value.lower() in _LOG_FILE_DISABLED else value
-    return configured or None
-
-
-def mask_secret(value: str | None, *, hidden: str = "********") -> str:
-    if not value:
-        return "<unset>"
-    if len(value) <= 8:
-        return hidden
-    return f"{value[:4]}...{value[-2:]}"
+        if not str(source.get(name, "")).strip():
+            continue
+        hint = REPLACED_ENV_VARS.get(name, "not read by trading-pump")
+        warnings.append(f"{name} is set but not read: {hint}")
+    return warnings
 
 
 def decode_keypair(private_key_b58: str) -> Keypair:
@@ -169,160 +246,85 @@ def decode_keypair(private_key_b58: str) -> Keypair:
     )
 
 
-def load_keypair_from_env(
-    env_var: str | None = None,
-) -> Keypair | None:
-    """Load and decode a Keypair from environment variables (e.g. PUMPFUN_PRIVATE_KEY or SOLANA_PRIVATE_KEY)."""
-    raw_key: str | None = None
-    if env_var:
-        raw_key = os.getenv(env_var)
-    else:
-        raw_key = os.getenv("PUMPFUN_PRIVATE_KEY") or os.getenv("SOLANA_PRIVATE_KEY")
+@dataclass(frozen=True)
+class Credentials:
+    """What the module reads from its environment. ``repr`` hides every value."""
 
-    if not raw_key or not raw_key.strip():
-        return None
-    return decode_keypair(raw_key.strip())
+    private_key: str | None = None
+    rpc_urls: tuple[str, ...] = ()
+    stream_url: str = PUMPPORTAL_URL
+    stream_api_key: str | None = None
 
-
-def get_runtime_env(**overrides: Any) -> dict[str, Any]:
-    """Return the environment-backed settings for bot startup."""
-    return {
-        "PUMPFUN_PRIVATE_KEY": os.getenv("PUMPFUN_PRIVATE_KEY")
-        or os.getenv("SOLANA_PRIVATE_KEY"),
-        "PUMPFUN_RPC_URL": os.getenv("PUMPFUN_RPC_URL") or os.getenv("HELIUS_RPC_URL"),
-        "PUMPFUN_RPC_URLS": os.getenv("PUMPFUN_RPC_URLS")
-        or os.getenv("SOLANA_RPC_URLS"),
-        "PUMPFUN_STREAM_URL": os.getenv("PUMPFUN_STREAM_URL")
-        or os.getenv("PUMPFUN_WS_URL"),
-        "PUMPFUN_STREAM_API_KEY": os.getenv("PUMPFUN_STREAM_API_KEY"),
-        "PUMPFUN_GEYSER_ENDPOINT": os.getenv("PUMPFUN_GEYSER_ENDPOINT"),
-        "PUMPFUN_GEYSER_X_TOKEN": os.getenv("PUMPFUN_GEYSER_X_TOKEN")
-        or os.getenv("PUMPFUN_GEYSER_TOKEN"),
-        "PUMPFUN_ALERT_PROVIDER": os.getenv("PUMPFUN_ALERT_PROVIDER"),
-        # Primary names per docs, with legacy aliases (BUG-87).
-        "PUMPFUN_AUDIT_LOG_PATH": os.getenv("PUMPFUN_AUDIT_LOG_PATH")
-        or os.getenv("PUMPFUN_AUDIT_LOG"),
-        "PUMPFUN_STATUS_PATH": os.getenv("PUMPFUN_STATUS_PATH")
-        or os.getenv("PUMPFUN_BOT_STATUS_PATH"),
-        "PUMPFUN_REPLAY_LOG_PATH": os.getenv("PUMPFUN_REPLAY_LOG_PATH"),
-        "PUMPFUN_RECORD_REPLAY": os.getenv("PUMPFUN_RECORD_REPLAY"),
-        "PUMPFUN_DRAWDOWN_MODE": os.getenv("PUMPFUN_DRAWDOWN_MODE"),
-        "PUMPFUN_PROFIT_RATCHET_RATIO": os.getenv("PUMPFUN_PROFIT_RATCHET_RATIO"),
-        "PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT": os.getenv(
-            "PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT"
-        ),
-        "PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS": os.getenv(
-            "PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS"
-        ),
-        "PUMPFUN_EVENT_LOG_PATH": os.getenv("PUMPFUN_EVENT_LOG_PATH"),
-        "PUMPFUN_EVENT_SUBSYSTEMS": os.getenv("PUMPFUN_EVENT_SUBSYSTEMS"),
-        "PUMPFUN_LOG_MAX_BYTES": os.getenv("PUMPFUN_LOG_MAX_BYTES"),
-        "PUMPFUN_LOG_BACKUP_COUNT": os.getenv("PUMPFUN_LOG_BACKUP_COUNT"),
-        "PUMPFUN_LOG_ROTATION_TYPE": os.getenv("PUMPFUN_LOG_ROTATION_TYPE"),
-        "PUMPFUN_LOG_COMPRESS": os.getenv("PUMPFUN_LOG_COMPRESS"),
-        "PUMPFUN_BOT_LOG_PATH": os.getenv("PUMPFUN_BOT_LOG_PATH"),
-        "PUMPFUN_AUDIT_MAX_BYTES": os.getenv("PUMPFUN_AUDIT_MAX_BYTES"),
-        "PUMPFUN_AUDIT_BACKUP_COUNT": os.getenv("PUMPFUN_AUDIT_BACKUP_COUNT"),
-        "PUMPFUN_AUDIT_RETENTION_DAYS": os.getenv("PUMPFUN_AUDIT_RETENTION_DAYS"),
-        "PUMPFUN_AUDIT_COMPRESS": os.getenv("PUMPFUN_AUDIT_COMPRESS"),
-        "PUMPFUN_REPLAY_MAX_BYTES": os.getenv("PUMPFUN_REPLAY_MAX_BYTES"),
-        "PUMPFUN_REPLAY_BACKUP_COUNT": os.getenv("PUMPFUN_REPLAY_BACKUP_COUNT"),
-        "PUMPFUN_REPLAY_RETENTION_DAYS": os.getenv("PUMPFUN_REPLAY_RETENTION_DAYS"),
-        "PUMPFUN_REPLAY_COMPRESS": os.getenv("PUMPFUN_REPLAY_COMPRESS"),
-        "PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS": os.getenv(
-            "PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS"
-        ),
-        "PUMPFUN_DYNAMIC_SLIPPAGE_ENABLED": os.getenv(
-            "PUMPFUN_DYNAMIC_SLIPPAGE_ENABLED"
+    def __repr__(self) -> str:
+        return (
+            f"Credentials(private_key={'set' if self.private_key else 'unset'}, "
+            f"rpc_urls={len(self.rpc_urls)}, "
+            f"stream_api_key={'set' if self.stream_api_key else 'unset'})"
         )
-        or os.getenv("PUMPFUN_ENABLE_DYNAMIC_SLIPPAGE"),
-        "PUMPFUN_MIN_SLIPPAGE_BPS": os.getenv("PUMPFUN_MIN_SLIPPAGE_BPS"),
-        "PUMPFUN_MAX_SLIPPAGE_BPS": os.getenv("PUMPFUN_MAX_SLIPPAGE_BPS"),
-        "PUMPFUN_MAX_EXIT_SLIPPAGE_BPS": os.getenv("PUMPFUN_MAX_EXIT_SLIPPAGE_BPS"),
-        "PUMPFUN_PRIORITY_FEE_MODE": os.getenv("PUMPFUN_PRIORITY_FEE_MODE"),
-        "PUMPFUN_CAPITAL_ROTATION_ENABLED": os.getenv(
-            "PUMPFUN_CAPITAL_ROTATION_ENABLED"
-        )
-        or os.getenv("PUMPFUN_ENABLE_CAPITAL_ROTATION"),
-        "PUMPFUN_DISPLACEMENT_MIN_CONVICTION_PERCENTILE": os.getenv(
-            "PUMPFUN_DISPLACEMENT_MIN_CONVICTION_PERCENTILE"
-        ),
-        "PUMPFUN_DISPLACEMENT_HURDLE_RATE_PCT": os.getenv(
-            "PUMPFUN_DISPLACEMENT_HURDLE_RATE_PCT"
-        ),
-        "PUMPFUN_PRE_GRADUATION_ENABLED": os.getenv("PUMPFUN_PRE_GRADUATION_ENABLED")
-        or os.getenv("PUMPFUN_ENABLE_PRE_GRADUATION_HARVESTING"),
-        "PUMPFUN_PRE_GRADUATION_ENTRY_PROGRESS_PCT": os.getenv(
-            "PUMPFUN_PRE_GRADUATION_ENTRY_PROGRESS_PCT"
-        ),
-        "PUMPFUN_CLUSTER_ANALYSIS_ENABLED": os.getenv(
-            "PUMPFUN_CLUSTER_ANALYSIS_ENABLED"
-        )
-        or os.getenv("PUMPFUN_ENABLE_CLUSTER_ANALYSIS"),
-        "PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT": os.getenv(
-            "PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT"
-        ),
-        "PUMPFUN_MAX_SINGLE_CLUSTER_PCT": os.getenv("PUMPFUN_MAX_SINGLE_CLUSTER_PCT"),
-        "PUMPFUN_MAX_SYBIL_WASH_RATIO": os.getenv("PUMPFUN_MAX_SYBIL_WASH_RATIO"),
-        "PUMPFUN_CLUSTER_TRACE_DEPTH": os.getenv("PUMPFUN_CLUSTER_TRACE_DEPTH"),
-        "PUMPFUN_ARB_ENABLED": os.getenv("PUMPFUN_ARB_ENABLED")
-        or os.getenv("PUMPFUN_ENABLE_CROSS_VENUE_ARBITRAGE"),
-        "PUMPFUN_ARB_BACKRUNNING_ENABLED": os.getenv("PUMPFUN_ARB_BACKRUNNING_ENABLED")
-        or os.getenv("PUMPFUN_ENABLE_MEMPOOL_BACKRUNNING"),
-        "PUMPFUN_ARB_MIN_PROFIT_SOL": os.getenv("PUMPFUN_ARB_MIN_PROFIT_SOL"),
-        "PUMPFUN_ARB_MIN_SPREAD_PCT": os.getenv("PUMPFUN_ARB_MIN_SPREAD_PCT"),
-        "PUMPFUN_ARB_MAX_INPUT_SOL": os.getenv("PUMPFUN_ARB_MAX_INPUT_SOL"),
-        "PUMPFUN_ARB_MIN_INPUT_SOL": os.getenv("PUMPFUN_ARB_MIN_INPUT_SOL"),
-        "PUMPFUN_ARB_JITO_TIP_SHARE_PCT": os.getenv("PUMPFUN_ARB_JITO_TIP_SHARE_PCT"),
-    } | overrides
+
+    @property
+    def has_private_key(self) -> bool:
+        return bool(self.private_key)
+
+    @property
+    def stream_display_url(self) -> str:
+        """The stream URL without any API key, safe to show (BUG-118)."""
+        return split_stream_api_key(self.stream_url)[0]
+
+    @property
+    def stream_key_in_url(self) -> bool:
+        """``PUMPFUN_STREAM_URL`` itself carries ``api-key`` (move it out, BUG-118)."""
+        return split_stream_api_key(self.stream_url)[1] is not None
+
+    def stream_connect_url(self) -> str:
+        """The URL to connect with, key added for PumpPortal only. Never log it."""
+        return stream_connect_url(self.stream_url, self.stream_api_key)
+
+    def keypair(self) -> Keypair:
+        """The wallet; raises when no key is configured."""
+        if not self.private_key:
+            raise ValueError(f"{PRIVATE_KEY_ENV} is not set")
+        return decode_keypair(self.private_key)
 
 
-def sanitize_env_for_logging() -> dict[str, Any]:
-    """Return environment values with sensitive secrets masked."""
-    masked: dict[str, Any] = {}
-    for key, value in get_runtime_env().items():
-        if value is None:
-            masked[key] = None
-            continue
-        if any(token in key.upper() for token in ("KEY", "TOKEN", "SECRET", "WEBHOOK")):
-            masked[key] = mask_secret(str(value))
-        else:
-            masked[key] = value
-    return masked
+def load_credentials(env: Mapping[str, str] | None = None) -> Credentials:
+    """Credentials from the environment (``PUMPFUN_*`` beats its alias).
 
-
-def validate_required_runtime_env(
-    required: Iterable[str] | None = None,
-) -> dict[str, Any]:
-    """Ensure required runtime env vars are configured before startup."""
-    env = get_runtime_env()
-    names = list(required or ("PUMPFUN_PRIVATE_KEY", "PUMPFUN_RPC_URL"))
-    missing: list[str] = []
-    for name in names:
-        if name == "PUMPFUN_RPC_URL":
-            if not env.get("PUMPFUN_RPC_URL") and not env.get("PUMPFUN_RPC_URLS"):
-                missing.append(name)
-        elif not env.get(name):
-            missing.append(name)
-
-    if missing:
-        raise ValueError(
-            "Missing required environment variables: " + ", ".join(missing)
-        )
-    return env
+    RPC endpoints: ``PUMPFUN_RPC_URL`` first, then ``PUMPFUN_RPC_URLS``; the
+    public mainnet RPC only when neither is set (fine for a short paper
+    test, rate-limited for a real run).
+    """
+    source = os.environ if env is None else env
+    urls: list[str] = []
+    primary = _first(source, RPC_URL_ENV)
+    if primary:
+        urls.append(primary)
+    extra = _first(source, RPC_URLS_ENV) or ""
+    for url in (part.strip() for part in extra.split(",")):
+        if url and url not in urls:
+            urls.append(url)
+    return Credentials(
+        private_key=_first(source, PRIVATE_KEY_ENV),
+        rpc_urls=tuple(urls) or (PUBLIC_RPC_URL,),
+        stream_url=_first(source, STREAM_URL_ENV) or PUMPPORTAL_URL,
+        stream_api_key=_first(source, STREAM_API_KEY_ENV),
+    )
 
 
 __all__ = [
+    "Credentials",
+    "JUPITER_API_KEY_ENV",
+    "MODULE_ENV_VARS",
+    "PRIVATE_KEY_ENV",
+    "PUBLIC_RPC_URL",
+    "PUMPPORTAL_URL",
+    "REPLACED_ENV_VARS",
+    "RPC_URLS_ENV",
+    "RPC_URL_ENV",
+    "STREAM_API_KEY_ENV",
+    "STREAM_URL_ENV",
     "decode_keypair",
-    "get_env_bool",
-    "get_env_float",
-    "get_env_int",
-    "get_env_list",
-    "get_runtime_env",
-    "load_keypair_from_env",
-    "mask_secret",
-    "sanitize_env_for_logging",
-    "UNREAD_ENV_VARS",
+    "known_env_names",
+    "load_credentials",
     "unread_env_warnings",
-    "validate_required_runtime_env",
 ]

@@ -25,9 +25,9 @@ from typing import Any
 from rich.panel import Panel
 from rich.table import Table
 
-from trading_pump.ops.logging import get_configured_console
-from trading_pump.ops.redact import redact_url
-from trading_pump.ops.retention import RetentionPolicy
+from trading_core.ops.logging import get_configured_console
+from trading_core.ops.redact import redact_url
+from trading_core.ops.retention import RetentionPolicy
 from trading_pump.recorder import ReplayRecorder
 from trading_pump.services import market_recorder, slow_lane
 

@@ -19,7 +19,7 @@ from typing import Any, Optional, Sequence
 
 import aiohttp
 
-from trading_pump.ops.redact import redact_text, redact_url
+from trading_core.ops.redact import redact_text, redact_url
 
 # JSON-RPC errors caused by the request itself (bad params, missing account,
 # preflight/simulation or signature failure). Every other error code is treated

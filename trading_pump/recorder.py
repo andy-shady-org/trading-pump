@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from trading_pump.ops.retention import RetentionPolicy, RotatedFileSink
+from trading_core.ops.retention import RetentionPolicy, RotatedFileSink
 
 logger = logging.getLogger(__name__)
 

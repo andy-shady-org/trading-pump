@@ -7,3 +7,9 @@ accounting, the audit trail, alerts, the dashboard) is trading-core's.
 """
 
 __version__ = "0.4.0.dev0"
+
+from trading_core.ops.redact import register_public_identifier
+
+from trading_pump.identifiers import is_solana_pubkey
+
+register_public_identifier(is_solana_pubkey)

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from trading_pump.ops.redact import redact_text, redact_url
+from trading_core.ops.redact import redact_text, redact_url
 
 logger = logging.getLogger(__name__)
 
