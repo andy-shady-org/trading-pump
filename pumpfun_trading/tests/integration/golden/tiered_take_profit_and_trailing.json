@@ -1,0 +1,59 @@
+{
+  "ledger": [
+    {
+      "action": "buy",
+      "cash_flow_sol": -0.01162384,
+      "cost_sol": 0.01,
+      "costs_sol": 0.00162384,
+      "gross_pnl_sol": 0.0,
+      "mint": "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump",
+      "net_pnl_sol": -0.00162384,
+      "proceeds_sol": 0.0,
+      "reason": "entry",
+      "rent_sol": 0.00151384,
+      "strategy": "balanced"
+    },
+    {
+      "action": "partial_sell",
+      "cash_flow_sol": 0.011266822917,
+      "cost_sol": 0.005,
+      "costs_sol": 0.00011,
+      "gross_pnl_sol": 0.006376822917,
+      "mint": "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump",
+      "net_pnl_sol": 0.006266822917,
+      "proceeds_sol": 0.011376822917,
+      "reason": "take_profit_tier_1 (2.33x >= 2.00x)",
+      "rent_sol": 0.0,
+      "strategy": "balanced"
+    },
+    {
+      "action": "partial_sell",
+      "cash_flow_sol": 0.008828932292,
+      "cost_sol": 0.0025,
+      "costs_sol": 0.00011,
+      "gross_pnl_sol": 0.006438932292,
+      "mint": "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump",
+      "net_pnl_sol": 0.006328932292,
+      "proceeds_sol": 0.008938932292,
+      "reason": "take_profit_tier_2 (3.67x >= 3.50x)",
+      "rent_sol": 0.0,
+      "strategy": "balanced"
+    },
+    {
+      "action": "sell",
+      "cash_flow_sol": 0.009123826979,
+      "cost_sol": 0.0025,
+      "costs_sol": -0.00140384,
+      "gross_pnl_sol": 0.005219986979,
+      "mint": "HeL2L24LpcuSo5Wrtu1ToEhy22BySBy71Eitk7Anpump",
+      "net_pnl_sol": 0.006623826979,
+      "proceeds_sol": 0.007719986979,
+      "reason": "trailing_stop_hit (drawdown 32.1% >= 15.0% from peak 4.67x)",
+      "rent_sol": -0.00151384,
+      "strategy": "balanced"
+    }
+  ],
+  "positions": {},
+  "state": "monitoring",
+  "wallet_balance_sol": 0.217595742188
+}

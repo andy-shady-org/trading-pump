@@ -1,1 +1,260 @@
-# trading-pump
+# Pump Fun Trading
+
+A high-performance, institutional-grade automated trading system for [Pump.fun](https://pump.fun) bonding curve liquidity on Solana.
+
+---
+
+## 📚 Central Documentation Portal
+
+All operational manuals, mathematical strategy guides, and architectural blueprints are organized in a structured knowledge hub centered on the [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](./docs/USER-GUIDE.md):
+
+* 📖 [**User Guide & Operations Portal (`docs/USER-GUIDE.md`)**](./docs/USER-GUIDE.md) — Central directory, installation, operational workflows, and CLI matrix.
+* 📈 [**Financial Strategy & Wealth Generation Blueprint (`docs/STRATEGY.md`)**](./docs/STRATEGY.md) — Bonding curve math, fractional Kelly sizing, dynamic trailing stops, and anti-rug heuristics.
+* 🛡️ [**Capital Protection & Risk Management (`docs/RISK.md`)**](./docs/RISK.md) — Exposure caps, daily hard circuit breakers (FEAT-09), and startup on-chain reconciliation.
+* 🖥️ [**Terminal UI & Operator Observability (`docs/TERMINAL-UI.md`)**](./docs/TERMINAL-UI.md) — Live console monitor, sub-millisecond slot telemetry, and alerting webhooks.
+* 🌐 [**Web Dashboard & Hosted Architecture (`docs/WEB-UI.md`)**](./docs/WEB-UI.md) — FastAPI control portal (FEAT-10), volatile in-memory key upload vault, and hot config endpoints.
+* ⚙️ [**Standardized Feature Catalog (`docs/FEATURES.md`)**](./docs/FEATURES.md) — Comprehensive catalog of completed features (FEAT-01 through FEAT-30).
+* 🔄 [**Historical Replay Backtesting Engine (`docs/REPLAY-ENGINE.md`)**](./docs/REPLAY-ENGINE.md) — Market replay simulator and strategy performance analyzer.
+* 🔍 [**Forensic Audit & Accounting Tool (`docs/AUDIT-TOOL.md`)**](./docs/AUDIT-TOOL.md) — Structured audit trail query and inspection CLI.
+* 🛠️ [**Developer & Internal Engineering Portal (`docs/dev/README.md`)**](./docs/dev/README.md) — Sprint backlog, bug tracker, suggestions, release gates, and operations runbook.
+
+---
+
+<div align="center">
+<a href="https://codecov.io/gh/andy-shady-org/pumpfun-trading"><img src="https://codecov.io/gh/andy-shady-org/pumpfun-trading/branch/main/graph/badge.svg" alt="Coverage"/></a>
+<a href="https://github.com/andy-shady-org/pumpfun-trading/stargazers"><img src="https://img.shields.io/github/stars/andy-shady-org/pumpfun-trading?style=flat" alt="Stars Badge"/></a>
+<a href="https://github.com/andy-shady-org/pumpfun-trading/network/members"><img src="https://img.shields.io/github/forks/andy-shady-org/pumpfun-trading?style=flat" alt="Forks Badge"/></a>
+<a href="https://github.com/andy-shady-org/pumpfun-trading/issues"><img src="https://img.shields.io/github/issues/andy-shady-org/pumpfun-trading" alt="Issues Badge"/></a>
+<a href="https://github.com/andy-shady-org/pumpfun-trading/pulls"><img src="https://img.shields.io/github/issues-pr/andy-shady-org/pumpfun-trading" alt="Pull Requests Badge"/></a>
+<a href="https://github.com/andy-shady-org/pumpfun-trading/graphs/contributors"><img alt="GitHub contributors" src="https://img.shields.io/github/contributors/andy-shady-org/pumpfun-trading?color=2b9348"></a>
+<a href="https://github.com/andy-shady-org/pumpfun-trading/blob/master/LICENSE"><img src="https://img.shields.io/github/license/andy-shady-org/pumpfun-trading?color=2b9348" alt="License Badge"/></a>
+<a href="https://github.com/psf/black"><img src="https://img.shields.io/badge/code%20style-black-000000.svg" alt="Code Style Black"/></a>
+<a href="https://pepy.tech/project/pumpfun-trading"><img alt="Downloads" src="https://static.pepy.tech/badge/pumpfun-trading"></a>
+<a href="https://pepy.tech/project/pumpfun-trading"><img alt="Downloads/Week" src="https://static.pepy.tech/badge/pumpfun-trading/month"></a>
+<a href="https://pepy.tech/project/pumpfun-trading"><img alt="Downloads/Month" src="https://static.pepy.tech/badge/pumpfun-trading/week"></a>
+</div>
+
+This package intentionally excludes the bot runtime and the `pumpfun-apis` repository. It focuses on a reusable client layer:
+
+- `pumpfun_trading.api` for HTTP access to Pump.fun public APIs
+- `pumpfun_trading.sdk` for execution-layer transaction building and broadcast helpers
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+## Example
+
+```python
+from pumpfun_trading.api.client import PumpFunApiClient
+from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+
+api = PumpFunApiClient()
+
+execution = PumpFunExecutionClient(
+    private_key_b58="...",
+    rpc_url="https://mainnet.helius-rpc.com/?api-key=...",
+)
+```
+
+## Public API usage
+
+This project only uses public [Pump.fun](https://pump.fun) endpoints for market data. No auth flow is required to inspect coins or fetch recent listings.
+
+```bash
+pumpbot --mode latest-coins --limit 20 --offset 0
+pumpbot --mode market-info --mint <mint-address>
+```
+
+## Local configuration
+
+The CLI and public API client do not require any auth token. To use the execution SDK, keep wallet secrets in environment variables or `.envrc` only.
+
+```bash
+cp .envrc.sample .envrc
+# edit .envrc with your real values
+```
+
+The sample file contains the supported environment variables for bot and execution setup. For an exhaustive, detailed reference of all 50+ configuration parameters, see [**`docs/ENVIRONMENTAL-VARIABLES.md`**](docs/ENVIRONMENTAL-VARIABLES.md).
+
+| Variable                            | Description                                                                                              | Required?                          |
+|-------------------------------------|----------------------------------------------------------------------------------------------------------|------------------------------------|
+| `PUMPFUN_PRIVATE_KEY`               | Base58 private key for the wallet used to sign transactions.                                             | Yes                                |
+| `SOLANA_PRIVATE_KEY`                | Legacy alias accepted by the bot runtime if `PUMPFUN_PRIVATE_KEY` is not set.                            | Optional alias                     |
+| `PUMPFUN_RPC_URL`                   | Solana RPC endpoint for execution and state queries.                                                     | Yes                                |
+| `HELIUS_RPC_URL`                    | Legacy alias accepted by the bot runtime if `PUMPFUN_RPC_URL` is not set.                                | Optional alias                     |
+| `PUMPFUN_GEYSER_ENDPOINT`           | Yellowstone Geyser gRPC streaming endpoint for sub-millisecond market feeds.                             | Required*                          |
+| `PUMPFUN_STREAM_URL`                | WebSocket stream URL (e.g. PumpPortal feed) for market ingestion.                                        | Required*                          |
+| `PUMPFUN_USE_JITO`                  | Enable Jito Block Engine private mempool bundling for MEV protection.                                    | Optional                           |
+| `PUMPFUN_AUDIT_LOG`                 | File path for the JSONL audit trail of lifecycle and trade events.                                       | Optional                           |
+| `PUMPFUN_BOT_STATUS_PATH`           | File path for the JSON bot status snapshot used for monitoring and incident review.                      | Optional                           |
+| `PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS`  | Enable high-throughput asynchronous diagnostic event logging.                                            | Optional                           |
+| `PUMPFUN_ALERT_PROVIDER`            | Alerting backend to use. Set to `none`, `discord`, `slack`, or `telegram`. Default is `none` (disabled). | Optional                           |
+| `PUMPFUN_ALERT_DISCORD_WEBHOOK_URL` | Discord webhook URL used when `PUMPFUN_ALERT_PROVIDER=discord`.                                          | Required if provider is `discord`  |
+| `PUMPFUN_ALERT_SLACK_WEBHOOK_URL`   | Slack incoming webhook URL used when `PUMPFUN_ALERT_PROVIDER=slack`.                                     | Required if provider is `slack`    |
+| `PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN`  | Telegram bot token used when `PUMPFUN_ALERT_PROVIDER=telegram`.                                          | Required if provider is `telegram` |
+| `PUMPFUN_ALERT_TELEGRAM_CHAT_ID`    | Telegram chat ID to send alerts to when `PUMPFUN_ALERT_PROVIDER=telegram`.                               | Required if provider is `telegram` |
+
+Example:
+
+```bash
+export PUMPFUN_PRIVATE_KEY="<base58-wallet-private-key>"
+export PUMPFUN_RPC_URL="https://mainnet.helius-rpc.com/?api-key=<api-key>"
+export PUMPFUN_AUDIT_LOG="${PWD}/.data/pumpfun_trading_audit.jsonl"
+export PUMPFUN_BOT_STATUS_PATH="${PWD}/.data/bot_status.json"
+```
+
+## Discovering a mint address
+
+Use the public frontend API to list recent coins and copy the `mint` field from the response:
+
+```bash
+pumpbot --mode latest-coins --limit 20 --offset 0
+```
+
+You can then inspect that mint without logging in:
+
+```bash
+pumpbot --mode market-info --mint <mint-address>
+```
+
+## Execution SDK
+
+```python
+from pumpfun_trading.sdk.execution import PumpFunExecutionClient
+
+execution = PumpFunExecutionClient(
+    private_key_b58="...",
+    rpc_url="https://mainnet.helius-rpc.com/?api-key=...",
+)
+```
+
+## Bot runtime and strategy presets
+
+The package includes a live launch-monitoring bot that can watch for newly created tokens, buy based on a configurable strategy, and exit on take-profit or stop-loss thresholds. The bot also enforces portfolio-level risk limits and account reserve guards as part of the Phase 0 safety hardening.
+
+```bash
+# balanced preset (default)
+pumpbot --mode bot --preset balanced
+
+# conservative preset
+pumpbot --mode bot --preset conservative
+
+# aggressive preset
+pumpbot --mode bot --preset aggressive
+
+# dry run / no real transactions
+pumpbot --mode bot --preset balanced --dry-run
+```
+
+You can also load a JSON config file instead of hardcoding values:
+
+```bash
+cp bot-config.example.json bot-config.json
+# edit bot-config.json with your target settings
+pumpbot --mode bot --config ./bot-config.json
+```
+
+Example bot config:
+
+```json
+{
+  "strategy_preset": "balanced",
+  "buy_amount_sol": 0.01,
+  "take_profit": 1.5,
+  "stop_loss": 0.85,
+  "max_active_positions": 1,
+  "max_positions_per_mint": 1,
+  "min_market_cap_sol": 5.0,
+  "max_buy_attempts_per_mint": 3,
+  "min_balance_sol": 0.05,
+  "min_sell_balance": 1,
+  "recent_token_ttl_seconds": 600,
+  "reconnect_delay_seconds": 2.0,
+  "dry_run": true,
+  "paper_trade": false,
+  "verbose": true,
+  "stream_url": "wss://pumpportal.fun/api/data",
+  "api_base_url": "https://frontend-api-v3.pump.fun",
+  "max_total_exposure_sol": 0.25,
+  "max_position_size_sol": 0.05,
+  "max_token_concentration_pct": 0.35,
+  "max_loss_per_trade_sol": 0.02,
+  "max_daily_drawdown_pct": 0.2,
+  "reserve_balance_sol": 0.1,
+  "health_check_timeout_seconds": 60
+}
+```
+
+The JSON file is intentionally a sample: keep your real runtime values in a local untracked copy and do not commit secrets or live config to version control. The risk-limit values above are the current portfolio safety defaults used for the balanced preset.
+
+## Audit trail investigation tool
+
+The bot writes a JSONL audit trail for trades, lifecycle transitions, status changes, and operational events. You can inspect it with the dedicated `pumpfun-audit` CLI tool:
+
+```bash
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl
+```
+
+Common filters:
+
+```bash
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --record-type trade
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --state holding
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --mint <mint-address>
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --mint-name SolCat
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --reason take_profit
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --summary
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --json
+pumpfun-audit --path .data/pumpfun_trading_audit.jsonl --export ./audit-export.json
+
+# Pre-registered go / no-go on a paper run (exit code 1 on NO-GO)
+pumpfun-audit verdict --path .data/pumpfun_trading_audit.jsonl --rules configs/verdict_rules.json --strategy momentum
+```
+
+See [AUDIT-TOOL.md](./docs/AUDIT-TOOL.md) for the full audit investigation workflow and examples.
+
+## Risk drills
+
+`pumpfun-drill` runs four scripted drills of the circuit breaker on a paper bot (cumulative loss cap and operator reset, an emergency lock across midnight, a live start with the balance RPC down, a slow take-profit sell). It uses a throwaway key and no network, and exits 1 when a drill fails. See [RUNBOOK §7.1](./docs/dev/RUNBOOK.md#71-scripted-risk-drills-feat-69).
+
+```bash
+pumpfun-drill --report drills.json
+```
+
+## Replay engine and historical strategy validation
+
+The project includes a dedicated `pumpfun-replay` tool for evaluating trading decisions against historical market snapshots without touching the live bot dashboard. This is implemented as a separate UI path so the live bot runtime remains unchanged while replay analysis runs in its own Rich panel flow.
+
+```bash
+pumpfun-replay --path ./historical_snapshots.json --mode dashboard
+pumpfun-replay --path ./historical_snapshots.json --mode summary
+pumpfun-replay --path ./historical_snapshots.json --mode trades
+pumpfun-replay --path ./historical_snapshots.json --mint-name SolCat --mode trades
+```
+
+The replay mode loads JSON or JSONL snapshot data, runs a lightweight paper-trading engine with fee/slippage assumptions, and prints metrics such as:
+
+- profit factor
+- max drawdown
+- win rate
+- average trade return
+- final equity and total trade count
+
+With `--config` or `--preset` it replays the bot's own sizing, exits, modelled costs and circuit breaker from the paper wallet, and `--compare-audit` checks it against a paper run's audit trail.
+
+See [REPLAY-ENGINE.md](./docs/REPLAY-ENGINE.md) for the full replay workflow, dataset format, and UI separation details.
+
+## Hyperparameter strategy optimizer
+
+The project includes `pumpfun-optimize` for automated hyperparameter tuning and backtest optimization over historical replay datasets (`FEAT-27`):
+
+```bash
+# Run evolutionary genetic optimization and export calibrated bot config
+pumpfun-optimize --dataset ./market_replay.jsonl --method genetic --generations 10 --export-config ./tuned_config.json
+
+# Run random search targeting Sharpe ratio
+pumpfun optimize --dataset ./market_replay.jsonl.gz --method random --iterations 50 --objective sharpe
+```

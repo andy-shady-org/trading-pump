@@ -1,0 +1,328 @@
+"""Environment-backed configuration helpers."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterable, Mapping
+from typing import Any
+
+import base58
+from solders.keypair import Keypair
+
+# Names that earlier docs listed but no code reads (BUG-142), with what to use.
+UNREAD_ENV_VARS: dict[str, str] = {
+    "PUMPFUN_DRY_RUN": (
+        "it does NOT stop live trading; use pumpbot --dry-run or --paper-trade"
+    ),
+    "PUMPFUN_CONFIG_PATH": "use pumpbot --config <path>",
+    "PUMPFUN_CONFIG": "use pumpbot --config <path>",
+    "PUMPFUN_STRATEGY_PRESET": "use pumpbot --preset, or strategy_preset in the config",
+    "PUMPFUN_PRESET": "use pumpbot --preset, or strategy_preset in the config",
+    "PUMPFUN_BASE_BUY_SOL": "use buy_amount_sol in the config or --buy-amount-sol",
+    "PUMPFUN_BUY_AMOUNT_SOL": "use buy_amount_sol in the config or --buy-amount-sol",
+    "PUMPFUN_ALERT_WEBHOOK_URL": "use PUMPFUN_ALERT_DISCORD_WEBHOOK_URL",
+    "PUMPFUN_TELEGRAM_BOT_TOKEN": "use PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN",
+    "PUMPFUN_TELEGRAM_CHAT_ID": "use PUMPFUN_ALERT_TELEGRAM_CHAT_ID",
+    **dict.fromkeys(
+        (
+            "PUMPFUN_ANTI_RUG_ENABLED",
+            "PUMPFUN_COPY_TRADING_ENABLED",
+            "PUMPFUN_COPY_TRADING_SCALE_FACTOR",
+            "PUMPFUN_COPY_TRADING_SIZING_MODE",
+            "PUMPFUN_COPY_TRADING_WALLETS",
+            "PUMPFUN_DIAGNOSTIC_EVENTS_ENABLED",
+            "PUMPFUN_DISPLACEMENT_HURDLE_PCT",
+            "PUMPFUN_DISPLACEMENT_MIN_CONVICTION",
+            "PUMPFUN_EVENT_LOG_SUBSYSTEMS",
+            "PUMPFUN_MAX_CREATOR_HOLDING_PCT",
+            "PUMPFUN_MAX_DAILY_DRAWDOWN",
+            "PUMPFUN_MAX_GINI_COEFFICIENT",
+            "PUMPFUN_MAX_MARKET_CAP_SOL",
+            "PUMPFUN_MAX_POSITIONS",
+            "PUMPFUN_MAX_RISK_SCORE",
+            "PUMPFUN_MAX_TOTAL_EXPOSURE_SOL",
+            "PUMPFUN_MIN_HOLD_BEFORE_DISPLACEMENT",
+            "PUMPFUN_MIN_MARKET_CAP_SOL",
+            "PUMPFUN_MOMENTUM_ENABLED",
+            "PUMPFUN_MOMENTUM_MIN_BUY_RATIO",
+            "PUMPFUN_MOMENTUM_MIN_NET_INFLOW_SOL",
+            "PUMPFUN_MOMENTUM_MIN_UNIQUE_BUYERS",
+            "PUMPFUN_MOMENTUM_MIN_Z_SCORE",
+            "PUMPFUN_PRE_GRAD_ENTRY_PROGRESS",
+            "PUMPFUN_PRE_GRAD_MAX_ENTRY_PROGRESS",
+            "PUMPFUN_RAYDIUM_BUY_SOL",
+            "PUMPFUN_RAYDIUM_SLIPPAGE_BPS",
+            "PUMPFUN_RAYDIUM_SNIPE_ENABLED",
+            "PUMPFUN_RPC_ENDPOINTS",
+            "PUMPFUN_RPC_POOL_CONCURRENCY",
+            "PUMPFUN_RPC_POOL_ENABLED",
+            "PUMPFUN_STAGNANT_TIMEOUT",
+            "PUMPFUN_STOP_LOSS",
+            "PUMPFUN_TIER1_TP_FRACTION",
+            "PUMPFUN_TIER1_TP_MULT",
+            "PUMPFUN_TIER2_TP_FRACTION",
+            "PUMPFUN_TIER2_TP_MULT",
+            "PUMPFUN_TIERED_TP_ENABLED",
+            "PUMPFUN_TRAILING_ACTIVATION_PCT",
+            "PUMPFUN_TRAILING_DROP_PCT",
+            "PUMPFUN_TRAILING_STOP_ENABLED",
+        ),
+        "strategy settings are config keys; set the matching key in the config",
+    ),
+}
+
+
+def unread_env_warnings(env: Mapping[str, str] | None = None) -> list[str]:
+    """One warning per set variable that nothing reads (BUG-142).
+
+    Only names are reported, never values: some of these held webhook URLs.
+    """
+    source = os.environ if env is None else env
+    return [
+        f"{name} is set but not read: {hint}"
+        for name, hint in UNREAD_ENV_VARS.items()
+        if source.get(name, "").strip()
+    ]
+
+
+def get_env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_env_float(name: str, default: float = 0.0) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def get_env_int(name: str, default: int = 0) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def get_env_list(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Parse comma-separated environment variable into tuple of strings."""
+    value = os.getenv(name)
+    if not value:
+        return default
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+BOT_LOG_PATH_ENV = "PUMPFUN_BOT_LOG_PATH"
+_LOG_FILE_DISABLED = {"none", "off", "false", "0", "-"}
+
+
+def resolve_bot_log_path(
+    explicit: str | None = None, configured: str | None = "bot.log"
+) -> str | None:
+    """Where the bot's application log (``bot.log``) is written, or ``None``.
+
+    Precedence: an explicit ``log_file=`` argument, then ``PUMPFUN_BOT_LOG_PATH``,
+    then the config's ``log_file``. The config always carries ``bot.log`` as its
+    default, so the environment must win over it, as ``PUMPFUN_EVENT_LOG_PATH``
+    does. ``none`` / ``off`` (in the argument or the variable) turn the file
+    off; an empty variable is ignored.
+    """
+    for candidate in (explicit, os.getenv(BOT_LOG_PATH_ENV)):
+        if candidate is None or not candidate.strip():
+            continue
+        value = candidate.strip()
+        return None if value.lower() in _LOG_FILE_DISABLED else value
+    return configured or None
+
+
+def mask_secret(value: str | None, *, hidden: str = "********") -> str:
+    if not value:
+        return "<unset>"
+    if len(value) <= 8:
+        return hidden
+    return f"{value[:4]}...{value[-2:]}"
+
+
+def decode_keypair(private_key_b58: str) -> Keypair:
+    """Decode a base58-encoded string into a solders Keypair."""
+    decoded = base58.b58decode(private_key_b58.strip())
+    if len(decoded) == 32:
+        return Keypair.from_seed(decoded)
+    if len(decoded) == 64:
+        try:
+            return Keypair.from_bytes(decoded)
+        except Exception:
+            return Keypair.from_seed(decoded[:32])
+    if len(decoded) >= 32:
+        return Keypair.from_seed(decoded[:32])
+    raise ValueError(
+        "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret key; "
+        f"got {len(decoded)} bytes after decoding."
+    )
+
+
+def load_keypair_from_env(
+    env_var: str | None = None,
+) -> Keypair | None:
+    """Load and decode a Keypair from environment variables (e.g. PUMPFUN_PRIVATE_KEY or SOLANA_PRIVATE_KEY)."""
+    raw_key: str | None = None
+    if env_var:
+        raw_key = os.getenv(env_var)
+    else:
+        raw_key = os.getenv("PUMPFUN_PRIVATE_KEY") or os.getenv("SOLANA_PRIVATE_KEY")
+
+    if not raw_key or not raw_key.strip():
+        return None
+    return decode_keypair(raw_key.strip())
+
+
+def get_runtime_env(**overrides: Any) -> dict[str, Any]:
+    """Return the environment-backed settings for bot startup."""
+    return {
+        "PUMPFUN_PRIVATE_KEY": os.getenv("PUMPFUN_PRIVATE_KEY")
+        or os.getenv("SOLANA_PRIVATE_KEY"),
+        "PUMPFUN_RPC_URL": os.getenv("PUMPFUN_RPC_URL") or os.getenv("HELIUS_RPC_URL"),
+        "PUMPFUN_RPC_URLS": os.getenv("PUMPFUN_RPC_URLS")
+        or os.getenv("SOLANA_RPC_URLS"),
+        "PUMPFUN_STREAM_URL": os.getenv("PUMPFUN_STREAM_URL")
+        or os.getenv("PUMPFUN_WS_URL"),
+        "PUMPFUN_STREAM_API_KEY": os.getenv("PUMPFUN_STREAM_API_KEY"),
+        "PUMPFUN_GEYSER_ENDPOINT": os.getenv("PUMPFUN_GEYSER_ENDPOINT"),
+        "PUMPFUN_GEYSER_X_TOKEN": os.getenv("PUMPFUN_GEYSER_X_TOKEN")
+        or os.getenv("PUMPFUN_GEYSER_TOKEN"),
+        "PUMPFUN_ALERT_PROVIDER": os.getenv("PUMPFUN_ALERT_PROVIDER"),
+        # Primary names per docs, with legacy aliases (BUG-87).
+        "PUMPFUN_AUDIT_LOG_PATH": os.getenv("PUMPFUN_AUDIT_LOG_PATH")
+        or os.getenv("PUMPFUN_AUDIT_LOG"),
+        "PUMPFUN_STATUS_PATH": os.getenv("PUMPFUN_STATUS_PATH")
+        or os.getenv("PUMPFUN_BOT_STATUS_PATH"),
+        "PUMPFUN_REPLAY_LOG_PATH": os.getenv("PUMPFUN_REPLAY_LOG_PATH"),
+        "PUMPFUN_RECORD_REPLAY": os.getenv("PUMPFUN_RECORD_REPLAY"),
+        "PUMPFUN_DRAWDOWN_MODE": os.getenv("PUMPFUN_DRAWDOWN_MODE"),
+        "PUMPFUN_PROFIT_RATCHET_RATIO": os.getenv("PUMPFUN_PROFIT_RATCHET_RATIO"),
+        "PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT": os.getenv(
+            "PUMPFUN_PROFIT_DRAWDOWN_TOLERANCE_PCT"
+        ),
+        "PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS": os.getenv(
+            "PUMPFUN_ENABLE_DIAGNOSTIC_EVENTS"
+        ),
+        "PUMPFUN_EVENT_LOG_PATH": os.getenv("PUMPFUN_EVENT_LOG_PATH"),
+        "PUMPFUN_EVENT_SUBSYSTEMS": os.getenv("PUMPFUN_EVENT_SUBSYSTEMS"),
+        "PUMPFUN_LOG_MAX_BYTES": os.getenv("PUMPFUN_LOG_MAX_BYTES"),
+        "PUMPFUN_LOG_BACKUP_COUNT": os.getenv("PUMPFUN_LOG_BACKUP_COUNT"),
+        "PUMPFUN_LOG_ROTATION_TYPE": os.getenv("PUMPFUN_LOG_ROTATION_TYPE"),
+        "PUMPFUN_LOG_COMPRESS": os.getenv("PUMPFUN_LOG_COMPRESS"),
+        "PUMPFUN_BOT_LOG_PATH": os.getenv("PUMPFUN_BOT_LOG_PATH"),
+        "PUMPFUN_AUDIT_MAX_BYTES": os.getenv("PUMPFUN_AUDIT_MAX_BYTES"),
+        "PUMPFUN_AUDIT_BACKUP_COUNT": os.getenv("PUMPFUN_AUDIT_BACKUP_COUNT"),
+        "PUMPFUN_AUDIT_RETENTION_DAYS": os.getenv("PUMPFUN_AUDIT_RETENTION_DAYS"),
+        "PUMPFUN_AUDIT_COMPRESS": os.getenv("PUMPFUN_AUDIT_COMPRESS"),
+        "PUMPFUN_REPLAY_MAX_BYTES": os.getenv("PUMPFUN_REPLAY_MAX_BYTES"),
+        "PUMPFUN_REPLAY_BACKUP_COUNT": os.getenv("PUMPFUN_REPLAY_BACKUP_COUNT"),
+        "PUMPFUN_REPLAY_RETENTION_DAYS": os.getenv("PUMPFUN_REPLAY_RETENTION_DAYS"),
+        "PUMPFUN_REPLAY_COMPRESS": os.getenv("PUMPFUN_REPLAY_COMPRESS"),
+        "PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS": os.getenv(
+            "PUMPFUN_RETENTION_CHECK_INTERVAL_SECONDS"
+        ),
+        "PUMPFUN_DYNAMIC_SLIPPAGE_ENABLED": os.getenv(
+            "PUMPFUN_DYNAMIC_SLIPPAGE_ENABLED"
+        )
+        or os.getenv("PUMPFUN_ENABLE_DYNAMIC_SLIPPAGE"),
+        "PUMPFUN_MIN_SLIPPAGE_BPS": os.getenv("PUMPFUN_MIN_SLIPPAGE_BPS"),
+        "PUMPFUN_MAX_SLIPPAGE_BPS": os.getenv("PUMPFUN_MAX_SLIPPAGE_BPS"),
+        "PUMPFUN_MAX_EXIT_SLIPPAGE_BPS": os.getenv("PUMPFUN_MAX_EXIT_SLIPPAGE_BPS"),
+        "PUMPFUN_PRIORITY_FEE_MODE": os.getenv("PUMPFUN_PRIORITY_FEE_MODE"),
+        "PUMPFUN_CAPITAL_ROTATION_ENABLED": os.getenv(
+            "PUMPFUN_CAPITAL_ROTATION_ENABLED"
+        )
+        or os.getenv("PUMPFUN_ENABLE_CAPITAL_ROTATION"),
+        "PUMPFUN_DISPLACEMENT_MIN_CONVICTION_PERCENTILE": os.getenv(
+            "PUMPFUN_DISPLACEMENT_MIN_CONVICTION_PERCENTILE"
+        ),
+        "PUMPFUN_DISPLACEMENT_HURDLE_RATE_PCT": os.getenv(
+            "PUMPFUN_DISPLACEMENT_HURDLE_RATE_PCT"
+        ),
+        "PUMPFUN_PRE_GRADUATION_ENABLED": os.getenv("PUMPFUN_PRE_GRADUATION_ENABLED")
+        or os.getenv("PUMPFUN_ENABLE_PRE_GRADUATION_HARVESTING"),
+        "PUMPFUN_PRE_GRADUATION_ENTRY_PROGRESS_PCT": os.getenv(
+            "PUMPFUN_PRE_GRADUATION_ENTRY_PROGRESS_PCT"
+        ),
+        "PUMPFUN_CLUSTER_ANALYSIS_ENABLED": os.getenv(
+            "PUMPFUN_CLUSTER_ANALYSIS_ENABLED"
+        )
+        or os.getenv("PUMPFUN_ENABLE_CLUSTER_ANALYSIS"),
+        "PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT": os.getenv(
+            "PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT"
+        ),
+        "PUMPFUN_MAX_SINGLE_CLUSTER_PCT": os.getenv("PUMPFUN_MAX_SINGLE_CLUSTER_PCT"),
+        "PUMPFUN_MAX_SYBIL_WASH_RATIO": os.getenv("PUMPFUN_MAX_SYBIL_WASH_RATIO"),
+        "PUMPFUN_CLUSTER_TRACE_DEPTH": os.getenv("PUMPFUN_CLUSTER_TRACE_DEPTH"),
+        "PUMPFUN_ARB_ENABLED": os.getenv("PUMPFUN_ARB_ENABLED")
+        or os.getenv("PUMPFUN_ENABLE_CROSS_VENUE_ARBITRAGE"),
+        "PUMPFUN_ARB_BACKRUNNING_ENABLED": os.getenv("PUMPFUN_ARB_BACKRUNNING_ENABLED")
+        or os.getenv("PUMPFUN_ENABLE_MEMPOOL_BACKRUNNING"),
+        "PUMPFUN_ARB_MIN_PROFIT_SOL": os.getenv("PUMPFUN_ARB_MIN_PROFIT_SOL"),
+        "PUMPFUN_ARB_MIN_SPREAD_PCT": os.getenv("PUMPFUN_ARB_MIN_SPREAD_PCT"),
+        "PUMPFUN_ARB_MAX_INPUT_SOL": os.getenv("PUMPFUN_ARB_MAX_INPUT_SOL"),
+        "PUMPFUN_ARB_MIN_INPUT_SOL": os.getenv("PUMPFUN_ARB_MIN_INPUT_SOL"),
+        "PUMPFUN_ARB_JITO_TIP_SHARE_PCT": os.getenv("PUMPFUN_ARB_JITO_TIP_SHARE_PCT"),
+    } | overrides
+
+
+def sanitize_env_for_logging() -> dict[str, Any]:
+    """Return environment values with sensitive secrets masked."""
+    masked: dict[str, Any] = {}
+    for key, value in get_runtime_env().items():
+        if value is None:
+            masked[key] = None
+            continue
+        if any(token in key.upper() for token in ("KEY", "TOKEN", "SECRET", "WEBHOOK")):
+            masked[key] = mask_secret(str(value))
+        else:
+            masked[key] = value
+    return masked
+
+
+def validate_required_runtime_env(
+    required: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Ensure required runtime env vars are configured before startup."""
+    env = get_runtime_env()
+    names = list(required or ("PUMPFUN_PRIVATE_KEY", "PUMPFUN_RPC_URL"))
+    missing: list[str] = []
+    for name in names:
+        if name == "PUMPFUN_RPC_URL":
+            if not env.get("PUMPFUN_RPC_URL") and not env.get("PUMPFUN_RPC_URLS"):
+                missing.append(name)
+        elif not env.get(name):
+            missing.append(name)
+
+    if missing:
+        raise ValueError(
+            "Missing required environment variables: " + ", ".join(missing)
+        )
+    return env
+
+
+__all__ = [
+    "decode_keypair",
+    "get_env_bool",
+    "get_env_float",
+    "get_env_int",
+    "get_env_list",
+    "get_runtime_env",
+    "load_keypair_from_env",
+    "mask_secret",
+    "sanitize_env_for_logging",
+    "UNREAD_ENV_VARS",
+    "unread_env_warnings",
+    "validate_required_runtime_env",
+]
