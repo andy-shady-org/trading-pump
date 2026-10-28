@@ -20,6 +20,7 @@ BUGS_MD = PACKAGE_ROOT.parent / "docs" / "dev" / "BUGS.md"
 # test (or add one) and remove the ID here. Reasons are kept next to each ID.
 KNOWN_UNTAGGED: dict[str, str] = {
     "BUG-09": "pytest addopts packaging issue; process fix, not runtime behaviour",
+    "BUG-31": "zero-reserve quoting superseded by BUG-101 (tagged)",
 }
 # BUGS.md "Where each fix lives" lists the resolved bugs whose fix (and test)
 # is in trading-core or left with code that was not ported; they need no tag
@@ -132,3 +133,89 @@ def test_regression_known_untagged_list_only_shrinks() -> None:
 def test_regression_tags_name_real_bugs() -> None:
     unknown = sorted(_regression_tags() - set(_bug_statuses()))
     assert unknown == []
+
+
+# -- documentation links ------------------------------------------------------
+REPO_ROOT = PACKAGE_ROOT.parent
+_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+_HEADING = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$")
+_SKIP_DIRS = {".git", ".nox", ".venv", "node_modules", "site-packages"}
+
+
+def _outside_fences(text: str) -> list[str]:
+    lines, fenced = [], False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+        elif not fenced:
+            lines.append(line)
+    return lines
+
+
+def _slug(heading: str) -> str:
+    """GitHub's heading anchor: lower case, formatting and punctuation dropped."""
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", heading.strip().lower())
+    text = re.sub(r"[`*~]", "", text)
+    return "".join(c for c in text if c.isalnum() or c in "-_ ").replace(" ", "-")
+
+
+def _anchors(path: Path) -> set[str]:
+    found: set[str] = set()
+    counts: dict[str, int] = {}
+    for line in _outside_fences(path.read_text(encoding="utf-8")):
+        match = _HEADING.match(line)
+        if match:
+            slug = _slug(match.group(1))
+            count = counts.get(slug, 0)
+            counts[slug] = count + 1
+            found.add(slug if count == 0 else f"{slug}-{count}")
+    return found
+
+
+def _broken_links(root: Path) -> list[str]:
+    broken: list[str] = []
+    anchors: dict[Path, set[str]] = {}
+    docs = sorted(
+        path for path in root.rglob("*.md") if not _SKIP_DIRS & set(path.parts)
+    )
+    for doc in docs:
+        for line in _outside_fences(doc.read_text(encoding="utf-8")):
+            for target in _LINK.findall(line):
+                if re.match(r"^[a-z]+:", target):
+                    continue
+                path, _, fragment = target.partition("#")
+                dest = (doc.parent / path).resolve() if path else doc
+                where = f"{doc.relative_to(root)} -> {target}"
+                if not dest.exists():
+                    broken.append(where)
+                elif fragment and dest.suffix == ".md":
+                    if dest not in anchors:
+                        anchors[dest] = _anchors(dest)
+                    if fragment.lower() not in anchors[dest]:
+                        broken.append(where)
+    return broken
+
+
+def test_docs_relative_links_and_anchors_resolve() -> None:
+    """Every relative link in the docs points at a file and heading that exist.
+
+    pumpfun-trading's documents were archived and split on 2026-10-28; this
+    keeps every cross-reference in the kept history working.
+    """
+    assert _broken_links(REPO_ROOT) == []
+
+
+def test_the_link_check_finds_missing_files_and_headings(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "a.md").write_text(
+        "# A Title\n## Same\n## Same\n```\n[fenced](missing.md)\n```\n"
+        "[ok](b.md#b-title) [dup](#same-1) [web](https://example.com)\n"
+        "[gone](c.md) [bad anchor](b.md#nope) [here](#nope)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docs" / "b.md").write_text("# B `Title`\n", encoding="utf-8")
+    assert _broken_links(tmp_path) == [
+        "docs/a.md -> c.md",
+        "docs/a.md -> b.md#nope",
+        "docs/a.md -> #nope",
+    ]

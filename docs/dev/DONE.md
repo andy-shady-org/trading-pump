@@ -1,5 +1,7 @@
 # Completed Work (archive)
 
+> **Since 2026-10-28** this archive continues in trading-pump. Everything below was finished in pumpfun-trading and is kept word for word; its links go to the [archived documents](../archive/pumpfun-trading/INDEX.md) where the item was planned, and much of the code it names was retired or moved to trading-core ([`BUGS.md`, Where each fix lives](BUGS.md#where-each-fix-lives-after-the-move-to-trading-core), [`TODO.md`, Not ported](TODO.md#not-ported)). Work finished in trading-pump is added at the end, under [trading-pump](#trading-pump).
+
 Finished phases, sprints and work items moved out of [`TODO.md`](../archive/pumpfun-trading/dev/TODO.md) on 2026-10-20, so that `TODO.md` lists open work only. Headings are kept word for word, so sprint names and anchors used elsewhere still resolve here. Release-by-release changes are in [`CHANGELOG.md`](../../CHANGELOG.md); strategy evidence and results are in [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log).
 
 **Rules.** A sprint moves here when its last box is ticked; in a sprint that is only partly done, the ticked items move here and `TODO.md` keeps a one-line pointer. Verify a completion against the code before moving it (AGENTS.md Learnings Log). Nothing here is open: items that were open when they were archived are marked **Superseded**, **Moved to `TODO.md`** or ticked with the reason they were closed.
@@ -944,3 +946,14 @@ Split in two (decided 2026-10-19). **28a** (branch `sprint-28a-runtime-decomposi
 - [x] **28a** Split `sdk/execution.py` into `execution_types.py`, `execution_base.py`, `transport.py`, `pumpfun_execution.py`, `raydium_execution.py` (public re-exports kept; 1,953 → 165 lines) *(mirrored `unit/sdk/test_*.py`; the 85 old `test_execution.py` tests moved whole)*
 - [x] Each extracted module gets its mirrored `tests/unit/<pkg>/test_<module>.py` in the same PR ([`TESTING.md`](../archive/pumpfun-trading/dev/TESTING.md)) *(28a)*
 - **Acceptance:** `bot/run.py` < 800 lines; golden replay tests from Sprint 27 unchanged; coverage ≥ 95%; mypy clean. *28a: `run.py` 5,078 → 4,631 lines, golden replay unchanged, coverage 96.53%, lint and mypy clean; the < 800 target needs 28b. 28b: 5,052 → 3,571 lines, golden replay unchanged, coverage 96.83%; the < 800 target moves to 28c.*
+
+## trading-pump
+
+### Migration onto trading-core (2026-10-28, [`CHANGELOG.md` Unreleased / 0.4.0](../../CHANGELOG.md))
+- [x] pumpfun-trading's history and tags imported; package renamed `trading_pump`
+- [x] Venue layer ported at 100% branch coverage (SDK, PumpSwap maths and fee config, costs, RPC pool, PumpPortal host, API client, screening, recorders); engine code removed in favour of trading-core; pumpbot runtime and NO-GO lanes retired (history at `v0.3.0rc8`)
+- [x] `PumpModule`, graduation tracking, the PumpSwap paper executor and the FEAT-76 `pumpswap_momentum` lane; `trading-pump replay`, `env`, `record`
+- [x] BUG-158 (missing balance read as 0 SOL)
+- [x] Documentation split: guides rewritten, pumpbot's archived, TODO / PROPOSED-FEATURES / ADRs split with trading-core, every bug accounted for (`BUGS.md`, Where each fix lives)
+- [x] Replay of the rc.8 graduation rows through the new stack ([`STRATEGY-PIVOT.md` §6.14](STRATEGY-PIVOT.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28))
+- [x] From the FEAT-76 TODO: the PumpSwap paper executor and the `pumpswap_momentum` lane, modelled in replay; the rc.9 build with BUG-157 fixed is superseded (the capture is pruned by its own policy)

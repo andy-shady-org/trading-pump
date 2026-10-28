@@ -1,8 +1,8 @@
 # Project Costs
 
-What building and running `pumpfun-trading` has cost so far, and what each running bot costs to keep going. Record every new payment here as it happens, in the currency it was paid in. Amounts are not converted: the project pays in USD, EUR, GBP and SOL, and an exchange rate picked later would make the totals look more exact than they are.
+What building and running `pumpfun-trading` (since 2026-10-28 `trading-pump`, the trading-core module) has cost so far, and what each running bot costs to keep going. Record every new payment here as it happens, in the currency it was paid in. Amounts are not converted: the project pays in USD, EUR, GBP and SOL, and an exchange rate picked later would make the totals look more exact than they are.
 
-Last updated: 2026-10-26.
+Last updated: 2026-10-28.
 
 ---
 
@@ -84,6 +84,14 @@ PumpPortal meters token-trade messages against the API key's wallet: 0.01 SOL pe
 (Trade rows with a `user` in the replay capture.) Launch mode subscribes to every held coin, so this grows with `max_active_positions` and how busy the held coins are.
 
 **The 0.02 SOL floor.** PumpPortal serves trade data only while the key's wallet holds at least 0.02 SOL, so only the balance above 0.02 SOL is usable. On 2026-10-26 a 0.010015 SOL charge at 15:10:59 UTC left 0.019985 SOL; PumpPortal closed the connection at 15:35:05 and refused every trade subscription after it, and both rc.7 bots (one shared key) stopped buying. A 0.02 SOL top-up at 15:49:16 was not picked up by the bot's retry on the same connection at 15:50:21, and the bots were stopped at 15:51 ([`RUNBOOK.md` §5.7](../archive/pumpfun-trading/dev/RUNBOOK.md#57-trade-feed-circuit-breaker-pumpportal-api-key-funds-bug-116)). Plan funding as 0.02 SOL plus the run's use: at rc.7's rate two bots use about 0.0024 SOL an hour, so a 72 h run needs about 0.17 SOL above the floor. After the 16:49 UTC top-up the wallet holds 0.199985 SOL, about 0.18 SOL above the floor: about 75 h of both bots at rc.7's rate, so check the balance on day 3 of the rc.8 runs (FEAT-75's filters buy less, which helps). The wallet's on-chain history shows the charges (one 0.01 SOL debit per 10,000 messages). At the operator's rate of 0.01 SOL = $1.00, two bots like these cost about $165 a month in trade data, more than the Helius plan.
+
+### 3.3 On the new stack (trading-pump 0.4.0, from 2026-10-28)
+
+What a run of the module costs, from the rc.8 measurements above; measure it on the first run (the dashboard's RPC row and the provider's usage page) and replace these estimates:
+
+* **PumpPortal: nothing.** The module subscribes to migrations only, which PumpPortal serves without a key and without metering. No trade-data charges, no 0.02 SOL floor.
+* **Helius credits: graduation tracking only.** No launch buying and no held curves to refresh: every followed graduate's pool is read every 2 s for its first 5 minutes, then every 10 s for 4 h, 33 pools per `getMultipleAccounts` call. At rc.6 / rc.8 rates (about 900 migrations a day) that is the FEAT-73 estimate above: about 1.3 M credits per 30 days at 10 s plus about 1.25 M for the fast phase, ≈ 2.6 M per run, plus a fee-config read every 5 minutes. Two runs fit the Developer plan's 10 M with room to spare; four do not.
+* **Disk:** about 1–2 M capture rows a day (rc.8: 861,000 rows in 16.6 h).
 
 ---
 

@@ -1,46 +1,25 @@
-# Copy this file to .envrc and fill in your real values.
-# Do not commit .envrc to version control.
-#
-# If you use direnv, this file is loaded automatically when you enter the repo.
+# Copy this file to .envrc in a runtime folder (never the repository), fill in
+# your real values and chmod 600 it. Do not commit .envrc to version control.
+# Only credentials live here; every other choice is in the run's settings file
+# (docs/CONFIGURATION.md). `trading-pump env` shows what is set, names only.
+# Every variable: docs/ENVIRONMENT.md.
 
-# Required: wallet private key for on-chain execution.
-export PUMPFUN_PRIVATE_KEY="<base58-wallet-private-key>"
-# Optional legacy alias accepted by the bot runtime.
-# export SOLANA_PRIVATE_KEY="$PUMPFUN_PRIVATE_KEY"
-
-# Required: RPC endpoint used to sign and submit transactions.
+# RPC: the primary endpoint and, recommended, a fallback (one key per run).
 export PUMPFUN_RPC_URL="https://mainnet.helius-rpc.com/?api-key=<your-rpc-api-key>"
-# Optional legacy alias accepted by the bot runtime.
-# export HELIUS_RPC_URL="$PUMPFUN_RPC_URL"
+# export PUMPFUN_RPC_URLS="https://<fallback-rpc>/?api-key=<key>"
 
-# Stream Ingestion: At least one of PUMPFUN_STREAM_URL or PUMPFUN_GEYSER_ENDPOINT must be configured for live trading/paper pilot.
-# Option A: WebSocket stream URL (e.g. PumpPortal public event feed)
-export PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"
+# Live mode only (not built yet): the trading wallet, base58 seed or secret key.
+# export PUMPFUN_PRIVATE_KEY="<base58-wallet-private-key>"
 
-# Option B: Yellowstone Geyser gRPC endpoint for sub-millisecond on-chain streaming
-# export PUMPFUN_GEYSER_ENDPOINT="https://grpc.mainnet.helius-rpc.com"
-# export PUMPFUN_GEYSER_X_TOKEN="<your-geyser-x-token>"
+# Not needed: the migration feed is free and keyless. Keep keys out of the URL.
+# export PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"
+# export PUMPFUN_STREAM_API_KEY="<pumpportal-api-key>"
 
-# Optional: alerting provider. Set to one of: none, discord, slack, telegram.
-# Use "none" to disable alerts entirely.
-export PUMPFUN_ALERT_PROVIDER="none"
+# Only for `trading-pump record --jupiter-quotes` on the keyed host.
+# export PUMPFUN_JUPITER_API_KEY="<jupiter-api-key>"
 
-# Discord: requires a webhook URL.
-# export PUMPFUN_ALERT_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/…"
-
-# Slack: requires a webhook URL.
-# export PUMPFUN_ALERT_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/…"
-
-# Telegram: requires both a bot token and a chat id.
-# export PUMPFUN_ALERT_TELEGRAM_BOT_TOKEN="<telegram-bot-token>"
-# export PUMPFUN_ALERT_TELEGRAM_CHAT_ID="<telegram-chat-id>"
-
-# Optional: durable JSONL audit trail path for lifecycle events and trades.
-export PUMPFUN_AUDIT_LOG="${PWD}/.data/pumpfun_trading_audit.jsonl"
-
-# Optional: JSON snapshot of the current bot state for monitoring and incident review.
-export PUMPFUN_BOT_STATUS_PATH="${PWD}/.data/bot_status.json"
-
-# Optional: if you use a local .env loader, source it before running the CLI.
-# Example:
-# export $(grep -v '^#' .env | xargs)
+# Alerts are trading-core's (its docs/ENVIRONMENT.md): one provider.
+# export TRADING_CORE_ALERT_PROVIDER="discord"
+# export TRADING_CORE_ALERT_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+# export TRADING_CORE_ALERT_TELEGRAM_BOT_TOKEN="<telegram-bot-token>"
+# export TRADING_CORE_ALERT_TELEGRAM_CHAT_ID="<telegram-chat-id>"

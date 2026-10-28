@@ -1,6 +1,8 @@
 # Identified Code Issues and Bugs
 
-This document details all identified bugs, edge-case vulnerabilities, logic flaws, and production-readiness blockers discovered during the comprehensive audit of `pumpfun-trading`.
+This document details all identified bugs, edge-case vulnerabilities, logic flaws, and production-readiness blockers found in `pumpfun-trading` and, since the move onto trading-core (2026-10-28), in `trading-pump`, which continues it. Numbering continues from pumpfun-trading (next free: **BUG-159**); trading-core numbers its own bugs `TC-<n>`.
+
+The write-ups below are kept as they were written. Their **Location** lines name pumpfun-trading's layout at the time (`pumpfun_trading/bot/run.py` and so on); [Where each fix lives](#where-each-fix-lives-after-the-move-to-trading-core) says where each fix and its test are today. The code of v0.3.0rc8 is in this repository's history (tag `v0.3.0rc8`).
 
 ---
 
@@ -165,6 +167,44 @@ This document details all identified bugs, edge-case vulnerabilities, logic flaw
 | **BUG-155** | Low | UI / Health | **RESOLVED** | After a quiet stream paused trading, the status stayed "health timeout" once trading had resumed, so the dashboard showed a pause that had ended; the label is cleared and "trading resumed" recorded |
 | **BUG-157** | High | Ops / Retention | **RESOLVED** | The periodic archive prune applied the audit policy to every `*.jsonl*` archive in the bot's folder, replay captures included, so `PUMPFUN_REPLAY_BACKUP_COUNT=40` was cut to the audit count (20) and the rc.8 captures lost their first 14–21 h of 37; each file is now pruned with its own policy, and only its own archives |
 | **BUG-156** | High | Streams / Trade feed | **RESOLVED** | After the PumpPortal key's wallet fell below 0.02 SOL, a top-up was not picked up: the breaker's probe re-asked the connection that had refused, PumpPortal did not accept it there, and both rc.7 bots stayed blocked until stopped; a refused connection is now closed and the fresh one subscribes, and the dashboard says "refused" until the feed is back |
+| **BUG-158** | Medium | SDK / Wallet balance | **RESOLVED** | `get_balance_sol` read an RPC answer without a balance (`result` missing, `null` or without `value`) as 0 SOL; a live run would have started its day, and the breaker's baseline, from an empty wallet. It now raises, and the engine counts the read as failed |
+
+
+## Where Each Fix Lives After The Move To trading-core
+
+pumpfun-trading was split on 2026-10-28: the venue-neutral engine (risk, accounting, audit, health, lifecycle, alerts, persistence, dashboard) moved to **trading-core**, and this repository kept the Solana / Pump.fun code and became a trading-core module. The pumpbot runtime (`bot/`, `execution/`, `engines/`) and the lanes that are not ported were retired (`docs/dev/TODO.md`, Not ported). Every resolved bug is therefore in one of four places:
+
+1. **Tested here.** The fix is in code this repository still has, and a test carries `@pytest.mark.regression("BUG-xx")` (`trading_pump/tests/unit/test_suite_layout.py` checks it).
+2. **trading-core, tagged there.** The fix moved with its code and its tagged test is in trading-core. trading-core's `docs/dev/BUGS.md` lists it and carries a copy of the write-up.
+3. **trading-core, rebuilt.** The code was rewritten in trading-core's own design (positions in quote units, the engine's single loop, the exit backoff, the dashboard) and the core's tests cover the behaviour without the tag. The write-up below is the history.
+4. **Retired.** The fix is in code that was not ported. It is in the history at tag `v0.3.0rc8`; anyone porting that code back must bring the fix and its tagged test with it.
+
+The guard reads the two lines below (one line each, IDs in any order):
+
+* **trading-core, tagged there**: BUG-10, BUG-12, BUG-47, BUG-64, BUG-89, BUG-94, BUG-97, BUG-98, BUG-99, BUG-105, BUG-106, BUG-111, BUG-114, BUG-115, BUG-127, BUG-128, BUG-141, BUG-144
+* **trading-core, rebuilt in the core design**: BUG-04, BUG-05, BUG-08, BUG-11, BUG-14, BUG-15, BUG-17, BUG-18, BUG-19, BUG-21, BUG-22, BUG-23, BUG-26, BUG-27, BUG-28, BUG-29, BUG-30, BUG-41, BUG-45, BUG-46, BUG-70, BUG-71, BUG-72, BUG-88, BUG-91, BUG-110, BUG-130, BUG-140, BUG-143, BUG-148, BUG-153, BUG-155
+* **Retired with code that was not ported (tag v0.3.0rc8)**: BUG-06, BUG-07, BUG-16, BUG-20, BUG-24, BUG-25, BUG-32, BUG-36, BUG-38, BUG-39, BUG-40, BUG-42, BUG-43, BUG-44, BUG-48, BUG-49, BUG-50, BUG-51, BUG-52, BUG-60, BUG-61, BUG-62, BUG-63, BUG-65, BUG-73, BUG-75, BUG-76, BUG-78, BUG-80, BUG-81, BUG-82, BUG-83, BUG-84, BUG-85, BUG-86, BUG-87, BUG-100, BUG-109, BUG-112, BUG-116, BUG-119, BUG-120, BUG-121, BUG-122, BUG-126, BUG-129, BUG-131, BUG-132, BUG-133, BUG-134, BUG-135, BUG-146, BUG-154, BUG-156
+
+Untagged on purpose (`KNOWN_UNTAGGED` in the guard, as in pumpfun-trading): **BUG-09** (a packaging fix, not runtime behaviour) and **BUG-31** (zero-reserve quoting, superseded by BUG-101, which is tagged here).
+
+Notes on the retired and rebuilt fixes a future port must not lose:
+
+| Bug | Where the fix was | Today |
+|---|---|---|
+| BUG-06 | bot-level stream circuit breaker (`bot/run.py`) | Retired. The reconnect backoff itself is in `streams/websocket.py` (doubling to 30 s), which the migration feed uses |
+| BUG-07 | startup position reconciliation (`bot/reconcile.py`) | Retired with reconcile; a core reconciliation contract is open in trading-core's TODO |
+| BUG-16, 38, 42, 43, 76 | `strategies/exits.py` (stagnation, pre-graduation tiers, tier latching, stop with no entry market cap) | Retired. The FEAT-76 lane uses the core's `ExitRules` (take profit, stop, max hold) |
+| BUG-20, 60–63, 82–84, 119, 121, 126, 135 | `engines/` (replay, optimizer, parity) | Retired. `trading-pump replay` drives the real engine from a capture instead; BUG-121 / 126 are why its fills pay the paper entry delay and the pool fee on both sides |
+| BUG-24, 48–50, 52, 73, 129, 154 | `execution/executor.py` (curve buys and sells, live fills, confirmation, entry curve wait) | Retired. Paper fills are rebuilt for PumpSwap in `execution.py` (fresh read per fill, refusals as BUG-145 / 152); live orders are refused until the live gate |
+| BUG-36, 44, 50, 51, 81, 131 | Raydium (`sdk/raydium*`) | Retired: Pump.fun migrates to PumpSwap (BUG-123) |
+| BUG-39, 40, 41 | the exit retry queue and Geyser dispatch in `bot/run.py` | 39 and 41 rebuilt in the core (one loop, exits with backoff); 40 retired with `streams/geyser.py` |
+| BUG-65, 109, 146 | `execution/liquidator.py`, `bot/run.py`, `bot/handlers/new_token.py` (launch-mode buying) | Retired with launch mode (NO-GO, STRATEGY-PIVOT §6.13). The core never re-buys an instrument it holds; it has no closed-instrument memory, which the FEAT-76 lane does not need (it decides once per graduate) |
+| BUG-75, 80 | market-cap unit guesses from the stream and the market-data service | Retired. Prices come from pool reserves only (`market.py`) |
+| BUG-85, 86, 87 | the old `pumpfun-replay`, `pumpfun-recorder --ws-url` and the status / audit path variables | Retired. Paths are engine settings; the recorder keeps only `--market`, `--jupiter-quotes` and `--backfill-bars` |
+| BUG-100, 112, 116, 122, 156 | the PumpPortal trade feed and its breaker (`bot/run.py`, `bot/trade_feed.py`) | Retired: the module subscribes to migrations only. Its stream reports degraded data to the core through `set_degraded` |
+| BUG-132, 133, 134 | momentum lane, velocity z-score, dynamic slippage | Retired with the momentum lane (NO-GO, STRATEGY-PIVOT §6.11) |
+
+Open issues in retired code, kept for the record: BUG-33 (superseded), BUG-37, BUG-55, BUG-59, BUG-90 (arbitrage and Geyser, retired) and BUG-92 (`max_positions_per_mint`; the core refuses a second position in a held instrument).
 
 ---
 
@@ -1406,3 +1446,13 @@ Found reading the rc.8 launch-mode A/B (`runtime/capture`, `runtime/pilot`, 2026
 * **Resolution:** `build_retention_managers` takes the files and a `per_file` policy map and builds one manager per directory and policy, matching only `<file name>*` of the files it manages. The bot passes the replay capture with its replay policy; logs, audit and events keep the audit policy as before. Files of other tools in the folder are never touched.
 * **Verification:** `regression("BUG-157")` test in `unit/bot/test_factory.py`: with an audit count of 2 and a replay count of 5, six archives each of the replay capture, audit trail, events and an unrelated `market.jsonl` prune to 5, 2, 2 and 6.
 
+## 30. Migration To trading-core (2026-10-28)
+
+Found while bringing the SDK to 100% branch coverage for the trading-core module.
+
+### BUG-158: An RPC Answer Without A Balance Read As 0 SOL [RESOLVED]
+* **Location:** `trading_pump/sdk/execution_base.py` (`ExecutionClientBase.get_balance_sol`)
+* **Description:** `get_balance_sol` took `result.value` with a default of 0 (`(parsed.get("result") or {}).get("value", 0)`). A `getBalance` answer with no result, a `null` result, a result without `value`, or a non-integer value was reported as a wallet of 0 SOL instead of a failed read. It was found by the branch coverage, not in a run: no paper run reads the wallet.
+* **Impact:** medium, live only: a run started on such an answer would set the day's equity baseline (and the profit-ratchet and cumulative-drawdown references) from an empty wallet, the BUG-130 failure through another door. trading-core's `get_balance` contract expects an exception for a failed read, which the engine counts and retries.
+* **Resolution:** the value must be a non-negative integer (a bool is refused); anything else raises `RuntimeError("getBalance returned no balance: ...")`. `PumpModule.get_balance` raises too when no private key is set.
+* **Verification:** `regression("BUG-158")` test in `unit/sdk/test_execution_base.py` (`{"result": None}`, `{}`, a negative and a boolean value all raise; a real balance of 0 lamports still reads as 0 SOL).

@@ -181,3 +181,12 @@ def test_the_manual_lists_exactly_the_variables_that_are_read() -> None:
         row = next(line for line in table.splitlines() if f"| `{name}`" in line)
         for alias in aliases:
             assert f"`{alias}`" in row, (name, alias)
+
+
+def test_every_variable_the_old_manual_documented_has_a_hint() -> None:
+    """An operator moving from pumpbot is told what replaced each variable."""
+    archived = REPO / "docs" / "archive" / "pumpfun-trading"
+    manual = (archived / "ENVIRONMENTAL-VARIABLES.md").read_text(encoding="utf-8")
+    documented = set(re.findall(r"`(PUMPFUN_[A-Z0-9_]+)`", manual))
+    unhinted = sorted(documented - set(REPLACED_ENV_VARS) - known_env_names())
+    assert unhinted == []

@@ -4,6 +4,8 @@ This file records the architecture decisions for the hosted Web UI platform (FEA
 
 Each record uses the format **Context → Decision → Alternatives considered → Consequences**. Status values: `Accepted`, `Proposed`, `Superseded`.
 
+> **2026-10-28: the split onto trading-core.** ADR-001 to ADR-007 are about the hosted Web UI and its platform, which is now planned in trading-core (they are copied to trading-core's `docs/dev/ARCHITECTURE-DECISIONS.md` and are owned there; the copies here are history). ADR-008 still applies to this repository. ADR-009 records the split itself. The codebase findings below (R1–R12) are pumpbot's: R1, R2, R4 and R6 are closed by the split (`bot/run.py`, `storage/status.py` and `ui/` are gone), R3 and R5 by trading-core's engine, R7 by removing Raydium, R11 is not ported, R12 is trading-core's.
+
 | ADR | Title | Status |
 |---|---|---|
 | [ADR-001](#adr-001-fastapi-for-the-web-backend) | FastAPI for the web backend | Accepted |
@@ -14,6 +16,7 @@ Each record uses the format **Context → Decision → Alternatives considered �
 | [ADR-006](#adr-006-vue-3--vuetify-md3-pwa-frontend) | Vue 3 + Vuetify MD3 PWA frontend | Accepted |
 | [ADR-007](#adr-007-zensical-docs-site-with-material-for-mkdocs-fallback) | Zensical docs site with Material for MkDocs fallback | Accepted |
 | [ADR-008](#adr-008-test-suite-mirrors-the-source-tree) | Test suite mirrors the source tree | Accepted |
+| [ADR-009](#adr-009-pumpfun-trading-becomes-a-trading-core-module) | pumpfun-trading becomes a trading-core module | Accepted |
 
 ---
 
@@ -174,3 +177,18 @@ The browser talks only to the control plane. The control plane owns auth, the da
   - The restructure (Sprints 26–27) lands **before** the run.py split (Sprint 28).
 * **Alternatives considered:** A top-level `tests/` directory (more churn in AGENTS.md, nox and coverage config — rejected).
 * **Consequences:** Collected test count and per-module coverage are compared before and after every migration batch; `fail_under` is never lowered.
+
+## ADR-009: pumpfun-trading Becomes A trading-core Module
+
+* **Status:** Accepted (2026-10-28)
+* **Context:** pumpfun-trading had grown into one bot (`pumpbot`) that mixed venue code (Solana SDK, Pump.fun and PumpSwap maths, PumpPortal streams, screening) with everything a trading engine needs whatever the venue (risk, circuit breaker, accounting, audit, health, lifecycle, alerts, persistence, dashboard). A second venue (Polymarket) needed the engine half. Meanwhile every Pump.fun lane had been measured NO-GO (STRATEGY-PIVOT §6.3–§6.13), and the one positive signal (FEAT-76) needed a new lane anyway. The engine was extracted into trading-core, with the Polymarket module as its first plugin.
+* **Decision:**
+  - This repository (renamed `trading-pump`, package `trading_pump`) keeps pumpfun-trading's full git history and becomes the trading-core module `pumpfun` (`PumpModule`, entry point `trading_core.modules`).
+  - **Port the venue layer, rebuild the lanes.** The SDK, PumpSwap maths and fee config, the cost parser, the RPC pool, the PumpPortal WebSocket host, the Pump.fun API client, anti-rug screening, graduation tracking and the research recorders are ported, brought to 100% branch coverage. The FEAT-76 lane is built new as a trading-core pipeline. Lanes and tools measured NO-GO or tied to the pumpbot runtime are not ported; they stay in the history at tag `v0.3.0rc8` with restore notes in `docs/dev/TODO.md`.
+  - **Engine code is not duplicated.** What moved to trading-core is deleted here and used from there; bugs fixed in that code are listed in `docs/dev/BUGS.md` ("Where each fix lives").
+  - **Credentials only in the environment** (`PUMPFUN_*`, six variables); everything else in `module_settings`, validated (`PumpSettings`, unknown keys are errors), because trading-core hashes the settings into run provenance.
+  - **The capture keeps pumpfun-trading's row shape**, so the rc.8 data and read-out scripts keep working and `trading-pump replay` reads old captures.
+  - **Live execution waits.** `LiveExecutor` refuses until a PumpSwap buy builder has been checked against mainnet transactions and the paper lane has passed; reconcile is ported with it.
+  - **Documentation history follows the code**: pumpbot's guides are archived unchanged in `docs/archive/pumpfun-trading/`; BUGS, CHANGELOG, DONE and STRATEGY-PIVOT continue here; engine-owned TODO, proposals and ADRs move to trading-core.
+* **Alternatives considered:** a 1:1 port of pumpbot onto the core (rejected: thousands of lines of NO-GO lanes to keep tested, and pumpbot's event-driven runtime does not fit the core's cycle without a rewrite anyway); keeping pumpfun-trading and adding a thin adapter (rejected: two copies of risk and accounting drift apart); a fresh repository (rejected: loses `git log`, `git blame` and tag history for the code that is kept).
+* **Consequences:** trading-pump is small enough to keep at 100% coverage on 3.11–3.14. A lane is a pipeline plus settings; a port of an old lane must bring its bugs' regression tests with it. Decisions about the engine are made in trading-core. pumpfun-trading is retired once the gate in `docs/dev/TODO.md` (Migration gate) is met.

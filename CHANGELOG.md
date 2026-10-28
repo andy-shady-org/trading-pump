@@ -1,15 +1,49 @@
 # Changelog
 
-All notable changes to `pumpfun-trading` are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow the SemVer policy in [`docs/dev/RELEASE-GATE.md` §6](docs/archive/pumpfun-trading/dev/RELEASE-GATE.md#6-versioning-policy). While the version is `0.x`, a MINOR release may change config keys, CLI flags or file formats; such changes are listed under **Changed**.
+All notable changes to `trading-pump`, and before it to `pumpfun-trading`, are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow the SemVer policy in [`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy). While the version is `0.x`, a MINOR release may change settings keys, CLI flags or file formats; such changes are listed under **Changed**.
 
 This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private git tags only: never published to PyPI or as public GitHub Releases. Only tagged versions run on a funded wallet.
 
-Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/dev/BUGS.md) and [`docs/dev/PROPOSED-FEATURES.md`](docs/archive/pumpfun-trading/dev/PROPOSED-FEATURES.md)) and ends with its release record ([`RELEASE-GATE.md` §5](docs/archive/pumpfun-trading/dev/RELEASE-GATE.md#5-release-record)).
+Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/dev/BUGS.md) and [`docs/dev/PROPOSED-FEATURES.md`](docs/dev/PROPOSED-FEATURES.md)) and ends with its release record ([`RELEASE-GATE.md` §5](docs/dev/RELEASE-GATE.md#5-release-record)).
 
-## [Unreleased]
+**History.** The entries from 0.1.0 to 0.3.0-rc.8 are pumpfun-trading's, kept as written: they describe the `pumpbot` runtime, its commands and variables, and link the [archived documents](docs/archive/pumpfun-trading/INDEX.md). Since 0.4.0 this repository is the trading-core module. The engine parts of those entries (risk, circuit breaker, accounting, audit tools, alerts, health, lifecycle, persistence, dashboard) are trading-core's now; trading-core's `CHANGELOG.md` lists the pumpfun-trading fixes and features it inherited, with the release each came in.
+
+## [Unreleased] - 0.4.0, the trading-core module
+
+pumpfun-trading becomes `trading-pump`, the Pump.fun / PumpSwap module for trading-core (ADR-009). The repository keeps its full history and tags; the package is renamed `pumpfun_trading` → `trading_pump`. The engine half moved to trading-core, the venue half stays here, and the lanes that were measured NO-GO are retired. The first lane on the new stack is FEAT-76. Branch: `migrate/from-pumpfun-trading` (needs trading-core's `feat/pumpfun-module-support`).
+
+### Added
+- `PumpModule` (`module.py`), registered in `trading_core.modules` as `pumpfun`: SOL quote currency with µSOL prices; quotes from the latest PumpSwap pool reading, re-read when older than `quote_max_age_seconds` and stale when the read fails or the pool is drained; exit value after the swap fee (BUG-136); health through `notify_market_data` / `set_degraded` (`pumpportal feed`, `solana rpc`); status and strategy rows; provenance; Solana public keys registered as public identifiers.
+- Graduation tracking on the new stack (FEAT-73, `graduates.py`, `feed.py`): PumpPortal's free `subscribeMigration` feed and a pool poller (2 s for 5 minutes, then 10 s, for 4 h; at most 500 pools; a missing pool retried for 60 s). Capture rows keep pumpfun-trading's shape.
+- The `pumpswap_momentum` lane (FEAT-76) as a trading-core pipeline (`strategies/pumpswap_momentum.py`): `graduations → standard_pool → [anti_rug] → momentum`; one decision per graduate at the first reading ≥ 60 s after the migration; buy at ≥ 1.2× the first price, first market cap 0.5–2× of 410.88 SOL.
+- PumpSwap paper execution (`execution.py`, `market.py`): fills through the pool's constant product with the fee on the SOL side, the fee from the PumpSwap fee config tier (else the AMM `global_config`, never below `fee_bps_floor`), a fresh read per fill, refusals wherever a live fill would fail (BUG-145, BUG-152), and every cost booked (`swap_fee`, `fee`, `priority_fee`, `tip`, `rent`, refunded on the full exit). Live orders are refused until the live gate.
+- `trading-pump replay` (`replay.py`): captures (plain or gzipped) through the real engine and module on a replay clock, no look-ahead, fixed fee (`--fee-bps`, default 125), its own status and audit in a new directory.
+- `trading-pump env` (names and states only) and `trading-pump record` (the research recorders; also `trading-pump-recorder`).
+- `PumpSettings` (`config/settings.py`): validated `module_settings` (`graduation`, `lane`, `execution`, `capture`, `stream`, `screening`); unknown keys are errors at every level (BUG-125's lesson).
+- `ScreeningSettings` with pumpbot's screening keys, defaults and the `conservative` / `balanced` / `aggressive` presets (`preset` key).
+- `configs/paper.example.json` (FEAT-76 paper run), `configs/capture.example.json` (record only); `configs/verdict_rules.json` converted to trading-core's names (`cost_floor` 0.000025 SOL on the tip, `strategy: pumpswap_momentum`).
+- Startup warnings, by name only, for every pumpbot-era `PUMPFUN_*` variable that is set, with what replaced it (`REPLACED_ENV_VARS`).
+- Documentation for the module: README, USER-GUIDE, STRATEGY, CONFIGURATION, ENVIRONMENT, CLI, FEATURES, ARCHITECTURE; dev RUNBOOK, RELEASE-GATE, TESTING, TODO and PROPOSED-FEATURES rewritten for the module; ADR-009; STRATEGY-PIVOT §6.14 (the rc.8 graduation rows replayed through the new stack: +1.1% per trade at 125 bps a side, −0.4% at 200 bps, +3.5% with a 2 s entry delay; NO-GO on count and interval, in-sample).
+
+### Changed
+- The run is `trading-core run --config F` with `"module": "pumpfun"`; `pumpbot` is gone. The settings file is trading-core's (engine keys) plus `module_settings` (docs/CONFIGURATION.md has the pumpbot key map).
+- Environment: six variables are read (`PUMPFUN_PRIVATE_KEY`, `PUMPFUN_RPC_URL`, `PUMPFUN_RPC_URLS`, `PUMPFUN_STREAM_URL`, `PUMPFUN_STREAM_API_KEY`, `PUMPFUN_JUPITER_API_KEY`, with their aliases). `PUMPFUN_RPC_URL` now comes first in the RPC pool, with `PUMPFUN_RPC_URLS` added after it (pumpbot used only the list when it was set).
+- The stream URL helpers (`stream_url_has_api_key`, `split_stream_api_key`, `stream_connect_url`) moved from the retired trade feed to `streams/websocket.py`, with their BUG-117 / BUG-118 tests.
+- `recorder.py` (was `bot/recorder.py`) writes through trading-core's `RotatedFileSink`.
+- Tooling as in trading-core: Python 3.11–3.14, Black, Ruff, flake8, mypy, **100%** statement and branch coverage (was ≥ 95%), the CI matrix checks out trading-core with `TRADING_CORE_TOKEN`; `python-dotenv` dropped.
+- The suite has 774 tests (pumpbot's had 2,208): the rest guarded retired or moved code; every bug they covered is accounted for in `BUGS.md`, Where each fix lives.
+- pumpfun-trading's documents are archived unchanged in `docs/archive/pumpfun-trading/`; BUGS, CHANGELOG, DONE, STRATEGY-PIVOT, COSTS and ARCHITECTURE-DECISIONS continue in place.
+
+### Moved to trading-core
+- Risk limits, the daily equity tracker and circuit breaker, net-PnL accounting, the audit reader and `pumpfun-audit pnl / cuts / verdict`, selection, alerts, diagnostic events and `pumpfun-events`, health, lifecycle, the operator pause, supervision, persistence, retention, provenance, redaction, logging, metrics and the Rich dashboard (`bot/` engine parts, `ops/`, `storage/`, `ui/`, `cli/audit.py`, `cli/events.py`). Their bugs keep their numbers and are listed in `BUGS.md`, Where each fix lives.
+
+### Removed
+- The pumpbot runtime (`bot/run.py`, factory, handlers, position manager, trade feed, event router, reconcile, sweep), `execution/`, `engines/` (replay engine, optimizer, parity, wallet scores), the curve lanes and their strategies (launch, confirmed momentum, pre-graduation, copy trading, arbitrage, regime, shadow variants, presets, tiered exits), Raydium (`sdk/raydium*`), Geyser (`streams/geyser.py`), the CLIs `pumpbot`, `pumpfun-replay`, `pumpfun-optimize`, `pumpfun-arb`, `pumpfun-drill`, `pumpfun-cli`, the drills, `deploy/`, the old configs and `bot-config.example.json`, and the integration and golden-replay tests that drove pumpbot. All of it is in the history at tag `v0.3.0rc8`; `docs/dev/TODO.md` (Not ported) says where and why.
+- Unused code: the old market-data service, the curve volatility estimator and `complete_at_create`, the per-side tip variables.
 
 ### Fixed
-- Replay captures keep `PUMPFUN_REPLAY_BACKUP_COUNT` parts: the periodic archive prune used the audit trail's limit for every `*.jsonl*` archive in the folder and deleted the oldest replay parts (the rc.8 captures lost their first 14–21 h); each file is now pruned with its own policy, and other tools' files are left alone (BUG-157).
+- `get_balance_sol` read an RPC answer without a balance as 0 SOL; it now raises (BUG-158).
+- (From pumpfun-trading's unreleased rc.9, never tagged there) Replay captures keep `PUMPFUN_REPLAY_BACKUP_COUNT` parts: the periodic archive prune used the audit trail's limit for every `*.jsonl*` archive in the folder and deleted the oldest replay parts (the rc.8 captures lost their first 14–21 h); each file is now pruned with its own policy, and other tools' files are left alone (BUG-157). On the new stack the capture is rotated and pruned only by its own `capture` policy.
 
 ## [0.3.0-rc.8] - 2026-10-26
 
