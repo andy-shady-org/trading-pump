@@ -426,3 +426,42 @@ def test_stop_on_signals_skips_loops_without_signal_support() -> None:
     assert len(working.handlers) == 2
     for error in (NotImplementedError, RuntimeError):
         record_cli.stop_on_signals(stop, Loop(error))
+
+
+@pytest.mark.parametrize(
+    ("flag", "stop"),
+    [
+        ("--market", KeyboardInterrupt()),
+        ("--market", SystemExit(0)),
+        ("--jupiter-quotes", KeyboardInterrupt()),
+        ("--jupiter-quotes", SystemExit(0)),
+    ],
+)
+def test_record_cli_stops_quietly_when_the_loop_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str, stop: BaseException
+) -> None:
+    """Ctrl-C and a clean exit end a recorder quietly, whatever Python's
+    asyncio does with an interrupt raised inside the coroutine (3.11 and 3.14
+    differ), so the loop itself is replaced here."""
+
+    def interrupted(coroutine: Any) -> None:
+        coroutine.close()
+        raise stop
+
+    monkeypatch.setattr(record_cli.asyncio, "run", interrupted)
+    args = build_record_parser().parse_args([flag, "-o", str(tmp_path / "x.jsonl")])
+    run_record_cli(args)
+
+
+def test_record_cli_market_passes_a_failing_exit_code_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failed(coroutine: Any) -> None:
+        coroutine.close()
+        raise SystemExit(3)
+
+    monkeypatch.setattr(record_cli.asyncio, "run", failed)
+    args = build_record_parser().parse_args(["--market", "-o", str(tmp_path / "m")])
+    with pytest.raises(SystemExit) as exc:
+        run_record_cli(args)
+    assert exc.value.code == 3

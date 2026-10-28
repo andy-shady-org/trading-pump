@@ -116,6 +116,7 @@ Every learning from pumpfun-trading is kept below, in its original words, with w
 - **[TESTS] Health Waits For The First Data:** trading-core's health monitor blocks entries only after market data has been seen once, so a test that expects "no RPC, no entries" must assert the module's degraded RPC condition, not a stale-data blocker that never armed (BUG-149 test). *[Applies: here.]*
 - **[TOOLS] Type-Check Against The Editable Core:** with trading-core installed editable, mypy does not find its package; run it with `MYPYPATH=../trading-core` (nox installs it normally and needs nothing). *[Applies: here.]*
 - **[TOOLS] The Mac Folder Cannot Delete:** in the connected Mac checkout, `rm` and `gzip` (which deletes its input) fail without delete permission, and git leaves lock files. Write new files, use `gzip -c`, deliver commits as bundles fetched into a branch, and never run state-changing git there. *[Applies: everywhere.]*
+- **[TESTS] 100% On 3.14 Is Not 100% On 3.11:** the first nox run on 3.11 missed three arcs that 3.14 covers: an exception raised inside a coroutine under `asyncio.run` reached the CLI's `except` on 3.14 but not on 3.11, and 3.11's tracer misses the exit arc of a suppressing `with` and of a branch that ends an `async with` block. Test interrupts by replacing `asyncio.run`, prefer `asyncio.gather(..., return_exceptions=True)` over `contextlib.suppress` around an await, and run `nox -s tests` on every version before calling coverage done. *[Applies: here.]*
 
 ## Project Overview
 

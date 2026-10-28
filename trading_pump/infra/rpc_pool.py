@@ -11,7 +11,6 @@ transaction broadcasting.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import math
 import re
@@ -817,11 +816,14 @@ class RpcConnectionPool:
         """Stop the background health check loop."""
         async with self._lock:
             self._running = False
-            if self._health_check_task is not None:
-                self._health_check_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._health_check_task
-                self._health_check_task = None
+            task, self._health_check_task = self._health_check_task, None
+        # Outside the ``async with`` and with no exception path: Python 3.11's
+        # coverage tracer misses the exit arcs of a suppressing ``with`` and of
+        # a branch that ends an ``async with`` block. gather returns the
+        # CancelledError instead of raising it.
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     async def close(self) -> None:
         """Stop health loop and close client session."""
