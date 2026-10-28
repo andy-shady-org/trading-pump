@@ -1,0 +1,19 @@
+{
+  "_comment": "Record-only graduation capture (FEAT-76 phase 1): every migrated coin's PumpSwap pool for 4 h, no trading (lane off). Run: trading-core run --config configs/capture.json --headless.",
+  "module": "pumpfun",
+  "mode": "paper",
+  "strategy_name": "graduation_capture",
+  "order_size": 0.02,
+  "paper_starting_balance": 2.0,
+  "cycle_seconds": 5,
+  "risk": {"max_total_exposure": 0.2, "max_position_size": 0.02, "max_active_positions": 1},
+  "module_settings": {
+    "lane": {"enabled": false},
+    "capture": {"path": "data/capture/capture.jsonl"}
+  },
+  "health_timeout_seconds": 120,
+  "status_path": "data/capture/status.json",
+  "audit_log_path": "data/capture/audit.jsonl",
+  "event_log_path": "data/capture/events.jsonl",
+  "log_file": "data/capture/trading-core.log"
+}

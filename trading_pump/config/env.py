@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import base58
 from solders.keypair import Keypair
+
 from trading_pump.streams.websocket import split_stream_api_key, stream_connect_url
 
 PRIVATE_KEY_ENV = "PUMPFUN_PRIVATE_KEY"
@@ -49,7 +50,10 @@ MODULE_ENV_VARS: dict[str, tuple[tuple[str, ...], str]] = {
 PUMPPORTAL_URL = "wss://pumpportal.fun/api/data"
 PUBLIC_RPC_URL = "https://api.mainnet-beta.solana.com"
 
-_ENGINE = "trading-core settings / TRADING_CORE_* variables (trading-core docs/ENVIRONMENT.md)"
+_ENGINE = (
+    "trading-core settings / TRADING_CORE_* variables "
+    "(trading-core docs/ENVIRONMENT.md)"
+)
 _MODULE = "a module_settings key (docs/CONFIGURATION.md)"
 # pumpbot-era variables and what replaces them. Names only: some held
 # webhook URLs, so a value is never echoed.
@@ -65,7 +69,8 @@ REPLACED_ENV_VARS: dict[str, str] = {
             "PUMPFUN_TELEGRAM_BOT_TOKEN",
             "PUMPFUN_TELEGRAM_CHAT_ID",
         ),
-        "alerts are the engine's: use TRADING_CORE_ALERT_* (trading-core docs/ENVIRONMENT.md)",
+        "alerts are the engine's: use TRADING_CORE_ALERT_* (trading-core "
+        "docs/ENVIRONMENT.md)",
     ),
     **dict.fromkeys(
         (
@@ -241,7 +246,8 @@ def decode_keypair(private_key_b58: str) -> Keypair:
     if len(decoded) >= 32:
         return Keypair.from_seed(decoded[:32])
     raise ValueError(
-        "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret key; "
+        "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret "
+        "key; "
         f"got {len(decoded)} bytes after decoding."
     )
 

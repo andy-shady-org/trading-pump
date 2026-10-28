@@ -80,9 +80,7 @@ def test_the_stream_key_is_added_for_pumpportal_only_and_never_shown() -> None:
 
 
 def test_repr_hides_every_value() -> None:
-    creds = Credentials(
-        private_key="secret-key", rpc_urls=("https://rpc/?api-key=x",)
-    )
+    creds = Credentials(private_key="secret-key", rpc_urls=("https://rpc/?api-key=x",))
 
     text = repr(creds)
     assert "secret-key" not in text and "api-key=x" not in text
