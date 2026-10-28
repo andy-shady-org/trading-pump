@@ -363,12 +363,7 @@ async def test_rpc_connection_pool_telemetry_and_health_probes() -> None:
     await pool.close()
 
 
-async def test_execution_client_with_rpc_pool_and_builder() -> None:
-    from trading_pump.execution.builder import (
-        ExecutionBuilder,
-        build_execution_client,
-    )
-
+async def test_execution_client_with_rpc_pool() -> None:
     dummy_key = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4JjaxnjfCebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
 
     # Single URL
@@ -386,23 +381,6 @@ async def test_execution_client_with_rpc_pool_and_builder() -> None:
     assert c2.rpc_pool.endpoints[0].url == "https://helius.rpc.com"
     assert c2.rpc_pool.endpoints[1].url == "https://quicknode.rpc.com"
     await c2.close()
-
-    # Builder support
-    builder = ExecutionBuilder(
-        dummy_key,
-        rpc_urls=["https://rpc1.com", "https://rpc2.com"],
-    )
-    c3 = builder.build()
-    assert c3.rpc_pool.endpoint_count == 2
-    await c3.close()
-
-    # Functional helper
-    c4 = build_execution_client(
-        dummy_key,
-        rpc_url="https://primary.rpc.com",
-    )
-    assert c4.rpc_pool.endpoint_count == 1
-    await c4.close()
 
 
 def _pool_with_responses(*bodies):

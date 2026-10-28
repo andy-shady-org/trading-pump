@@ -4,7 +4,6 @@ import time
 
 import pytest
 
-from trading_pump.config.env import get_runtime_env
 from trading_pump.strategies.cluster import (
     ClusterAnalysisVerdict,
     FundingCluster,
@@ -14,7 +13,6 @@ from trading_pump.strategies.cluster import (
     SybilWashVerdict,
     WalletNode,
 )
-from trading_pump.strategies.decision import TradingStrategy
 from trading_pump.strategies.filters import (
     DevWalletProfile,
     HolderDistribution,
@@ -22,8 +20,7 @@ from trading_pump.strategies.filters import (
     evaluate_token_heuristics,
     passes_anti_rug_screening,
 )
-from trading_pump.strategies.presets import resolve_strategy_config
-from trading_pump.tests.support.factories import make_config
+from trading_pump.tests.support.factories import make_screening
 
 
 def test_wallet_node_and_funding_cluster_data_models():
@@ -239,8 +236,7 @@ def test_funding_cluster_analyzer_evaluation_and_verdict():
 
 
 def test_evaluate_cluster_heuristics_and_filters_integration():
-    config = make_config(
-        dry_run=False,
+    config = make_screening(
         enable_cluster_analysis=True,
         max_cluster_concentration_pct=0.25,
         max_single_cluster_pct=0.20,
@@ -308,15 +304,13 @@ def test_evaluate_cluster_heuristics_and_filters_integration():
     )
 
 
-def test_strategy_decision_evaluate_cluster_graph():
-    config = make_config(
-        dry_run=False,
-        strategy_preset="balanced",
-        enable_cluster_analysis=True,
-    )
-    strategy = TradingStrategy(config)
+def test_evaluate_cluster_graph_uses_the_screening_thresholds():
+    from trading_pump.strategies.enrichment import evaluate_cluster_graph
 
-    verdict = strategy.evaluate_cluster_graph(
+    config = make_screening(enable_cluster_analysis=True)
+
+    verdict = evaluate_cluster_graph(
+        config,
         "MintDecision111",
         top_holders=[("W1", 100_000_000_000_000), ("W2", 100_000_000_000_000)],
         creator_wallet="Dev111",
@@ -325,51 +319,12 @@ def test_strategy_decision_evaluate_cluster_graph():
     )
     assert verdict.mint == "MintDecision111"
     assert verdict.cluster_concentration_index == pytest.approx(0.20)
-    summary = strategy.summary()
-    assert summary
-    assert summary["enable_cluster_analysis"] is True
-    assert summary["max_cluster_concentration_pct"] == 0.25
-
-
-def test_presets_and_environment_variable_loading(monkeypatch):
-    # Verify presets contain FEAT-26 fields
-    for preset_name in ("conservative", "balanced", "aggressive"):
-        cfg = resolve_strategy_config(preset_name)
-        assert cfg.enable_cluster_analysis is True
-        assert 0.0 < cfg.max_cluster_concentration_pct <= 1.0
-        assert 0.0 < cfg.max_single_cluster_pct <= 1.0
-        assert 0.0 < cfg.max_sybil_wash_ratio <= 1.0
-        assert cfg.cluster_trace_depth >= 1
-
-    # Validation errors
-    with pytest.raises(ValueError, match="max_cluster_concentration_pct"):
-        resolve_strategy_config(
-            "balanced", overrides={"max_cluster_concentration_pct": 1.5}
-        )
-
-    with pytest.raises(ValueError, match="cluster_trace_depth"):
-        resolve_strategy_config("balanced", overrides={"cluster_trace_depth": 0})
-
-    # Environment variable resolution
-    monkeypatch.setenv("PUMPFUN_CLUSTER_ANALYSIS_ENABLED", "true")
-    monkeypatch.setenv("PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT", "0.30")
-    monkeypatch.setenv("PUMPFUN_MAX_SINGLE_CLUSTER_PCT", "0.22")
-    monkeypatch.setenv("PUMPFUN_MAX_SYBIL_WASH_RATIO", "0.18")
-    monkeypatch.setenv("PUMPFUN_CLUSTER_TRACE_DEPTH", "4")
-
-    env = get_runtime_env()
-    assert env["PUMPFUN_CLUSTER_ANALYSIS_ENABLED"] == "true"
-    assert env["PUMPFUN_MAX_CLUSTER_CONCENTRATION_PCT"] == "0.30"
-    assert env["PUMPFUN_MAX_SINGLE_CLUSTER_PCT"] == "0.22"
-    assert env["PUMPFUN_MAX_SYBIL_WASH_RATIO"] == "0.18"
-    assert env["PUMPFUN_CLUSTER_TRACE_DEPTH"] == "4"
 
 
 async def test_token_enricher_enrich_and_screen_with_cluster_analysis():
-    from trading_pump.bot.enrichment import TokenEnricher
+    from trading_pump.strategies.enrichment import TokenEnricher
 
-    config = make_config(
-        dry_run=False,
+    config = make_screening(
         enable_anti_rug_filters=True,
         enable_cluster_analysis=True,
         max_cluster_concentration_pct=0.25,

@@ -1,7 +1,7 @@
 """Unit tests for ``sdk/execution.py``: the composed client and its re-exports.
 
 Behaviour of each part lives in the mirrored mixin tests: ``test_execution_base``,
-``test_transport``, ``test_pumpfun_execution`` and ``test_raydium_execution``.
+``test_transport``, ``test_pumpfun_execution`` and ``test_pumpswap_execution``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from trading_pump.sdk import execution, execution_types
 from trading_pump.sdk.execution import PumpFunExecutionClient
 from trading_pump.sdk.execution_base import ExecutionClientBase
 from trading_pump.sdk.pumpfun_execution import PumpFunCurveMixin
-from trading_pump.sdk.raydium_execution import RaydiumExecutionMixin
+from trading_pump.sdk.pumpswap_execution import PumpSwapExecutionMixin
 from trading_pump.sdk.transport import TransactionTransportMixin
 
 
@@ -21,13 +21,13 @@ def test_client_composes_every_mixin() -> None:
     mro = PumpFunExecutionClient.__mro__
     for part in (
         PumpFunCurveMixin,
-        RaydiumExecutionMixin,
+        PumpSwapExecutionMixin,
         TransactionTransportMixin,
         ExecutionClientBase,
     ):
         assert part in mro
-    assert mro.index(PumpFunCurveMixin) < mro.index(RaydiumExecutionMixin)
-    assert mro.index(RaydiumExecutionMixin) < mro.index(TransactionTransportMixin)
+    assert mro.index(PumpFunCurveMixin) < mro.index(PumpSwapExecutionMixin)
+    assert mro.index(PumpSwapExecutionMixin) < mro.index(TransactionTransportMixin)
 
 
 def test_client_exposes_methods_from_every_part() -> None:
@@ -42,8 +42,8 @@ def test_client_exposes_methods_from_every_part() -> None:
         "build_buy_tx",
         "build_sell_tx",
         "get_bonding_curve_states",
-        "raydium_buy",
-        "swap_raydium",
+        "get_pumpswap_pool_states",
+        "pumpswap_sell",
     ):
         assert callable(getattr(client, name)), name
 
@@ -68,10 +68,8 @@ def test_shared_constants_and_errors_are_re_exported(name: str) -> None:
         "JitoClient",
         "JitoTipConfig",
         "JITO_TIP_ACCOUNTS",
-        "RaydiumPoolKeys",
         "RpcConnectionPool",
         "calculate_buy_tokens_out",
-        "build_raydium_swap_instruction",
     ],
 )
 def test_historical_imports_still_resolve(name: str) -> None:

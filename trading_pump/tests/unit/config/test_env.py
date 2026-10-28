@@ -24,7 +24,7 @@ from trading_pump.config.env import (
     validate_required_runtime_env,
 )
 from trading_pump.ops.logging import log_runtime_event, setup_structured_logging
-from trading_pump.tests.support.factories import make_config
+from trading_pump.tests.support.factories import make_screening
 
 
 def test_runtime_env_and_logging_helpers(monkeypatch, tmp_path):
@@ -125,7 +125,7 @@ def test_status_and_audit_env_aliases(monkeypatch, tmp_path):
     bot = TradingBot(
         private_key_b58="1" * 64,
         rpc_url="https://api.mainnet-beta.solana.com",
-        config=make_config(dry_run=True),
+        config=make_screening(dry_run=True),
     )
     assert bot.bot_status_path == str(tmp_path / "s.json")
     assert bot.audit_log_path == str(tmp_path / "a.jsonl")

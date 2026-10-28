@@ -93,28 +93,20 @@ def block_external_network(monkeypatch: pytest.MonkeyPatch) -> None:
 def isolate_test_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path, request: pytest.FixtureRequest
 ) -> None:
-    """Isolate tests from ambient persistence, audit env vars and live RPC."""
-    # An operator shell (direnv ``.envrc``) exports tips, keys and endpoints;
-    # tests must see the defaults, not the runtime's settings.
-    for name in [key for key in os.environ if key.startswith("PUMPFUN_")]:
+    """Isolate tests from ambient settings, files and live RPC.
+
+    An operator shell (direnv ``.envrc``) exports keys, endpoints and the
+    engine's paths; tests must see the defaults, not the runtime's settings,
+    and every test runs in its own ``tmp_path`` so nothing lands in the repo
+    (BUG-143).
+    """
+    for name in [
+        key for key in os.environ if key.startswith(("PUMPFUN_", "TRADING_CORE_"))
+    ]:
         monkeypatch.delenv(name, raising=False)
-    isolated_status_path = str(tmp_path / "bot_status.json")
-    isolated_audit_path = str(tmp_path / "audit_trail.jsonl")
+    monkeypatch.chdir(tmp_path)
 
-    monkeypatch.setenv("PUMPFUN_STATUS_PATH", isolated_status_path)
-    monkeypatch.setenv("PUMPFUN_BOT_STATUS_PATH", isolated_status_path)
-    monkeypatch.setenv("PUMPFUN_AUDIT_LOG_PATH", isolated_audit_path)
-    monkeypatch.setenv("PUMPFUN_AUDIT_LOG", isolated_audit_path)
-    # Without it every TradingBot appended to ``bot.log`` in the working directory.
-    monkeypatch.setenv("PUMPFUN_BOT_LOG_PATH", str(tmp_path / "bot.log"))
-    # ... and wrote its diagnostic events to ``events.jsonl`` there (BUG-143).
-    monkeypatch.setenv("PUMPFUN_EVENT_LOG_PATH", str(tmp_path / "events.jsonl"))
-
-    from trading_pump.execution.executor import OrderExecutor
-
-    monkeypatch.setattr(OrderExecutor, "balance_retry_delay_seconds", 0.0)
-
-    from trading_pump.bot.enrichment import TokenEnricher
+    from trading_pump.strategies.enrichment import TokenEnricher
 
     monkeypatch.setattr(TokenEnricher, "holder_retry_delay_seconds", 0.0)
 

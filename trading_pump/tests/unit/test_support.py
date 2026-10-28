@@ -2,35 +2,22 @@
 
 ``support/`` is not source, so it has no mirrored package; these tests pin
 the factories, fakes and payload builders that other tests rely on. The
-payload tests round-trip through the real parsers, so a layout drift in
-``streams/geyser.py`` or ``sdk/execution.py`` fails here first.
+payload tests round-trip through the real decoder, so a layout drift in
+``sdk/pumpfun_execution.py`` fails here first.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from solders.pubkey import Pubkey
 
-from trading_pump.bot.position_manager import PositionManager
-from trading_pump.bot.strategy import TradingBotConfig
 from trading_pump.config.env import decode_keypair
 from trading_pump.sdk import jito as jito_module
 from trading_pump.sdk.execution import PumpFunExecutionClient
 from trading_pump.sdk.jito import JITO_TIP_ACCOUNTS, JitoBundleStatus, JitoClient
-from trading_pump.sdk.raydium import RAYDIUM_AUTHORITY_V4, SERUM_PROGRAM_ID_V3
-from trading_pump.streams.geyser import (
-    BondingCurveBinaryParser,
-    TradeInstructionBinaryParser,
-)
 from trading_pump.tests.support import constants, payloads
-from trading_pump.tests.support.factories import (
-    make_bot,
-    make_config,
-    make_pool_keys,
-    make_position,
-)
+from trading_pump.strategies.filters import ScreeningSettings
+from trading_pump.tests.support.factories import make_screening
 from trading_pump.tests.support.fakes import (
     FakeAlertSink,
     FakeClock,
@@ -58,109 +45,31 @@ def test_sample_mints_are_valid_pubkeys(mint: str) -> None:
 # --- factories -------------------------------------------------------------------
 
 
-def test_make_config_defaults_are_small_and_never_live() -> None:
-    config = make_config()
-
-    assert isinstance(config, TradingBotConfig)
-    assert config.buy_amount_sol == 0.01
-    assert config.dry_run is True
+def test_make_screening_defaults_match_the_settings() -> None:
+    assert make_screening() == ScreeningSettings()
 
 
-def test_make_config_overrides_win_over_defaults() -> None:
-    config = make_config(dry_run=False, max_active_positions=2)
+def test_make_screening_overrides_win_over_defaults() -> None:
+    settings = make_screening(min_holder_count=6, enable_cluster_analysis=False)
 
-    assert config.dry_run is False
-    assert config.max_active_positions == 2
-    assert config.buy_amount_sol == 0.01
-
-
-def test_make_bot_with_tmp_path_writes_state_there(tmp_path: Path) -> None:
-    bot = make_bot(tmp_path, max_active_positions=3)
-
-    assert bot.config.max_active_positions == 3
-    assert bot.config.dry_run is True
-    assert bot.private_key_b58 == constants.SAMPLE_PRIVATE_KEY
-    assert Path(str(bot.bot_status_path)) == tmp_path / "status.json"
-    assert Path(str(bot.audit_log_path)) == tmp_path / "audit.jsonl"
-
-
-def test_make_bot_explicit_config_is_used_as_is(tmp_path: Path) -> None:
-    config = make_config(buy_amount_sol=0.02)
-
-    bot = make_bot(tmp_path, config=config)
-
-    assert bot.config.buy_amount_sol == 0.02
-
-
-def test_make_bot_config_and_overrides_together_raises(tmp_path: Path) -> None:
-    with pytest.raises(TypeError, match="either config"):
-        make_bot(tmp_path, config=make_config(), dry_run=False)
-
-
-def test_make_bot_bot_kwargs_reach_the_constructor(tmp_path: Path) -> None:
-    status = tmp_path / "custom.json"
-
-    bot = make_bot(tmp_path, bot_kwargs={"bot_status_path": str(status)})
-
-    assert Path(str(bot.bot_status_path)) == status
-
-
-def test_make_position_on_bot_opens_a_live_shaped_position(tmp_path: Path) -> None:
-    bot = make_bot(tmp_path)
-
-    position = make_position(bot, cost_sol=0.02, name="Tok")
-
-    assert constants.SAMPLE_MINT in bot.position_manager
-    assert bot.position_manager[constants.SAMPLE_MINT] is position
-    assert position["cost_sol"] == 0.02
-    assert position["name"] == "Tok"
-    assert position["remaining_token_amount"] == 350_000_000_000
-
-
-def test_make_position_accepts_a_bare_manager() -> None:
-    manager = PositionManager(make_config())
-
-    make_position(manager, constants.WSOL_MINT)
-
-    assert len(manager) == 1
-    assert constants.WSOL_MINT in manager
-
-
-def test_make_pool_keys_unique_accounts_are_distinct_valid_pubkeys() -> None:
-    keys = make_pool_keys()
-    accounts = [keys.amm_id, keys.amm_open_orders, keys.serum_market, keys.lp_mint]
-
-    assert len(set(accounts)) == len(accounts)
-    for account in accounts:
-        Pubkey.from_string(account)
-    assert keys.amm_authority == RAYDIUM_AUTHORITY_V4
-    assert keys.serum_program_id == SERUM_PROGRAM_ID_V3
-    assert keys.coin_mint == constants.SAMPLE_MINT
-    assert keys.pc_mint == constants.WSOL_MINT
-
-
-def test_make_pool_keys_shared_default_and_overrides() -> None:
-    keys = make_pool_keys(constants.WSOL_MINT, unique=False, lp_mint="Lp")
-
-    assert keys.amm_id == keys.serum_market == str(Pubkey.default())
-    assert keys.coin_mint == constants.WSOL_MINT
-    assert keys.lp_mint == "Lp"
+    assert settings.min_holder_count == 6
+    assert settings.enable_cluster_analysis is False
 
 
 # --- payloads --------------------------------------------------------------------
 
 
-def test_bonding_curve_bytes_round_trip_through_geyser_parser() -> None:
+def test_bonding_curve_bytes_round_trip_through_sdk_decoder() -> None:
     raw = payloads.bonding_curve_bytes(real_sol_reserves=5, complete=True)
 
-    update = BondingCurveBinaryParser.parse_account_data(raw, mint="M")
+    decoded = PumpFunExecutionClient.decode_bonding_curve_data(raw)
 
-    assert update.virtual_token_reserves == constants.INITIAL_VIRTUAL_TOKEN_RESERVES
-    assert update.virtual_sol_reserves == constants.INITIAL_VIRTUAL_SOL_RESERVES
-    assert update.real_token_reserves == constants.INITIAL_REAL_TOKEN_RESERVES
-    assert update.real_sol_reserves == 5
-    assert update.token_total_supply == constants.TOKEN_TOTAL_SUPPLY
-    assert update.complete is True
+    assert decoded["virtual_token_reserves"] == constants.INITIAL_VIRTUAL_TOKEN_RESERVES
+    assert decoded["virtual_sol_reserves"] == constants.INITIAL_VIRTUAL_SOL_RESERVES
+    assert decoded["real_token_reserves"] == constants.INITIAL_REAL_TOKEN_RESERVES
+    assert decoded["real_sol_reserves"] == 5
+    assert decoded["token_total_supply"] == constants.TOKEN_TOTAL_SUPPLY
+    assert decoded["complete"] is True
 
 
 def test_bonding_curve_bytes_creator_lands_where_sdk_reads_it() -> None:
@@ -181,42 +90,6 @@ def test_account_data_b64_matches_rpc_shape() -> None:
 
     assert encoding == "base64"
     assert payloads.base64.b64decode(data) == raw
-
-
-@pytest.mark.parametrize("is_buy", [True, False])
-def test_trade_event_bytes_round_trip_through_parser(is_buy: bool) -> None:
-    user = str(Pubkey.new_unique())
-    raw = payloads.trade_event_bytes(is_buy=is_buy, user=user, sol_amount=7)
-
-    event = TradeInstructionBinaryParser.parse_trade_event_buffer(raw)
-
-    assert event is not None
-    assert event.mint == constants.SAMPLE_MINT
-    assert event.user == user
-    assert event.is_buy is is_buy
-    assert event.sol_amount_lamports == 7
-    assert event.timestamp == payloads.SAMPLE_TIMESTAMP
-
-
-def test_complete_event_bytes_round_trip_through_parser() -> None:
-    raw = payloads.complete_event_bytes(mint=constants.SAMPLE_PUMP_MINT)
-
-    event = TradeInstructionBinaryParser.parse_complete_event_buffer(raw)
-
-    assert event is not None
-    assert event.mint == constants.SAMPLE_PUMP_MINT
-
-
-def test_buy_and_sell_instruction_bytes_round_trip() -> None:
-    buy = TradeInstructionBinaryParser.parse_buy_instruction(
-        payloads.buy_instruction_bytes(10, 20)
-    )
-    sell = TradeInstructionBinaryParser.parse_sell_instruction(
-        payloads.sell_instruction_bytes(30, 40)
-    )
-
-    assert buy == {"amount": 10, "max_sol_cost": 20}
-    assert sell == {"amount": 30, "min_sol_output": 40}
 
 
 # --- FakeClock -------------------------------------------------------------------

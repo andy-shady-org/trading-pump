@@ -6,17 +6,21 @@ import time
 from typing import Any, Optional
 
 from trading_pump.api.client import PumpFunApiClient
-from trading_pump.bot.strategy import (
+from trading_pump.sdk.execution import PumpFunExecutionClient
+from trading_pump.strategies.cluster import (
+    ClusterAnalysisVerdict,
+    FundingClusterAnalyzer,
+)
+from trading_pump.strategies.filters import (
     DevWalletProfile,
     HolderDistribution,
     ScreeningCache,
+    ScreeningSettings,
     TokenMetadata,
     TokenScreeningVerdict,
-    TradingStrategy,
+    bundle_metrics,
+    evaluate_token_heuristics,
 )
-from trading_pump.sdk.execution import PumpFunExecutionClient
-from trading_pump.strategies.base import TradingBotConfig
-from trading_pump.strategies.filters import bundle_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +237,34 @@ def screening_snapshot(
     return record
 
 
+def evaluate_cluster_graph(
+    config: ScreeningSettings,
+    mint: str,
+    *,
+    top_holders: list[tuple[str, int]] | None = None,
+    creator_wallet: str | None = None,
+    creator_balance: int = 0,
+    total_supply: int = 1_000_000_000_000_000,
+    funding_links: list[tuple[str, str, float]] | None = None,
+    trades: list[dict[str, Any]] | None = None,
+) -> ClusterAnalysisVerdict:
+    """Funding-cluster and Sybil wash-trading verdict for one token (FEAT-26)."""
+    analyzer = FundingClusterAnalyzer(
+        max_cluster_concentration_pct=config.max_cluster_concentration_pct,
+        max_single_cluster_pct=config.max_single_cluster_pct,
+        max_sybil_wash_ratio=config.max_sybil_wash_ratio,
+        cluster_trace_depth=config.cluster_trace_depth,
+    )
+    graph = analyzer.build_graph(
+        top_holders=top_holders,
+        creator_wallet=creator_wallet,
+        creator_balance=creator_balance,
+        total_supply=total_supply,
+        funding_links=funding_links,
+    )
+    return analyzer.evaluate(mint, graph, trades=trades)
+
+
 class TokenEnricher:
     """Handles off-chain token metadata enrichment, creator profiling, and anti-rug screening."""
 
@@ -243,16 +275,14 @@ class TokenEnricher:
         self,
         api_client: Optional[PumpFunApiClient] = None,
         execution_client: Optional[PumpFunExecutionClient] = None,
-        config: Optional[TradingBotConfig] = None,
-        strategy: Optional[TradingStrategy] = None,
+        config: Optional[ScreeningSettings] = None,
         screening_cache: Optional[ScreeningCache] = None,
         lookup_timeout_seconds: float = DEFAULT_LOOKUP_TIMEOUT_SECONDS,
     ) -> None:
         self.api = api_client
         self.lookup_timeout_seconds = lookup_timeout_seconds
         self.execution = execution_client
-        self.config = config or TradingBotConfig()
-        self.strategy = strategy or TradingStrategy(self.config)
+        self.config = config or ScreeningSettings()
         self.screening_cache = screening_cache or ScreeningCache(
             default_ttl=float(self.config.screening_cache_ttl_seconds)
         )
@@ -263,7 +293,7 @@ class TokenEnricher:
         self,
         mint: str,
         token_data: Optional[dict[str, Any]] = None,
-        config: Optional[TradingBotConfig] = None,
+        config: Optional[ScreeningSettings] = None,
     ) -> TokenScreeningVerdict:
         """Enriches off-chain metadata, developer profile, and top holders, evaluating anti-rug heuristics."""
         active_config = config or self.config
@@ -391,7 +421,8 @@ class TokenEnricher:
                     if holder_distribution
                     else 1_000_000_000_000_000
                 )
-                cluster_analysis = self.strategy.evaluate_cluster_graph(
+                cluster_analysis = evaluate_cluster_graph(
+                    active_config,
                     mint,
                     top_holders=top_h,
                     creator_wallet=str(creator) if creator else None,
@@ -405,7 +436,8 @@ class TokenEnricher:
                     trades=cluster_trades if isinstance(cluster_trades, list) else None,
                 )
 
-        verdict = self.strategy.screen_token(
+        verdict = evaluate_token_heuristics(
+            active_config,
             mint,
             metadata=metadata,
             dev_profile=dev_profile,

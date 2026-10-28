@@ -3,10 +3,9 @@ from __future__ import annotations
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, Sequence
 
-from trading_pump.strategies.base import TradingBotConfig
 
 if TYPE_CHECKING:
     from trading_pump.strategies.cluster import ClusterAnalysisVerdict
@@ -24,6 +23,103 @@ _WEBSITE_PATTERN = re.compile(
     r"https?://(?:www\.)?[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?:/[^\s]*)?",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class ScreeningSettings:
+    """The anti-rug screen's thresholds (FEAT-04, FEAT-26).
+
+    The same keys and defaults the pumpbot strategy config had, so a screen
+    tuned there reads the same here. ``enable_anti_rug_filters`` false passes
+    every token with risk score 0.
+    """
+
+    enable_anti_rug_filters: bool = True
+    max_dev_24h_launches: int = 5
+    max_creator_initial_holding_pct: float = 0.10
+    max_top5_holder_concentration_pct: float = 0.15
+    max_gini_coefficient: float = 0.85
+    require_social_links: bool = False
+    # Reject a token outright when no holder data could be read (BUG-107).
+    require_holder_data: bool = False
+    # Reject a token with fewer holder accounts than this at screening (0 = off).
+    # Counts the accounts getTokenLargestAccounts returned (max 20).
+    min_holder_count: int = 0
+    min_social_links_count: int = 1
+    max_acceptable_risk_score: float = 50.0
+    screening_cache_ttl_seconds: int = 60
+    enable_cluster_analysis: bool = True
+    max_cluster_concentration_pct: float = 0.25
+    max_single_cluster_pct: float = 0.20
+    max_sybil_wash_ratio: float = 0.20
+    cluster_trace_depth: int = 2
+
+    @classmethod
+    def from_mapping(cls, data: Any) -> ScreeningSettings:
+        """Build from a mapping; unknown keys are an error (BUG-125).
+
+        ``preset`` (``conservative`` / ``balanced`` / ``aggressive``) starts
+        from that preset's thresholds; the other keys override it.
+        """
+        values = {
+            k: v for k, v in dict(data or {}).items() if not str(k).startswith("_")
+        }
+        preset = values.pop("preset", None)
+        known = {f.name for f in fields(cls)}
+        unknown = sorted(set(values) - known)
+        if unknown:
+            raise ValueError(f"Unknown screening keys: {', '.join(unknown)}")
+        if preset is not None:
+            return cls.preset(str(preset), **values)
+        return cls(**values)
+
+    @classmethod
+    def preset(cls, name: str, **overrides: Any) -> ScreeningSettings:
+        """The screening thresholds of a pumpbot strategy preset, plus overrides."""
+        key = str(name).strip().lower()
+        if key not in SCREENING_PRESETS:
+            raise ValueError(
+                f"Unknown screening preset {name!r}; "
+                f"use one of {', '.join(SCREENING_PRESETS)}"
+            )
+        return cls(**{**SCREENING_PRESETS[key], **overrides})
+
+
+# The screening part of pumpbot's strategy presets (strategies/presets.py up
+# to v0.3.0rc8), so a screen tuned there (the canary used ``conservative``)
+# reads the same here.
+SCREENING_PRESETS: dict[str, dict[str, Any]] = {
+    "conservative": {
+        "enable_anti_rug_filters": True,
+        "max_dev_24h_launches": 2,
+        "max_creator_initial_holding_pct": 0.05,
+        "max_top5_holder_concentration_pct": 0.10,
+        "max_gini_coefficient": 0.80,
+        "require_social_links": True,
+        "min_social_links_count": 2,
+        "max_acceptable_risk_score": 30.0,
+    },
+    "balanced": {
+        "enable_anti_rug_filters": True,
+        "max_dev_24h_launches": 5,
+        "max_creator_initial_holding_pct": 0.10,
+        "max_top5_holder_concentration_pct": 0.15,
+        "max_gini_coefficient": 0.85,
+        "require_social_links": False,
+        "min_social_links_count": 0,
+        "max_acceptable_risk_score": 50.0,
+    },
+    "aggressive": {
+        "enable_anti_rug_filters": True,
+        "max_dev_24h_launches": 8,
+        "max_creator_initial_holding_pct": 0.15,
+        "max_top5_holder_concentration_pct": 0.25,
+        "max_gini_coefficient": 0.90,
+        "require_social_links": False,
+        "min_social_links_count": 0,
+        "max_acceptable_risk_score": 70.0,
+    },
+}
 
 
 @dataclass
@@ -526,7 +622,7 @@ def evaluate_cluster_heuristics(
 
 
 def evaluate_token_heuristics(
-    config: TradingBotConfig,
+    config: ScreeningSettings,
     mint: str,
     *,
     metadata: TokenMetadata | dict[str, Any] | None = None,
@@ -580,10 +676,10 @@ def evaluate_token_heuristics(
         total_risk_score += MISSING_SCREENING_DATA_PENALTY
         all_reasons.append("Holder distribution data unavailable")
         flags["missing_holder_data"] = True
-        if getattr(config, "require_holder_data", False):
+        if config.require_holder_data:
             # Without holders the top-5 and Gini checks cannot run (BUG-107).
             hard_failed = True
-    min_holders = int(getattr(config, "min_holder_count", 0) or 0)
+    min_holders = int(config.min_holder_count)
     holder_count = len(holder_distribution.top_holders) if holder_distribution else 0
     if min_holders > 0 and holder_count < min_holders:
         # In the 24 h capture, tokens with more than 5 holder accounts at
@@ -645,17 +741,15 @@ def evaluate_token_heuristics(
 
     # 5. On-Chain Funding Cluster Graph & Sybil Wash-Trading (FEAT-26)
     if (
-        getattr(config, "enable_cluster_analysis", True)
+        config.enable_cluster_analysis
         and cluster_analysis is not None
     ):
         cluster_pass, cluster_penalty, cluster_reasons, cluster_flags = (
             evaluate_cluster_heuristics(
                 cluster_analysis,
-                max_cluster_concentration_pct=getattr(
-                    config, "max_cluster_concentration_pct", 0.25
-                ),
-                max_single_cluster_pct=getattr(config, "max_single_cluster_pct", 0.20),
-                max_sybil_wash_ratio=getattr(config, "max_sybil_wash_ratio", 0.20),
+                max_cluster_concentration_pct=config.max_cluster_concentration_pct,
+                max_single_cluster_pct=config.max_single_cluster_pct,
+                max_sybil_wash_ratio=config.max_sybil_wash_ratio,
             )
         )
         total_risk_score += cluster_penalty
@@ -695,7 +789,7 @@ def evaluate_token_heuristics(
 
 
 def passes_anti_rug_screening(
-    config: TradingBotConfig,
+    config: ScreeningSettings,
     mint: str,
     *,
     metadata: TokenMetadata | dict[str, Any] | None = None,
@@ -719,53 +813,15 @@ def passes_anti_rug_screening(
     return verdict.passed
 
 
-# Standard eligibility filter functions
-def passes_market_cap_filter(
-    config: TradingBotConfig, *, market_cap_sol: float
-) -> bool:
-    return market_cap_sol >= config.min_market_cap_sol
-
-
-def token_is_recently_seen(
-    config: TradingBotConfig, *, mint_seen_recently: bool
-) -> bool:
-    return bool(mint_seen_recently)
-
-
-def buy_attempts_within_limit(config: TradingBotConfig, *, buy_attempts: int) -> bool:
-    return buy_attempts < config.max_buy_attempts_per_mint
-
-
-def token_is_eligible(
-    config: TradingBotConfig,
-    *,
-    market_cap_sol: float,
-    mint_seen_recently: bool,
-    buy_attempts: int,
-    screening_verdict: TokenScreeningVerdict | None = None,
-) -> bool:
-    passes_basic = (
-        passes_market_cap_filter(config, market_cap_sol=market_cap_sol)
-        and not token_is_recently_seen(config, mint_seen_recently=mint_seen_recently)
-        and buy_attempts_within_limit(config, buy_attempts=buy_attempts)
-    )
-    if not passes_basic:
-        return False
-
-    if screening_verdict is not None and not screening_verdict.passed:
-        return False
-
-    return True
-
-
 __all__ = [
     "DevWalletProfile",
     "HolderDistribution",
     "ScreeningCache",
+    "SCREENING_PRESETS",
+    "ScreeningSettings",
     "ScreeningVerdict",
     "TokenMetadata",
     "TokenScreeningVerdict",
-    "buy_attempts_within_limit",
     "bundle_metrics",
     "calculate_gini_coefficient",
     "evaluate_cluster_heuristics",
@@ -775,7 +831,4 @@ __all__ = [
     "evaluate_metadata_socials",
     "evaluate_token_heuristics",
     "passes_anti_rug_screening",
-    "passes_market_cap_filter",
-    "token_is_eligible",
-    "token_is_recently_seen",
 ]

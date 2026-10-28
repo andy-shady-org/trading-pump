@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from trading_pump.bot.recorder import ReplayRecorder
+from trading_pump.recorder import ReplayRecorder
 
 
 async def _yield(times: int = 20) -> None:

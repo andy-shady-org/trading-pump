@@ -12,7 +12,7 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
 from trading_pump.api.client import PumpFunApiClient
-from trading_pump.bot.enrichment import (
+from trading_pump.strategies.enrichment import (
     SCREENING_EVENT,
     TokenEnricher,
     count_launches_last_24h,
@@ -23,26 +23,25 @@ from trading_pump.bot.enrichment import (
     resolve_creator,
     screening_snapshot,
 )
-from trading_pump.bot.strategy import (
+from trading_pump.sdk.execution import PumpFunExecutionClient
+from trading_pump.strategies.filters import (
     DevWalletProfile,
     HolderDistribution,
     ScreeningCache,
+    ScreeningSettings,
     TokenMetadata,
     TokenScreeningVerdict,
 )
-from trading_pump.sdk.execution import PumpFunExecutionClient
-from trading_pump.strategies.base import TradingBotConfig
 from trading_pump.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
-from trading_pump.tests.support.factories import make_config
+from trading_pump.tests.support.factories import make_screening
 
 CREATOR = str(Pubkey.new_unique())
 METADATA_URI = "https://ipfs.io/ipfs/QmTestMetadata"
 
 
-def _strict_config() -> TradingBotConfig:
+def _strict_config() -> ScreeningSettings:
     """Matches the `conservative` screening thresholds used by the canary."""
-    return make_config(
-        dry_run=False,
+    return make_screening(
         enable_anti_rug_filters=True,
         enable_cluster_analysis=False,
         require_social_links=True,
@@ -273,7 +272,8 @@ def test_creator_initial_buy_pct(
 
 
 async def test_token_enricher_disabled():
-    config = make_config(dry_run=False, enable_anti_rug_filters=False)
+    config = make_screening(
+        enable_anti_rug_filters=False)
     enricher = TokenEnricher(config=config)
     verdict = await enricher.enrich_and_screen("Mint111")
     assert verdict.passed
@@ -285,7 +285,8 @@ async def test_token_enricher_cache_hit():
     cached = TokenScreeningVerdict(mint="Mint111", passed=True, risk_score=10.0)
     cache.set("Mint111", cached)
 
-    config = make_config(dry_run=False, enable_anti_rug_filters=True)
+    config = make_screening(
+        enable_anti_rug_filters=True)
     enricher = TokenEnricher(config=config, screening_cache=cache)
     verdict = await enricher.enrich_and_screen("Mint111")
     assert verdict is cached
@@ -312,8 +313,8 @@ async def test_token_enricher_with_mock_api():
         ]
     )
 
-    config = make_config(
-        dry_run=False, enable_anti_rug_filters=True, max_acceptable_risk_score=50.0
+    config = make_screening(
+        enable_anti_rug_filters=True, max_acceptable_risk_score=50.0
     )
     enricher = TokenEnricher(api_client=mock_api, config=config)
     verdict = await enricher.enrich_and_screen("Mint111")
@@ -406,8 +407,7 @@ async def test_require_holder_data_turns_missing_holders_into_a_reject(
 ) -> None:
     mint = str(Pubkey.new_unique())
     client = _execution_client()
-    config = make_config(
-        dry_run=False,
+    config = make_screening(
         enable_anti_rug_filters=True,
         enable_cluster_analysis=False,
         require_social_links=True,

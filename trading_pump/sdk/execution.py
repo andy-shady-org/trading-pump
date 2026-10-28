@@ -1,4 +1,4 @@
-"""Pump.fun execution client composed from the Pump.fun, Raydium and transport mixins.
+"""Pump.fun execution client composed from the Pump.fun, PumpSwap and transport mixins.
 
 Every name historically importable from this module is re-exported here.
 """
@@ -50,11 +50,6 @@ from .jito import (
     JitoClient,
     JitoTipConfig,
 )
-from .raydium import (
-    RaydiumPoolKeys,
-    build_raydium_swap_instruction,
-    calculate_raydium_swap_out,
-)
 from .execution_types import (
     PUMP_PROGRAM_ID,
     GET_MULTIPLE_ACCOUNTS_LIMIT,
@@ -89,7 +84,6 @@ from .execution_types import (
 from .pumpfun_execution import PumpFunCurveMixin
 from .pumpswap import PumpSwapPoolUnavailableError
 from .pumpswap_execution import PumpSwapExecutionMixin
-from .raydium_execution import RaydiumExecutionMixin
 
 __all__ = [
     "AccountMeta",
@@ -98,7 +92,6 @@ __all__ = [
     "ASSOCIATED_TOKEN_PROGRAM_ID",
     "asyncio",
     "base64",
-    "build_raydium_swap_instruction",
     "BUY_DISCRIMINATOR",
     "BUY_V2_DISCRIMINATOR",
     "BUYBACK_FEE_RECIPIENT",
@@ -106,7 +99,6 @@ __all__ = [
     "calculate_buy_price_impact",
     "calculate_buy_tokens_out",
     "calculate_market_cap_sol",
-    "calculate_raydium_swap_out",
     "calculate_sell_execution_slippage",
     "calculate_sell_price_impact",
     "calculate_sell_sol_out",
@@ -146,7 +138,6 @@ __all__ = [
     "PUMP_PROGRAM_ID",
     "PumpFunExecutionClient",
     "PumpSwapPoolUnavailableError",
-    "RaydiumPoolKeys",
     "RENT_PROGRAM_ID",
     "RpcConnectionPool",
     "SELL_DISCRIMINATOR",
@@ -169,6 +160,6 @@ __all__ = [
 
 
 class PumpFunExecutionClient(
-    PumpFunCurveMixin, RaydiumExecutionMixin, PumpSwapExecutionMixin
+    PumpFunCurveMixin, PumpSwapExecutionMixin
 ):
     """Build and broadcast real Pump.fun transactions using the program instruction pattern."""

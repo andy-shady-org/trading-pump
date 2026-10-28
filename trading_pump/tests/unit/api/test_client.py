@@ -13,7 +13,6 @@ from trading_pump.api.client import (
     resolve_metadata_uri,
 )
 from trading_pump.tests.support.constants import SAMPLE_MINT
-from trading_pump.tests.support.factories import make_config
 
 CID = "bafkreientcdd2rvizwb3ww42kx6uslbaqglpxph26cpwqoys552wtsj4ti"
 
@@ -480,17 +479,9 @@ async def test_api_client_context_manager_and_text_response():
         assert res == "plain non-json response text"
 
 
-async def test_api_client_and_replay_and_main_branches():
+async def test_api_client_retry_and_error_branches():
     from trading_pump.api.client import PumpFunApiClient
-    from trading_pump.cli.main import main
-    from trading_pump.engines.replay import (
-        PaperTradingEngine,
-        render_replay_dashboard,
-        render_replay_summary,
-        render_replay_trades,
-    )
 
-    # 1. ApiClient retries and error branches
     api = PumpFunApiClient(max_retries=2, retry_backoff_seconds=0.01)
     mock_session = MagicMock()
     # A MagicMock ``closed`` is truthy, which made the client open a real
@@ -534,73 +525,3 @@ async def test_api_client_and_replay_and_main_branches():
 
     await api.close()
 
-    # 2. ReplayEngine with momentum and graduation simulation
-    cfg = make_config(
-        dry_run=True,
-        buy_amount_sol=0.02,
-        enable_momentum_signals=True,
-        enable_raydium_migration_sniping=True,
-    )
-    paper = PaperTradingEngine(
-        initial_cash=10.0,
-        strategy_config=cfg,
-    )
-
-    # Feed snapshots that trigger buy, trailing stop, take profit, and graduation
-    snapshots = [
-        {
-            "mint": SAMPLE_MINT,
-            "mint_name": "CoinAlpha",
-            "timestamp": 1000.0,
-            "market_cap_sol": 30.0,
-            "price_sol": 0.00003,
-            "is_buy": True,
-            "sol_amount": 1.0,
-            "user": "Trader1",
-            "trade_records": [
-                {"is_buy": True, "sol_amount": 1.0, "user": "T1", "timestamp": 1000.0},
-                {"is_buy": True, "sol_amount": 1.0, "user": "T2", "timestamp": 1000.0},
-                {"is_buy": True, "sol_amount": 1.0, "user": "T3", "timestamp": 1000.0},
-            ],
-            "real_sol_reserves": 82.0,
-            "virtual_sol_reserves": 112.0,
-            "complete": False,
-        },
-        {
-            "mint": SAMPLE_MINT,
-            "mint_name": "CoinAlpha",
-            "timestamp": 1020.0,
-            "market_cap_sol": 65.0,  # 2x+ take profit trigger
-            "price_sol": 0.000065,
-            "is_buy": True,
-            "sol_amount": 1.0,
-            "user": "Trader2",
-            "real_sol_reserves": 85.0,
-            "virtual_sol_reserves": 115.0,
-            "complete": True,
-        },
-        {
-            "mint": SAMPLE_MINT,
-            "mint_name": "CoinAlpha",
-            "timestamp": 1030.0,
-            "market_cap_sol": 85.0,
-            "price_sol": 0.000085,
-            "sell_signal": True,
-        },
-    ]
-    summary = paper.run(snapshots)
-    assert summary is not None
-
-    render_replay_summary(summary)
-    render_replay_trades(summary.get("trades", []))
-    render_replay_dashboard(summary)
-
-    # 3. Main CLI parser with --help / replay --help
-    with patch("sys.argv", ["trading_pump", "--help"]), pytest.raises(SystemExit):
-        main()
-
-    with (
-        patch("sys.argv", ["trading_pump", "replay", "--help"]),
-        pytest.raises(SystemExit),
-    ):
-        main()

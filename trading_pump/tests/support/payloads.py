@@ -1,8 +1,8 @@
 """Byte builders for Pump.fun account and event payloads.
 
-The layouts mirror the parsers in ``streams/geyser.py``
-(``BondingCurveBinaryParser``, ``TradeInstructionBinaryParser``); the
-round-trip tests in ``tests/unit/test_support.py`` fail if either side drifts.
+The bonding-curve layout mirrors ``PumpFunCurveMixin.decode_bonding_curve_data``
+(``sdk/pumpfun_execution.py``); the round-trip tests in
+``tests/unit/test_support.py`` fail if either side drifts.
 Pubkeys must be valid base58, so a payload never carries padded garbage.
 """
 
@@ -13,12 +13,6 @@ import struct
 
 from solders.pubkey import Pubkey
 
-from trading_pump.streams.geyser import (
-    BUY_DISCRIMINATOR,
-    COMPLETE_EVENT_DISCRIMINATOR,
-    SELL_DISCRIMINATOR,
-    TRADE_EVENT_DISCRIMINATOR,
-)
 from trading_pump.tests.support.constants import (
     INITIAL_REAL_TOKEN_RESERVES,
     INITIAL_VIRTUAL_SOL_RESERVES,
@@ -90,65 +84,6 @@ def account_data_b64(raw: bytes) -> list[str]:
     return [base64.b64encode(raw).decode("ascii"), "base64"]
 
 
-def trade_event_bytes(
-    *,
-    mint: str = SAMPLE_MINT,
-    sol_amount: int = 1_000_000_000,
-    token_amount: int = 35_000_000_000_000,
-    is_buy: bool = True,
-    user: str = SAMPLE_USER,
-    timestamp: int = SAMPLE_TIMESTAMP,
-    virtual_sol_reserves: int = 31_000_000_000,
-    virtual_token_reserves: int = 1_038_000_000_000_000,
-    real_sol_reserves: int = 1_000_000_000,
-    real_token_reserves: int = 758_100_000_000_000,
-) -> bytes:
-    """Return an Anchor ``TradeEvent`` (discriminator + 121-byte payload)."""
-    return TRADE_EVENT_DISCRIMINATOR + struct.pack(
-        "<32sQQ?32sqQQQQ",
-        _pubkey_bytes(mint),
-        sol_amount,
-        token_amount,
-        is_buy,
-        _pubkey_bytes(user),
-        timestamp,
-        virtual_sol_reserves,
-        virtual_token_reserves,
-        real_sol_reserves,
-        real_token_reserves,
-    )
-
-
-def complete_event_bytes(
-    *,
-    user: str = SAMPLE_USER,
-    mint: str = SAMPLE_MINT,
-    bonding_curve: str = SAMPLE_CURVE,
-    timestamp: int = SAMPLE_TIMESTAMP,
-) -> bytes:
-    """Return an Anchor ``CompleteEvent`` (curve graduated)."""
-    return COMPLETE_EVENT_DISCRIMINATOR + struct.pack(
-        "<32s32s32sq",
-        _pubkey_bytes(user),
-        _pubkey_bytes(mint),
-        _pubkey_bytes(bonding_curve),
-        timestamp,
-    )
-
-
-def buy_instruction_bytes(amount: int, max_sol_cost: int) -> bytes:
-    """Return Pump.fun ``buy`` instruction data (amount, max SOL cost)."""
-    return BUY_DISCRIMINATOR + struct.pack("<QQ", amount, max_sol_cost)
-
-
-def sell_instruction_bytes(amount: int, min_sol_output: int) -> bytes:
-    """Return Pump.fun ``sell`` instruction data (amount, min SOL output)."""
-    return SELL_DISCRIMINATOR + struct.pack("<QQ", amount, min_sol_output)
-
-
-# Mainnet accounts of a graduated Pump.fun coin (getAccountInfo, base64), used
-# to pin the PumpSwap layouts and PDAs (BUG-123). Source: the Apache-2.0
-# pumpfun-bonkfun-bot regression fixture raw_graduated_markets_from_getaccountinfo.json.
 GRADUATED_MINT = "DJGsptd7CEMEKrHdmVPastxKcPNSqGJT5K7HWcn5pump"
 GRADUATED_POOL = "B9WYSKaLDWnegupPNG1h99XiiokMUYj6k64Dbqv18qr8"
 GRADUATED_CURVE_ADDRESS = "3gssU4VTiBwWWsovxhhgGNjBqY7gMbjdUkhwpdEJsmVM"

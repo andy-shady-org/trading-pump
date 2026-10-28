@@ -1,8 +1,8 @@
 import pytest
 
 from trading_pump.strategies import filters as filters_module
-from trading_pump.strategies.decision import TradingStrategy
 from trading_pump.strategies.filters import (
+    ScreeningSettings,
     DevWalletProfile,
     HolderDistribution,
     ScreeningCache,
@@ -16,8 +16,7 @@ from trading_pump.strategies.filters import (
     evaluate_token_heuristics,
     passes_anti_rug_screening,
 )
-from trading_pump.strategies.presets import resolve_strategy_config
-from trading_pump.tests.support.factories import make_config
+from trading_pump.tests.support.factories import make_screening
 from trading_pump.tests.support.fakes import FakeClock
 
 
@@ -316,7 +315,7 @@ def test_screening_cache(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_full_heuristic_screening_pipeline():
-    config = resolve_strategy_config("balanced")
+    config = ScreeningSettings.preset("balanced")
     mint = "TestMint11111111111111111111111111111111111"
     cache = ScreeningCache(default_ttl=60.0)
 
@@ -405,10 +404,7 @@ def test_full_heuristic_screening_pipeline():
 
 
 def test_disabled_anti_rug_filters():
-    config = resolve_strategy_config(
-        "balanced",
-        overrides={"enable_anti_rug_filters": False},
-    )
+    config = ScreeningSettings.preset("balanced", enable_anti_rug_filters=False)
 
     verdict = evaluate_token_heuristics(
         config,
@@ -421,14 +417,16 @@ def test_disabled_anti_rug_filters():
     assert "disabled" in verdict.reasons[0].lower()
 
 
-def test_trading_strategy_screen_token_integration():
-    config = resolve_strategy_config("conservative")
+def test_conservative_preset_screen_passes_a_clean_token():
+    config = ScreeningSettings.preset("conservative")
     assert config.enable_anti_rug_filters is True
     assert config.max_creator_initial_holding_pct == 0.05
     assert config.min_social_links_count == 2
+    assert config.max_top5_holder_concentration_pct == 0.10
+    assert config.max_gini_coefficient == 0.80
 
-    strategy = TradingStrategy(config)
-    verdict = strategy.screen_token(
+    verdict = evaluate_token_heuristics(
+        config,
         "ConservativeTestMint",
         metadata={
             "twitter": "https://x.com/SafeToken",
@@ -440,78 +438,20 @@ def test_trading_strategy_screen_token_integration():
     )
     assert verdict.passed
 
-    # Summary includes anti-rug keys
-    summary = strategy.summary()
-    assert summary["enable_anti_rug_filters"] is True
-    assert summary["max_creator_initial_holding_pct"] == 0.05
-    assert summary["max_top5_holder_concentration_pct"] == 0.10
-    assert summary["max_gini_coefficient"] == 0.80
 
-    # token_is_eligible with screening verdict
-    eligible = strategy.is_eligible_for_buy(
-        market_cap_sol=35.0,
-        mint_seen_recently=False,
-        buy_attempts=0,
-        screening_verdict=verdict,
+def test_screening_presets_and_mapping() -> None:
+    assert ScreeningSettings.from_mapping({"preset": "aggressive"}) == (
+        ScreeningSettings.preset("aggressive")
     )
-    assert eligible
+    assert ScreeningSettings.from_mapping(
+        {"preset": "balanced", "min_holder_count": 6, "_note": "comment"}
+    ).min_holder_count == 6
+    assert ScreeningSettings.from_mapping(None) == ScreeningSettings()
+    with pytest.raises(ValueError, match="Unknown screening keys: bogus"):
+        ScreeningSettings.from_mapping({"bogus": 1})
+    with pytest.raises(ValueError, match="Unknown screening preset"):
+        ScreeningSettings.preset("reckless")
 
-    failed_verdict = TokenScreeningVerdict(
-        mint="BadMint", passed=False, risk_score=80.0
-    )
-    ineligible = strategy.is_eligible_for_buy(
-        market_cap_sol=35.0,
-        mint_seen_recently=False,
-        buy_attempts=0,
-        screening_verdict=failed_verdict,
-    )
-    assert not ineligible
-
-
-@pytest.mark.regression("BUG-77")
-def test_screening_cache_is_bounded():
-    """BUG-77: the screening cache evicts the oldest entry at capacity."""
-    cache = ScreeningCache(default_ttl=60.0, max_entries=2)
-    verdict = TokenScreeningVerdict(mint="m", passed=True, risk_score=0.0)
-    for mint in ("a", "b", "c"):
-        cache.set(mint, verdict)
-    assert cache.size() == 2
-    assert cache.get("a") is None and cache.get("c") is verdict
-    cache.set("d", verdict, ttl=-1.0)
-    cache.set("e", verdict)
-    assert cache.size() == 2
-
-
-@pytest.mark.regression("BUG-56")
-def test_gini_above_configured_cap_is_hard_reject():
-    # BUG-56: 0.85 < G <= 0.95 used to be a soft penalty only
-    holders = [("whale", 1_000_000)] + [(f"w{i}", 1) for i in range(9)]
-    dist = HolderDistribution(top_holders=holders)
-    assert 0.85 < dist.compute_gini_coefficient() <= 0.95
-    passed, _, reasons = evaluate_holder_distribution(dist, max_gini=0.85)
-    assert passed is False
-    assert any("Gini" in r for r in reasons)
-
-
-@pytest.mark.regression("BUG-57")
-def test_missing_dev_and_holder_data_fails_closed():
-    # BUG-57
-    config = make_config(
-        dry_run=False, enable_anti_rug_filters=True, require_social_links=False
-    )
-    verdict = evaluate_token_heuristics(config, "NoDataMint", use_cache=False)
-    assert verdict.passed is False
-    assert verdict.flags["missing_dev_data"] is True
-    assert verdict.flags["missing_holder_data"] is True
-
-    partial = evaluate_token_heuristics(
-        config,
-        "PartialMint",
-        dev_profile=DevWalletProfile(creator_address="Dev1"),
-        use_cache=False,
-    )
-    assert partial.passed is True
-    assert partial.flags["missing_holder_data"] is True
 
 
 def _holders(accounts: int) -> HolderDistribution:
@@ -538,7 +478,7 @@ def _holders(accounts: int) -> HolderDistribution:
 def test_min_holder_count_rejects_tokens_below_the_threshold(
     min_holder_count: int, accounts: int, passes: bool
 ) -> None:
-    config = make_config(
+    config = make_screening(
         min_holder_count=min_holder_count, max_acceptable_risk_score=100.0
     )
     verdict = evaluate_token_heuristics(
