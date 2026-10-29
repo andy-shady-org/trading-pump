@@ -963,3 +963,6 @@ Split in two (decided 2026-10-19). **28a** (branch `sprint-28a-runtime-decomposi
 ### FEAT-65 slow lane, phase 0 data (closed 2026-10-29: NO-GO)
 - [x] Walk-forward test of the §6.12 trend rules on the Binance history, in SOL terms with the measured costs, against a random-entry baseline on unseen periods, pre-registered: **NO-GO**, negative and below random timing in all four counted half-years, −37.8% compounded ([`STRATEGY-PIVOT.md` §6.15](STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)). The backtester and the lane it would have unlocked are not built
 
+### FEAT-76 PumpSwap Post-Graduation Momentum Lane (partly done)
+- [x] PumpSwap fee checked against real swaps: 94 trades of 11 rc.9 graduates decoded from their events; the module's tier and pool maths match them, once the tier uses the mint's real supply (BUG-162); no `fee_bps_floor` needed ([`STRATEGY-PIVOT.md` §6.16](STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29))
+

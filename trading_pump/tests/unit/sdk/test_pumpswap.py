@@ -13,6 +13,8 @@ from solders.pubkey import Pubkey
 
 from trading_pump.sdk import pumpswap as ps
 from trading_pump.tests.support.payloads import (
+    GRADUATE_MINT_B64,
+    GRADUATE_MINT_SUPPLY,
     GRADUATED_BASE_VAULT_B64,
     GRADUATED_GLOBAL_CONFIG_ADDRESS,
     GRADUATED_GLOBAL_CONFIG_B64,
@@ -210,3 +212,13 @@ def test_sell_instruction_tail_for_mayhem_cashback_and_no_buyback() -> None:
     assert len(keys) == 23
     assert keys[9] == config.reserved_fee_recipient
     assert keys[22] == str(ps.amm_pda(b"user_volume_accumulator", bytes(user)))
+
+
+@pytest.mark.regression("BUG-162")
+def test_mint_supply_reads_a_real_token_2022_mint() -> None:
+    data = base64.b64decode(GRADUATE_MINT_B64)
+    assert len(data) == 386
+    # Below the 1B tokens (1e15 raw) the coin started with: burns.
+    assert ps.mint_supply(data) == GRADUATE_MINT_SUPPLY < 10**15
+    with pytest.raises(ps.PumpSwapPoolUnavailableError, match="too short"):
+        ps.mint_supply(data[:43])

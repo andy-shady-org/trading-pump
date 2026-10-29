@@ -74,11 +74,14 @@ party's quote:
   constant product: `tokens = base × swapped / (quote + swapped)`.
 * **Sell**: `pumpswap_sell_quote` (the program's own maths): the tokens swap
   for SOL along the constant product and the fee comes off what comes out.
-* **Swap fee**: the pool's tier in the PumpSwap fee config by market cap,
-  else the AMM `global_config` total, never below `fee_bps_floor`. Which tier
-  applies to a fresh graduate is to be checked against a real swap before the
-  live gate ([dev/TODO.md](dev/TODO.md)); replays use a fixed fee
-  (`--fee-bps`, 125 by default) and should be run at 200 too.
+* **Swap fee**: the pool's tier in the PumpSwap fee config by market cap on
+  the mint's real supply (as the program prices it; burns take it below 1B
+  tokens, BUG-162), else the AMM `global_config` total, never below
+  `fee_bps_floor`. Checked against 94 real trades of fresh graduates
+  ([dev/STRATEGY-PIVOT.md §6.16](dev/STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)):
+  125 bps a side below 420 SOL, 120 bps from there, and the pool maths
+  reproduces their fills. Replays use a fixed fee (`--fee-bps`, 125 by
+  default); 200 is a stress, not a plausible fee.
 * **Network costs** on every fill: 5,000 lamports base fee, the priority fee
   (5,000 lamports in the example), a Jito tip when on, and 1,513,840 lamports
   of Token-2022 account rent on the first buy of a coin, refunded at the full
@@ -128,5 +131,5 @@ Rules pumpbot learnt that apply to any lane here:
 
 Known risks (from the FEAT-76 proposal): the edge is small next to the
 noise and sensitive to latency; snipers trade the migration block, so live
-fills may be worse than paper's next reading; the fee tier is an assumption
-until a live fill measures it.
+fills may be worse than paper's next reading. The fee tier was checked on
+real third-party trades (§6.16); our own first live fill still has to confirm it.

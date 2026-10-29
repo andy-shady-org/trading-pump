@@ -188,6 +188,7 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-28 | same, swap fee 200 bps a side | pumpswap_momentum | same | 42 | −0.003 | 50.0% | the edge is about the cost: −0.4% per trade (§6.14) |
 | 2026-10-28 | same, 125 bps, `paper_entry_delay_seconds` 2 | pumpswap_momentum | same + 2 s entry delay | 33 | +0.023 | 54.5% | better, not worse, with a later fill: +3.5% per trade; NO-GO on count and interval (§6.14) |
 | 2026-10-29 | FEAT-65 walk-forward, Binance daily bars 2021-08 → 2026-10-22, trend rule (SMA 10 / 20 / 50 chosen on the 730 days before each half-year), SOL terms, measured costs | slow lane (backtest) | pre-registered (`PREREGISTRATION.md` sha256 `a76d5535…`), 6–7 tokens in the counted periods | 60–180 switches a period | −0.6% / −17.3% / −17.1% / −8.6% (2024 H2 → 2026 Jan–Apr) | — | **NO-GO**: below 0 and below the random-entry p90 in all four counted periods; −37.8% compounded (§6.15) |
+| 2026-10-29 | PumpSwap fee check: 94 real trades in the first 10 minutes of 11 standard rc.9 graduates, `BuyEvent` / `SellEvent` decoded (public RPC, read-only) | pumpswap_momentum (costs) | the live fee config | 94 trades | — | — | **the cost model holds**: 92 of 94 paid the module's tier, the module's pool maths reproduces real fills to 0.001 bps; the tier must use the mint's real supply (BUG-162) (§6.16) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -470,4 +471,21 @@ Items 2 and 3 of the "top 10 strategies" review: the **pullback entry** (wait fo
   Compounded over the four counted periods: −37.8% (stress −43.3%), against −60.9% for holding the tokens. RAY alone (2022 H1 → 2024 H1, reported, not counted): four of five half-years negative, −82.1% compounded; its one positive half (+13.1% in 2023 H2) was far below the random p90 (+71.5%).
 - **Reading:** **NO-GO on every condition**: no counted period is above 0, none beats random timing, and the compounded return is negative. Every training window had all three rules negative too, so the walk-forward only ever chose the least bad loser. The trend rule does what §6.12 saw, cutting the worst drawdowns (−37.8% against −60.9% for holding), but in SOL terms holding SOL beat both. The one good stretch is the six months §6.12 had already seen. Costs are not the problem (60–180 switches a half-year at 4–27 bps a side).
 - **Next:** FEAT-65 stops here. No backtester, no lane and no Jupiter swap client are built for it. Another rule on the same data would be a new pre-registered test, not a variation of this one tuned until it passes (AGENTS: "Beat a random cut"). The scripts, the cost table and the result are in `runtime/analysis-feat65-walkforward/`.
+
+### 6.16 PumpSwap fee check: the cost model holds, on the mint's real supply (2026-10-29)
+- **Question** (FEAT-76, [`TODO.md`](TODO.md#feat-76-pumpswap-post-graduation-momentum-lane)): does the fee the module charges a fresh graduate, the PumpSwap fee-config tier for its market cap, match what real swaps in a graduate's first minutes pay? Every FEAT-76 result so far assumed a rate (§6.14 moved from +1.1% to −0.4% a trade between 125 and 200 bps a side).
+- **Data:** the 11 standard graduates of the rc.9 capture's first hours (first market cap 205–822 SOL); for each, 12 transactions spread over its first 10 minutes on PumpSwap (132 in all), read from the public mainnet RPC. Each PumpSwap trade emits a `BuyEvent` / `SellEvent` (`pump-fun/pump-public-docs`, `idl/pump_amm.json`) with the reserves it priced at, the LP, protocol and creator fee in bps and in lamports, and the mint's supply: 94 such events (58 buys, 36 sells). The fee config was read the same day:
+
+  | Market cap from (SOL) | LP | Protocol | Creator | Total (bps) |
+  |---|---|---|---|---|
+  | 0 | 2 | 93 | 30 | 125 |
+  | 420 | 20 | 5 | 95 | 120 |
+  | 1,470 | 20 | 5 | 90 | 115 |
+  | then down by 5 bps a step | 20 | 5 | … | to 30 from 98,240 |
+
+- **Results:**
+  - **The tier:** 92 of 94 trades paid exactly the tier the module picks. One was the migration's own buy (no fee). The other, at 432.3 SOL on the module's basis, paid the below-420 tier: the program prices the tier on the mint's real supply, which was 3.8% below the 1B tokens the module assumed (burns). On the real supply all 93 fee-paying trades match their tier. Fixed as **BUG-162**.
+  - **The price:** given a trade's reserves (vault plus the pool's virtual quote reserve, about 17.6 SOL on every fresh graduate) and what the user paid, the module's own `buy_tokens_out` / `sell_lamports_out` reproduce the tokens or SOL received to within 0.001 bps for every `buy`, `buy_v2` and sell, and within 0.34 bps for `buy_exact_quote_in` (from the transactions' balance changes; the event's input field means something else for that instruction). The only miss is a 7-lamport dust sell.
+  - **Nothing else is charged:** half of the protocol fee goes to a buyback (`buyback_fee_basis_points` 5,000), inside the 5 or 93 bps, not on top; cashback and holder rewards were 0 on these coins (none was a cashback coin).
+- **Reading:** a fresh graduate pays **125 bps a side below 420 SOL and 120 bps from there** (on the real supply), as the module charges once BUG-162 is fixed: the §6.14 replay at 125 bps was the realistic one, and 200 bps a stress, not a plausible fee. No `fee_bps_floor` is needed. The lane's other costs (base and priority fee, rent) are unchanged. Scripts and data: `runtime/analysis-feat76-fee-check/`.
 

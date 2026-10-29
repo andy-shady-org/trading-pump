@@ -11,6 +11,7 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 ## [Unreleased]
 
 ### Fixed
+- The PumpSwap fee tier is picked on the mint's real supply, as the program does, not on 1B tokens: a fresh graduate with burnt supply near the 420 SOL tier boundary was charged 120 bps a side where the program charges 125 (BUG-162). The supply is read with the fee accounts and cached; an unreadable supply is an unknown fee, never a guess.
 - The batch bonding-curve reader (`get_bonding_curve_states`) read an RPC error, or an answer without an account list, as every curve missing, as the pool reader did before BUG-159; it now shares the pool reader's checked `getMultipleAccounts` and raises (BUG-161). Nothing running called it.
 
 ### Changed

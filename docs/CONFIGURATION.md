@@ -76,7 +76,7 @@ stop loss `0.15`, `max_hold_seconds` `1800`), and sizing is the engine's
 | Key | Default | Meaning |
 |---|---|---|
 | `slippage_bps` | `500` | A buy is refused when its fill price is more than this above the signal price. |
-| `fee_bps_floor` | `0` | Least swap fee a side. The fee is the pool's tier from the PumpSwap fee config when it can be read, else the AMM `global_config` total. |
+| `fee_bps_floor` | `0` | Least swap fee a side. The fee is the pool's tier from the PumpSwap fee config (on the market cap at the mint's real supply, BUG-162) when it can be read, else the AMM `global_config` total. Not needed for the live tiers (STRATEGY-PIVOT §6.16). |
 | `priority_fee_lamports` | `5000` | Priority fee booked on every fill (as `priority_fee`). |
 | `compute_unit_limit` | `200000` | Compute units requested (live transactions; kept for the live gate). |
 | `use_jito` | `false` | Book a Jito tip on every fill. |

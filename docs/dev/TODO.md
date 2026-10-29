@@ -38,14 +38,14 @@ CI green on 3.11–3.14, and the rc.9 tags installed in the runtime folder
 
 Done: the paper lane, the PumpSwap paper executor priced from the pool and
 the fee config, the replay, the pre-registered verdict file
-(`configs/verdict_rules.json`) ([FEATURES.md §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper)).
+(`configs/verdict_rules.json`) ([FEATURES.md §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper)), and the fee check against real swaps
+([STRATEGY-PIVOT §6.16](STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)).
 pumpfun-trading's planned rc.9 build (BUG-157 fixed) is superseded: the
 capture here is pruned by its own policy only, and "rc.9" now names the first
 run on the new stack (`v0.4.0rc1`).
 
 - [ ] **rc.9:** 72 h paper run on fresh data with `configs/paper.example.json` on `v0.4.0rc2` (signal 60 s, ratio 1.2, standard pool, TP +20%, stop −15%, 30 min hold, 0.02 SOL, 1.5 s paper entry delay): record the verdict rule's sha256 and the run provenance before it starts; judge with `trading-core-audit verdict --rules configs/verdict_rules.json`; pass = the verdict's GO (≥ 100 positions, both halves positive, 90% interval above 0, positive without the best 3), and better than a random entry on the same graduates
 - [ ] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges
-- [ ] Check the PumpSwap fee: read the fee config tier for a fresh graduate (market cap about 410 SOL) and compare it with the fee paid by real PumpSwap swaps of graduates in their first minutes (on-chain transactions, read-only); set `fee_bps_floor` or fix the tier selection if they differ. Until then every replay states its fee
 - [ ] Optional, if the RPC budget allows: a 1 s fast phase for the first 3 minutes (`fast_poll_interval_seconds`), since the result moved with one reading of delay (§6.13)
 - [ ] Market recorder before it can pick a venue: a sell-quote check per followed pool (Jupiter on Solana), coverage of Raydium LaunchLab / stonkfun / memefun pools (GeckoTerminal OHLCV or on-chain reads), and per-chain cost and gas at the trade size
 
