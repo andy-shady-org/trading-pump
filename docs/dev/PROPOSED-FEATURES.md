@@ -7,7 +7,7 @@ schedule is in [`TODO.md`](TODO.md). When a feature's code ships, move it to
 ships there and keep the missing parts here (AGENTS, Feature Docs Track
 Code).
 
-This list continues pumpfun-trading's (next free ID: **FEAT-77**). On
+This list continues pumpfun-trading's (next free ID: **FEAT-78**). On
 2026-10-28 it was split by owner: the venue proposals below stayed; the Web
 UI platform and the engine-level proposals (FEAT-10, FEAT-31 to FEAT-38,
 FEAT-41, FEAT-43 to FEAT-46, FEAT-48) moved to trading-core's
@@ -38,7 +38,8 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-59 | Pullback entry after the first dump | Income | P2 | shadow variants in rc.3; entry path not built |
 | FEAT-60 | Buy-timing (drizzle / burst) inputs | Income | P3 | inputs recorded in rc.3 (no edge yet); gate not built |
 | FEAT-61 | Create-slot bundle proxy | Income | P3 | inputs recorded in rc.3; gate not built |
-| FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled |
+| FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled; refocused on graduates 2026-10-29: read-out from FEAT-74 data first ([`TODO.md`](TODO.md#cross-chain-market-recorder-feat-74)) |
+| FEAT-77 | On-chain migration feed as a fallback for PumpPortal | Reliability | P2 | proposed 2026-10-29; measure the subscription's volume first ([`TODO.md`](TODO.md#on-chain-migration-feed-feat-77-fallback-for-pumpportal)) |
 | FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P3 | not scheduled |
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
 | FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | — | **NO-GO** 2026-10-29: costs pass (0–37 bps, phase 0), but the pre-registered walk-forward on the Binance history lost in every counted half-year and never beat random timing (STRATEGY-PIVOT §6.15); not built |
@@ -174,6 +175,17 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   3. **Execution (only after phase 2 passes).** Buy and sell builders checked against real mainnet transactions, a `venue` field on positions, trade records and `pumpfun-audit pnl --group-by`, the venue's migration exit, then a 72 h paper pilot and the normal Stage 0 gate (`RELEASE-GATE.md` §3.1) before any capital.
 * **Risks:** fewer launches means fewer trades, so a small edge may not cover fixed costs; the "cleaner signal" may just be fewer data points; a second venue doubles the data and cost surface the operator has to watch. The decision rules are the same as on Pump.fun (AGENTS learnings "Beat a random cut", "Model the latency you pay").
 * **Dependencies:** none for phase 1; FEAT-58 / FEAT-59 shadow tooling for phase 2. Do not start it while the rc.2 / rc.3 Pump.fun captures and the pre-graduation pilot are still unread. **Impact:** an evidence-based answer on a second Solana venue at the cost of a recorder and one capture; no trading change until phase 3.
+* **Update (2026-10-29):** the question has moved. Launch buying on Pump.fun is NO-GO (§6.13) and the one positive signal is post-graduation (FEAT-76), so the Moonshot question is whether its *graduates* behave like PumpSwap's after costs, not its launches. Moonshot graduates migrate to open AMMs (Raydium or Meteora; the target and its fees are to be read from mainnet), whose new pools the FEAT-74 market recorder already discovers through GeckoTerminal. Phase 1 therefore starts as a read-out of recorder data (TODO, FEAT-74), with no new decoder. It is very small: 18 Moonshot pools (`moonshot` 10, `moonit` 8) against 2,866 PumpSwap pools in rc.8's 38 h ([`STRATEGY-PIVOT.md` §6.17](STRATEGY-PIVOT.md#617-launchpads-in-the-rc8-cross-chain-data-2026-10-29)), so no pre-registered verdict (≥ 100 positions) is reachable in a reasonable run; FEAT-76's own count is near that minimum on 72 h of Pump.fun graduates. Revisit only if its share grows. A buy path would be a separate trading-core module (Raydium / Meteora pool maths, fees and builders), not a lane here.
+
+### FEAT-77: On-Chain Migration Feed As A Fallback For PumpPortal
+* **Class / Priority:** Reliability · P2 (proposed 2026-10-29; no code)
+* **Goal:** keep following graduates when PumpPortal fails. Today its `subscribeMigration` is the module's only source of migrations, and it has failed twice: a half-open socket that delivered nothing for 3 h (BUG-150) and refusals a reconnect did not clear (BUG-156).
+* **Not the goal: speed.** PumpPortal's migration event reached the module 0.3–1.1 s after the migration's block in the rc.9 data (§6.16's sample), and the FEAT-76 rule acts 60 s after the migration. A Geyser / Yellowstone feed (FEAT-39) is not needed for this.
+* **Design:**
+  1. **Measure first.** A migration is one transaction: Pump.fun's `migrate` calls PumpSwap's `create_pool`. Candidate subscriptions, each measured for messages and bytes per hour, and the provider's billing for them, before any choice: `logsSubscribe` mentioning the Pump.fun program (filter on the `migrate` log), and `programSubscribe` on the PumpSwap program filtered to pool accounts (`dataSize`, base or quote mint). Check whether swaps rewrite the pool account (it holds addresses and config; the reserves sit in the vault token accounts), since that decides whether `programSubscribe` is a trickle or a firehose.
+  2. **Record-only.** The chosen subscription runs next to PumpPortal and writes `migration` rows tagged with their source; a read-out compares both feeds (missed, late, duplicate migrations) over at least 24 h.
+  3. **Fallback.** `MigrationFeed` takes migrations from either source, de-duplicated by mint, and reports which source is degraded; trading-core's health and alerts are unchanged.
+* **Dependencies:** the RPC provider's WebSocket limits and billing. **Impact:** no blind runs when PumpPortal is down; no change to any decision.
 
 ### FEAT-63: Funding-Source Lookup For The Cluster Analyser
 * **Class / Priority:** Income · P3 (proposed 2026-10-20, split out of `FEATURES.md` §27; not scheduled)
