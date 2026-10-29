@@ -36,8 +36,9 @@ Keep one status file per module and mode (trading-core refuses another's).
 - `trading-core modules` lists `pumpfun`, and the installed versions are the
   tags you mean to run (`pip show trading-core trading-pump`).
 - Alerts: one `TRADING_CORE_ALERT_*` provider set and a test alert received.
-- Disk: a graduation capture is about 1–2 M rows a day; `capture.max_files`
-  × `max_bytes` must hold the whole run (BUG-157's lesson).
+- Disk: a graduation capture is about 1.2 M rows, about 320 MB, a day before
+  compression (rc.8); `capture.max_files` × `max_bytes` must hold the whole
+  run (BUG-157's lesson). The default, 100 × 50 MB, holds about two weeks.
 - For live (not built yet): a dedicated hot wallet holding only the stage's
   capital ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate)).
 
@@ -54,7 +55,8 @@ Keep one status file per module and mode (trading-core refuses another's).
 3. In the first hour:
    ```bash
    zcat -f data/paper/capture.jsonl* | head -1 | jq .timestamp       # oldest row ≈ start time (BUG-157)
-   jq '.run_provenance' data/paper/status.json                         # build, settings hash, module settings
+   jq '.run_provenance | {package_version, git_commit, git_dirty, module_version, module_git, config_file_sha256}' \
+     data/paper/status.json      # both builds clean (git_dirty false) and the frozen config
    trading-core-events --path data/paper/events.jsonl --errors-only --limit 50
    ```
    The dashboard's module rows should move: PumpPortal `connected` with a

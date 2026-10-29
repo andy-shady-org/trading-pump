@@ -29,8 +29,8 @@ docs split, the replay of the rc.8 graduation rows through the new stack
 ([STRATEGY-PIVOT §6.14](STRATEGY-PIVOT.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28)).
 
 - [ ] `nox` green in CI (`tests.yml` matrix on 3.11–3.14, needs the `TRADING_CORE_TOKEN` secret). *Done locally on Linux, 2026-10-28:* `nox -s tests lint mypy package`, 100% coverage on 3.11, 3.12, 3.13 and 3.14, wheel without tests
-- [ ] trading-core's `feat/pumpfun-module-support` merged and tagged (the module needs `CLOSES_POSITION` on sells and `trading-core check` building the module); then pin `trading-core>=` that version in `pyproject.toml`
-- [ ] A paper run of at least 24 h on the new stack with `configs/paper.example.json` (copied to the runtime folder): check after an hour that the capture's oldest row is the start time (BUG-157), `degraded` conditions stay clear, the dashboard rows move, and the capture replays with `trading-pump replay` to the same positions as the run (fills at the same readings, within the fee difference)
+- [ ] Tag trading-core `v0.2.0` and trading-pump `v0.4.0rc1` (the rc.9 build; `trading-core>=0.2.0` pinned, so runs record the module's own commit, `module_git`), push both, and install them in the runtime folder from clean checkouts of the tags
+- [ ] A paper run of at least 24 h on the new stack with `configs/paper.example.json` (copied to the runtime folder; the 72 h rc.9 run below counts): check after an hour that the capture's oldest row is the start time (BUG-157), `degraded` conditions stay clear, the dashboard rows move, and the capture replays with `trading-pump replay` to the same positions as the run (fills at the same readings, within the fee difference)
 - [ ] Move the runtime data that is still wanted (rc.6 to rc.8 captures, analysis scripts, `runtime/archive/`) out of the pumpfun-trading checkout, if it lives there
 - [ ] Then archive the pumpfun-trading GitHub repository (read-only) rather than deleting it; its history is in this repository already
 
@@ -39,10 +39,11 @@ docs split, the replay of the rc.8 graduation rows through the new stack
 Done: the paper lane, the PumpSwap paper executor priced from the pool and
 the fee config, the replay, the pre-registered verdict file
 (`configs/verdict_rules.json`) ([FEATURES.md §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper)).
-The rc.9 build with BUG-157 fixed is superseded: the capture here is pruned
-by its own policy only.
+pumpfun-trading's planned rc.9 build (BUG-157 fixed) is superseded: the
+capture here is pruned by its own policy only, and "rc.9" now names the first
+run on the new stack (`v0.4.0rc1`).
 
-- [ ] 72 h paper run on fresh data with `configs/paper.example.json` (signal 60 s, ratio 1.2, standard pool, TP +20%, stop −15%, 30 min hold, 0.02 SOL): record the verdict rule's sha256 and the run provenance before it starts; judge with `trading-core-audit verdict --rules configs/verdict_rules.json`; pass = the verdict's GO (≥ 100 positions, both halves positive, 90% interval above 0, positive without the best 3), and better than a random entry on the same graduates
+- [ ] **rc.9:** 72 h paper run on fresh data with `configs/paper.example.json` on `v0.4.0rc1` (signal 60 s, ratio 1.2, standard pool, TP +20%, stop −15%, 30 min hold, 0.02 SOL, 1.5 s paper entry delay): record the verdict rule's sha256 and the run provenance before it starts; judge with `trading-core-audit verdict --rules configs/verdict_rules.json`; pass = the verdict's GO (≥ 100 positions, both halves positive, 90% interval above 0, positive without the best 3), and better than a random entry on the same graduates
 - [ ] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges
 - [ ] Check the PumpSwap fee: read the fee config tier for a fresh graduate (market cap about 410 SOL) and compare it with the fee paid by real PumpSwap swaps of graduates in their first minutes (on-chain transactions, read-only); set `fee_bps_floor` or fix the tier selection if they differ. Until then every replay states its fee
 - [ ] Optional, if the RPC budget allows: a 1 s fast phase for the first 3 minutes (`fast_poll_interval_seconds`), since the result moved with one reading of delay (§6.13)
@@ -127,5 +128,5 @@ the Phase 4b funding gate and the "definition of done" moved to trading-core
 with the Web UI; `min_holder_count: 6` on an unseen capture (Sprint 24A) was a
 launch-lane screen setting and is closed with it (reopen it if
 `lane.screen_entries` is ever turned on); the 72 h graduation-only
-capture on rc.9 (FEAT-76 phase 1) is replaced by the 72 h paper run above,
-which records the same rows.
+capture planned for pumpfun-trading's rc.9 (FEAT-76 phase 1) is replaced by
+the 72 h rc.9 paper run above, which records the same rows.

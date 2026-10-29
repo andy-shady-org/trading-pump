@@ -81,7 +81,7 @@ stop loss `0.15`, `max_hold_seconds` `1800`), and sizing is the engine's
 | `compute_unit_limit` | `200000` | Compute units requested (live transactions; kept for the live gate). |
 | `use_jito` | `false` | Book a Jito tip on every fill. |
 | `jito_tip_lamports` | `0` | The tip, when `use_jito` is on. |
-| `paper_entry_delay_seconds` | `0` | Wait before a paper buy reads the pool, to model a live buy's latency (BUG-121's lesson). `2` is a fair stress test (STRATEGY-PIVOT §6.14). |
+| `paper_entry_delay_seconds` | `0` | Wait before a paper buy reads the pool, to model a live buy's latency (BUG-121's lesson). The paper example (and the rc.9 run) use `1.5`, pumpbot's paper latency; `2` is a fair stress test (STRATEGY-PIVOT §6.14). |
 | `quote_max_age_seconds` | `15` | A held pool's reading older than this is re-read before the engine marks or exits on it; a failed read makes the quote stale. |
 | `rpc_timeout_seconds` | `10` | Timeout of one pool or fee-config read. |
 
@@ -101,7 +101,7 @@ file's (BUG-157).
 |---|---|---|
 | `path` | `"data/capture.jsonl"` | The capture; `null` turns it off. |
 | `max_bytes` | `52428800` | Rotate at 50 MB. |
-| `max_files` | `20` | Rotated parts kept. A 72 h capture of every graduate needs more than the default: check the oldest row after the first day (BUG-157's lesson). |
+| `max_files` | `100` | Rotated parts kept: about two weeks of graduation rows at rc.8's rate (about 320 MB a day before compression). Check the oldest row after the first day (BUG-157's lesson). |
 | `max_age_days` | `30` | Parts older than this are pruned. |
 | `compress` | `true` | Gzip rotated parts. |
 | `flush_interval_seconds` | `5` | How often buffered rows are written. |
