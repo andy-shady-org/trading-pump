@@ -122,6 +122,70 @@ SCREENING_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
+def _explicit_socials(data: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+    """Twitter, Telegram, website and Discord as the record names them."""
+    twitter = (
+        data.get("twitter")
+        or data.get("x")
+        or data.get("twitter_url")
+        or data.get("x_url")
+    )
+    telegram = (
+        data.get("telegram")
+        or data.get("tg")
+        or data.get("telegram_url")
+        or data.get("tg_url")
+    )
+    website = (
+        data.get("website")
+        or data.get("web")
+        or data.get("website_url")
+        or data.get("url")
+    )
+    discord = data.get("discord") or data.get("discord_url")
+
+    # Check nested extensions / links / social dictionaries if present
+    extensions = data.get("extensions") or data.get("links") or data.get("socials")
+    if isinstance(extensions, dict):
+        twitter = twitter or extensions.get("twitter") or extensions.get("x")
+        telegram = telegram or extensions.get("telegram") or extensions.get("tg")
+        website = website or extensions.get("website") or extensions.get("web")
+        discord = discord or extensions.get("discord")
+    return twitter, telegram, website, discord
+
+
+def _socials_from_description(
+    description: str, twitter: Any, telegram: Any, website: Any
+) -> tuple[Any, Any, Any]:
+    """Links the description mentions fill the ones the record lacks."""
+    found = _TWITTER_PATTERN.search(description)
+    if not twitter and found:
+        twitter = found.group(0)
+    found = _TELEGRAM_PATTERN.search(description)
+    if not telegram and found:
+        telegram = found.group(0)
+    if not website:
+        website = _description_website(description) or website
+    return twitter, telegram, website
+
+
+_NOT_A_WEBSITE = ("twitter.com", "x.com", "t.me", "telegram.me", "discord")
+
+
+def _description_website(description: str) -> str | None:
+    """The first URL in the description that is not a social link."""
+    for match in _WEBSITE_PATTERN.finditer(description):
+        candidate_url = match.group(0)
+        candidate_lower = candidate_url.lower()
+        if not any(domain in candidate_lower for domain in _NOT_A_WEBSITE):
+            return candidate_url
+    return None
+
+
+def _clean(value: Any) -> str | None:
+    return str(value).strip() if value else None
+
+
 @dataclass
 class TokenMetadata:
     name: str = ""
@@ -148,63 +212,12 @@ class TokenMetadata:
             data.get("metadata_uri") or data.get("uri") or data.get("metadataUri") or ""
         ).strip()
 
-        twitter = (
-            data.get("twitter")
-            or data.get("x")
-            or data.get("twitter_url")
-            or data.get("x_url")
-        )
-        telegram = (
-            data.get("telegram")
-            or data.get("tg")
-            or data.get("telegram_url")
-            or data.get("tg_url")
-        )
-        website = (
-            data.get("website")
-            or data.get("web")
-            or data.get("website_url")
-            or data.get("url")
-        )
-        discord = data.get("discord") or data.get("discord_url")
-
-        # Check nested extensions / links / social dictionaries if present
-        extensions = data.get("extensions") or data.get("links") or data.get("socials")
-        if isinstance(extensions, dict):
-            twitter = twitter or extensions.get("twitter") or extensions.get("x")
-            telegram = telegram or extensions.get("telegram") or extensions.get("tg")
-            website = website or extensions.get("website") or extensions.get("web")
-            discord = discord or extensions.get("discord")
-
+        twitter, telegram, website, discord = _explicit_socials(data)
         # Also search in description or raw text if not found explicitly
-        found = _TWITTER_PATTERN.search(description) if description else None
-        if not twitter and found:
-            twitter = found.group(0)
-        found = _TELEGRAM_PATTERN.search(description) if description else None
-        if not telegram and found:
-            telegram = found.group(0)
-        if not website and description:
-            for match in _WEBSITE_PATTERN.finditer(description):
-                candidate_url = match.group(0)
-                candidate_lower = candidate_url.lower()
-                if not any(
-                    domain in candidate_lower
-                    for domain in [
-                        "twitter.com",
-                        "x.com",
-                        "t.me",
-                        "telegram.me",
-                        "discord",
-                    ]
-                ):
-                    website = candidate_url
-                    break
-
-        # Clean strings
-        twitter_clean = str(twitter).strip() if twitter else None
-        telegram_clean = str(telegram).strip() if telegram else None
-        website_clean = str(website).strip() if website else None
-        discord_clean = str(discord).strip() if discord else None
+        if description:
+            twitter, telegram, website = _socials_from_description(
+                description, twitter, telegram, website
+            )
 
         return cls(
             name=name,
@@ -212,10 +225,10 @@ class TokenMetadata:
             description=description,
             image_uri=image_uri,
             metadata_uri=metadata_uri,
-            twitter=twitter_clean,
-            telegram=telegram_clean,
-            website=website_clean,
-            discord=discord_clean,
+            twitter=_clean(twitter),
+            telegram=_clean(telegram),
+            website=_clean(website),
+            discord=_clean(discord),
             raw=data,
         )
 
@@ -666,86 +679,99 @@ def evaluate_token_heuristics(
             metadata=parsed_metadata,
             cluster_analysis=cluster_analysis,
         )
-        if use_cache:
-            active_cache.set(mint, verdict, ttl=config.screening_cache_ttl_seconds)
-        return verdict
-
-    total_risk_score = 0.0
-    all_reasons: list[str] = []
-    flags: dict[str, Any] = {}
-    hard_failed = False
-
-    # 0. Missing enrichment data must not read as a clean pass (BUG-57)
-    if dev_profile is None or not dev_profile.creator_address:
-        total_risk_score += MISSING_SCREENING_DATA_PENALTY
-        all_reasons.append("Dev wallet data unavailable")
-        flags["missing_dev_data"] = True
-    if holder_distribution is None or not holder_distribution.top_holders:
-        total_risk_score += MISSING_SCREENING_DATA_PENALTY
-        all_reasons.append("Holder distribution data unavailable")
-        flags["missing_holder_data"] = True
-        if config.require_holder_data:
-            # Without holders the top-5 and Gini checks cannot run (BUG-107).
-            hard_failed = True
-    min_holders = int(config.min_holder_count)
-    holder_count = len(holder_distribution.top_holders) if holder_distribution else 0
-    if min_holders > 0 and holder_count < min_holders:
-        # In the 24 h capture, tokens with more than 5 holder accounts at
-        # screening were the only group that was net positive after costs.
-        all_reasons.append(
-            f"Too few holders: {holder_count} holder accounts (min {min_holders})"
+    else:
+        verdict = _screen(
+            config,
+            mint,
+            metadata=parsed_metadata,
+            dev_profile=dev_profile,
+            holder_distribution=holder_distribution,
+            bonding_curve_pda=bonding_curve_pda,
+            cluster_analysis=cluster_analysis,
         )
-        flags["too_few_holders"] = True
-        hard_failed = True
+
+    if use_cache:
+        active_cache.set(mint, verdict, ttl=config.screening_cache_ttl_seconds)
+
+    return verdict
+
+
+@dataclass
+class _Score:
+    """The running result of one screen."""
+
+    total: float = 0.0
+    reasons: list[str] = field(default_factory=list)
+    flags: dict[str, Any] = field(default_factory=dict)
+    hard_failed: bool = False
+
+    def add(
+        self,
+        passed: bool,
+        penalty: float,
+        reasons: list[str],
+        flag: str | None = None,
+    ) -> None:
+        """One check's result; a failed check is a hard reject."""
+        self.total += penalty
+        self.reasons.extend(reasons)
+        if not passed:
+            if flag is not None:
+                self.flags[flag] = True
+            self.hard_failed = True
+
+
+def _screen(
+    config: ScreeningSettings,
+    mint: str,
+    *,
+    metadata: TokenMetadata | None,
+    dev_profile: DevWalletProfile | None,
+    holder_distribution: HolderDistribution | None,
+    bonding_curve_pda: str | None,
+    cluster_analysis: ClusterAnalysisVerdict | None,
+) -> TokenScreeningVerdict:
+    score = _Score()
+    _missing_data(config, dev_profile, holder_distribution, score)
 
     # 1. Dev wallet profiling
-    dev_pass, dev_penalty, dev_reasons = evaluate_dev_wallet(
-        dev_profile, max_24h_launches=config.max_dev_24h_launches
+    score.add(
+        *evaluate_dev_wallet(dev_profile, max_24h_launches=config.max_dev_24h_launches),
+        flag="dev_serial_launcher",
     )
-    total_risk_score += dev_penalty
-    all_reasons.extend(dev_reasons)
-    if not dev_pass:
-        flags["dev_serial_launcher"] = True
-        hard_failed = True
 
     # 2. Creator initial holding allocation
     creator_pct = (
         holder_distribution.creator_initial_pct if holder_distribution else 0.0
     )
-    creator_pass, creator_penalty, creator_reasons = evaluate_creator_holdings(
-        creator_pct, max_pct=config.max_creator_initial_holding_pct
+    score.add(
+        *evaluate_creator_holdings(
+            creator_pct, max_pct=config.max_creator_initial_holding_pct
+        ),
+        flag="creator_excess_holding",
     )
-    total_risk_score += creator_penalty
-    all_reasons.extend(creator_reasons)
-    if not creator_pass:
-        flags["creator_excess_holding"] = True
-        hard_failed = True
 
     # 3. Top holder concentration & Gini coefficient
-    holder_pass, holder_penalty, holder_reasons = evaluate_holder_distribution(
-        holder_distribution,
-        max_top5_pct=config.max_top5_holder_concentration_pct,
-        max_gini=config.max_gini_coefficient,
-        bonding_curve_pda=bonding_curve_pda,
+    score.add(
+        *evaluate_holder_distribution(
+            holder_distribution,
+            max_top5_pct=config.max_top5_holder_concentration_pct,
+            max_gini=config.max_gini_coefficient,
+            bonding_curve_pda=bonding_curve_pda,
+        ),
+        flag="high_holder_concentration",
     )
-    total_risk_score += holder_penalty
-    all_reasons.extend(holder_reasons)
-    if not holder_pass:
-        flags["high_holder_concentration"] = True
-        hard_failed = True
 
-    # 4. Metadata and socials verification
-    social_pass, social_penalty, social_reasons = evaluate_metadata_socials(
-        parsed_metadata,
-        min_social_links_count=config.min_social_links_count,
-        require_social_links=config.require_social_links,
+    # 4. Metadata and socials verification; only fails when
+    # require_social_links is on: a hard reject.
+    score.add(
+        *evaluate_metadata_socials(
+            metadata,
+            min_social_links_count=config.min_social_links_count,
+            require_social_links=config.require_social_links,
+        ),
+        flag="missing_socials",
     )
-    total_risk_score += social_penalty
-    all_reasons.extend(social_reasons)
-    if not social_pass:
-        # Only fails when require_social_links is on: a hard reject.
-        flags["missing_socials"] = True
-        hard_failed = True
 
     # 5. On-Chain Funding Cluster Graph & Sybil Wash-Trading (FEAT-26)
     if config.enable_cluster_analysis and cluster_analysis is not None:
@@ -757,41 +783,63 @@ def evaluate_token_heuristics(
                 max_sybil_wash_ratio=config.max_sybil_wash_ratio,
             )
         )
-        total_risk_score += cluster_penalty
-        all_reasons.extend(cluster_reasons)
-        flags.update(cluster_flags)
-        if not cluster_pass:
-            hard_failed = True
+        score.flags.update(cluster_flags)
+        score.add(cluster_pass, cluster_penalty, cluster_reasons)
 
     # Normalize total risk score (0.0 to 100.0)
-    normalized_risk_score = min(100.0, max(0.0, total_risk_score))
-    passed = not hard_failed and (
+    normalized_risk_score = min(100.0, max(0.0, score.total))
+    passed = not score.hard_failed and (
         normalized_risk_score <= config.max_acceptable_risk_score
     )
 
     if not passed and normalized_risk_score > config.max_acceptable_risk_score:
-        all_reasons.append(
+        score.reasons.append(
             f"Composite risk score {normalized_risk_score:.1f} exceeds threshold "
             f"{config.max_acceptable_risk_score:.1f}"
         )
 
-    verdict = TokenScreeningVerdict(
+    return TokenScreeningVerdict(
         mint=mint,
         passed=passed,
         risk_score=normalized_risk_score,
-        reasons=all_reasons,
-        flags=flags,
+        reasons=score.reasons,
+        flags=score.flags,
         timestamp=time.monotonic(),
         dev_profile=dev_profile,
         holder_distribution=holder_distribution,
-        metadata=parsed_metadata,
+        metadata=metadata,
         cluster_analysis=cluster_analysis,
     )
 
-    if use_cache:
-        active_cache.set(mint, verdict, ttl=config.screening_cache_ttl_seconds)
 
-    return verdict
+def _missing_data(
+    config: ScreeningSettings,
+    dev_profile: DevWalletProfile | None,
+    holder_distribution: HolderDistribution | None,
+    score: _Score,
+) -> None:
+    """Missing enrichment data must not read as a clean pass (BUG-57)."""
+    if dev_profile is None or not dev_profile.creator_address:
+        score.total += MISSING_SCREENING_DATA_PENALTY
+        score.reasons.append("Dev wallet data unavailable")
+        score.flags["missing_dev_data"] = True
+    if holder_distribution is None or not holder_distribution.top_holders:
+        score.total += MISSING_SCREENING_DATA_PENALTY
+        score.reasons.append("Holder distribution data unavailable")
+        score.flags["missing_holder_data"] = True
+        if config.require_holder_data:
+            # Without holders the top-5 and Gini checks cannot run (BUG-107).
+            score.hard_failed = True
+    min_holders = int(config.min_holder_count)
+    holder_count = len(holder_distribution.top_holders) if holder_distribution else 0
+    if min_holders > 0 and holder_count < min_holders:
+        # In the 24 h capture, tokens with more than 5 holder accounts at
+        # screening were the only group that was net positive after costs.
+        score.reasons.append(
+            f"Too few holders: {holder_count} holder accounts (min {min_holders})"
+        )
+        score.flags["too_few_holders"] = True
+        score.hard_failed = True
 
 
 def passes_anti_rug_screening(

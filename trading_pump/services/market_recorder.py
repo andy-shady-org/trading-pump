@@ -37,9 +37,10 @@ import logging
 import os
 import time
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,11 @@ MISSING_GRACE_SECONDS = 600.0
 # New-pool addresses remembered per chain to find where the last page ended.
 SEEN_PER_CHAIN = 5_000
 STATE_VERSION = 1
+
+
+def _gecko_items(payload: Any) -> list[Any]:
+    """The ``data`` list of a GeckoTerminal answer; empty for anything else."""
+    return (payload or {}).get("data") or [] if isinstance(payload, dict) else []
 
 
 @dataclass
@@ -447,6 +453,17 @@ class MarketRecorder:
         """One DexScreener call for up to 30 pools of one chain; rows written."""
         if not pools:
             return 0
+        matches = await self._fetch_matches(chain, pools)
+        now = self._clock()
+        written = 0
+        for pool in pools:
+            written += self._apply_snapshot(chain, pool, matches.get(pool.key), now)
+        return written
+
+    async def _fetch_matches(
+        self, chain: str, pools: Sequence[FollowedPool]
+    ) -> dict[tuple[str, str], tuple[Mapping[str, Any], str]]:
+        """The pair call for ``pools``, then the token lookup for the misses."""
         dex_chain = CHAINS[chain][1]
         url = f"{self.dexscreener_url}/latest/dex/pairs/{dex_chain}/" + ",".join(
             p.pool for p in pools
@@ -465,61 +482,85 @@ class MarketRecorder:
         unmatched = [p for p in pools if p.key not in matches and p.base_token]
         if unmatched:
             matches.update(await self._match_by_token(chain, unmatched))
-        now = self._clock()
-        written = 0
-        for pool in pools:
-            match = matches.get(pool.key)
-            pool.last_snapshot_at = now
-            if match is None:
-                pool.missing += 1
-                if (
-                    pool.missing >= MISSING_LIMIT
-                    and now - pool.first_seen >= MISSING_GRACE_SECONDS
-                ):
-                    self._end(pool, "missing", now)
-                continue
-            pair, matched = match
-            pool.missing = 0
-            pool.snapshots += 1
-            snap = dexscreener_snapshot(pair)
-            age = now - pool.first_seen
-            signature = _signature(snap)
-            if (
-                signature == pool.signature
-                and now - pool.last_written_at < self.config.heartbeat_seconds
-            ):
-                self.stats.snapshots_unchanged += 1
-            else:
-                pool.signature = signature
-                pool.last_written_at = now
-                self._write(
-                    SNAPSHOT_EVENT,
-                    {
-                        "chain": chain,
-                        "pool": pool.pool,
-                        "source": pool.source,
-                        "dex": pair.get("dexId"),
-                        "matched": matched,
-                        **(
-                            {"pair_address": pair.get("pairAddress")}
-                            if matched == "token"
-                            else {}
-                        ),
-                        "age_seconds": round(age, 1),
-                        **snap,
-                    },
-                    now,
-                )
-                self.stats.snapshots += 1
-                written += 1
-            if age >= self.config.dead_after_seconds:
-                liquidity = snap.get("liquidity_usd")
-                quiet = _trades((snap.get("txns") or {}).get("h1")) == 0
-                if quiet and (
-                    liquidity is None or liquidity < self.config.min_liquidity_usd
-                ):
-                    self._end(pool, "dead", now)
+        return matches
+
+    def _apply_snapshot(
+        self,
+        chain: str,
+        pool: FollowedPool,
+        match: tuple[Mapping[str, Any], str] | None,
+        now: float,
+    ) -> int:
+        """One pool's answer (or miss); returns rows written."""
+        pool.last_snapshot_at = now
+        if match is None:
+            self._note_missing(pool, now)
+            return 0
+        pair, matched = match
+        pool.missing = 0
+        pool.snapshots += 1
+        snap = dexscreener_snapshot(pair)
+        age = now - pool.first_seen
+        written = self._write_snapshot(chain, pool, pair, matched, snap, age, now)
+        if age >= self.config.dead_after_seconds and self._looks_dead(snap):
+            self._end(pool, "dead", now)
         return written
+
+    def _note_missing(self, pool: FollowedPool, now: float) -> None:
+        pool.missing += 1
+        if (
+            pool.missing >= MISSING_LIMIT
+            and now - pool.first_seen >= MISSING_GRACE_SECONDS
+        ):
+            self._end(pool, "missing", now)
+
+    def _write_snapshot(
+        self,
+        chain: str,
+        pool: FollowedPool,
+        pair: Mapping[str, Any],
+        matched: str,
+        snap: dict[str, Any],
+        age: float,
+        now: float,
+    ) -> int:
+        """Write the row unless nothing changed within the heartbeat; 1 if written."""
+        signature = _signature(snap)
+        if (
+            signature == pool.signature
+            and now - pool.last_written_at < self.config.heartbeat_seconds
+        ):
+            self.stats.snapshots_unchanged += 1
+            return 0
+        pool.signature = signature
+        pool.last_written_at = now
+        self._write(
+            SNAPSHOT_EVENT,
+            {
+                "chain": chain,
+                "pool": pool.pool,
+                "source": pool.source,
+                "dex": pair.get("dexId"),
+                "matched": matched,
+                **(
+                    {"pair_address": pair.get("pairAddress")}
+                    if matched == "token"
+                    else {}
+                ),
+                "age_seconds": round(age, 1),
+                **snap,
+            },
+            now,
+        )
+        self.stats.snapshots += 1
+        return 1
+
+    def _looks_dead(self, snap: Mapping[str, Any]) -> bool:
+        liquidity = snap.get("liquidity_usd")
+        quiet = _trades((snap.get("txns") or {}).get("h1")) == 0
+        return quiet and (
+            liquidity is None or liquidity < self.config.min_liquidity_usd
+        )
 
     async def _match_by_token(
         self, chain: str, pools: Sequence[FollowedPool]
@@ -571,22 +612,25 @@ class MarketRecorder:
         for pool in list(self.followed.values()):
             if now - pool.first_seen > self.config.max_age_seconds:
                 self._end(pool, "max_age", now)
+        written = 0
+        for chain, batch in self._due_batches(now):
+            try:
+                written += await self.snapshot_batch(chain, batch)
+            except Exception as exc:  # HTTP status, network, JSON: retry next pass
+                self._note_error(exc)
+                return written
+        return written
+
+    def _due_batches(self, now: float) -> list[tuple[str, list[FollowedPool]]]:
+        """The due pools, per chain, in batches of one DexScreener call."""
         by_chain: dict[str, list[FollowedPool]] = {}
         for pool in self.due(now):
             by_chain.setdefault(pool.chain, []).append(pool)
-        written = 0
-        for chain, pools in by_chain.items():
-            for start in range(0, len(pools), DEXSCREENER_BATCH):
-                batch = pools[start : start + DEXSCREENER_BATCH]
-                try:
-                    written += await self.snapshot_batch(chain, batch)
-                except HttpStatusError as exc:
-                    self._note_error(exc)
-                    return written
-                except Exception as exc:  # network, JSON: retry next pass
-                    self._note_error(exc)
-                    return written
-        return written
+        return [
+            (chain, pools[start : start + DEXSCREENER_BATCH])
+            for chain, pools in by_chain.items()
+            for start in range(0, len(pools), DEXSCREENER_BATCH)
+        ]
 
     # -- discovery ------------------------------------------------------------
 
@@ -614,47 +658,56 @@ class MarketRecorder:
         for page in range(1, max(1, int(self.config.max_new_pool_pages)) + 1):
             self.stats.discovery_calls += 1
             payload = await self._gecko(f"networks/{network}/new_pools", {"page": page})
-            items = (
-                (payload or {}).get("data") or [] if isinstance(payload, dict) else []
-            )
+            items = _gecko_items(payload)
             if not items:
                 reached_known = True
                 break
-            now = self._clock()
-            for item in items:
-                fields = gecko_pool_fields(item, network)
-                address = fields.get("pool")
-                if not isinstance(address, str) or not address:
-                    continue
-                if address in seen:
-                    reached_known = True
-                    continue
-                self._remember(chain, address)
-                found += 1
-                self.stats.new_pools += 1
-                dex = str(fields.get("dex") or "")
-                share = self.config.share_for(chain, dex)
-                follow = in_sample(f"{chain}:{address}", share, salt=SAMPLE_SALT)
-                followed = follow and self._follow(
-                    chain, fields, source="new", rank=None, now=now
-                )
-                self._write(
-                    POOL_EVENT,
-                    {
-                        "chain": chain,
-                        "source": "new",
-                        "followed": bool(followed),
-                        "sample_share": share,
-                        **fields,
-                    },
-                    now,
-                )
+            page_found, reached_known = self._discover_page(chain, items, seen)
+            found += page_found
             if reached_known:
                 break
         if not reached_known and not first_run:
             # More new pools than pages: some were never seen.
             self.stats.discovery_gaps += 1
         return found
+
+    def _discover_page(
+        self, chain: str, items: Sequence[Any], seen: Mapping[str, None]
+    ) -> tuple[int, bool]:
+        """One page of new pools: (pools new to us, whether a known one appeared)."""
+        network = CHAINS[chain][0]
+        now = self._clock()
+        found = 0
+        reached_known = False
+        for item in items:
+            fields = gecko_pool_fields(item, network)
+            address = fields.get("pool")
+            if not isinstance(address, str) or not address:
+                continue
+            if address in seen:
+                reached_known = True
+                continue
+            self._remember(chain, address)
+            found += 1
+            self.stats.new_pools += 1
+            dex = str(fields.get("dex") or "")
+            share = self.config.share_for(chain, dex)
+            follow = in_sample(f"{chain}:{address}", share, salt=SAMPLE_SALT)
+            followed = follow and self._follow(
+                chain, fields, source="new", rank=None, now=now
+            )
+            self._write(
+                POOL_EVENT,
+                {
+                    "chain": chain,
+                    "source": "new",
+                    "followed": bool(followed),
+                    "sample_share": share,
+                    **fields,
+                },
+                now,
+            )
+        return found, reached_known
 
     async def refresh_lists(self, chain: str) -> int:
         """The chain's momentum lists; returns pools newly followed from them."""
@@ -665,9 +718,7 @@ class MarketRecorder:
             payload = await self._gecko(
                 f"networks/{network}/{path}", {**query, "page": 1}
             )
-            items = (
-                (payload or {}).get("data") or [] if isinstance(payload, dict) else []
-            )
+            items = _gecko_items(payload)
             now = self._clock()
             ranked: list[str] = []
             for rank, item in enumerate(items, start=1):
@@ -700,24 +751,30 @@ class MarketRecorder:
         for chain in self.config.chains:
             now = self._clock()
             # A failure waits for the next interval; the other job still runs.
-            if (
-                now - self._discovered_at.get(chain, float("-inf"))
-                >= self.config.discovery_interval_seconds
+            if self._claim(
+                self._discovered_at, chain, now, self.config.discovery_interval_seconds
             ):
-                self._discovered_at[chain] = now
-                try:
-                    await self.discover(chain)
-                except Exception as exc:
-                    self._note_error(exc)
-            if self.config.lists and (
-                now - self._listed_at.get(chain, float("-inf"))
-                >= self.config.list_interval_seconds
+                await self._attempt(self.discover(chain))
+            if self.config.lists and self._claim(
+                self._listed_at, chain, now, self.config.list_interval_seconds
             ):
-                self._listed_at[chain] = now
-                try:
-                    await self.refresh_lists(chain)
-                except Exception as exc:
-                    self._note_error(exc)
+                await self._attempt(self.refresh_lists(chain))
+
+    @staticmethod
+    def _claim(
+        stamps: dict[str, float], chain: str, now: float, interval: float
+    ) -> bool:
+        """True (and the job's time stamped) when the chain's job is due."""
+        if now - stamps.get(chain, float("-inf")) < interval:
+            return False
+        stamps[chain] = now
+        return True
+
+    async def _attempt(self, job: Awaitable[Any]) -> None:
+        try:
+            await job
+        except Exception as exc:
+            self._note_error(exc)
 
     def _note_error(self, exc: Exception) -> None:
         self.stats.errors += 1
@@ -767,18 +824,29 @@ class MarketRecorder:
 
     def load_state(self) -> int:
         """Resume a saved follow list; returns pools resumed."""
-        if self.state_path is None or not self.state_path.exists():
+        state = self._read_state()
+        if state is None:
             return 0
+        resumed = self._resume_followed(state.get("followed") or [], self._clock())
+        self._resume_seen(state.get("seen") or {})
+        return resumed
+
+    def _read_state(self) -> dict[str, Any] | None:
+        """The saved state when it exists, parses and has this version."""
+        if self.state_path is None or not self.state_path.exists():
+            return None
         try:
             state = json.loads(self.state_path.read_text())
         except (OSError, ValueError) as exc:
             logger.warning("Market state %s unreadable: %s", self.state_path, exc)
-            return 0
+            return None
         if not isinstance(state, dict) or state.get("version") != STATE_VERSION:
-            return 0
-        now = self._clock()
+            return None
+        return state
+
+    def _resume_followed(self, raws: Sequence[Any], now: float) -> int:
         resumed = 0
-        for raw in state.get("followed") or []:
+        for raw in raws:
             try:
                 pool = FollowedPool(**raw)
             except TypeError:
@@ -789,12 +857,14 @@ class MarketRecorder:
                 continue
             self.followed[pool.key] = pool
             resumed += 1
-        for chain, addresses in (state.get("seen") or {}).items():
+        return resumed
+
+    def _resume_seen(self, saved: Mapping[str, Any]) -> None:
+        for chain, addresses in saved.items():
             if chain in self.seen and isinstance(addresses, list):
                 for address in addresses:
                     if isinstance(address, str):
                         self._remember(chain, address)
-        return resumed
 
     # -- loop -----------------------------------------------------------------
 
@@ -807,42 +877,50 @@ class MarketRecorder:
     ) -> MarketRecorderStats:
         """Discovery and snapshots in two tasks until ``stop`` or the duration."""
         stop = stop or asyncio.Event()
-        started = self._clock()
-
-        def finished() -> bool:
-            if stop.is_set():
-                return True
-            if duration_seconds is not None and self._clock() - started >= float(
-                duration_seconds
-            ):
-                stop.set()
-                return True
-            return False
-
-        async def discovery_loop() -> None:
-            while not finished():
-                await self.discovery_pass()
-                await self._sleep(tick_seconds)
-
-        async def snapshot_loop() -> None:
-            while not finished():
-                await self.snapshot_due()
-                self.maybe_write_stats()
-                try:
-                    self.save_state()
-                except OSError as exc:
-                    self._note_error(exc)
-                await self._sleep(tick_seconds)
-
+        finished = partial(self._finished, stop, self._clock(), duration_seconds)
         try:
-            await asyncio.gather(discovery_loop(), snapshot_loop())
+            await asyncio.gather(
+                self._discovery_loop(finished, tick_seconds),
+                self._snapshot_loop(finished, tick_seconds),
+            )
         finally:
             self.maybe_write_stats(force=True)
-            try:
-                self.save_state(force=True)
-            except OSError as exc:
-                self._note_error(exc)
+            self._save_state_noting_errors(force=True)
         return self.stats
+
+    def _finished(
+        self, stop: asyncio.Event, started: float, duration_seconds: float | None
+    ) -> bool:
+        if stop.is_set():
+            return True
+        if duration_seconds is not None and self._clock() - started >= float(
+            duration_seconds
+        ):
+            stop.set()
+            return True
+        return False
+
+    async def _discovery_loop(
+        self, finished: Callable[[], bool], tick_seconds: float
+    ) -> None:
+        while not finished():
+            await self.discovery_pass()
+            await self._sleep(tick_seconds)
+
+    async def _snapshot_loop(
+        self, finished: Callable[[], bool], tick_seconds: float
+    ) -> None:
+        while not finished():
+            await self.snapshot_due()
+            self.maybe_write_stats()
+            self._save_state_noting_errors()
+            await self._sleep(tick_seconds)
+
+    def _save_state_noting_errors(self, *, force: bool = False) -> None:
+        try:
+            self.save_state(force=force)
+        except OSError as exc:
+            self._note_error(exc)
 
 
 __all__ = [

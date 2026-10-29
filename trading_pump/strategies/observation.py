@@ -301,33 +301,54 @@ def discovery_candidates(
         return []
     found: list[tuple[str, float | None]] = []
     for coin in rows:
-        if not isinstance(coin, Mapping):
-            continue
-        mint = coin.get("mint")
-        if not isinstance(mint, str) or not mint:
-            continue
-        if coin.get("complete") is True:
-            continue
-        program = coin.get("program")
-        if program not in (None, "pump"):
-            continue
-        quote = coin.get("quote_mint")
-        if quote not in (None, SOL_QUOTE_MINT):
-            continue
-        try:
-            real_sol = float(coin.get("real_sol_reserves") or 0) / LAMPORTS_PER_SOL
-        except (TypeError, ValueError):
-            continue
-        if not min_real_sol <= real_sol < max_real_sol:
-            continue
-        created: float | None = None
-        raw_created = coin.get("created_timestamp")
-        if isinstance(raw_created, (int, float)) and raw_created > 0:
-            created = float(raw_created)
-            if created > 1e12:  # milliseconds
-                created /= 1000.0
-        found.append((mint, created))
+        candidate = _candidate(
+            coin, min_real_sol=min_real_sol, max_real_sol=max_real_sol
+        )
+        if candidate is not None:
+            found.append(candidate)
     return found
+
+
+def _candidate(
+    coin: Any, *, min_real_sol: float, max_real_sol: float
+) -> tuple[str, float | None] | None:
+    if not isinstance(coin, Mapping):
+        return None
+    mint = coin.get("mint")
+    if not isinstance(mint, str) or not mint:
+        return None
+    if not _open_pump_sol_curve(coin):
+        return None
+    real_sol = _real_sol(coin)
+    if real_sol is None or not min_real_sol <= real_sol < max_real_sol:
+        return None
+    return mint, _created_at(coin.get("created_timestamp"))
+
+
+def _open_pump_sol_curve(coin: Mapping[str, Any]) -> bool:
+    """A Pump.fun program curve, quoted in SOL, not complete."""
+    return (
+        coin.get("complete") is not True
+        and coin.get("program") in (None, "pump")
+        and coin.get("quote_mint") in (None, SOL_QUOTE_MINT)
+    )
+
+
+def _real_sol(coin: Mapping[str, Any]) -> float | None:
+    try:
+        return float(coin.get("real_sol_reserves") or 0) / LAMPORTS_PER_SOL
+    except (TypeError, ValueError):
+        return None
+
+
+def _created_at(raw_created: Any) -> float | None:
+    """Creation time in epoch seconds (the API may send milliseconds)."""
+    if not (isinstance(raw_created, (int, float)) and raw_created > 0):
+        return None
+    created = float(raw_created)
+    if created > 1e12:  # milliseconds
+        created /= 1000.0
+    return created
 
 
 __all__ = [

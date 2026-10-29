@@ -524,26 +524,30 @@ class PumpFunCurveMixin(TransactionTransportMixin):
             values = (parsed.get("result") or {}).get("value") or []
             for index, mint in enumerate(chunk):
                 value = values[index] if index < len(values) else None
-                reason = None
-                state: dict[str, Any] = {}
-                if not value:
-                    reason = "missing"
-                elif str(value.get("owner") or PUMP_PROGRAM_ID) != PUMP_PROGRAM_ID:
-                    reason = "not_pump_fun"
-                else:
-                    try:
-                        raw = base64.b64decode((value.get("data") or [""])[0])
-                        state = self.decode_bonding_curve_data(raw)
-                        self._reject_non_standard_curve(mint, state)
-                    except NonStandardCurveError:
-                        reason = "non_standard"
-                    except Exception:
-                        reason = "decode_error"
+                state, reason = self._curve_from_account(mint, value)
                 if reason is None:
                     states[mint] = state
                 elif rejected is not None:
                     rejected[mint] = reason
         return states
+
+    def _curve_from_account(
+        self, mint: str, value: dict[str, Any] | None
+    ) -> tuple[dict[str, Any], str | None]:
+        """The decoded curve of one account read, or ``{}`` and why not."""
+        if not value:
+            return {}, "missing"
+        if str(value.get("owner") or PUMP_PROGRAM_ID) != PUMP_PROGRAM_ID:
+            return {}, "not_pump_fun"
+        try:
+            raw = base64.b64decode((value.get("data") or [""])[0])
+            state = self.decode_bonding_curve_data(raw)
+            self._reject_non_standard_curve(mint, state)
+        except NonStandardCurveError:
+            return {}, "non_standard"
+        except Exception:
+            return {}, "decode_error"
+        return state, None
 
     async def _fetch_trade_curve_state(self, mint: str) -> dict[str, Any]:
         """Fetches the bonding curve needed to build a trade.
@@ -632,6 +636,21 @@ class PumpFunCurveMixin(TransactionTransportMixin):
                 f"Non-standard bonding curve for {mint}: {anomaly}"
             )
 
+    async def _buy_ata_exists(self, mint: str, token_program: Any) -> bool:
+        """Whether the wallet's ATA exists; ``False`` on any failed lookup (the
+        create is idempotent, BUG-54). Clients without the ``token_program``
+        keyword are asked without it."""
+        try:
+            return bool(await self.get_ata_exists(mint, token_program=token_program))
+        except TypeError:
+            pass
+        except Exception:
+            return False
+        try:
+            return bool(await self.get_ata_exists(mint))
+        except Exception:
+            return False
+
     async def build_buy_tx(
         self,
         mint: str,
@@ -667,18 +686,7 @@ class PumpFunCurveMixin(TransactionTransportMixin):
             )
 
         instructions = []
-        ata_exists = False
-        try:
-            ata_exists = await self.get_ata_exists(mint, token_program=base_token_prog)
-        except TypeError:
-            try:
-                ata_exists = await self.get_ata_exists(mint)
-            except Exception:
-                ata_exists = False
-        except Exception:
-            ata_exists = False
-
-        if not ata_exists:
+        if not await self._buy_ata_exists(mint, base_token_prog):
             # Idempotent create: a failed/stale lookup never breaks the buy (BUG-54).
             instructions.append(
                 create_idempotent_associated_token_account(

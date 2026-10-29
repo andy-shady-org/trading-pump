@@ -181,19 +181,24 @@ def _broken_links(root: Path) -> list[str]:
     for doc in docs:
         for line in _outside_fences(doc.read_text(encoding="utf-8")):
             for target in _LINK.findall(line):
-                if re.match(r"^[a-z]+:", target):
-                    continue
-                path, _, fragment = target.partition("#")
-                dest = (doc.parent / path).resolve() if path else doc
-                where = f"{doc.relative_to(root)} -> {target}"
-                if not dest.exists():
-                    broken.append(where)
-                elif fragment and dest.suffix == ".md":
-                    if dest not in anchors:
-                        anchors[dest] = _anchors(dest)
-                    if fragment.lower() not in anchors[dest]:
-                        broken.append(where)
+                if _link_broken(doc, target, anchors):
+                    broken.append(f"{doc.relative_to(root)} -> {target}")
     return broken
+
+
+def _link_broken(doc: Path, target: str, anchors: dict[Path, set[str]]) -> bool:
+    """A relative link whose file, or heading in a Markdown file, is missing."""
+    if re.match(r"^[a-z]+:", target):
+        return False
+    path, _, fragment = target.partition("#")
+    dest = (doc.parent / path).resolve() if path else doc
+    if not dest.exists():
+        return True
+    if not fragment or dest.suffix != ".md":
+        return False
+    if dest not in anchors:
+        anchors[dest] = _anchors(dest)
+    return fragment.lower() not in anchors[dest]
 
 
 def test_docs_relative_links_and_anchors_resolve() -> None:

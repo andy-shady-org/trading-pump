@@ -1,6 +1,7 @@
 """Execution client core: wallet, RPC access, shared helpers and account queries."""
 
 import asyncio
+from typing import Any
 
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -340,18 +341,25 @@ class ExecutionClientBase:
         value = (parsed.get("result") or {}).get("value")
         if not isinstance(value, list):
             raise RuntimeError(f"Unexpected getTokenLargestAccounts value: {parsed}")
-        accounts: list[tuple[str, int]] = []
-        for entry in value:
-            if not isinstance(entry, dict):
-                continue
-            address = entry.get("address")
-            try:
-                amount = int(entry.get("amount") or 0)
-            except (TypeError, ValueError):
-                continue
-            if isinstance(address, str) and address:
-                accounts.append((address, amount))
-        return accounts
+        return [
+            account
+            for account in map(self._largest_account_entry, value)
+            if account is not None
+        ]
+
+    @staticmethod
+    def _largest_account_entry(entry: Any) -> tuple[str, int] | None:
+        """``(address, raw_amount)`` of one ``getTokenLargestAccounts`` entry."""
+        if not isinstance(entry, dict):
+            return None
+        address = entry.get("address")
+        try:
+            amount = int(entry.get("amount") or 0)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(address, str) and address:
+            return address, amount
+        return None
 
     def wallet_token_accounts(self, mint: str) -> list[str]:
         """The wallet's ATA for ``mint`` under both token programs."""
@@ -429,6 +437,58 @@ class ExecutionClientBase:
         if self.rpc_pool is not None:
             await self.rpc_pool.close()
 
+    async def _balance_by_owner(self, mint: str, owner: str) -> int:
+        """The balance from ``getTokenAccountsByOwner``; raises when unknown."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                owner,
+                {"mint": mint},
+                {"encoding": "jsonParsed", "commitment": "confirmed"},
+            ],
+        }
+        parsed = await self._request_rpc_json(payload)
+        if "error" in parsed or not isinstance(parsed.get("result"), dict):
+            raise RuntimeError(f"getTokenAccountsByOwner error: {parsed}")
+        accounts = parsed["result"].get("value")
+        if not isinstance(accounts, list):
+            raise RuntimeError(f"Unexpected getTokenAccountsByOwner value: {parsed}")
+        if not accounts:
+            return 0
+        for acc in accounts:
+            info = (
+                ((acc.get("account") or {}).get("data") or {})
+                .get("parsed", {})
+                .get("info", {})
+            )
+            token_amount_obj = info.get("tokenAmount", {})
+            if "amount" in token_amount_obj:
+                return int(token_amount_obj["amount"])
+        raise RuntimeError("Token account has no parsed amount")
+
+    async def _balance_of_ata(self, mint: str, owner: str) -> tuple[int | None, str]:
+        """The ATA's balance from ``getTokenAccountBalance`` (0 when the RPC
+        says the account does not exist), or ``None`` and why not."""
+        ata = await self.get_ata_address(mint, owner)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountBalance",
+            "params": [ata, {"commitment": "confirmed"}],
+        }
+        parsed = await self._request_rpc_json(payload)
+        error = parsed.get("error")
+        if isinstance(error, dict) and "could not find account" in str(
+            error.get("message", "")
+        ):
+            return 0, ""
+        value = (parsed.get("result") or {}).get("value")
+        if isinstance(value, dict) and "amount" in value:
+            return int(value["amount"]), ""
+        return None, f"getTokenAccountBalance returned no amount: {parsed}"
+
     async def get_token_balance(self, mint: str, owner: str | None = None) -> int:
         """Return the token balance for the wallet ATA for a given mint, in raw token
         units.
@@ -440,57 +500,14 @@ class ExecutionClientBase:
         owner_pubkey = owner or str(self.wallet)
         errors: list[str] = []
         try:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getTokenAccountsByOwner",
-                "params": [
-                    owner_pubkey,
-                    {"mint": mint},
-                    {"encoding": "jsonParsed", "commitment": "confirmed"},
-                ],
-            }
-            parsed = await self._request_rpc_json(payload)
-            if "error" in parsed or not isinstance(parsed.get("result"), dict):
-                raise RuntimeError(f"getTokenAccountsByOwner error: {parsed}")
-            accounts = parsed["result"].get("value")
-            if not isinstance(accounts, list):
-                raise RuntimeError(
-                    f"Unexpected getTokenAccountsByOwner value: {parsed}"
-                )
-            if not accounts:
-                return 0
-            for acc in accounts:
-                info = (
-                    ((acc.get("account") or {}).get("data") or {})
-                    .get("parsed", {})
-                    .get("info", {})
-                )
-                token_amount_obj = info.get("tokenAmount", {})
-                if "amount" in token_amount_obj:
-                    return int(token_amount_obj["amount"])
-            raise RuntimeError("Token account has no parsed amount")
+            return await self._balance_by_owner(mint, owner_pubkey)
         except Exception as exc:
             errors.append(str(exc))
-
         try:
-            ata = await self.get_ata_address(mint, owner_pubkey)
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getTokenAccountBalance",
-                "params": [ata, {"commitment": "confirmed"}],
-            }
-            parsed = await self._request_rpc_json(payload)
-            error = parsed.get("error")
-            if isinstance(error, dict) and "could not find account" in str(
-                error.get("message", "")
-            ):
-                return 0
-            value = (parsed.get("result") or {}).get("value")
-            if isinstance(value, dict) and "amount" in value:
-                return int(value["amount"])
-            errors.append(f"getTokenAccountBalance returned no amount: {parsed}")
+            amount, problem = await self._balance_of_ata(mint, owner_pubkey)
+            if amount is not None:
+                return amount
+            errors.append(problem)
         except Exception as exc:
             errors.append(str(exc))
         raise TokenBalanceUnavailableError(

@@ -8,7 +8,7 @@ nox -s lint mypy tests          # trading-core comes from ../trading-core by def
 
 | Session | Runs | Must |
 |---|---|---|
-| `lint` (3.14) | `ruff check .`, `black --check .`, `flake8 .` | pass |
+| `lint` (3.14) | `ruff check .`, `black --check .`, `flake8 .` (McCabe complexity ≤ 7) | pass |
 | `mypy` (3.14, checks as 3.11) | `mypy` on the package and tests, against trading-core's types (`py.typed`) | no issues |
 | `tests-3.11` … `tests-3.14` | `pytest --cov=trading_pump --cov-fail-under=100` | pass with 100% **statement and branch** coverage on every version |
 | `tests-fast` | unit and property tests, no coverage | quick loop |
@@ -22,7 +22,7 @@ checkout path (default `../trading-core`) or any pip requirement, e.g.
 Outside nox, with trading-core installed editable, mypy needs
 `MYPYPATH=../trading-core`.
 
-The suite (779 tests) runs in about 7 seconds and **never touches the
+The suite (789 tests) runs in about 10 seconds and **never touches the
 network**. pumpbot's suite had 2,208 tests at v0.3.0rc8; the difference is
 the retired runtime and lanes (their tests are in the history at that tag,
 and the bugs they guarded are accounted for in

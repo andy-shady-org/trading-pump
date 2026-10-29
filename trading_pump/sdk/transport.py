@@ -245,15 +245,13 @@ class TransactionTransportMixin(ExecutionClientBase):
             return self.jito_tip_lamports
         return self.jito_tip_config.default_tip_lamports
 
-    async def _build_tx_with_instructions(
-        self,
-        instructions,
-        *,
-        tip_lamports: int | None = None,
-    ) -> VersionedTransaction:
-        tx_instructions = []
+    def _compute_budget_instructions(self) -> list[Any]:
+        """``SetComputeUnitLimit`` and ``SetComputeUnitPrice``, when set. The
+        price comes from ``compute_unit_price_micro_lamports`` or, without
+        it, from the priority fee spread over the unit limit."""
+        budget = []
         if self.compute_unit_limit > 0:
-            tx_instructions.append(
+            budget.append(
                 self.build_set_compute_unit_limit_instruction(self.compute_unit_limit)
             )
         unit_price = self.compute_unit_price_micro_lamports
@@ -266,27 +264,26 @@ class TransactionTransportMixin(ExecutionClientBase):
                 (self.priority_fee_lamports * 1_000_000) / self.compute_unit_limit
             )
         if unit_price and unit_price > 0:
-            tx_instructions.append(
-                self.build_set_compute_unit_price_instruction(unit_price)
-            )
+            budget.append(self.build_set_compute_unit_price_instruction(unit_price))
+        return budget
+
+    async def _build_tx_with_instructions(
+        self,
+        instructions,
+        *,
+        tip_lamports: int | None = None,
+    ) -> VersionedTransaction:
+        tx_instructions = self._compute_budget_instructions()
         tx_instructions.extend(instructions)
         effective_tip = (
             tip_lamports if tip_lamports is not None else self.jito_tip_lamports
         )
         if effective_tip > 0:
+            # The tip is the last instruction (AGENTS: Jito tip placement).
             tx_instructions.append(self.build_jito_tip_instruction(effective_tip))
 
         blockhash = await self.get_latest_blockhash()
-        account_keys = []
-        for instruction in tx_instructions:
-            for meta in instruction.accounts:
-                if meta.pubkey not in account_keys:
-                    account_keys.append(meta.pubkey)
-        if self.wallet not in account_keys:
-            account_keys.insert(0, self.wallet)
-        else:
-            account_keys.remove(self.wallet)
-            account_keys.insert(0, self.wallet)
+        # MessageV0.try_compile orders the account keys itself (the payer first).
         from solders.hash import Hash
 
         blockhash_obj = (
@@ -378,28 +375,8 @@ class TransactionTransportMixin(ExecutionClientBase):
 
         try:
             if self.jito_client is not None:
-                bundle_id = await self.jito_client.send_bundle(transactions)
-                status = await self.jito_client.wait_for_bundle_confirmation(
-                    bundle_id, timeout_seconds=timeout
-                )
-                if status.is_landed:
-                    self.execution_health_score = min(
-                        100.0, self.execution_health_score + 5.0
-                    )
-                    return tx_sig
-                if status.is_failed:
-                    raise RuntimeError(f"Jito bundle {bundle_id} failed: {status.err}")
-                # Unknown/pending is not a fill: fall through to the RPC fallback,
-                # which re-sends the same signed tx (deduplicated by signature).
-                raise TimeoutError(f"Jito bundle {bundle_id} not landed within timeout")
-            else:
-                bundle_id = await self.send_jito_bundle(transactions)
-                confirmed = await self.confirm_transaction(
-                    tx_sig, max_retries=max(1, int(timeout))
-                )
-                if confirmed:
-                    return tx_sig
-                raise TimeoutError(f"Bundle {bundle_id} not confirmed within timeout")
+                return await self._land_with_jito_client(transactions, tx_sig, timeout)
+            return await self._land_with_bundle_endpoint(transactions, tx_sig, timeout)
         except Exception:
             if not self.jito_fallback_to_rpc:
                 raise
@@ -407,6 +384,34 @@ class TransactionTransportMixin(ExecutionClientBase):
             self.execution_health_score = max(0.0, self.execution_health_score - 5.0)
             # Fast fallback to high-priority direct RPC submission
             return await self.send_transaction(tx)
+
+    async def _land_with_jito_client(
+        self, transactions: list[VersionedTransaction], tx_sig: str, timeout: float
+    ) -> str:
+        assert self.jito_client is not None
+        bundle_id = await self.jito_client.send_bundle(transactions)
+        status = await self.jito_client.wait_for_bundle_confirmation(
+            bundle_id, timeout_seconds=timeout
+        )
+        if status.is_landed:
+            self.execution_health_score = min(100.0, self.execution_health_score + 5.0)
+            return tx_sig
+        if status.is_failed:
+            raise RuntimeError(f"Jito bundle {bundle_id} failed: {status.err}")
+        # Unknown/pending is not a fill: fall through to the RPC fallback,
+        # which re-sends the same signed tx (deduplicated by signature).
+        raise TimeoutError(f"Jito bundle {bundle_id} not landed within timeout")
+
+    async def _land_with_bundle_endpoint(
+        self, transactions: list[VersionedTransaction], tx_sig: str, timeout: float
+    ) -> str:
+        bundle_id = await self.send_jito_bundle(transactions)
+        confirmed = await self.confirm_transaction(
+            tx_sig, max_retries=max(1, int(timeout))
+        )
+        if confirmed:
+            return tx_sig
+        raise TimeoutError(f"Bundle {bundle_id} not confirmed within timeout")
 
     async def send_transaction(self, tx: VersionedTransaction) -> str:
         async with self._execution_lock:
@@ -450,29 +455,38 @@ class TransactionTransportMixin(ExecutionClientBase):
             "params": [[signature], {"searchTransactionHistory": True}],
         }
         for _ in range(max_retries):
-            try:
-                parsed = await self._request_rpc_json(payload, timeout_seconds=5.0)
-                result = (parsed.get("result") or {}).get("value")
-                if not result:
-                    await asyncio.sleep(interval)
-                    continue
-                status = result[0]
-                if not status:
-                    await asyncio.sleep(interval)
-                    continue
-                confirmation_status = status.get("confirmationStatus")
-                if confirmation_status in {
-                    "processed",
-                    "confirmed",
-                    "finalized",
-                }:
-                    if status.get("err") is None:
-                        return True
-                    return False
-            except RuntimeError as exc:
-                if "On-chain transaction failed" in str(exc):
-                    raise
-            except Exception:
-                pass
+            outcome = await self._signature_outcome(payload)
+            if outcome is not None:
+                return outcome
             await asyncio.sleep(interval)
         return False
+
+    async def _signature_outcome(self, payload: dict[str, Any]) -> bool | None:
+        """One status poll: True / False once settled, None to poll again.
+
+        Any error except an on-chain failure counts as "not yet"."""
+        try:
+            parsed = await self._request_rpc_json(payload, timeout_seconds=5.0)
+            return self._settled_outcome(parsed)
+        except RuntimeError as exc:
+            if "On-chain transaction failed" in str(exc):
+                raise
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _settled_outcome(parsed: Any) -> bool | None:
+        result = (parsed.get("result") or {}).get("value")
+        if not result:
+            return None
+        status = result[0]
+        if not status:
+            return None
+        if status.get("confirmationStatus") not in {
+            "processed",
+            "confirmed",
+            "finalized",
+        }:
+            return None
+        return status.get("err") is None

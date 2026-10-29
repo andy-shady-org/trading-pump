@@ -28,7 +28,14 @@ import logging
 import os
 import statistics
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Container,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -657,6 +664,18 @@ class QuoteRecorderStats:
     rate_limited: int = 0
 
 
+def _add_buy_gap(row: dict[str, Any], buy_row: Mapping[str, Any]) -> None:
+    """The sell leg is quoted after the pacing gap, so the round trip also
+    holds the price move in between (BUG-139): record how long and how many
+    slots, so the analysis can see and bound it."""
+    row["buy_gap_seconds"] = round(
+        float(row["timestamp"]) - float(buy_row["timestamp"]), 3
+    )
+    buy_slot, sell_slot = buy_row.get("context_slot"), row.get("context_slot")
+    if isinstance(buy_slot, int) and isinstance(sell_slot, int):
+        row["buy_gap_slots"] = sell_slot - buy_slot
+
+
 class QuoteRecorder:
     """Samples quotes, prices and priority fees into a row sink."""
 
@@ -777,25 +796,20 @@ class QuoteRecorder:
             latency_ms=(timing["ended"] - timing["started"]) * 1000.0,
         )
         if buy_row is not None:
-            # The sell leg is quoted after the pacing gap, so the round trip
-            # also holds the price move in between (BUG-139): record how long
-            # and how many slots, so the analysis can see and bound it.
-            row["buy_gap_seconds"] = round(
-                float(row["timestamp"]) - float(buy_row["timestamp"]), 3
-            )
-            buy_slot, sell_slot = buy_row.get("context_slot"), row.get("context_slot")
-            if isinstance(buy_slot, int) and isinstance(sell_slot, int):
-                row["buy_gap_slots"] = sell_slot - buy_slot
-        for pool in row["pools"]:
-            # Most recently quoted first, so the fee sample follows the routes.
-            symbols = self._pool_symbols.pop(pool, set())
-            symbols.add(token.symbol)
-            self._pool_symbols[pool] = symbols
-        while len(self._pool_symbols) > MAX_TRACKED_POOLS:
-            self._pool_symbols.pop(next(iter(self._pool_symbols)))
+            _add_buy_gap(row, buy_row)
+        self._track_pools(row["pools"], token.symbol)
         self.sink.record_snapshot(row)
         self.stats.quotes += 1
         return row
+
+    def _track_pools(self, pools: Iterable[str], symbol: str) -> None:
+        for pool in pools:
+            # Most recently quoted first, so the fee sample follows the routes.
+            symbols = self._pool_symbols.pop(pool, set())
+            symbols.add(symbol)
+            self._pool_symbols[pool] = symbols
+        while len(self._pool_symbols) > MAX_TRACKED_POOLS:
+            self._pool_symbols.pop(next(iter(self._pool_symbols)))
 
     async def sample_quotes(self, token: SlowLaneToken) -> None:
         for size_sol in self.sizes_sol:
@@ -972,61 +986,106 @@ async def backfill_bars(
     Prices are USD for the token itself (``token=<mint>``), so the pool's side
     does not matter. Bars are de-duplicated per token and timeframe.
     """
-    for timeframe in timeframes:
-        if timeframe not in BAR_TIMEFRAMES:
-            raise ValueError(f"unknown bar timeframe {timeframe!r}.")
-    pacer = RequestPacer(request_gap_seconds, sleep=sleep, clock=monotonic)
-    stats = BackfillStats()
+    _check_timeframes(timeframes, BAR_TIMEFRAMES)
+    job = _GeckoBackfill(
+        gecko=gecko,
+        sink=sink,
+        pacer=RequestPacer(request_gap_seconds, sleep=sleep, clock=monotonic),
+        sleep=sleep,
+        max_pages=max(1, int(max_pages)),
+    )
     for token in tokens:
-        stats.tokens += 1
-        try:
-            stats.requests += 1
-            pool = await _paced(pacer, partial(gecko.top_pool, token.mint), sleep)
-        except Exception as exc:
-            stats.fail(f"{token.symbol} pool", exc)
-            continue
+        job.stats.tokens += 1
+        pool = await job.top_pool(token)
         if pool is None:
-            stats.pools_missing += 1
             continue
         for timeframe in timeframes:
-            seen: set[float] = set()
-            before: int | None = None
-            for page_index in range(max(1, int(max_pages))):
-                try:
-                    stats.requests += 1
-                    page = await _paced(
-                        pacer,
-                        partial(
-                            gecko.ohlcv,
-                            pool["address"],
-                            timeframe=timeframe,
-                            before_timestamp=before,
-                            token_mint=token.mint,
-                        ),
-                        sleep,
-                    )
-                except HttpStatusError as exc:
-                    if exc.status == 401 and page_index > 0:
-                        stats.history_limited += 1
-                    else:
-                        stats.fail(f"{token.symbol} {timeframe}", exc)
-                    break
-                except Exception as exc:
-                    stats.fail(f"{token.symbol} {timeframe}", exc)
-                    break
-                fresh = [b for b in page if float(b[0]) not in seen]
-                for bar in fresh:
-                    seen.add(float(bar[0]))
-                    sink.record_snapshot(
-                        bar_row(bar, token=token, pool=pool, timeframe=timeframe)
-                    )
-                    stats.bars += 1
-                if len(page) < BARS_PER_PAGE or not fresh:
-                    break
-                before = int(min(float(b[0]) for b in page))
+            await job.timeframe(token, pool, timeframe)
+    return job.stats
+
+
+def _check_timeframes(timeframes: Sequence[str], known: Container[str]) -> None:
+    for timeframe in timeframes:
+        if timeframe not in known:
+            raise ValueError(f"unknown bar timeframe {timeframe!r}.")
+
+
+@dataclass
+class _GeckoBackfill:
+    """One GeckoTerminal backfill: the client, the pacing and the counts."""
+
+    gecko: GeckoTerminalClient
+    sink: RowSink
+    pacer: RequestPacer
+    sleep: Sleep
+    max_pages: int
+    stats: BackfillStats = field(default_factory=BackfillStats)
+
+    async def top_pool(self, token: SlowLaneToken) -> dict[str, Any] | None:
+        """The token's top pool; None (counted) when it has none or failed."""
+        try:
+            self.stats.requests += 1
+            pool = await _paced(
+                self.pacer, partial(self.gecko.top_pool, token.mint), self.sleep
+            )
+        except Exception as exc:
+            self.stats.fail(f"{token.symbol} pool", exc)
+            return None
+        if pool is None:
+            self.stats.pools_missing += 1
+        return pool
+
+    async def timeframe(
+        self, token: SlowLaneToken, pool: Mapping[str, Any], timeframe: str
+    ) -> None:
+        seen: set[float] = set()
+        before: int | None = None
+        for page_index in range(self.max_pages):
+            page = await self.page(token, pool, timeframe, before, page_index)
+            if page is None:
+                return
+            fresh = [b for b in page if float(b[0]) not in seen]
+            for bar in fresh:
+                seen.add(float(bar[0]))
+                self.sink.record_snapshot(
+                    bar_row(bar, token=token, pool=pool, timeframe=timeframe)
+                )
+                self.stats.bars += 1
+            if len(page) < BARS_PER_PAGE or not fresh:
+                return
+            before = int(min(float(b[0]) for b in page))
+        self.stats.page_limited += 1
+
+    async def page(
+        self,
+        token: SlowLaneToken,
+        pool: Mapping[str, Any],
+        timeframe: str,
+        before: int | None,
+        page_index: int,
+    ) -> list[list[float]] | None:
+        """One page of bars; None (counted) when paging must stop."""
+        try:
+            self.stats.requests += 1
+            return await _paced(
+                self.pacer,
+                partial(
+                    self.gecko.ohlcv,
+                    pool["address"],
+                    timeframe=timeframe,
+                    before_timestamp=before,
+                    token_mint=token.mint,
+                ),
+                self.sleep,
+            )
+        except HttpStatusError as exc:
+            if exc.status == 401 and page_index > 0:
+                self.stats.history_limited += 1
             else:
-                stats.page_limited += 1
-    return stats
+                self.stats.fail(f"{token.symbol} {timeframe}", exc)
+        except Exception as exc:
+            self.stats.fail(f"{token.symbol} {timeframe}", exc)
+        return None
 
 
 def binance_bar_row(
@@ -1076,67 +1135,120 @@ async def backfill_binance_bars(
     dropped. A missing pair is counted and skipped; a blocked host (403 / 418 /
     451) stops the whole run, since every later request would fail too.
     """
-    for timeframe in timeframes:
-        if timeframe not in BINANCE_INTERVALS:
-            raise ValueError(f"unknown bar timeframe {timeframe!r}.")
-    pacer = RequestPacer(request_gap_seconds, sleep=sleep, clock=monotonic)
-    stats = BackfillStats()
-    now_ms = int(wall_clock() * 1000)
-    first_ms = BINANCE_EPOCH_MS if since is None else int(float(since) * 1000)
+    _check_timeframes(timeframes, BINANCE_INTERVALS)
+    job = _BinanceBackfill(
+        binance=binance,
+        sink=sink,
+        pacer=RequestPacer(request_gap_seconds, sleep=sleep, clock=monotonic),
+        sleep=sleep,
+        max_pages=max(1, int(max_pages)),
+        now_ms=int(wall_clock() * 1000),
+        first_ms=BINANCE_EPOCH_MS if since is None else int(float(since) * 1000),
+    )
     for token in tokens:
-        stats.tokens += 1
+        job.stats.tokens += 1
         pair = token.binance_pair()
         if pair is None:
-            stats.skipped += 1
+            job.stats.skipped += 1
             continue
+        if await job.pair(token, pair, timeframes) == _BLOCKED:
+            break
+    return job.stats
+
+
+# How a Binance pair's (or a page's) download ended.
+_DONE, _MISSING, _BLOCKED, _FAILED = "done", "missing", "blocked", "failed"
+
+
+@dataclass
+class _BinanceBackfill:
+    """One Binance backfill: the client, the pacing, the window and the counts."""
+
+    binance: BinanceClient
+    sink: RowSink
+    pacer: RequestPacer
+    sleep: Sleep
+    max_pages: int
+    now_ms: int
+    first_ms: int
+    stats: BackfillStats = field(default_factory=BackfillStats)
+
+    async def pair(
+        self, token: SlowLaneToken, pair: str, timeframes: Sequence[str]
+    ) -> str:
+        """Every timeframe of one pair; stops at a missing pair or a block."""
         for timeframe in timeframes:
-            interval = BINANCE_INTERVALS[timeframe]
-            seen: set[int] = set()
-            start = first_ms
-            missing = False
-            for page_index in range(max(1, int(max_pages))):
-                try:
-                    stats.requests += 1
-                    page = await _paced(
-                        pacer,
-                        partial(
-                            binance.klines, pair, interval=interval, start_ms=start
-                        ),
-                        sleep,
-                    )
-                except HttpStatusError as exc:
-                    if exc.status in BINANCE_BLOCKED_STATUSES:
-                        stats.blocked_status = exc.status
-                        stats.fail(f"{token.symbol} {timeframe}", exc)
-                        return stats
-                    if exc.status == 400 and page_index == 0:
-                        missing = True
-                        stats.pairs_missing += 1
-                        stats.failures.append(f"{token.symbol}: no Binance pair {pair}")
-                    else:
-                        stats.fail(f"{token.symbol} {timeframe}", exc)
-                    break
-                except Exception as exc:
-                    stats.fail(f"{token.symbol} {timeframe}", exc)
-                    break
-                closed = [k for k in page if int(k[6]) < now_ms]
-                fresh = [k for k in closed if int(k[0]) not in seen]
-                for kline in fresh:
-                    seen.add(int(kline[0]))
-                    sink.record_snapshot(
-                        binance_bar_row(
-                            kline, token=token, pair=pair, timeframe=timeframe
-                        )
-                    )
-                    stats.bars += 1
-                if len(page) < BINANCE_BARS_PER_PAGE or not fresh:
-                    break
-                start = max(int(k[0]) for k in page) + 1
-            else:
-                stats.page_limited += 1
-            if missing:
-                break
-    return stats
+            outcome = await self.timeframe(token, pair, timeframe)
+            if outcome in (_MISSING, _BLOCKED):
+                return outcome
+        return _DONE
+
+    async def timeframe(self, token: SlowLaneToken, pair: str, timeframe: str) -> str:
+        interval = BINANCE_INTERVALS[timeframe]
+        seen: set[int] = set()
+        start = self.first_ms
+        for page_index in range(self.max_pages):
+            page, outcome = await self.page(
+                token, pair, timeframe, interval, start, page_index
+            )
+            if page is None:
+                return outcome
+            closed = [k for k in page if int(k[6]) < self.now_ms]
+            fresh = [k for k in closed if int(k[0]) not in seen]
+            for kline in fresh:
+                seen.add(int(kline[0]))
+                self.sink.record_snapshot(
+                    binance_bar_row(kline, token=token, pair=pair, timeframe=timeframe)
+                )
+                self.stats.bars += 1
+            if len(page) < BINANCE_BARS_PER_PAGE or not fresh:
+                return _DONE
+            start = max(int(k[0]) for k in page) + 1
+        self.stats.page_limited += 1
+        return _DONE
+
+    async def page(
+        self,
+        token: SlowLaneToken,
+        pair: str,
+        timeframe: str,
+        interval: str,
+        start: int,
+        page_index: int,
+    ) -> tuple[list[list[Any]] | None, str]:
+        """One page of klines, or None and why paging stops (all counted)."""
+        try:
+            self.stats.requests += 1
+            page = await _paced(
+                self.pacer,
+                partial(self.binance.klines, pair, interval=interval, start_ms=start),
+                self.sleep,
+            )
+        except HttpStatusError as exc:
+            return None, self._refused(token, pair, timeframe, exc, page_index)
+        except Exception as exc:
+            self.stats.fail(f"{token.symbol} {timeframe}", exc)
+            return None, _FAILED
+        return page, _DONE
+
+    def _refused(
+        self,
+        token: SlowLaneToken,
+        pair: str,
+        timeframe: str,
+        exc: HttpStatusError,
+        page_index: int,
+    ) -> str:
+        if exc.status in BINANCE_BLOCKED_STATUSES:
+            self.stats.blocked_status = exc.status
+            self.stats.fail(f"{token.symbol} {timeframe}", exc)
+            return _BLOCKED
+        if exc.status == 400 and page_index == 0:
+            self.stats.pairs_missing += 1
+            self.stats.failures.append(f"{token.symbol}: no Binance pair {pair}")
+            return _MISSING
+        self.stats.fail(f"{token.symbol} {timeframe}", exc)
+        return _FAILED
 
 
 def round_trip_cost_summary(
