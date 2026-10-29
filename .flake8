@@ -4,7 +4,8 @@
 max-line-length = 88
 extend-ignore = E203, E701, E704
 max-complexity = 7
-application-import-names = trading_pump
+# Import order is ruff's (rules I, known-first-party in pyproject.toml); flake8
+# would need the flake8-import-order plugin, whose styles disagree with ruff.
 exclude =
     .git,
     __pycache__,

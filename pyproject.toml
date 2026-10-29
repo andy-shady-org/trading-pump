@@ -84,7 +84,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "C", "I", "B", "UP"]
-# C901 (complexity) is reviewed by hand; B008 flags dataclass field defaults.
+# C901 (complexity) is flake8's (max-complexity in .flake8); B008 flags
+# dataclass field defaults.
 ignore = ["C901", "B008"]
 
 [tool.ruff.lint.isort]
