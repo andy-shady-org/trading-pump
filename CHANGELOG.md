@@ -10,8 +10,27 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+## [0.4.0-rc.3] - 2026-10-29
+
+The rc.10 build, on trading-core `v0.2.1`. One change of behaviour: the PumpSwap fee tier on the mint's real supply (BUG-162), from the fee check against real trades. The rest is restructuring that changes nothing, and two research read-outs. Paper only.
+
+### Research
+- FEAT-76 fee check: 94 real PumpSwap trades of 11 rc.9 graduates, decoded from their events, pay the module's tier and fill at its pool maths to 0.001 bps, once the tier uses the mint's real supply ([`STRATEGY-PIVOT.md` §6.16](docs/dev/STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)).
+- FEAT-65 walk-forward on the Binance history: **NO-GO**, the slow lane is closed ([§6.15](docs/dev/STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)).
+
+### Fixed
+- The PumpSwap fee tier is picked on the mint's real supply, as the program does, not on 1B tokens: a fresh graduate with burnt supply near the 420 SOL tier boundary was charged 120 bps a side where the program charges 125 (BUG-162). The supply is read with the fee accounts and cached; an unreadable supply is an unknown fee, never a guess.
+- The batch bonding-curve reader (`get_bonding_curve_states`) read an RPC error, or an answer without an account list, as every curve missing, as the pool reader did before BUG-159; it now shares the pool reader's checked `getMultipleAccounts` and raises (BUG-161). Nothing running called it.
+
 ### Changed
+- flake8's `application-import-names` setting is gone: only the flake8-import-order plugin reads it (not installed), and every style of that plugin disagrees with ruff's isort, which already treats `trading_pump` as first-party and is the import-order check (`nox -s lint`).
 - flake8 limits McCabe complexity to 7 (`max-complexity` in `.flake8`). The 37 functions above it (API client, CLI recorders, RPC pool, module network check, replay, recorder, SDK, research recorders, screening, WebSocket loop and two test helpers) were split into smaller helpers with the same behaviour: no settings, file format, CLI or output change, and the suite is unchanged (789 tests, 100% on 3.11–3.14). An unused account-key loop in the SDK transaction builder was removed.
+
+#### Release record – v0.4.0rc3 (2026-10-29)
+- Commit: the tagged commit on `main` after the `rc10/prep` merge; trading-core `v0.2.1`
+- Release gate: `nox -s format lint mypy tests` passed on Linux, 802 tests (789 in rc.2, plus 13 for BUG-161 and BUG-162), 100% coverage on 3.11–3.14. To do: CI on the tag, the smoke run in `runtime-pump` (`bin/install-release.sh v0.2.1 v0.4.0rc3`, README §2), the restart drill
+- Reference replay: the rc.9 capture's first 9.8 h (2026-10-29 08:30–18:20 UTC), replayed at 125 bps through `v0.2.0` + `v0.4.0rc2` and through this code on `v0.2.1`: identical, 38 trades with the same times, prices, sizes and costs. The replay's fixed fee does not exercise BUG-162, which changes paper fills only for a graduate with burnt supply between about 420 and 437 SOL
+- Capital stage: 0 (paper)
 
 ## [0.4.0-rc.2] - 2026-10-29
 

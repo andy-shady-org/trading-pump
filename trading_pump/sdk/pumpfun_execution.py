@@ -505,25 +505,20 @@ class PumpFunCurveMixin(TransactionTransportMixin):
         the Pump.fun program (BUG-108) and pass the reserve sanity checks
         (BUG-104) are returned; every other mint is written to ``rejected`` with a
         reason (``missing``, ``not_pump_fun``, ``decode_error``, ``non_standard``).
-        An RPC failure raises ``RuntimeError`` so the caller can back off.
+        An RPC failure, or an answer without an account list (BUG-161), raises
+        ``RuntimeError`` so the caller can back off; nothing is rejected then.
         """
         unique = list(dict.fromkeys(str(m) for m in mints if m))
         states: dict[str, dict[str, int | float | bool]] = {}
         for start in range(0, len(unique), GET_MULTIPLE_ACCOUNTS_LIMIT):
             chunk = unique[start : start + GET_MULTIPLE_ACCOUNTS_LIMIT]
             pdas = [self.get_bonding_curve_pda(mint)[0] for mint in chunk]
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getMultipleAccounts",
-                "params": [pdas, {"encoding": "base64", "commitment": "confirmed"}],
-            }
-            parsed = await self._request_rpc_json(
-                payload, max_retries=1, timeout_seconds=timeout_seconds
+            # An answer without an account list raises: an RPC error is not
+            # "every curve missing" (BUG-161, as BUG-159 for pools).
+            values = await self._get_accounts(
+                pdas, max_retries=1, timeout_seconds=timeout_seconds
             )
-            values = (parsed.get("result") or {}).get("value") or []
-            for index, mint in enumerate(chunk):
-                value = values[index] if index < len(values) else None
+            for mint, value in zip(chunk, values, strict=True):
                 state, reason = self._curve_from_account(mint, value)
                 if reason is None:
                     states[mint] = state

@@ -957,3 +957,12 @@ Split in two (decided 2026-10-19). **28a** (branch `sprint-28a-runtime-decomposi
 - [x] Documentation split: guides rewritten, pumpbot's archived, TODO / PROPOSED-FEATURES / ADRs split with trading-core, every bug accounted for (`BUGS.md`, Where each fix lives)
 - [x] Replay of the rc.8 graduation rows through the new stack ([`STRATEGY-PIVOT.md` §6.14](STRATEGY-PIVOT.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28))
 - [x] From the FEAT-76 TODO: the PumpSwap paper executor and the `pumpswap_momentum` lane, modelled in replay; the rc.9 build with BUG-157 fixed is superseded (the capture is pruned by its own policy)
+- [x] `nox` green in CI: the `Tests` workflow on merged `main` (`5c8925c`, run 40903911567, 2026-10-29) passed on 3.11, 3.12, 3.13 and 3.14 and the lint, typing, audit and package job, with the `TRADING_CORE_TOKEN` secret set
+- [x] trading-core `v0.2.0` and trading-pump `v0.4.0rc2` tagged and pushed, and installed in `runtime-pump` from clean checkouts of the tags: the rc.9 run's `RUN.txt` records both tags and commits (`2f4f1aa`, `dabcea0`)
+
+### FEAT-65 slow lane, phase 0 data (closed 2026-10-29: NO-GO)
+- [x] Walk-forward test of the §6.12 trend rules on the Binance history, in SOL terms with the measured costs, against a random-entry baseline on unseen periods, pre-registered: **NO-GO**, negative and below random timing in all four counted half-years, −37.8% compounded ([`STRATEGY-PIVOT.md` §6.15](STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)). The backtester and the lane it would have unlocked are not built
+
+### FEAT-76 PumpSwap Post-Graduation Momentum Lane (partly done)
+- [x] PumpSwap fee checked against real swaps: 94 trades of 11 rc.9 graduates decoded from their events; the module's tier and pool maths match them, once the tier uses the mint's real supply (BUG-162); no `fee_bps_floor` needed ([`STRATEGY-PIVOT.md` §6.16](STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29))
+

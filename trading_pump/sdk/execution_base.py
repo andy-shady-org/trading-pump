@@ -234,6 +234,50 @@ class ExecutionClientBase:
             self.execution_health_score = max(0.0, self.execution_health_score - 10.0)
             raise RuntimeError(f"RPC request failed after retries: {exc}") from exc
 
+    async def _get_accounts(
+        self,
+        addresses: list[str],
+        *,
+        max_retries: int = 2,
+        timeout_seconds: float = 5.0,
+    ) -> list[dict[str, Any] | None]:
+        """``getMultipleAccounts``: one entry per address, ``None`` for an
+        account that does not exist. A failed read raises (BUG-159)."""
+        parsed = await self._request_rpc_json(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getMultipleAccounts",
+                "params": [
+                    addresses,
+                    {"encoding": "base64", "commitment": "confirmed"},
+                ],
+            },
+            max_retries=max_retries,
+            timeout_seconds=timeout_seconds,
+        )
+        # An answer that is not a list of accounts is a failed read, not a
+        # list of missing accounts (BUG-159): a JSON-RPC error the pool hands
+        # back (bad params, a wrong cluster's method set) must reach the log.
+        if "error" in parsed:
+            error = parsed.get("error")
+            detail = (
+                error
+                if not isinstance(error, dict)
+                else (f"[{error.get('code')}] {str(error.get('message', ''))[:200]}")
+            )
+            raise RuntimeError(f"getMultipleAccounts failed: {detail}")
+        result = parsed.get("result")
+        values = result.get("value") if isinstance(result, dict) else None
+        if not isinstance(values, list):
+            raise RuntimeError(
+                f"getMultipleAccounts returned no account list: {result!r}"[:300]
+            )
+        return [
+            values[index] if index < len(values) else None
+            for index in range(len(addresses))
+        ]
+
     @staticmethod
     def is_valid_pubkey(value: str) -> bool:
         try:

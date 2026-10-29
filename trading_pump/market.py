@@ -21,7 +21,11 @@ from typing import Any, Protocol
 
 from solders.pubkey import Pubkey
 
-from trading_pump.sdk.execution_types import PUMP_FEE_PROGRAM_ID
+from trading_pump.sdk.execution_types import (
+    PUMP_FEE_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID_STR,
+    TOKEN_PROGRAM_ID_STR,
+)
 from trading_pump.sdk.fee_config import decode_fee_config, select_fee_tier
 from trading_pump.sdk.pumpswap import (
     PUMP_AMM_PROGRAM_ID,
@@ -29,6 +33,7 @@ from trading_pump.sdk.pumpswap import (
     decode_global_config,
     fee_config_address,
     global_config_address,
+    mint_supply,
     pumpswap_sell_quote,
 )
 
@@ -40,8 +45,10 @@ FEE_SOURCE_TIER = "fee_config_tier"
 FEE_SOURCE_GLOBAL = "global_config"
 FEE_SOURCE_FLOOR = "floor"
 FEE_SOURCE_REPLAY = "replay"
-# The fee accounts change rarely; read them again after this long.
+# The fee accounts change rarely, and a mint's supply only falls (burns);
+# read them again after this long.
 FEE_TTL_SECONDS = 300.0
+TOKEN_PROGRAMS = frozenset({TOKEN_PROGRAM_ID_STR, TOKEN_2022_PROGRAM_ID_STR})
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,14 @@ class PoolReading:
     @property
     def market_cap_lamports(self) -> int:
         return int(round(self.market_cap_sol * LAMPORTS_PER_SOL))
+
+    def fee_market_cap_lamports(self, mint_supply: int) -> int:
+        """Market cap on the mint's real supply: what PumpSwap picks the fee
+        tier by (BUG-162). Burns take the supply below the 1B tokens
+        ``market_cap_sol`` assumes."""
+        if self.drained:
+            return 0
+        return (self.quote_reserve * int(mint_supply)) // self.base_reserve
 
     @property
     def pool_sol(self) -> float:
@@ -184,6 +199,7 @@ class RpcPoolSource:
     fee_bps_floor: int = 0
     clock: Callable[[], float] = time.monotonic
     _fees: tuple[float, Any, Any] | None = field(default=None, repr=False)
+    _supplies: dict[str, tuple[float, int]] = field(default_factory=dict, repr=False)
     stats: dict[str, int] = field(default_factory=dict)
 
     def _count(self, key: str) -> None:
@@ -209,38 +225,80 @@ class RpcPoolSource:
         }
         return readings, rejected
 
-    async def _fee_accounts(self) -> tuple[Any, Any]:
-        """(fee tiers or None, global config or None), cached for a while."""
-        cached = self._fees
+    async def _fee_inputs(self, mint: str) -> tuple[Any, Any, int | None]:
+        """(fee tiers or None, global config or None, the mint's supply or
+        None), each cached for a while and read in one call when due."""
         moment = self.clock()
-        if cached is not None and moment - cached[0] < FEE_TTL_SECONDS:
-            return cached[1], cached[2]
-        tiers_value, config_value = await self.client._get_accounts(
-            [str(fee_config_address()), str(global_config_address())],
-            timeout_seconds=self.timeout_seconds,
+        fees_due = self._fees is None or moment - self._fees[0] >= FEE_TTL_SECONDS
+        cached_supply = self._supplies.get(mint)
+        supply_due = (
+            cached_supply is None or moment - cached_supply[0] >= FEE_TTL_SECONDS
         )
+        addresses = [str(fee_config_address()), str(global_config_address())]
+        wanted = (addresses if fees_due else []) + ([mint] if supply_due else [])
+        if wanted:
+            values = await self.client._get_accounts(
+                wanted, timeout_seconds=self.timeout_seconds
+            )
+            if fees_due:
+                self._store_fees(moment, values[0], values[1])
+            if supply_due:
+                self._store_supply(mint, moment, values[-1])
+        fees = self._fees
+        assert fees is not None  # stored by the first read
+        supply = self._supplies.get(mint)
+        return fees[1], fees[2], supply[1] if supply is not None else None
+
+    def _store_fees(self, moment: float, tiers_value: Any, config_value: Any) -> None:
         tiers = _decode(tiers_value, PUMP_FEE_PROGRAM_ID, decode_fee_config)
         config = _decode(config_value, PUMP_AMM_PROGRAM_ID, decode_global_config)
-        if tiers is None and config is None and cached is not None:
-            return cached[1], cached[2]
+        if tiers is None and config is None and self._fees is not None:
+            return  # keep the last good read; try again next time
         self._fees = (moment, tiers, config)
         self._count("fee_reads")
-        return tiers, config
+
+    def _store_supply(self, mint: str, moment: float, value: Any) -> None:
+        supply = _decode_mint_supply(value)
+        if supply is not None:
+            self._supplies[mint] = (moment, supply)
 
     async def swap_fee(self, reading: PoolReading) -> SwapFee:
-        tiers, config = await self._fee_accounts()
-        fee: SwapFee | None = None
-        if tiers is not None and tiers.fee_tiers:
-            chosen = select_fee_tier(tiers.fee_tiers, reading.market_cap_lamports)
-            total = chosen.lp_fee_bps + chosen.protocol_fee_bps + chosen.creator_fee_bps
-            fee = SwapFee(int(total), FEE_SOURCE_TIER)
-        elif config is not None:
-            fee = SwapFee(int(config.total_fee_bps), FEE_SOURCE_GLOBAL)
-        if fee is None:
-            raise RuntimeError("PumpSwap fee accounts could not be read")
+        tiers, config, supply = await self._fee_inputs(reading.mint)
+        fee = _fee_for(reading, tiers, config, supply)
         if fee.bps < self.fee_bps_floor:
             return SwapFee(int(self.fee_bps_floor), FEE_SOURCE_FLOOR)
         return fee
+
+
+def _fee_for(
+    reading: PoolReading, tiers: Any, config: Any, supply: int | None
+) -> SwapFee:
+    """The tier for the pool's market cap on the mint's supply, else the
+    global config's flat fee; unknown is an error, never a guess."""
+    if tiers is not None and tiers.fee_tiers:
+        if supply is None:
+            raise RuntimeError(
+                f"supply of mint {reading.mint} could not be read: fee tier unknown"
+            )
+        chosen = select_fee_tier(
+            tiers.fee_tiers, reading.fee_market_cap_lamports(supply)
+        )
+        total = chosen.lp_fee_bps + chosen.protocol_fee_bps + chosen.creator_fee_bps
+        return SwapFee(int(total), FEE_SOURCE_TIER)
+    if config is not None:
+        return SwapFee(int(config.total_fee_bps), FEE_SOURCE_GLOBAL)
+    raise RuntimeError("PumpSwap fee accounts could not be read")
+
+
+def _decode_mint_supply(value: Mapping[str, Any] | None) -> int | None:
+    """A mint account's supply, or ``None`` when absent, foreign or malformed."""
+    if not value or str(value.get("owner") or "") not in TOKEN_PROGRAMS:
+        return None
+    try:
+        supply = mint_supply(base64.b64decode((value.get("data") or [""])[0]))
+    except Exception:
+        return None
+    return supply if supply > 0 else None
 
 
 def _decode(value: Mapping[str, Any] | None, owner: str, decoder: Any) -> Any:

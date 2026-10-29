@@ -43,44 +43,6 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
     # (FEAT-73); a pool's vault addresses never change.
     _pumpswap_vaults: dict[str, tuple[str, str, str]]
 
-    async def _get_accounts(
-        self, addresses: list[str], *, timeout_seconds: float = 5.0
-    ) -> list[dict[str, Any] | None]:
-        parsed = await self._request_rpc_json(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getMultipleAccounts",
-                "params": [
-                    addresses,
-                    {"encoding": "base64", "commitment": "confirmed"},
-                ],
-            },
-            max_retries=2,
-            timeout_seconds=timeout_seconds,
-        )
-        # An answer that is not a list of accounts is a failed read, not a
-        # list of missing accounts (BUG-159): a JSON-RPC error the pool hands
-        # back (bad params, a wrong cluster's method set) must reach the log.
-        if "error" in parsed:
-            error = parsed.get("error")
-            detail = (
-                error
-                if not isinstance(error, dict)
-                else (f"[{error.get('code')}] {str(error.get('message', ''))[:200]}")
-            )
-            raise RuntimeError(f"getMultipleAccounts failed: {detail}")
-        result = parsed.get("result")
-        values = result.get("value") if isinstance(result, dict) else None
-        if not isinstance(values, list):
-            raise RuntimeError(
-                f"getMultipleAccounts returned no account list: {result!r}"[:300]
-            )
-        return [
-            values[index] if index < len(values) else None
-            for index in range(len(addresses))
-        ]
-
     @staticmethod
     def _account_bytes(value: dict[str, Any] | None) -> bytes:
         return base64.b64decode(((value or {}).get("data") or [""])[0])

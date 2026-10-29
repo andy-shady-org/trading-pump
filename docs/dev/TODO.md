@@ -20,16 +20,16 @@ where to find it. The list as it stood is archived unchanged:
 | **Now** | Close the migration: CI on 3.11–3.14, a paper run on the new stack, then retire pumpfun-trading | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
 | **Next** | FEAT-76: a fresh 72 h paper run with a pre-registered verdict; the fee tier checked against a real swap | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane) |
 | **Then** | Only if the lane passes: the PumpSwap buy builder, reconcile, one live round trip, Stage 0 / Stage 1 | [Live gate](#live-gate-for-the-pumpswap-lane) |
-| **Later** | Research read-outs (graduation paths, cross-chain, slow lane); a second venue only with evidence | [Research](#research-record-only) |
+| **Later** | Research read-outs (graduation paths, cross-chain); a second venue only with evidence (the slow lane was NO-GO, [STRATEGY-PIVOT §6.15](STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
 
 ## Migration gate (before pumpfun-trading is deleted)
 
-Done: the history import, the module and lane, 100% coverage on 3.14, the
-docs split, the replay of the rc.8 graduation rows through the new stack
-([STRATEGY-PIVOT §6.14](STRATEGY-PIVOT.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28)).
+Done: the history import, the module and lane, the docs split, the replay
+of the rc.8 graduation rows through the new stack
+([STRATEGY-PIVOT §6.14](STRATEGY-PIVOT.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28)),
+CI green on 3.11–3.14, and the rc.9 tags installed in the runtime folder
+([DONE.md](DONE.md#migration-onto-trading-core-2026-10-28-changelogmd-unreleased--040)).
 
-- [ ] `nox` green in CI (`tests.yml` matrix on 3.11–3.14, needs the `TRADING_CORE_TOKEN` secret). *Done locally on Linux, 2026-10-28:* `nox -s tests lint mypy package`, 100% coverage on 3.11, 3.12, 3.13 and 3.14, wheel without tests
-- [ ] Tag trading-core `v0.2.0` and trading-pump `v0.4.0rc2` (the rc.9 build, replacing rc1 after the smoke run found BUG-159 and BUG-160; `trading-core>=0.2.0` pinned, so runs record the module's own commit, `module_git`), push both, and install them in the runtime folder from clean checkouts of the tags
 - [ ] A paper run of at least 24 h on the new stack with `configs/paper.example.json` (copied to the runtime folder; the 72 h rc.9 run below counts): check after an hour that the capture's oldest row is the start time (BUG-157), `degraded` conditions stay clear, the dashboard rows move, and the capture replays with `trading-pump replay` to the same positions as the run (fills at the same readings, within the fee difference)
 - [ ] Move the runtime data that is still wanted (rc.6 to rc.8 captures, analysis scripts, `runtime/archive/`) out of the pumpfun-trading checkout, if it lives there
 - [ ] Then archive the pumpfun-trading GitHub repository (read-only) rather than deleting it; its history is in this repository already
@@ -38,14 +38,14 @@ docs split, the replay of the rc.8 graduation rows through the new stack
 
 Done: the paper lane, the PumpSwap paper executor priced from the pool and
 the fee config, the replay, the pre-registered verdict file
-(`configs/verdict_rules.json`) ([FEATURES.md §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper)).
+(`configs/verdict_rules.json`) ([FEATURES.md §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper)), and the fee check against real swaps
+([STRATEGY-PIVOT §6.16](STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)).
 pumpfun-trading's planned rc.9 build (BUG-157 fixed) is superseded: the
 capture here is pruned by its own policy only, and "rc.9" now names the first
 run on the new stack (`v0.4.0rc1`).
 
 - [ ] **rc.9:** 72 h paper run on fresh data with `configs/paper.example.json` on `v0.4.0rc2` (signal 60 s, ratio 1.2, standard pool, TP +20%, stop −15%, 30 min hold, 0.02 SOL, 1.5 s paper entry delay): record the verdict rule's sha256 and the run provenance before it starts; judge with `trading-core-audit verdict --rules configs/verdict_rules.json`; pass = the verdict's GO (≥ 100 positions, both halves positive, 90% interval above 0, positive without the best 3), and better than a random entry on the same graduates
 - [ ] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges
-- [ ] Check the PumpSwap fee: read the fee config tier for a fresh graduate (market cap about 410 SOL) and compare it with the fee paid by real PumpSwap swaps of graduates in their first minutes (on-chain transactions, read-only); set `fee_bps_floor` or fix the tier selection if they differ. Until then every replay states its fee
 - [ ] Optional, if the RPC budget allows: a 1 s fast phase for the first 3 minutes (`fast_poll_interval_seconds`), since the result moved with one reading of delay (§6.13)
 - [ ] Market recorder before it can pick a venue: a sell-quote check per followed pool (Jupiter on Solana), coverage of Raydium LaunchLab / stonkfun / memefun pools (GeckoTerminal OHLCV or on-chain reads), and per-chain cost and gas at the trade size
 
@@ -78,10 +78,6 @@ Built and ported (`trading-pump record --market`). Carried over:
 - [ ] Read-out per chain and launchpad: what share of new pools reach 2× / 5× from their first snapshot and when, how many die within an hour, and what liquidity a 0.02-SOL-sized trade would meet
 - [ ] Momentum read-out: for pools entering a trending or top-volume list, the move over the next 1 / 6 / 24 h from the first snapshot after entry; whether list rank, age or liquidity at entry separate the runs from the dumps, in both halves of the run and on a second run
 - [ ] A buy path on another chain or launchpad only if a rule beats realistic costs (swap fees, gas, slippage at the snapshot liquidity) in both halves and on a second run. It would be a new trading-core module, not a lane here
-
-### FEAT-65 slow lane, phase 0 data
-Built and ported (`trading-pump record --jupiter-quotes` / `--backfill-bars`). Carried over:
-- [ ] Walk-forward test of the §6.12 trend rules on the Binance history (`--backfill-bars --bar-source binance`, 2020–2026), in SOL terms with the measured costs, against a random-entry baseline and on at least two unseen periods; only if it passes, build the FEAT-65 backtester and lane (as a trading-core module or lane)
 
 ## Module and tooling
 

@@ -1309,6 +1309,31 @@ async def test_get_bonding_curve_states_raises_on_rpc_failure() -> None:
     assert await client.get_bonding_curve_states([]) == {}
 
 
+@pytest.mark.regression("BUG-161")
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"error": {"code": -32602, "message": "Invalid params"}},
+        {"error": "node is behind"},
+        {"result": None},
+        {"result": {}},
+        {},
+    ],
+)
+async def test_an_rpc_error_is_a_failed_curve_read_not_every_curve_missing(
+    answer: dict,
+) -> None:
+    client = _client()
+    client._request_rpc_json = AsyncMock(return_value=answer)
+    rejected: dict[str, str] = {}
+
+    with pytest.raises(RuntimeError, match="getMultipleAccounts"):
+        await client.get_bonding_curve_states([SAMPLE_MINT], rejected=rejected)
+    assert rejected == {}
+    call = client._request_rpc_json.await_args_list[0]
+    assert call.kwargs["max_retries"] == 1
+
+
 # --- BUG-124: non-SOL quote mints are refused, not mispriced -----------------------
 
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
