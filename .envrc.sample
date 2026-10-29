@@ -1,0 +1,25 @@
+# Copy this file to .envrc in a runtime folder (never the repository), fill in
+# your real values and chmod 600 it. Do not commit .envrc to version control.
+# Only credentials live here; every other choice is in the run's settings file
+# (docs/CONFIGURATION.md). `trading-pump env` shows what is set, names only.
+# Every variable: docs/ENVIRONMENT.md.
+
+# RPC: the primary endpoint and, recommended, a fallback (one key per run).
+export PUMPFUN_RPC_URL="https://mainnet.helius-rpc.com/?api-key=<your-rpc-api-key>"
+# export PUMPFUN_RPC_URLS="https://<fallback-rpc>/?api-key=<key>"
+
+# Live mode only (not built yet): the trading wallet, base58 seed or secret key.
+# export PUMPFUN_PRIVATE_KEY="<base58-wallet-private-key>"
+
+# Not needed: the migration feed is free and keyless. Keep keys out of the URL.
+# export PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"
+# export PUMPFUN_STREAM_API_KEY="<pumpportal-api-key>"
+
+# Only for `trading-pump record --jupiter-quotes` on the keyed host.
+# export PUMPFUN_JUPITER_API_KEY="<jupiter-api-key>"
+
+# Alerts are trading-core's (its docs/ENVIRONMENT.md): one provider.
+# export TRADING_CORE_ALERT_PROVIDER="discord"
+# export TRADING_CORE_ALERT_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+# export TRADING_CORE_ALERT_TELEGRAM_BOT_TOKEN="<telegram-bot-token>"
+# export TRADING_CORE_ALERT_TELEGRAM_CHAT_ID="<telegram-chat-id>"

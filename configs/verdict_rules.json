@@ -1,0 +1,15 @@
+{
+  "_comment": "Pre-registered go / no-go rule for the FEAT-76 paper run (trading-core-audit verdict --rules configs/verdict_rules.json). Fix it before the run starts, record the sha256 that the verdict prints in the release record, and never edit it after the run has started. pumpfun-trading's rule (tip_lamports 25000, min_net_sol 0) in trading-core's names: cost_floor 0.000025 SOL on the tip. See trading-core docs/AUDIT-TOOL.md.",
+  "min_positions": 100,
+  "min_net": 0.0,
+  "exit_haircut_bps": 50,
+  "cost_floor": 0.000025,
+  "cost_floor_component": "tip",
+  "split_at": "mid",
+  "min_positive_day_share": 0.5,
+  "drop_top": 3,
+  "bootstrap_samples": 10000,
+  "confidence": 0.9,
+  "seed": 7,
+  "strategy": "pumpswap_momentum"
+}

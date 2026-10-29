@@ -1,0 +1,95 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# trading-core is a private repository. Create a fine-grained personal access
+# token with read-only "Contents" access to andy-shady-org/trading-core and
+# store it as the TRADING_CORE_TOKEN secret of this repository.
+env:
+  TRADING_CORE_REF: main
+
+jobs:
+  test:
+    name: tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every interpreter the package supports (requires-python >= 3.11).
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: trading-pump
+
+      - name: Checkout trading-core (private)
+        uses: actions/checkout@v4
+        with:
+          repository: andy-shady-org/trading-core
+          ref: ${{ env.TRADING_CORE_REF }}
+          token: ${{ secrets.TRADING_CORE_TOKEN }}
+          path: trading-core
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install nox
+
+      - name: Run tests with coverage
+        working-directory: trading-pump
+        env:
+          TRADING_CORE_SOURCE: ${{ github.workspace }}/trading-core
+        run: nox -s "tests-${{ matrix.python-version }}"
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.14'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./trading-pump/coverage.xml
+          fail_ci_if_error: false
+
+  checks:
+    name: lint, typing, audit, package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: trading-pump
+
+      - name: Checkout trading-core (private)
+        uses: actions/checkout@v4
+        with:
+          repository: andy-shady-org/trading-core
+          ref: ${{ env.TRADING_CORE_REF }}
+          token: ${{ secrets.TRADING_CORE_TOKEN }}
+          path: trading-core
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install nox
+
+      - name: Run lint, typing, dependency audit and wheel check
+        working-directory: trading-pump
+        env:
+          TRADING_CORE_SOURCE: ${{ github.workspace }}/trading-core
+        run: nox -s lint mypy audit package
