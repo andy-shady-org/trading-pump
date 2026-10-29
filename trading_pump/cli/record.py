@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -396,8 +397,20 @@ async def run_market(args: argparse.Namespace, output_path: Path) -> None:
     )
 
 
-async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None:
-    """FEAT-65 phase 0: one-off OHLCV download for the token list."""
+@dataclass(frozen=True)
+class _BackfillOptions:
+    source: str
+    binance: bool
+    since: Any
+    tokens: list[Any]
+    timeframes: list[str]
+    request_gap: float
+    max_pages: int
+    base_url: str
+
+
+def _backfill_options(args: argparse.Namespace) -> _BackfillOptions:
+    """The backfill's settings, with each venue's defaults filled in."""
     source = getattr(args, "bar_source", None) or slow_lane.BAR_VENUE
     binance = source == slow_lane.BINANCE_VENUE
     since = getattr(args, "bar_since", None)
@@ -407,81 +420,73 @@ async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None
             "(GeckoTerminal pages back from today).[/red]"
         )
         raise SystemExit(2)
-    tokens = slow_lane.load_token_list(getattr(args, "tokens", None))
-    timeframes = [t.strip() for t in str(args.bar_timeframes).split(",") if t.strip()]
     gap = getattr(args, "request_gap", None)
     max_pages = getattr(args, "bar_max_pages", None)
-    if max_pages is None:
-        max_pages = (
-            slow_lane.DEFAULT_BINANCE_MAX_PAGES
-            if binance
-            else slow_lane.DEFAULT_BAR_MAX_PAGES
+    defaults = (
+        (
+            slow_lane.DEFAULT_BINANCE_REQUEST_GAP_SECONDS,
+            slow_lane.DEFAULT_BINANCE_MAX_PAGES,
+            slow_lane.BINANCE_URL,
         )
-    if gap is None:
-        gap = (
-            slow_lane.DEFAULT_BINANCE_REQUEST_GAP_SECONDS
-            if binance
-            else slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS
-        )
-    base_url = getattr(args, "bar_base_url", None) or (
-        slow_lane.BINANCE_URL if binance else slow_lane.GECKOTERMINAL_URL
-    )
-    http = slow_lane.AiohttpJson()
-    recorder = ReplayRecorder(
-        output_path=output_path,
-        batch_size=max(args.batch_size, 500),
-        flush_interval_seconds=args.flush_interval,
-        policy=BACKFILL_RETENTION,
-    )
-    since_text = (
-        datetime.fromtimestamp(since, tz=UTC).strftime("%Y-%m-%d")
-        if since is not None
-        else "listing"
-    )
-    console.print(
-        Panel(
-            f"[bold cyan]{BAR_SOURCE_LABELS[source]} Bar Backfill (FEAT-65)[/bold "
-            "cyan]\n"
-            f"Tokens: [yellow]{len(tokens)}[/yellow] | "
-            f"Timeframes: [yellow]{', '.join(timeframes)}[/yellow] | "
-            f"Max pages: [yellow]{max_pages}[/yellow]"
-            + (f" | Since: [yellow]{since_text}[/yellow]" if binance else "")
-            + f"\nHost: [magenta]{redact_url(base_url)}[/magenta]\n"
-            f"Output: [magenta]{output_path}[/magenta]",
-            title="Slow-lane data",
+        if binance
+        else (
+            slow_lane.DEFAULT_BAR_REQUEST_GAP_SECONDS,
+            slow_lane.DEFAULT_BAR_MAX_PAGES,
+            slow_lane.GECKOTERMINAL_URL,
         )
     )
-    await recorder.start()
-    try:
-        if binance:
-            stats = await slow_lane.backfill_binance_bars(
-                slow_lane.BinanceClient(http, base_url=base_url),
-                recorder,
-                tokens=tokens,
-                timeframes=timeframes,
-                max_pages=max_pages,
-                since=since,
-                request_gap_seconds=gap,
-            )
-        else:
-            stats = await slow_lane.backfill_bars(
-                slow_lane.GeckoTerminalClient(http, base_url=base_url),
-                recorder,
-                tokens=tokens,
-                timeframes=timeframes,
-                max_pages=max_pages,
-                request_gap_seconds=gap,
-            )
-    finally:
-        await recorder.close()
-        await http.close()
+    return _BackfillOptions(
+        source=source,
+        binance=binance,
+        since=since,
+        tokens=slow_lane.load_token_list(getattr(args, "tokens", None)),
+        timeframes=[
+            t.strip() for t in str(args.bar_timeframes).split(",") if t.strip()
+        ],
+        request_gap=defaults[0] if gap is None else gap,
+        max_pages=defaults[1] if max_pages is None else max_pages,
+        base_url=getattr(args, "bar_base_url", None) or defaults[2],
+    )
+
+
+async def _backfill(
+    options: _BackfillOptions, http: Any, recorder: ReplayRecorder
+) -> Any:
+    if options.binance:
+        return await slow_lane.backfill_binance_bars(
+            slow_lane.BinanceClient(http, base_url=options.base_url),
+            recorder,
+            tokens=options.tokens,
+            timeframes=options.timeframes,
+            max_pages=options.max_pages,
+            since=options.since,
+            request_gap_seconds=options.request_gap,
+        )
+    return await slow_lane.backfill_bars(
+        slow_lane.GeckoTerminalClient(http, base_url=options.base_url),
+        recorder,
+        tokens=options.tokens,
+        timeframes=options.timeframes,
+        max_pages=options.max_pages,
+        request_gap_seconds=options.request_gap,
+    )
+
+
+def _backfill_summary(options: _BackfillOptions, stats: Any, output_path: Path) -> None:
     source_rows = (
         [
             ("Pairs missing", str(stats.pairs_missing)),
             ("Skipped (no Binance pair)", str(stats.skipped)),
         ]
-        if binance
-        else [("Pools missing", str(stats.pools_missing))]
+        if options.binance
+        else [
+            ("Pools missing", str(stats.pools_missing)),
+        ]
+    )
+    history_rows = (
+        []
+        if options.binance
+        else [("History limit reached", str(stats.history_limited))]
     )
     _summary(
         "Bar Backfill Summary",
@@ -490,11 +495,7 @@ async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None
             *source_rows,
             ("Bars", str(stats.bars)),
             ("Requests", str(stats.requests)),
-            *(
-                []
-                if binance
-                else [("History limit reached", str(stats.history_limited))]
-            ),
+            *history_rows,
             ("Page limit reached", str(stats.page_limited)),
             ("Errors", str(stats.errors)),
             *(("Failed", failure) for failure in stats.failures),
@@ -515,22 +516,67 @@ async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None
         )
 
 
+async def run_backfill_bars(args: argparse.Namespace, output_path: Path) -> None:
+    """FEAT-65 phase 0: one-off OHLCV download for the token list."""
+    options = _backfill_options(args)
+    http = slow_lane.AiohttpJson()
+    recorder = ReplayRecorder(
+        output_path=output_path,
+        batch_size=max(args.batch_size, 500),
+        flush_interval_seconds=args.flush_interval,
+        policy=BACKFILL_RETENTION,
+    )
+    since_text = (
+        datetime.fromtimestamp(options.since, tz=UTC).strftime("%Y-%m-%d")
+        if options.since is not None
+        else "listing"
+    )
+    console.print(
+        Panel(
+            f"[bold cyan]{BAR_SOURCE_LABELS[options.source]} Bar Backfill "
+            "(FEAT-65)[/bold cyan]\n"
+            f"Tokens: [yellow]{len(options.tokens)}[/yellow] | "
+            f"Timeframes: [yellow]{', '.join(options.timeframes)}[/yellow] | "
+            f"Max pages: [yellow]{options.max_pages}[/yellow]"
+            + (f" | Since: [yellow]{since_text}[/yellow]" if options.binance else "")
+            + f"\nHost: [magenta]{redact_url(options.base_url)}[/magenta]\n"
+            f"Output: [magenta]{output_path}[/magenta]",
+            title="Slow-lane data",
+        )
+    )
+    await recorder.start()
+    try:
+        stats = await _backfill(options, http, recorder)
+    finally:
+        await recorder.close()
+        await http.close()
+    _backfill_summary(options, stats, output_path)
+
+
+def _run_until_interrupted(coroutine: Any, *, quiet_failures: bool) -> None:
+    """Run a recorder until it ends; Ctrl-C and a clean exit end it quietly.
+
+    A failing exit code is passed on unless ``quiet_failures``.
+    """
+    try:
+        asyncio.run(coroutine)
+    except KeyboardInterrupt:
+        return
+    except SystemExit as exc:
+        if not quiet_failures and exc.code not in (None, 0):
+            raise
+
+
 def run_record_cli(args: argparse.Namespace) -> None:
     """Execute the record CLI handler."""
     output = getattr(args, "output", None)
     if getattr(args, "market", False):
-        try:
-            asyncio.run(run_market(args, Path(output or DEFAULT_MARKET_OUTPUT)))
-        except (KeyboardInterrupt, SystemExit) as exc:
-            if isinstance(exc, SystemExit) and exc.code not in (None, 0):
-                raise
+        market = run_market(args, Path(output or DEFAULT_MARKET_OUTPUT))
+        _run_until_interrupted(market, quiet_failures=False)
         return
     if getattr(args, "jupiter_quotes", False):
-        path = Path(output or DEFAULT_QUOTES_OUTPUT)
-        try:
-            asyncio.run(run_jupiter_quotes(args, path))
-        except (KeyboardInterrupt, SystemExit):
-            pass
+        quotes = run_jupiter_quotes(args, Path(output or DEFAULT_QUOTES_OUTPUT))
+        _run_until_interrupted(quotes, quiet_failures=True)
         return
     if getattr(args, "backfill_bars", False):
         default_bars = (

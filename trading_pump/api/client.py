@@ -165,26 +165,28 @@ class PumpFunApiClient:
                     data=data,
                     headers=headers,
                 )
-                self._circuit_failures = 0
-                return result
-            except PumpFunApiHttpError as exc:
-                # A 404 for a not-yet-indexed mint is an answer: retrying only adds
-                # ~3.5 s of backoff and must not trip the circuit (BUG-95).
-                if not exc.is_retryable:
-                    raise
-                if attempt >= self.max_retries:
-                    self._record_circuit_failure()
+            except Exception as exc:
+                if not self._should_retry(exc, attempt):
                     raise
                 await asyncio.sleep(self._backoff_delay(attempt))
-            except Exception:
-                if attempt >= self.max_retries:
-                    self._record_circuit_failure()
-                    raise
-                await asyncio.sleep(self._backoff_delay(attempt))
+                continue
+            self._circuit_failures = 0
+            return result
 
         # Only reached with max_retries < 0 (no attempt at all): every attempt
         # above either returns or raises on the last try.
         raise RuntimeError(f"PumpFun API request failed for {method.upper()} {path}.")
+
+    def _should_retry(self, exc: Exception, attempt: int) -> bool:
+        """Whether a failed attempt is tried again (the last one trips the
+        circuit). A 404 for a not-yet-indexed mint is an answer: retrying only
+        adds ~3.5 s of backoff and must not trip the circuit (BUG-95)."""
+        if isinstance(exc, PumpFunApiHttpError) and not exc.is_retryable:
+            return False
+        if attempt >= self.max_retries:
+            self._record_circuit_failure()
+            return False
+        return True
 
     async def get(
         self,
@@ -330,6 +332,18 @@ class PumpFunApiClient:
             f"{base_url.rstrip('/')}/coins-v2/mints", json={"mints": mints}
         )
 
+    @staticmethod
+    def _first_coin(payload: Any) -> dict[str, Any] | None:
+        """The first coin record of a ``coins-v2/mints`` answer: a list, or a
+        mapping with a ``data`` or ``items`` list."""
+        candidates: list[Any] = [payload]
+        if isinstance(payload, dict):
+            candidates = [payload.get("data"), payload.get("items")]
+        for items in candidates:
+            if isinstance(items, list) and items and isinstance(items[0], dict):
+                return items[0]
+        return None
+
     async def get_coin(self, mint: str) -> Any:
         try:
             return await self.get(f"/coins/{mint}")
@@ -343,19 +357,9 @@ class PumpFunApiClient:
                 raise
 
             payload = await self.post("/coins-v2/mints", json={"mints": [mint]})
-            if isinstance(payload, list) and payload:
-                first = payload[0]
-                if isinstance(first, dict):
-                    return first
-            if isinstance(payload, dict):
-                if isinstance(payload.get("data"), list) and payload["data"]:
-                    first = payload["data"][0]
-                    if isinstance(first, dict):
-                        return first
-                if isinstance(payload.get("items"), list) and payload["items"]:
-                    first = payload["items"][0]
-                    if isinstance(first, dict):
-                        return first
+            first = self._first_coin(payload)
+            if first is not None:
+                return first
             raise RuntimeError(
                 f"Mint {mint} not found via the public Pump.fun metadata endpoints."
             ) from exc

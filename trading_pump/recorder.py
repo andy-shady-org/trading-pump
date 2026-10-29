@@ -82,29 +82,33 @@ class ReplayRecorder:
         """Background coroutine that aggregates records and writes batches to disk."""
         while not self._closed:
             try:
-                batch: list[dict[str, Any]] = []
-                # Wait for at least one item or timeout
-                try:
-                    first_item = await asyncio.wait_for(
-                        self._queue.get(), timeout=self.flush_interval_seconds
-                    )
-                    batch.append(first_item)
-                    self._queue.task_done()
-                except TimeoutError:
+                batch = await self._next_batch()
+                if batch is None:
                     continue
-
-                # Drain what is already queued, up to batch_size. One event
-                # loop, no other consumer: a non-empty queue cannot be empty
-                # by the time get_nowait runs.
-                while len(batch) < self.batch_size and not self._queue.empty():
-                    batch.append(self._queue.get_nowait())
-                    self._queue.task_done()
                 await self._write_batch(batch)
             except asyncio.CancelledError:
                 break
             except Exception as err:
                 logger.error("Error in ReplayRecorder flush worker: %s", err)
                 await asyncio.sleep(0.5)
+
+    async def _next_batch(self) -> list[dict[str, Any]] | None:
+        """The next batch: wait for one record (``None`` when the flush
+        interval passes first), then drain what is queued, up to batch_size."""
+        try:
+            first_item = await asyncio.wait_for(
+                self._queue.get(), timeout=self.flush_interval_seconds
+            )
+        except TimeoutError:
+            return None
+        batch: list[dict[str, Any]] = [first_item]
+        self._queue.task_done()
+        # One event loop, no other consumer: a non-empty queue cannot be empty
+        # by the time get_nowait runs.
+        while len(batch) < self.batch_size and not self._queue.empty():
+            batch.append(self._queue.get_nowait())
+            self._queue.task_done()
+        return batch
 
     async def _write_batch(self, batch: list[dict[str, Any]]) -> None:
         """Append a batch of serialized JSON lines to the destination file."""

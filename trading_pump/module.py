@@ -87,6 +87,26 @@ class QuoteUnavailable(RuntimeError):
     """No pool reading could be had for an instrument."""
 
 
+def _wrong_network(
+    endpoints: list[Any], hashes: list[str | None]
+) -> tuple[list[tuple[Any, str]], int]:
+    """Endpoints on another network than mainnet-beta, with why, and how many
+    endpoints to keep (on mainnet, or not confirmed)."""
+    wrong: list[tuple[Any, str]] = []
+    keep = 0
+    for endpoint, genesis in zip(endpoints, hashes, strict=True):
+        if genesis is None:
+            logger.warning(
+                "could not confirm the network of RPC endpoint %s", endpoint.label
+            )
+        if genesis is None or genesis == MAINNET_GENESIS_HASH:
+            keep += 1
+            continue
+        name = CLUSTER_GENESIS_HASHES.get(genesis, "an unknown network")
+        wrong.append((endpoint, f"{endpoint.label} serves {name}"))
+    return wrong, keep
+
+
 class PumpModule(TradingModule):
     name = "pumpfun"
     version = __version__
@@ -262,36 +282,28 @@ class PumpModule(TradingModule):
         hashes = await asyncio.gather(
             *(pool.endpoint_genesis_hash(endpoint) for endpoint in endpoints)
         )
-        wrong = []
-        keep = 0
-        for endpoint, genesis in zip(endpoints, hashes, strict=True):
-            if genesis is None:
-                logger.warning(
-                    "could not confirm the network of RPC endpoint %s", endpoint.label
-                )
-                keep += 1
-            elif genesis != MAINNET_GENESIS_HASH:
-                name = CLUSTER_GENESIS_HASHES.get(genesis, "an unknown network")
-                wrong.append((endpoint, f"{endpoint.label} serves {name}"))
-            else:
-                keep += 1
-        problems = [text for _, text in wrong]
-        if not wrong:
-            return problems
+        wrong, keep = _wrong_network(endpoints, hashes)
+        if wrong:
+            self._report_wrong_network(pool, wrong, keep=keep)
+        return [text for _, text in wrong]
+
+    def _report_wrong_network(
+        self, pool: Any, wrong: list[tuple[Any, str]], *, keep: int
+    ) -> None:
         detail = (
-            "; ".join(problems) + ", not mainnet-beta: check PUMPFUN_RPC_URL / "
-            "PUMPFUN_RPC_URLS"
+            "; ".join(text for _, text in wrong)
+            + ", not mainnet-beta: check PUMPFUN_RPC_URL / PUMPFUN_RPC_URLS"
         )
         if keep:
             for endpoint, _ in wrong:
                 pool.remove_endpoint(endpoint.url)
             detail += " (left out of the pool)"
         logger.error("RPC endpoint on the wrong network: %s", detail)
-        if self.host is not None:
-            self.host.record_event(f"RPC endpoint on the wrong network: {detail}")
-            if not keep:
-                self.host.set_degraded(CONDITION_NETWORK, True, detail)
-        return problems
+        if self.host is None:
+            return
+        self.host.record_event(f"RPC endpoint on the wrong network: {detail}")
+        if not keep:
+            self.host.set_degraded(CONDITION_NETWORK, True, detail)
 
     @property
     def poll_tick(self) -> float:

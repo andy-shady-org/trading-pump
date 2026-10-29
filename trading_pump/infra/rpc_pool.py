@@ -476,58 +476,83 @@ class RpcConnectionPool:
 
         method = str(payload.get("method") or "unknown")[:64]
         self.requests_by_method[method] = self.requests_by_method.get(method, 0) + 1
-        retries = (
-            max_retries
-            if max_retries is not None
-            else self.config.max_retries_per_query
-        )
-        timeout_sec = (
-            timeout_seconds
-            if timeout_seconds is not None
-            else self.config.request_timeout_seconds
-        )
+        retries, timeout_sec = self._limits(max_retries, timeout_seconds)
 
         last_error: Exception | None = None
         attempted_urls: set[str] = set()
 
         for attempt in range(retries + 1):
-            now = time.time()
-            candidates = self.get_healthy_endpoints(now)
-            if not candidates:
-                if last_error is None:
-                    raise self._unavailable_error(now)
+            chosen_ep = self._next_endpoint(
+                attempted_urls, failed=last_error is not None
+            )
+            if chosen_ep is None:
                 break
-
-            # Prioritize candidates not yet attempted in this query cycle
-            unattempted = [ep for ep in candidates if ep.url not in attempted_urls]
-            chosen_ep = unattempted[0] if unattempted else candidates[0]
-
-            attempted_urls.add(chosen_ep.url)
-            probing = chosen_ep.state == CircuitState.HALF_OPEN
-            if probing:
-                chosen_ep.probe_in_flight = True
-            start_t = time.perf_counter()
-
             try:
-                parsed = await self._send(chosen_ep, payload, timeout_sec, start_t)
-                return parsed
+                return await self._send_once(chosen_ep, payload, timeout_sec)
             except Exception as exc:
                 # Endpoint errors are recorded where they are raised; transport
                 # errors (timeouts, resets) leave the breaker as it was.
                 last_error = exc
-            finally:
-                if probing:
-                    chosen_ep.probe_in_flight = False
             if attempt >= retries:
                 break
             # Short backoff before trying next candidate
             await asyncio.sleep(min(0.5, 0.1 * (2**attempt)))
 
-        if last_error is not None:
-            raise RuntimeError(
-                f"All RPC pool query attempts failed: {last_error}"
-            ) from last_error
-        raise RuntimeError("RPC pool query failed without captured error")
+        raise self._exhausted(last_error)
+
+    @staticmethod
+    def _exhausted(last_error: Exception | None) -> RuntimeError:
+        if last_error is None:
+            return RuntimeError("RPC pool query failed without captured error")
+        error = RuntimeError(f"All RPC pool query attempts failed: {last_error}")
+        error.__cause__ = last_error
+        return error
+
+    def _limits(
+        self, max_retries: int | None, timeout_seconds: float | None
+    ) -> tuple[int, float]:
+        retries = (
+            max_retries
+            if max_retries is not None
+            else self.config.max_retries_per_query
+        )
+        timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self.config.request_timeout_seconds
+        )
+        return retries, timeout
+
+    def _next_endpoint(
+        self, attempted_urls: set[str], *, failed: bool
+    ) -> RpcEndpoint | None:
+        """The best available endpoint not tried yet in this query (else the
+        best). With none available: raise before any attempt failed, else
+        ``None`` (the query gives up with the last error)."""
+        now = time.time()
+        candidates = self.get_healthy_endpoints(now)
+        if not candidates:
+            if not failed:
+                raise self._unavailable_error(now)
+            return None
+        unattempted = [ep for ep in candidates if ep.url not in attempted_urls]
+        chosen = unattempted[0] if unattempted else candidates[0]
+        attempted_urls.add(chosen.url)
+        return chosen
+
+    async def _send_once(
+        self, endpoint: RpcEndpoint, payload: dict[str, Any], timeout_sec: float
+    ) -> dict[str, Any]:
+        """One attempt; a half-open endpoint takes one probe at a time."""
+        probing = endpoint.state == CircuitState.HALF_OPEN
+        if probing:
+            endpoint.probe_in_flight = True
+        start_t = time.perf_counter()
+        try:
+            return await self._send(endpoint, payload, timeout_sec, start_t)
+        finally:
+            if probing:
+                endpoint.probe_in_flight = False
 
     async def _send(
         self,
@@ -546,67 +571,78 @@ class RpcConnectionPool:
             timeout=client_timeout,
         ) as resp:
             elapsed = time.perf_counter() - start_t
-            body = ""
-            parsed = None
-
-            if resp.status == 429:
-                self._record_endpoint_failure(endpoint, "429")
-                # The body says whether this is a rate or a plan limit (credits).
-                detail = await self._error_body(resp)
-                raise _RecordedRpcError(
-                    f"RPC endpoint rate limited (HTTP 429): {endpoint.label}"
-                    + (f": {detail}" if detail else "")
-                )
-
-            if resp.status != 200:
-                detail = await self._error_body(resp)
-                self._record_endpoint_failure(endpoint, f"HTTP_{resp.status}")
-                raise _RecordedRpcError(
-                    f"RPC HTTP {resp.status} from {endpoint.label}: {detail}"
-                )
-
-            try:
-                text_res = await resp.text()
-                if isinstance(text_res, str):
-                    body = text_res
-                    parsed = json.loads(body)
-            except Exception:
-                parsed = None
-
-            if parsed is None and hasattr(resp, "json"):
-                try:
-                    json_res = await resp.json()
-                    if isinstance(json_res, dict):
-                        parsed = json_res
-                except Exception:
-                    pass
-
+            await self._raise_for_status(endpoint, resp)
+            parsed = await self._json_body(resp)
             if not isinstance(parsed, dict):
                 self._record_endpoint_failure(endpoint, "invalid_json_type")
                 raise _RecordedRpcError(
                     f"RPC response not a JSON dict from {endpoint.label}"
                 )
-
-            # Check for JSON-RPC level rate limits or server errors
-            # Node-side errors fail over; deterministic request errors are
-            # returned to the caller with the endpoint still healthy (BUG-67).
-            if "error" in parsed and isinstance(parsed["error"], dict):
-                err_code = parsed["error"].get("code", 0)
-                err_msg = str(parsed["error"].get("message", ""))
-                if err_code not in DETERMINISTIC_JSONRPC_ERROR_CODES:
-                    is_rate_limit = err_code == 429
-                    self._record_endpoint_failure(
-                        endpoint, "429_jsonrpc" if is_rate_limit else "jsonrpc_error"
-                    )
-                    label = "rate limit" if is_rate_limit else "error"
-                    raise _RecordedRpcError(
-                        f"JSON-RPC {label} on {endpoint.label}: "
-                        f"[{err_code}] {redact_text(err_msg)[:200]}"
-                    )
-
+            self._raise_for_jsonrpc_error(endpoint, parsed)
             # Success!
             endpoint.record_success(elapsed)
             return parsed
+
+    async def _raise_for_status(self, endpoint: RpcEndpoint, resp: Any) -> None:
+        if resp.status == 429:
+            self._record_endpoint_failure(endpoint, "429")
+            # The body says whether this is a rate or a plan limit (credits).
+            detail = await self._error_body(resp)
+            raise _RecordedRpcError(
+                f"RPC endpoint rate limited (HTTP 429): {endpoint.label}"
+                + (f": {detail}" if detail else "")
+            )
+        if resp.status != 200:
+            detail = await self._error_body(resp)
+            self._record_endpoint_failure(endpoint, f"HTTP_{resp.status}")
+            raise _RecordedRpcError(
+                f"RPC HTTP {resp.status} from {endpoint.label}: {detail}"
+            )
+
+    @staticmethod
+    async def _json_body(resp: Any) -> dict[str, Any] | None:
+        """The JSON object a response carries (text first, then ``json()``)."""
+        parsed = await RpcConnectionPool._text_json(resp)
+        if parsed is None and hasattr(resp, "json"):
+            parsed = await RpcConnectionPool._method_json(resp)
+        return parsed if isinstance(parsed, dict) else None
+
+    @staticmethod
+    async def _text_json(resp: Any) -> Any:
+        try:
+            text_res = await resp.text()
+            return json.loads(text_res) if isinstance(text_res, str) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    async def _method_json(resp: Any) -> dict[str, Any] | None:
+        try:
+            json_res = await resp.json()
+        except Exception:
+            return None
+        return json_res if isinstance(json_res, dict) else None
+
+    def _raise_for_jsonrpc_error(
+        self, endpoint: RpcEndpoint, parsed: dict[str, Any]
+    ) -> None:
+        """Node-side errors fail over; deterministic request errors are
+        returned to the caller with the endpoint still healthy (BUG-67)."""
+        error = parsed.get("error")
+        if not isinstance(error, dict):
+            return
+        err_code = error.get("code", 0)
+        if err_code in DETERMINISTIC_JSONRPC_ERROR_CODES:
+            return
+        is_rate_limit = err_code == 429
+        self._record_endpoint_failure(
+            endpoint, "429_jsonrpc" if is_rate_limit else "jsonrpc_error"
+        )
+        label = "rate limit" if is_rate_limit else "error"
+        raise _RecordedRpcError(
+            f"JSON-RPC {label} on {endpoint.label}: "
+            f"[{err_code}] {redact_text(str(error.get('message', '')))[:200]}"
+        )
 
     @staticmethod
     async def _error_body(resp: Any) -> str:
@@ -666,78 +702,10 @@ class RpcConnectionPool:
             ],
         }
 
-        async def _send_to_single_endpoint(endpoint: RpcEndpoint) -> str:
-            start_t = time.perf_counter()
-            session = await self._get_session()
-            client_timeout = aiohttp.ClientTimeout(total=timeout_sec)
-            async with session.post(
-                endpoint.url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=client_timeout,
-            ) as resp:
-                elapsed = time.perf_counter() - start_t
-                body = ""
-                parsed = None
-
-                if resp.status == 429:
-                    self._record_endpoint_failure(endpoint, "429")
-                    raise RuntimeError(f"Rate limited (HTTP 429) on {endpoint.label}")
-
-                if resp.status != 200:
-                    try:
-                        body = await resp.text()
-                    except Exception:
-                        body = ""
-                    self._record_endpoint_failure(endpoint, f"HTTP_{resp.status}")
-                    raise RuntimeError(
-                        f"HTTP {resp.status} on {endpoint.label}: {body[:200]}"
-                    )
-
-                try:
-                    text_res = await resp.text()
-                    if isinstance(text_res, str):
-                        body = text_res
-                        parsed = json.loads(body)
-                except Exception:
-                    parsed = None
-
-                if parsed is None and hasattr(resp, "json"):
-                    try:
-                        json_res = await resp.json()
-                        if isinstance(json_res, dict):
-                            parsed = json_res
-                    except Exception:
-                        pass
-
-                if not isinstance(parsed, dict):
-                    self._record_endpoint_failure(endpoint, "invalid_json_type")
-                    raise RuntimeError(f"Invalid JSON from {endpoint.label}")
-
-                if "error" in parsed:
-                    err = parsed["error"]
-                    err_msg = str(err)
-                    code = err.get("code") if isinstance(err, dict) else None
-                    if code not in DETERMINISTIC_JSONRPC_ERROR_CODES:
-                        # A failed simulation is the transaction's fault, not
-                        # the endpoint's: it must not open the breaker, which
-                        # now stops reads too (BUG-151).
-                        self._record_endpoint_failure(endpoint, "send_tx_error")
-                    raise RuntimeError(
-                        f"SendTransaction error on {endpoint.label}: {err_msg}"
-                    )
-
-                sig = parsed.get("result")
-                if not isinstance(sig, str) or len(sig) < 20:
-                    self._record_endpoint_failure(endpoint, "invalid_signature")
-                    raise RuntimeError(
-                        f"Invalid signature response on {endpoint.label}: {parsed}"
-                    )
-
-                endpoint.record_success(elapsed)
-                return sig
-
-        tasks = [asyncio.create_task(_send_to_single_endpoint(ep)) for ep in selected]
+        tasks = [
+            asyncio.create_task(self._send_transaction(ep, payload, timeout_sec))
+            for ep in selected
+        ]
         errors: list[Exception] = []
 
         try:
@@ -758,6 +726,61 @@ class RpcConnectionPool:
             f"Multi-RPC transaction broadcast failed across {len(selected)} endpoints: "
             + "; ".join(str(e) for e in errors)
         )
+
+    async def _send_transaction(
+        self, endpoint: RpcEndpoint, payload: dict[str, Any], timeout_sec: float
+    ) -> str:
+        """``sendTransaction`` on one endpoint; the signature or an error."""
+        start_t = time.perf_counter()
+        session = await self._get_session()
+        client_timeout = aiohttp.ClientTimeout(total=timeout_sec)
+        async with session.post(
+            endpoint.url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=client_timeout,
+        ) as resp:
+            elapsed = time.perf_counter() - start_t
+            await self._raise_for_broadcast_status(endpoint, resp)
+            parsed = await self._json_body(resp)
+            if parsed is None:
+                self._record_endpoint_failure(endpoint, "invalid_json_type")
+                raise RuntimeError(f"Invalid JSON from {endpoint.label}")
+            sig = self._signature(endpoint, parsed)
+            endpoint.record_success(elapsed)
+            return sig
+
+    async def _raise_for_broadcast_status(
+        self, endpoint: RpcEndpoint, resp: Any
+    ) -> None:
+        if resp.status == 429:
+            self._record_endpoint_failure(endpoint, "429")
+            raise RuntimeError(f"Rate limited (HTTP 429) on {endpoint.label}")
+        if resp.status != 200:
+            try:
+                body = await resp.text()
+            except Exception:
+                body = ""
+            self._record_endpoint_failure(endpoint, f"HTTP_{resp.status}")
+            raise RuntimeError(f"HTTP {resp.status} on {endpoint.label}: {body[:200]}")
+
+    def _signature(self, endpoint: RpcEndpoint, parsed: dict[str, Any]) -> str:
+        if "error" in parsed:
+            err = parsed["error"]
+            code = err.get("code") if isinstance(err, dict) else None
+            if code not in DETERMINISTIC_JSONRPC_ERROR_CODES:
+                # A failed simulation is the transaction's fault, not the
+                # endpoint's: it must not open the breaker, which now stops
+                # reads too (BUG-151).
+                self._record_endpoint_failure(endpoint, "send_tx_error")
+            raise RuntimeError(f"SendTransaction error on {endpoint.label}: {err}")
+        sig = parsed.get("result")
+        if not isinstance(sig, str) or len(sig) < 20:
+            self._record_endpoint_failure(endpoint, "invalid_signature")
+            raise RuntimeError(
+                f"Invalid signature response on {endpoint.label}: {parsed}"
+            )
+        return sig
 
     async def check_endpoint_health(
         self, endpoint: RpcEndpoint, timeout_seconds: float = 5.0

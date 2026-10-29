@@ -82,6 +82,31 @@ def is_graduation_row(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _graduation_key(row: Mapping[str, Any]) -> tuple[str, float] | None:
+    """``(mint, timestamp)`` of a usable graduation row, else ``None``."""
+    if not is_graduation_row(row):
+        return None
+    mint = row.get("mint")
+    if not isinstance(mint, str) or not mint:
+        return None
+    try:
+        return mint, float(row.get("timestamp") or 0.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pool_reading(
+    row: Mapping[str, Any], mint: str, stamp: float
+) -> PoolReading | None:
+    """The reading a ``curve_poll`` row records (``None`` when malformed)."""
+    try:
+        quote = int(round(float(row.get("pool_sol") or 0.0) * LAMPORTS_PER_SOL))
+        base = int(round(float(row.get("pool_tokens") or 0.0) * TOKEN_UNITS))
+    except (TypeError, ValueError):
+        return None
+    return PoolReading(mint=mint, at=stamp, base_reserve=base, quote_reserve=quote)
+
+
 @dataclass
 class CaptureMarket:
     """The graduation rows of a capture, indexed for playback."""
@@ -95,41 +120,28 @@ class CaptureMarket:
         market = cls()
         seen: set[str] = set()
         for row in rows:
-            if not is_graduation_row(row):
+            keyed = _graduation_key(row)
+            if keyed is None:
                 continue
-            mint = row.get("mint")
-            if not isinstance(mint, str) or not mint:
-                continue
-            try:
-                stamp = float(row.get("timestamp") or 0.0)
-            except (TypeError, ValueError):
-                continue
+            mint, stamp = keyed
             event = row.get("event")
-            if event == OBSERVATION_START_EVENT:
-                if mint not in seen:
-                    seen.add(mint)
-                    migrated = row.get("migrated_at", stamp)
-                    market.migrations.append((float(migrated or stamp), mint))
+            if event == OBSERVATION_START_EVENT and mint not in seen:
+                seen.add(mint)
+                migrated = row.get("migrated_at", stamp)
+                market.migrations.append((float(migrated or stamp), mint))
             elif event == "curve_poll":
-                try:
-                    quote = int(
-                        round(float(row.get("pool_sol") or 0.0) * LAMPORTS_PER_SOL)
-                    )
-                    base = int(
-                        round(float(row.get("pool_tokens") or 0.0) * TOKEN_UNITS)
-                    )
-                except (TypeError, ValueError):
-                    continue
-                market.readings.setdefault(mint, []).append(
-                    PoolReading(
-                        mint=mint, at=stamp, base_reserve=base, quote_reserve=quote
-                    )
-                )
-        market.migrations.sort()
-        for mint, series in market.readings.items():
-            series.sort(key=lambda r: r.at)
-            market._times[mint] = [r.at for r in series]
+                reading = _pool_reading(row, mint, stamp)
+                if reading is not None:
+                    market.readings.setdefault(mint, []).append(reading)
+        market._index()
         return market
+
+    def _index(self) -> None:
+        """Sort migrations and readings, and index reading times per mint."""
+        self.migrations.sort()
+        for mint, series in self.readings.items():
+            series.sort(key=lambda r: r.at)
+            self._times[mint] = [r.at for r in series]
 
     @property
     def start(self) -> float | None:
