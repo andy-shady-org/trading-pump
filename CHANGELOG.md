@@ -10,7 +10,11 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Fixed
+- The batch bonding-curve reader (`get_bonding_curve_states`) read an RPC error, or an answer without an account list, as every curve missing, as the pool reader did before BUG-159; it now shares the pool reader's checked `getMultipleAccounts` and raises (BUG-161). Nothing running called it.
+
 ### Changed
+- flake8's `application-import-names` setting is gone: only the flake8-import-order plugin reads it (not installed), and every style of that plugin disagrees with ruff's isort, which already treats `trading_pump` as first-party and is the import-order check (`nox -s lint`).
 - flake8 limits McCabe complexity to 7 (`max-complexity` in `.flake8`). The 37 functions above it (API client, CLI recorders, RPC pool, module network check, replay, recorder, SDK, research recorders, screening, WebSocket loop and two test helpers) were split into smaller helpers with the same behaviour: no settings, file format, CLI or output change, and the suite is unchanged (789 tests, 100% on 3.11–3.14). An unused account-key loop in the SDK transaction builder was removed.
 
 ## [0.4.0-rc.2] - 2026-10-29
