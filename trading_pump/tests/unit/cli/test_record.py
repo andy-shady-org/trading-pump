@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,44 @@ def test_record_main_parses_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen[0].market is True
 
 
+def _klines(url: str, params: Any) -> Any:
+    pair = params["symbol"]
+    if pair == "GONEUSDT":
+        raise record_cli.slow_lane.HttpStatusError(400, "Invalid symbol.")
+    if pair == "BLOCKUSDT":
+        raise record_cli.slow_lane.HttpStatusError(451, "restricted")
+    return [[86_400_000, "1", "2", "0.5", "1.5", "9", 172_799_999, "13", 3]]
+
+
+def _gecko_pools(url: str, params: Any) -> Any:
+    if "Gone" in url:
+        return {"data": []}
+    return {"data": [{"attributes": {"address": "PoolX", "name": "JUP / SOL"}}]}
+
+
+# What the stand-in answers, by URL fragment, checked in order.
+_SLOW_LANE_ANSWERS: tuple[tuple[str, Callable[[str, Any], Any]], ...] = (
+    ("/api/v3/klines", _klines),
+    (
+        "/price/v3",
+        lambda url, params: {
+            "JUPmint": {"usdPrice": 0.3, "liquidity": 1e6, "decimals": 6}
+        },
+    ),
+    (
+        "/swap/v1/quote",
+        lambda url, params: {"inAmount": "1", "outAmount": "5000000", "routePlan": []},
+    ),
+    ("/tokens/", _gecko_pools),
+    (
+        "/ohlcv/day",
+        lambda url, params: {
+            "data": {"attributes": {"ohlcv_list": [[86400, 1, 2, 0.5, 1.5, 9]]}}
+        },
+    ),
+)
+
+
 class _SlowLaneHttp:
     """Offline stand-in for ``slow_lane.AiohttpJson`` (FEAT-65 recorder)."""
 
@@ -61,25 +100,9 @@ class _SlowLaneHttp:
     ) -> Any:
         self.urls.append(url)
         self.params.append(params)
-        if "/api/v3/klines" in url:
-            pair = params["symbol"]
-            if pair == "GONEUSDT":
-                raise record_cli.slow_lane.HttpStatusError(400, "Invalid symbol.")
-            if pair == "BLOCKUSDT":
-                raise record_cli.slow_lane.HttpStatusError(451, "restricted")
-            return [[86_400_000, "1", "2", "0.5", "1.5", "9", 172_799_999, "13", 3]]
-        if "/price/v3" in url:
-            return {"JUPmint": {"usdPrice": 0.3, "liquidity": 1e6, "decimals": 6}}
-        if "/swap/v1/quote" in url:
-            return {"inAmount": "1", "outAmount": "5000000", "routePlan": []}
-        if "/tokens/" in url:
-            if "Gone" in url:
-                return {"data": []}
-            return {"data": [{"attributes": {"address": "PoolX", "name": "JUP / SOL"}}]}
-        if "/ohlcv/day" in url:
-            return {
-                "data": {"attributes": {"ohlcv_list": [[86400, 1, 2, 0.5, 1.5, 9]]}}
-            }
+        for fragment, answer in _SLOW_LANE_ANSWERS:
+            if fragment in url:
+                return answer(url, params)
         raise RuntimeError("hour bars down")
 
     async def post_json(self, url: str, payload: Any, *, headers: Any = None) -> Any:
