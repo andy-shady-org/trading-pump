@@ -237,8 +237,14 @@ async def replay_capture(
 ) -> ReplayResult:
     """Play ``market`` through a fresh engine; see the module docstring."""
     start, end = market.start, market.end
-    if start is None or end is None:
+    if start is None:
         raise ValueError("the capture has no graduation rows")
+    if end is None:
+        raise ValueError(
+            f"the capture follows {len(market.migrations)} graduate(s) but holds "
+            "no pool readings (curve_poll rows): every pool read failed or "
+            "found no pool, so there is nothing to replay"
+        )
     run = replay_settings(settings, Path(out_dir))
     clock = ReplayClock(start)
     module = PumpModule(

@@ -10,6 +10,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Fixed
+- An RPC answer without an account list (a JSON-RPC error, a `null` result) is a failed pool read, logged with its cause and reported as `solana rpc` degraded, not every pool `missing` (BUG-159). `trading-pump replay` says when a capture followed graduates but holds no pool readings.
+
 ## [0.4.0-rc.1] - 2026-10-29
 
 The first release of trading-pump, the build of the **rc.9** run: the FEAT-76 `pumpswap_momentum` lane in a 72 h paper run on fresh data, judged by the pre-registered `configs/verdict_rules.json`. Runs on trading-core 0.2.0. Like every rc before it, a **pre-release for paper only**: live orders are refused.

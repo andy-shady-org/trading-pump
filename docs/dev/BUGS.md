@@ -1,6 +1,6 @@
 # Identified Code Issues and Bugs
 
-This document details all identified bugs, edge-case vulnerabilities, logic flaws, and production-readiness blockers found in `pumpfun-trading` and, since the move onto trading-core (2026-10-28), in `trading-pump`, which continues it. Numbering continues from pumpfun-trading (next free: **BUG-159**); trading-core numbers its own bugs `TC-<n>`.
+This document details all identified bugs, edge-case vulnerabilities, logic flaws, and production-readiness blockers found in `pumpfun-trading` and, since the move onto trading-core (2026-10-28), in `trading-pump`, which continues it. Numbering continues from pumpfun-trading (next free: **BUG-160**); trading-core numbers its own bugs `TC-<n>`.
 
 The write-ups below are kept as they were written. Their **Location** lines name pumpfun-trading's layout at the time (`pumpfun_trading/bot/run.py` and so on); [Where each fix lives](#where-each-fix-lives-after-the-move-to-trading-core) says where each fix and its test are today. The code of v0.3.0rc8 is in this repository's history (tag `v0.3.0rc8`).
 
@@ -168,6 +168,7 @@ The write-ups below are kept as they were written. Their **Location** lines name
 | **BUG-157** | High | Ops / Retention | **RESOLVED** | The periodic archive prune applied the audit policy to every `*.jsonl*` archive in the bot's folder, replay captures included, so `PUMPFUN_REPLAY_BACKUP_COUNT=40` was cut to the audit count (20) and the rc.8 captures lost their first 14–21 h of 37; each file is now pruned with its own policy, and only its own archives |
 | **BUG-156** | High | Streams / Trade feed | **RESOLVED** | After the PumpPortal key's wallet fell below 0.02 SOL, a top-up was not picked up: the breaker's probe re-asked the connection that had refused, PumpPortal did not accept it there, and both rc.7 bots stayed blocked until stopped; a refused connection is now closed and the fresh one subscribes, and the dashboard says "refused" until the feed is back |
 | **BUG-158** | Medium | SDK / Wallet balance | **RESOLVED** | `get_balance_sol` read an RPC answer without a balance (`result` missing, `null` or without `value`) as 0 SOL; a live run would have started its day, and the breaker's baseline, from an empty wallet. It now raises, and the engine counts the read as failed |
+| **BUG-159** | High | SDK / Pool reads | **RESOLVED** | `getMultipleAccounts` answers without an account list (a JSON-RPC error the RPC pool hands back, a `null` result) were read as "every account missing", so every graduate's pool ended `missing` with nothing in the log and the run went quiet as "market data stale"; such an answer is now a failed read, logged with the RPC's error and reported as `solana rpc` degraded |
 
 
 ## Where Each Fix Lives After The Move To trading-core
@@ -1456,3 +1457,14 @@ Found while bringing the SDK to 100% branch coverage for the trading-core module
 * **Impact:** medium, live only: a run started on such an answer would set the day's equity baseline (and the profit-ratchet and cumulative-drawdown references) from an empty wallet, the BUG-130 failure through another door. trading-core's `get_balance` contract expects an exception for a failed read, which the engine counts and retries.
 * **Resolution:** the value must be a non-negative integer (a bool is refused); anything else raises `RuntimeError("getBalance returned no balance: ...")`. `PumpModule.get_balance` raises too when no private key is set.
 * **Verification:** `regression("BUG-158")` test in `unit/sdk/test_execution_base.py` (`{"result": None}`, `{}`, a negative and a boolean value all raise; a real balance of 0 lamports still reads as 0 SOL).
+
+## 31. rc.9 Smoke Run (2026-10-29)
+
+Found in the first smoke run of `v0.4.0rc1` in `runtime-pump` (`configs/smoke.json`, 2026-10-29 07:00–07:29 UTC): 10 migrations, every pool ended `missing` after 28 reads in 60 s, no reading was captured, the engine paused on "market data stale", and `trading-pump replay` said the capture had "no graduation rows".
+
+### BUG-159: An RPC Error Reads As Every Pool Missing [RESOLVED]
+* **Location:** `trading_pump/sdk/pumpswap_execution.py` (`_get_accounts`, used by `get_pumpswap_pool_states` and the fee-config reads), `trading_pump/replay.py` (`replay_capture` message)
+* **Description:** `_get_accounts` took `(parsed.get("result") or {}).get("value") or []` and padded the list with `None`. The RPC pool raises on node errors and rate limits but returns *deterministic* JSON-RPC errors (invalid params and the like, BUG-67) to the caller with the endpoint still healthy, so such an answer came back as "no account at any address": every pool `missing`, every fee account unreadable, and no warning anywhere. A `null` result did the same. The same mints read on the public mainnet RPC at the same time returned their PumpSwap pools, so the pools existed. What the smoke run's endpoint answered is checked with `runtime-pump/diag-rpc.py`; whatever it was, the run could not tell an RPC answering nonsense from pools not created yet.
+* **Impact:** high for any run: a misconfigured or wrong-cluster endpoint, or one that rejects the request, makes a paper run follow nothing while looking like a quiet market; the rc.9 72 h run would have recorded nothing.
+* **Resolution:** an answer with `error`, or without a `result.value` list, raises `RuntimeError("getMultipleAccounts failed: [code] message")` / `"...returned no account list..."`. The poller logs it as `pool poll failed`, the module reports `solana rpc` degraded with the cause (the dashboard and the degradation alert show it), fee reads fail as "fee unknown", and graduates stay followed until reads work again. `trading-pump replay` on a capture that followed graduates but holds no readings now says so ("follows N graduate(s) but holds no pool readings") instead of "no graduation rows".
+* **Verification:** `regression("BUG-159")` test in `unit/sdk/test_pumpswap_execution.py` (an error object, an error string, a `null` result, a result without `value` and an empty answer each raise and reject nothing); `unit/test_replay.py::test_a_capture_with_graduates_but_no_readings_says_so`.
