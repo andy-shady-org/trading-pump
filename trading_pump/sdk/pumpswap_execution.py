@@ -170,8 +170,23 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
             cache = self._pumpswap_vaults = {}
         reasons: dict[str, str] = {}
         unknown = [mint for mint in unique if mint not in cache]
-        for start in range(0, len(unknown), GET_MULTIPLE_ACCOUNTS_LIMIT):
-            chunk = unknown[start : start + GET_MULTIPLE_ACCOUNTS_LIMIT]
+        await self._resolve_pools(unknown, cache, reasons, timeout_seconds)
+        known = [mint for mint in unique if mint in cache]
+        states = await self._read_pools(known, cache, reasons, timeout_seconds)
+        if rejected is not None:
+            rejected.update(reasons)
+        return states
+
+    async def _resolve_pools(
+        self,
+        mints: list[str],
+        cache: dict[str, tuple[str, str, str]],
+        reasons: dict[str, str],
+        timeout_seconds: float,
+    ) -> None:
+        """Find each new mint's canonical pool and cache its vault addresses."""
+        for start in range(0, len(mints), GET_MULTIPLE_ACCOUNTS_LIMIT):
+            chunk = mints[start : start + GET_MULTIPLE_ACCOUNTS_LIMIT]
             addresses = [str(canonical_pool_address(mint)) for mint in chunk]
             values = await self._get_accounts(
                 addresses, timeout_seconds=timeout_seconds
@@ -182,48 +197,60 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
                     reasons[mint] = reason
                 else:
                     cache[mint] = (address, pool.base_vault, pool.quote_vault)
+
+    async def _read_pools(
+        self,
+        mints: list[str],
+        cache: dict[str, tuple[str, str, str]],
+        reasons: dict[str, str],
+        timeout_seconds: float,
+    ) -> dict[str, dict[str, Any]]:
+        """Read each cached pool and both its vaults, 33 mints per call."""
         states: dict[str, dict[str, Any]] = {}
-        known = [mint for mint in unique if mint in cache]
         per_call = GET_MULTIPLE_ACCOUNTS_LIMIT // POOL_ACCOUNTS_PER_MINT
-        for start in range(0, len(known), per_call):
-            chunk = known[start : start + per_call]
+        for start in range(0, len(mints), per_call):
+            chunk = mints[start : start + per_call]
             addresses = [address for mint in chunk for address in cache[mint]]
             values = await self._get_accounts(
                 addresses, timeout_seconds=timeout_seconds
             )
             for index, mint in enumerate(chunk):
-                pool_value, base_value, quote_value = values[
+                accounts = values[
                     index
                     * POOL_ACCOUNTS_PER_MINT : (index + 1)
                     * POOL_ACCOUNTS_PER_MINT
                 ]
-                pool, reason = self._observed_pool(mint, cache[mint][0], pool_value)
-                if pool is None:
+                state, reason = self._pool_state(mint, cache[mint][0], accounts)
+                if state is None:
                     reasons[mint] = reason
-                    continue
-                if not base_value or not quote_value:
-                    reasons[mint] = "missing"
-                    continue
-                try:
-                    base_reserve = token_account_amount(self._account_bytes(base_value))
-                    quote_reserve = (
-                        token_account_amount(self._account_bytes(quote_value))
-                        + pool.virtual_quote_reserves
-                    )
-                except Exception:
-                    reasons[mint] = "decode_error"
-                    continue
-                states[mint] = {
-                    "pool": pool.address,
-                    "base_reserve": base_reserve,
-                    "quote_reserve": quote_reserve,
-                    "market_cap_sol": pumpswap_market_cap_sol(
-                        base_reserve, quote_reserve
-                    ),
-                }
-        if rejected is not None:
-            rejected.update(reasons)
+                else:
+                    states[mint] = state
         return states
+
+    def _pool_state(
+        self, mint: str, address: str, accounts: list[dict[str, Any] | None]
+    ) -> tuple[dict[str, Any] | None, str]:
+        """The pool's reserves from its pool and vault accounts, or why not."""
+        pool_value, base_value, quote_value = accounts
+        pool, reason = self._observed_pool(mint, address, pool_value)
+        if pool is None:
+            return None, reason
+        if not base_value or not quote_value:
+            return None, "missing"
+        try:
+            base_reserve = token_account_amount(self._account_bytes(base_value))
+            quote_reserve = (
+                token_account_amount(self._account_bytes(quote_value))
+                + pool.virtual_quote_reserves
+            )
+        except Exception:
+            return None, "decode_error"
+        return {
+            "pool": pool.address,
+            "base_reserve": base_reserve,
+            "quote_reserve": quote_reserve,
+            "market_cap_sol": pumpswap_market_cap_sol(base_reserve, quote_reserve),
+        }, ""
 
     def _observed_pool(
         self, mint: str, address: str, value: dict[str, Any] | None
