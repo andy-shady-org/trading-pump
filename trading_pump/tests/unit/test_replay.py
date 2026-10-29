@@ -206,6 +206,22 @@ async def test_replaying_nothing_is_an_error(tmp_path: Path) -> None:
         await replay_capture(CaptureMarket(), settings(), tmp_path / "x")
 
 
+async def test_a_capture_with_graduates_but_no_readings_says_so(tmp_path: Path) -> None:
+    market = CaptureMarket.from_rows(
+        [
+            {
+                "timestamp": 1.0,
+                "mint": MINT,
+                "event": "observation_start",
+                "source": "graduation",
+                "migrated_at": 1.0,
+            }
+        ]
+    )
+    with pytest.raises(ValueError, match="follows 1 graduate.*no pool readings"):
+        await replay_capture(market, settings(), tmp_path / "x")
+
+
 def test_reading_dataclass_round_trip() -> None:
     reading = PoolReading(MINT, 1.0, 2, 3)
     assert reading.pool is None

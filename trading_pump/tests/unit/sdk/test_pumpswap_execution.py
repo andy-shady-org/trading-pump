@@ -335,3 +335,30 @@ async def test_pool_states_batch_33_pools_per_call() -> None:
         assert await client.get_pumpswap_pool_states(mints, rejected=rejected) == {}
     assert [len(c) for c in calls] == [99, 21]
     assert set(rejected.values()) == {"missing"} and len(rejected) == 40
+
+
+@pytest.mark.regression("BUG-159")
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        (
+            {"error": {"code": -32602, "message": "Invalid params"}},
+            r"\[-32602\] Invalid",
+        ),
+        ({"error": "nope"}, "failed: nope"),
+        ({"result": None}, "no account list"),
+        ({"result": {"context": {}}}, "no account list"),
+        ({}, "no account list"),
+    ],
+)
+async def test_an_rpc_answer_without_accounts_is_a_failed_read_not_missing_pools(
+    answer: dict[str, Any], message: str
+) -> None:
+    client = _client()
+    rejected: dict[str, str] = {}
+    with (
+        patch.object(client, "_request_rpc_json", AsyncMock(return_value=answer)),
+        pytest.raises(RuntimeError, match=message),
+    ):
+        await client.get_pumpswap_pool_states([GRADUATED_MINT], rejected=rejected)
+    assert rejected == {}
