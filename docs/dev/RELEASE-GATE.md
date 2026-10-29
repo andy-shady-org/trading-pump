@@ -24,7 +24,7 @@ to trading-core with the Web UI.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Release gate for `v0.4.0rc2` (the rc.9 build, on trading-core `v0.2.0`) | Partly run (2026-10-29): `nox` pass on Linux, 100% coverage on 3.11–3.14. The rc.1 smoke run found BUG-159 and BUG-160 (a devnet endpoint, nothing read). Still to do: CI on the tag, a smoke run with pool readings and a matching replay, the restart drill, the secrets spot-check ([`TODO.md`, Migration gate](TODO.md#migration-gate-before-pumpfun-trading-is-deleted)) | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0-rc.2 |
+| Release gate for `v0.4.0rc3` (the rc.10 build, on trading-core `v0.2.1`) | Partly run (2026-10-29): `nox` pass on Linux, 802 tests, 100% coverage on 3.11–3.14; the rc.9 capture replays identically through rc.2 and rc.3. Still to do: CI on the tag, the smoke run in the new `runtime-pump` layout, the restart drill. rc.2 (the rc.9 run) is still running | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0-rc.3 |
 | Live capital stage | **Stage 0 not passed.** Every pumpbot lane was NO-GO (rc.1 to rc.8). FEAT-76 replayed on the rc.8 rows: NO-GO on count and interval, in-sample (STRATEGY-PIVOT §6.14). Next: a 72 h paper run on fresh data | [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log) |
 | Live execution | Not built: `LiveExecutor` refuses every order | [`TODO.md`, Live gate](TODO.md#live-gate-for-the-pumpswap-lane) |
 | Mainnet-verified money paths | Pump.fun curve `buy` / `sell` layout (BUG-34, pumpbot). Not verified on a real trade: the PumpSwap buy (not built), the PumpSwap sell (BUG-123), the fee tier a fresh graduate pays | `BUGS.md` |
