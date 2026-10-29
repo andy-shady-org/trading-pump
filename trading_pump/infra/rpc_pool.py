@@ -40,6 +40,17 @@ _INLINE_SECRET_RE = re.compile(
 )
 
 
+# Genesis hashes of the public Solana clusters: an endpoint's answer to
+# ``getGenesisHash`` says which network it serves (the rc.9 smoke run read
+# devnet for mainnet pools, BUG-160).
+MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+CLUSTER_GENESIS_HASHES = {
+    MAINNET_GENESIS_HASH: "mainnet-beta",
+    "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG": "devnet",
+    "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY": "testnet",
+}
+
+
 class RpcPoolUnavailableError(RuntimeError):
     """Every endpoint's circuit breaker is open: the request was not sent (BUG-151)."""
 
@@ -782,6 +793,26 @@ class RpcConnectionPool:
             self._record_endpoint_failure(endpoint, str(exc))
             return False
 
+    async def endpoint_genesis_hash(
+        self, endpoint: RpcEndpoint, timeout_seconds: float = 5.0
+    ) -> str | None:
+        """The genesis hash ``endpoint`` reports, or ``None`` when it does not
+        answer (the breaker is left alone: this is a configuration check)."""
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "getGenesisHash"}
+        try:
+            session = await self._get_session()
+            async with session.post(
+                endpoint.url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+            ) as resp:
+                parsed = await resp.json(content_type=None)
+        except Exception:
+            return None
+        result = parsed.get("result") if isinstance(parsed, dict) else None
+        return result if isinstance(result, str) else None
+
     async def check_all_health(self) -> dict[str, bool]:
         """Check health across all registered endpoints concurrently."""
         tasks = [self.check_endpoint_health(ep) for ep in self._endpoints]
@@ -863,6 +894,8 @@ class RpcConnectionPool:
 
 
 __all__ = [
+    "CLUSTER_GENESIS_HASHES",
+    "MAINNET_GENESIS_HASH",
     "CircuitState",
     "RpcEndpoint",
     "RpcPoolUnavailableError",

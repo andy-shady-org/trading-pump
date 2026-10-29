@@ -49,12 +49,14 @@ from trading_pump.config.settings import PumpSettings
 from trading_pump.execution import LiveExecutor, PaperExecutor
 from trading_pump.feed import (
     CONDITION_FEED,
+    CONDITION_NETWORK,
     CONDITION_RPC,
     MigrationFeed,
     PoolPoller,
 )
 from trading_pump.graduates import GraduateTracker
 from trading_pump.identifiers import is_solana_pubkey
+from trading_pump.infra.rpc_pool import CLUSTER_GENESIS_HASHES, MAINNET_GENESIS_HASH
 from trading_pump.market import (
     LAMPORTS_PER_SOL,
     TOKEN_UNITS,
@@ -234,6 +236,7 @@ class PumpModule(TradingModule):
                     "PUMPFUN_STREAM_API_KEY (BUG-118)"
                 )
         if self.live_feeds:
+            await self.check_rpc_network()
             self._tasks.append(asyncio.create_task(self.feed.run(), name="pump_feed"))
             self._tasks.append(
                 asyncio.create_task(
@@ -241,6 +244,54 @@ class PumpModule(TradingModule):
                     name="pump_poller",
                 )
             )
+
+    async def check_rpc_network(self) -> list[str]:
+        """Drop RPC endpoints that serve another network than mainnet-beta.
+
+        An endpoint on devnet answers every mainnet pool read with "no
+        account", which looks exactly like pools not created yet (BUG-160).
+        Each endpoint is asked for its genesis hash at start: one on another
+        network is removed while a mainnet (or unconfirmed) endpoint is left;
+        when none is, the endpoints stay and ``rpc network`` is reported
+        degraded. Returns the problems found.
+        """
+        pool = getattr(self.client, "rpc_pool", None)
+        if pool is None:
+            return []
+        endpoints = list(pool.endpoints)
+        hashes = await asyncio.gather(
+            *(pool.endpoint_genesis_hash(endpoint) for endpoint in endpoints)
+        )
+        wrong = []
+        keep = 0
+        for endpoint, genesis in zip(endpoints, hashes, strict=True):
+            if genesis is None:
+                logger.warning(
+                    "could not confirm the network of RPC endpoint %s", endpoint.label
+                )
+                keep += 1
+            elif genesis != MAINNET_GENESIS_HASH:
+                name = CLUSTER_GENESIS_HASHES.get(genesis, "an unknown network")
+                wrong.append((endpoint, f"{endpoint.label} serves {name}"))
+            else:
+                keep += 1
+        problems = [text for _, text in wrong]
+        if not wrong:
+            return problems
+        detail = (
+            "; ".join(problems) + ", not mainnet-beta: check PUMPFUN_RPC_URL / "
+            "PUMPFUN_RPC_URLS"
+        )
+        if keep:
+            for endpoint, _ in wrong:
+                pool.remove_endpoint(endpoint.url)
+            detail += " (left out of the pool)"
+        logger.error("RPC endpoint on the wrong network: %s", detail)
+        if self.host is not None:
+            self.host.record_event(f"RPC endpoint on the wrong network: {detail}")
+            if not keep:
+                self.host.set_degraded(CONDITION_NETWORK, True, detail)
+        return problems
 
     @property
     def poll_tick(self) -> float:

@@ -58,6 +58,11 @@ manual documented has a hint there.
   public mainnet RPC is fine for a short paper test and rate limited for a
   real run. Each followed graduate costs one pool read every 2 s for its
   first 5 minutes, then one every 10 s ([dev/COSTS.md §3.1](dev/COSTS.md#31-helius-rpc-credits)).
+* **Mainnet only.** Providers give each key a mainnet and a devnet URL. A
+  devnet endpoint answers every mainnet pool read with "no account", so the
+  rc.9 smoke run followed 10 graduates and read none (BUG-160). The module
+  checks each endpoint's network at start and drops any that is not
+  mainnet-beta (or reports `rpc network` degraded when none is).
 * **Order of the RPC list.** pumpbot used only `PUMPFUN_RPC_URLS` when it was
   set; trading-pump puts `PUMPFUN_RPC_URL` first and adds the list after it.
 * **Keys stay out of URLs.** A provider key in a URL (`?api-key=`, `/v2/<key>`)

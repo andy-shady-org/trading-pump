@@ -20,7 +20,8 @@ Solana, Pump.fun and PumpSwap. The contract between the two is trading-core's
 | `format_price`, `status_rows`, `strategy_rows` | µSOL prices; feed, graduates, pool reads, RPC, capture rows; the lane's rule |
 | `provenance()` | Lane, graduation and execution settings, capture path, RPC endpoint count, fees seen |
 | `is_public_identifier` | Solana public keys (mints, pools) are public, not secrets |
-| host callbacks | `notify_market_data()` on every good pool read; `set_degraded("pumpportal feed" / "solana rpc", ...)` |
+| host callbacks | `notify_market_data()` on every good pool read; `set_degraded("pumpportal feed" / "solana rpc" / "rpc network", ...)` |
+| start-up checks | Every RPC endpoint's genesis hash: an endpoint not on mainnet-beta is dropped, or `rpc network` degraded when none is (BUG-160) |
 
 `module_settings` are validated by `PumpSettings` (`config/settings.py`),
 credentials read by `config/env.py`; the two never mix.

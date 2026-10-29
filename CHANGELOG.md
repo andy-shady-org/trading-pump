@@ -10,8 +10,21 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+## [0.4.0-rc.2] - 2026-10-29
+
+The rc.9 build, replacing `v0.4.0rc1`: the first smoke run of rc.1 in `runtime-pump` followed 10 graduates and read none of their pools, because its RPC endpoint was on devnet and nothing said so. Like rc.1, paper only.
+
+### Added
+- RPC network check at start (BUG-160): every endpoint is asked for its genesis hash; one on devnet, testnet or an unknown network is dropped from the pool, and when no endpoint is on mainnet `rpc network` is reported degraded with the cause. `RpcConnectionPool.endpoint_genesis_hash`, `MAINNET_GENESIS_HASH`, `CLUSTER_GENESIS_HASHES`.
+
 ### Fixed
 - An RPC answer without an account list (a JSON-RPC error, a `null` result) is a failed pool read, logged with its cause and reported as `solana rpc` degraded, not every pool `missing` (BUG-159). `trading-pump replay` says when a capture followed graduates but holds no pool readings.
+
+#### Release record – v0.4.0rc2 (2026-10-29)
+- Commit: the tagged commit on `main` after the `release/v0.4.0rc2` merge; trading-core `v0.2.0`
+- Release gate: partly run, as for rc.1 (see below); to do: CI on the tag, a smoke run with pool readings and a matching replay, the restart drill
+- Smoke run of rc.1 (2026-10-29 07:00–07:29 UTC): 10 migrations, 0 readings, devnet endpoint (BUG-159, BUG-160); `.envrc` fixed and `diag-rpc.py` confirmed both endpoints on mainnet-beta
+- Capital stage: 0 (paper)
 
 ## [0.4.0-rc.1] - 2026-10-29
 

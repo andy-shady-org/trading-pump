@@ -39,6 +39,8 @@ logger = logging.getLogger("trading_pump.feed")
 
 CONDITION_FEED = "pumpportal feed"
 CONDITION_RPC = "solana rpc"
+# Every RPC endpoint serves a network other than mainnet-beta (BUG-160).
+CONDITION_NETWORK = "rpc network"
 
 
 def migration_mint(data: Any) -> str | None:
@@ -194,6 +196,7 @@ class PoolPoller:
 
 __all__ = [
     "CONDITION_FEED",
+    "CONDITION_NETWORK",
     "CONDITION_RPC",
     "MigrationFeed",
     "PoolPoller",
