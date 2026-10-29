@@ -20,7 +20,7 @@ where to find it. The list as it stood is archived unchanged:
 | **Now** | Close the migration: CI on 3.11–3.14, a paper run on the new stack, then retire pumpfun-trading | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
 | **Next** | FEAT-76: a fresh 72 h paper run with a pre-registered verdict; the fee tier checked against a real swap | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane) |
 | **Then** | Only if the lane passes: the PumpSwap buy builder, reconcile, one live round trip, Stage 0 / Stage 1 | [Live gate](#live-gate-for-the-pumpswap-lane) |
-| **Later** | Research read-outs (graduation paths, cross-chain, slow lane); a second venue only with evidence | [Research](#research-record-only) |
+| **Later** | Research read-outs (graduation paths, cross-chain); a second venue only with evidence (the slow lane was NO-GO, [STRATEGY-PIVOT §6.15](STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
 
 ## Migration gate (before pumpfun-trading is deleted)
 
@@ -78,10 +78,6 @@ Built and ported (`trading-pump record --market`). Carried over:
 - [ ] Read-out per chain and launchpad: what share of new pools reach 2× / 5× from their first snapshot and when, how many die within an hour, and what liquidity a 0.02-SOL-sized trade would meet
 - [ ] Momentum read-out: for pools entering a trending or top-volume list, the move over the next 1 / 6 / 24 h from the first snapshot after entry; whether list rank, age or liquidity at entry separate the runs from the dumps, in both halves of the run and on a second run
 - [ ] A buy path on another chain or launchpad only if a rule beats realistic costs (swap fees, gas, slippage at the snapshot liquidity) in both halves and on a second run. It would be a new trading-core module, not a lane here
-
-### FEAT-65 slow lane, phase 0 data
-Built and ported (`trading-pump record --jupiter-quotes` / `--backfill-bars`). Carried over:
-- [ ] Walk-forward test of the §6.12 trend rules on the Binance history (`--backfill-bars --bar-source binance`, 2020–2026), in SOL terms with the measured costs, against a random-entry baseline and on at least two unseen periods; only if it passes, build the FEAT-65 backtester and lane (as a trading-core module or lane)
 
 ## Module and tooling
 

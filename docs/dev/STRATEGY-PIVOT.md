@@ -187,6 +187,7 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-28 | rc.8 run A graduation rows, 16.6 h, `trading-pump replay` (in-sample) | pumpswap_momentum | `configs/paper.example.json`, swap fee 125 bps a side | 42 | +0.009 | 50.0% | **not evidence**: +1.1% per trade, verdict NO-GO (42 of 100 positions, interval includes 0) (§6.14) |
 | 2026-10-28 | same, swap fee 200 bps a side | pumpswap_momentum | same | 42 | −0.003 | 50.0% | the edge is about the cost: −0.4% per trade (§6.14) |
 | 2026-10-28 | same, 125 bps, `paper_entry_delay_seconds` 2 | pumpswap_momentum | same + 2 s entry delay | 33 | +0.023 | 54.5% | better, not worse, with a later fill: +3.5% per trade; NO-GO on count and interval (§6.14) |
+| 2026-10-29 | FEAT-65 walk-forward, Binance daily bars 2021-08 → 2026-10-22, trend rule (SMA 10 / 20 / 50 chosen on the 730 days before each half-year), SOL terms, measured costs | slow lane (backtest) | pre-registered (`PREREGISTRATION.md` sha256 `a76d5535…`), 6–7 tokens in the counted periods | 60–180 switches a period | −0.6% / −17.3% / −17.1% / −8.6% (2024 H2 → 2026 Jan–Apr) | — | **NO-GO**: below 0 and below the random-entry p90 in all four counted periods; −37.8% compounded (§6.15) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -447,3 +448,26 @@ Items 2 and 3 of the "top 10 strategies" review: the **pullback entry** (wait fo
 
 - **Reading:** the engine reproduces the offline read-out of §6.13 (n = 42–72, +1.3% to +5.7% per trade at 2% a side there; +1.1% at 1.25% here), so the module, the replay and the accounting agree with the scripts. It is the same data the rule was found on, so this is a check of the code, **not evidence for the rule**. Costs are 70% of the gross; at 2% a side the lane loses. A 2 s entry delay helped rather than hurt, the opposite of the "one extra reading moves it by up to 5 points" warning in §6.13, which says the result is noise-sized, not that latency is free.
 - **Next:** unchanged from FEAT-76: a fresh 72 h paper run on the new stack with the rule and the verdict file fixed before it starts ([`TODO.md`](TODO.md#feat-76-pumpswap-post-graduation-momentum-lane)), and the PumpSwap fee tier checked against a real swap before trusting either cost assumption.
+
+### 6.15 FEAT-65 walk-forward on the Binance history: NO-GO (2026-10-29)
+- **Question:** the gate FEAT-65 set itself ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter), Design 5): is the §6.12 trend rule net positive on at least two unseen periods and better than a random-entry baseline, now that a long bar history exists?
+- **Pre-registered** before any result (`PREREGISTRATION.md`, sha256 `a76d553552572a75961b8bad729efa47273d9f53ea1aa94791c2221a76956269`). It was revised once before anything was computed: the first draft's calendar years hold RAY alone until 2024, so its "not one token" condition could never have been met. The test, in short:
+  - Binance daily bars (downloaded 2026-10-23), the seven risky tokens of §6.12, prices in SOL terms. A token joins a period once it has 60 bars.
+  - The §6.12 rule unchanged: hold the token while yesterday's close is above its N-day mean, else SOL; trade at the next open; each switch pays half the measured Jupiter round trip at 0.1 SOL plus 10 bps (stress: half the p90 plus 20 bps).
+  - Half-year test periods 2022 → 2026-04-21; N ∈ {10, 20, 50} chosen on the 730 days before each period, then run on the period. The six months §6.12 looked at count as seen.
+  - Random-entry baseline: the rule's own in-token and in-SOL stretches shuffled (same exposure and trade count, other timing), 2,000 draws.
+  - Pass: in at least two unseen periods with three or more tokens, above 0 and above the baseline's 90th percentile; positive compounded over those periods (stress not negative); and not resting on the best token.
+- **Results** (base costs; stress 1–3 points lower):
+
+  | Period | Tokens | N chosen | Walk-forward | Random p90 | Without the best token | Buy and hold |
+  |---|---|---|---|---|---|---|
+  | 2024 H2 | 6 | 10 | −0.6% | +18.7% | −9.9% | +8.2% |
+  | 2025 H1 | 6 | 10 | −17.3% | −6.2% | −20.9% | −40.9% |
+  | 2025 H2 | 7 | 50 | −17.1% | +1.5% | −24.9% | −48.6% |
+  | 2026 Jan–Apr | 7 | 50 | −8.6% | +18.6% | −12.5% | +19.0% |
+  | *2026 Apr–Oct (seen)* | 7 | 50 | *+26.9%* | *+50.6%* | *+12.2%* | *+33.2%* |
+
+  Compounded over the four counted periods: −37.8% (stress −43.3%), against −60.9% for holding the tokens. RAY alone (2022 H1 → 2024 H1, reported, not counted): four of five half-years negative, −82.1% compounded; its one positive half (+13.1% in 2023 H2) was far below the random p90 (+71.5%).
+- **Reading:** **NO-GO on every condition**: no counted period is above 0, none beats random timing, and the compounded return is negative. Every training window had all three rules negative too, so the walk-forward only ever chose the least bad loser. The trend rule does what §6.12 saw, cutting the worst drawdowns (−37.8% against −60.9% for holding), but in SOL terms holding SOL beat both. The one good stretch is the six months §6.12 had already seen. Costs are not the problem (60–180 switches a half-year at 4–27 bps a side).
+- **Next:** FEAT-65 stops here. No backtester, no lane and no Jupiter swap client are built for it. Another rule on the same data would be a new pre-registered test, not a variation of this one tuned until it passes (AGENTS: "Beat a random cut"). The scripts, the cost table and the result are in `runtime/analysis-feat65-walkforward/`.
+
