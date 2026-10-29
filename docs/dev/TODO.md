@@ -72,12 +72,21 @@ Built and ported ([FEATURES.md §2](../FEATURES.md#2-graduation-tracking-feat-73
 - [ ] PumpSwap buys on any rule other than FEAT-76 only if that read-out finds one
 - The read-out of the curve *before* graduation (launch sample joined to graduation rows) needs the launch sample, which was not ported; see [Not ported](#not-ported)
 
+### On-chain migration feed (fallback for PumpPortal)
+PumpPortal is the only source of migrations, and it has failed twice (a silent half-open socket for 3 h, BUG-150; refusals a reconnect did not clear, BUG-156). Its events arrive about 1 s after the migration block (rc.9: 0.3–1.1 s on five graduates, block times to the second), so speed is not the reason: with a 60 s signal, millisecond detection changes nothing.
+- [ ] Measure first: subscribe for an hour, record-only, to (a) `logsSubscribe` mentioning the Pump.fun program and (b) `programSubscribe` on the PumpSwap program filtered to pool accounts (`dataSize`), and count messages, bytes and the provider's credit cost against migrations found; a migration is one transaction (Pump.fun `migrate` calling PumpSwap `create_pool`), so either sees it
+- [ ] If one is cheap enough: a second migration source in `feed.py` behind the same tracker (de-duplicated by mint), with its own degraded condition, so a PumpPortal outage stops neither the follow list nor the capture. Geyser / Yellowstone (paid, lower latency) stays out unless live fills show latency costs entries (FEAT-39)
+
 ### Cross-chain market recorder (FEAT-74)
 Built and ported (`trading-pump record --market`). Carried over:
 - [ ] Run it for at least 72 h ([`RUNBOOK.md` §5](RUNBOOK.md#5-research-recorders)); check `market_stats` (no rate limits, few discovery gaps, `following` below the cap) and the disk use in the first day
 - [ ] Read-out per chain and launchpad: what share of new pools reach 2× / 5× from their first snapshot and when, how many die within an hour, and what liquidity a 0.02-SOL-sized trade would meet
 - [ ] Momentum read-out: for pools entering a trending or top-volume list, the move over the next 1 / 6 / 24 h from the first snapshot after entry; whether list rank, age or liquidity at entry separate the runs from the dumps, in both halves of the run and on a second run
 - [ ] A buy path on another chain or launchpad only if a rule beats realistic costs (swap fees, gas, slippage at the snapshot liquidity) in both halves and on a second run. It would be a new trading-core module, not a lane here
+- [ ] Executable prices before any cross-chain read-out is trusted: a sell-quote check per followed pool at the trade size (Jupiter on Solana; on Base and BSC a buy-then-sell round trip simulated with `eth_call` on a public RPC, which also exposes honeypots and transfer taxes), recorded on the snapshot rows; then repeat the rc.8 read-out with only the pools whose sell went through ([STRATEGY-PIVOT §6.13](STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28): the best rc.8 groups had the honeypot signature)
+- [ ] Per-launchpad split of the read-outs, by GeckoTerminal's `dex` id: on BSC `four-meme` (the closest copy of Pump.fun: 2,392 curves in rc.8's 38 h) and its graduations; on Base the Uniswap v4 pools (where Clanker deploys), `bankr` and `o1-launchpad`; Virtuals did not appear under its own id in rc.8, so find how its curves and graduations are listed before counting it ([STRATEGY-PIVOT §6.17](STRATEGY-PIVOT.md#617-launchpads-in-the-rc8-cross-chain-data-2026-10-29))
+- [ ] Tron (SunPump → SunSwap): not recorded. Check that GeckoTerminal and DexScreener list Tron's new pools and SunPump curves under ids the recorder can use, then add `tron` to `CHAINS` (off by default, like `eth`) and run it next to Base and BSC
+- [ ] Moonshot: 18 pools in rc.8's 38 h (`moonshot` 10, `moonit` 8) against 2,866 PumpSwap pools, far too few for a pre-registered verdict (≥ 100 positions) in any reasonable run. Revisit only if its share grows; then read its graduates' paths from this recorder before writing a module (its graduates trade on Raydium or Meteora pools, a different venue layer)
 
 ## Module and tooling
 
