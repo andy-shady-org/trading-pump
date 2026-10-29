@@ -10,6 +10,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Changed
+- flake8 limits McCabe complexity to 7 (`max-complexity` in `.flake8`). The 37 functions above it (API client, CLI recorders, RPC pool, module network check, replay, recorder, SDK, research recorders, screening, WebSocket loop and two test helpers) were split into smaller helpers with the same behaviour: no settings, file format, CLI or output change, and the suite is unchanged (789 tests, 100% on 3.11–3.14). An unused account-key loop in the SDK transaction builder was removed.
+
 ## [0.4.0-rc.2] - 2026-10-29
 
 The rc.9 build, replacing `v0.4.0rc1`: the first smoke run of rc.1 in `runtime-pump` followed 10 graduates and read none of their pools, because its RPC endpoint was on devnet and nothing said so. Like rc.1, paper only.
