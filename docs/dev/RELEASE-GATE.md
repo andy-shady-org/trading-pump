@@ -24,7 +24,7 @@ to trading-core with the Web UI.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Release gate for `0.4.0` (the first trading-core module release) | Not yet run in full. Locally on Linux (2026-10-28): `nox -s tests lint mypy package` pass, 100% coverage on 3.11–3.14, 779 tests; CI, the paper run and the restart drill to do ([`TODO.md`, Migration gate](TODO.md#migration-gate-before-pumpfun-trading-is-deleted)) | [`CHANGELOG.md`](../../CHANGELOG.md) Unreleased |
+| Release gate for `v0.4.0rc1` (the rc.9 build, on trading-core `v0.2.0`) | Partly run (2026-10-29): `nox -s tests lint mypy package` pass on Linux, 779 tests, 100% coverage on 3.11–3.14, wheel without tests. Still to do: CI on the tags, the restart drill, and the secrets spot-check of the rc.9 files ([`TODO.md`, Migration gate](TODO.md#migration-gate-before-pumpfun-trading-is-deleted)) | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0-rc.1 |
 | Live capital stage | **Stage 0 not passed.** Every pumpbot lane was NO-GO (rc.1 to rc.8). FEAT-76 replayed on the rc.8 rows: NO-GO on count and interval, in-sample (STRATEGY-PIVOT §6.14). Next: a 72 h paper run on fresh data | [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log) |
 | Live execution | Not built: `LiveExecutor` refuses every order | [`TODO.md`, Live gate](TODO.md#live-gate-for-the-pumpswap-lane) |
 | Mainnet-verified money paths | Pump.fun curve `buy` / `sell` layout (BUG-34, pumpbot). Not verified on a real trade: the PumpSwap buy (not built), the PumpSwap sell (BUG-123), the fee tier a fresh graduate pays | `BUGS.md` |

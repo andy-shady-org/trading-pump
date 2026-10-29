@@ -170,11 +170,16 @@ class CaptureSettings:
     ``curve_poll``, ``observation_end``, ``migration``), so its read-out
     scripts work on it. It is rotated and pruned by its own policy, never by
     another file's (BUG-157). ``path`` null turns it off.
+
+    Sizing: rc.8's graduation rows were about 256 bytes each, 1.24 M a day,
+    so about 320 MB a day before compression. 100 parts of 50 MB hold about
+    two weeks; the old default of 20 parts held about 3 days, just short of
+    a 72 h run.
     """
 
     path: str | None = "data/capture.jsonl"
     max_bytes: int = 50 * 1024 * 1024
-    max_files: int = 20
+    max_files: int = 100
     max_age_days: int = 30
     compress: bool = True
     flush_interval_seconds: float = 5.0

@@ -8,7 +8,27 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 **History.** The entries from 0.1.0 to 0.3.0-rc.8 are pumpfun-trading's, kept as written: they describe the `pumpbot` runtime, its commands and variables, and link the [archived documents](docs/archive/pumpfun-trading/INDEX.md). Since 0.4.0 this repository is the trading-core module. The engine parts of those entries (risk, circuit breaker, accounting, audit tools, alerts, health, lifecycle, persistence, dashboard) are trading-core's now; trading-core's `CHANGELOG.md` lists the pumpfun-trading fixes and features it inherited, with the release each came in.
 
-## [Unreleased] - 0.4.0, the trading-core module
+## [Unreleased]
+
+## [0.4.0-rc.1] - 2026-10-29
+
+The first release of trading-pump, the build of the **rc.9** run: the FEAT-76 `pumpswap_momentum` lane in a 72 h paper run on fresh data, judged by the pre-registered `configs/verdict_rules.json`. Runs on trading-core 0.2.0. Like every rc before it, a **pre-release for paper only**: live orders are refused.
+
+### Changed (since the migration below)
+- `trading-core>=0.2.0`: runs record the module's own git commit (`module_git` in the provenance), so a result can be traced to the trading-pump build that made it.
+- `capture.max_files` defaults to 100 (was 20): at rc.8's rate (about 320 MB of graduation rows a day before compression) 20 parts of 50 MB held about 3 days, just short of a 72 h run, the BUG-157 failure again.
+- `configs/paper.example.json`: `paper_entry_delay_seconds` 1.5 (was 0), pumpbot's paper latency, so paper buys pay for the time a live buy takes to land (BUG-121's lesson). Fixed before the rc.9 run starts.
+- 100% coverage on Python 3.11 as well (the record CLI's interrupt tests replace `asyncio.run`; the RPC pool's health-loop stop has no 3.11-only arc).
+
+#### Release record – v0.4.0rc1 (2026-10-29)
+- Commit: the tagged commit on `main` after the `release/v0.4.0rc1` merge; trading-core `v0.2.0`
+- Release gate: partly run. `nox -s tests lint mypy package` pass on Linux: 779 tests on each of 3.11, 3.12, 3.13, 3.14, coverage 100% statement and branch; the wheel `trading_pump-0.4.0rc1-py3-none-any.whl` ships no tests, private classifier. To do: CI on the tags, the restart drill, the secrets spot-check
+- Reference replay: the rc.8 graduation rows (STRATEGY-PIVOT §6.14), at 0 s entry delay; rc.9 runs at 1.5 s
+- Paper verdict (FEAT-67): `configs/verdict_rules.json` unchanged since 2026-10-28; its hash is recorded at the rc.9 start
+- Run: `runtime-pump/run-rc9.sh` (`configs/rc9-paper.json`: the paper example with every file in `data/rc9/`), headless, 72 h
+- Capital stage: 0 (paper)
+
+**The migration onto trading-core** (the sections below):
 
 pumpfun-trading becomes `trading-pump`, the Pump.fun / PumpSwap module for trading-core (ADR-009). The repository keeps its full history and tags; the package is renamed `pumpfun_trading` → `trading_pump`. The engine half moved to trading-core, the venue half stays here, and the lanes that were measured NO-GO are retired. The first lane on the new stack is FEAT-76. Branch: `migrate/from-pumpfun-trading` (needs trading-core's `feat/pumpfun-module-support`).
 

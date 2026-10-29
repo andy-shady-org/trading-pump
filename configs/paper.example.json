@@ -46,7 +46,7 @@
     "execution": {
       "slippage_bps": 500,
       "priority_fee_lamports": 5000,
-      "paper_entry_delay_seconds": 0
+      "paper_entry_delay_seconds": 1.5
     },
     "capture": {
       "path": "data/paper/capture.jsonl"

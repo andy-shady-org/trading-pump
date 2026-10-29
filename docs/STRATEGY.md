@@ -84,7 +84,7 @@ party's quote:
   of Token-2022 account rent on the first buy of a coin, refunded at the full
   exit. At 0.02 SOL a trade the rent is 7.6% of the stake for the life of the
   position: it is booked, not ignored ([dev/COSTS.md](dev/COSTS.md)).
-* **Latency**: `paper_entry_delay_seconds` delays the read a paper buy fills
+* **Latency**: `paper_entry_delay_seconds` (1.5 s in the paper example) delays the read a paper buy fills
   at. pumpbot learnt that a paper fill without the latency a live fill pays
   makes a losing rule look good (BUG-121, BUG-126).
 
