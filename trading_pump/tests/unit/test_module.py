@@ -357,3 +357,88 @@ async def test_an_unbound_module_reports_nowhere_and_a_given_client_is_used() ->
     module._rpc_failed("down")
     module._feed_state(False, "closed")
     assert module.host is None
+
+
+class _GenesisPool:
+    """An RPC pool whose endpoints report the given genesis hashes."""
+
+    def __init__(self, hashes: dict[str, str | None]) -> None:
+        from trading_pump.infra.rpc_pool import RpcEndpoint
+
+        self.hashes = hashes
+        self.endpoints = [RpcEndpoint(url) for url in hashes]
+        self.removed: list[str] = []
+
+    async def endpoint_genesis_hash(self, endpoint: Any) -> str | None:
+        return self.hashes[endpoint.url]
+
+    def remove_endpoint(self, url: str) -> bool:
+        self.removed.append(url)
+        return True
+
+
+DEVNET = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+
+
+@pytest.mark.regression("BUG-160")
+async def test_an_endpoint_on_devnet_is_dropped_while_a_mainnet_one_is_left() -> None:
+    from trading_pump.infra.rpc_pool import MAINNET_GENESIS_HASH
+
+    module, _, _, host = _module()
+    pool = _GenesisPool(
+        {
+            "https://dev.example/?api-key=K": DEVNET,
+            "https://main.example": MAINNET_GENESIS_HASH,
+        }
+    )
+    module.client = type("Client", (), {"rpc_pool": pool})()
+    problems = await module.check_rpc_network()
+    assert problems == ["dev.example serves devnet"]
+    assert pool.removed == ["https://dev.example/?api-key=K"]
+    [(event, _)] = host.events
+    assert "left out of the pool" in event and "api-key" not in event
+    assert host.degraded == {}
+
+
+@pytest.mark.regression("BUG-160")
+async def test_only_wrong_networks_keep_the_endpoints_and_report_degraded() -> None:
+    module, _, _, host = _module()
+    pool = _GenesisPool({"https://dev.example": DEVNET, "https://odd.example": "X"})
+    module.client = type("Client", (), {"rpc_pool": pool})()
+    problems = await module.check_rpc_network()
+    assert problems == [
+        "dev.example serves devnet",
+        "odd.example serves an unknown network",
+    ]
+    assert pool.removed == []
+    assert "PUMPFUN_RPC_URL" in host.degraded["rpc network"]
+
+
+async def test_an_unconfirmed_endpoint_is_kept_and_mainnet_alone_is_quiet() -> None:
+    from trading_pump.infra.rpc_pool import MAINNET_GENESIS_HASH
+
+    module, _, _, host = _module()
+    module.client = type(
+        "Client",
+        (),
+        {"rpc_pool": _GenesisPool({"https://m.example": MAINNET_GENESIS_HASH})},
+    )()
+    assert await module.check_rpc_network() == []
+    silent = _GenesisPool(
+        {"https://quiet.example": None, "https://dev.example": DEVNET}
+    )
+    module.client = type("Client", (), {"rpc_pool": silent})()
+    assert await module.check_rpc_network() == ["dev.example serves devnet"]
+    assert silent.removed == ["https://dev.example"] and host.degraded == {}
+    module.client = None
+    assert await module.check_rpc_network() == []
+    unbound = PumpModule(
+        source=FakePoolSource(),
+        credentials=Credentials(),
+        live_feeds=False,
+        capture={"path": None},
+    )
+    unbound.client = type(
+        "Client", (), {"rpc_pool": _GenesisPool({"https://d.example": DEVNET})}
+    )()
+    assert await unbound.check_rpc_network() == ["d.example serves devnet"]

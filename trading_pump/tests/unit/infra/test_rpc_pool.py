@@ -1106,3 +1106,26 @@ async def test_a_json_body_that_is_not_an_object_is_refused() -> None:
     pool._session = _session_answering(_resp(text=None, json_value=[1, 2]))
     with pytest.raises(RuntimeError, match="not a JSON dict"):
         await pool.request({"method": "getSlot"}, max_retries=0)
+
+
+async def test_endpoint_genesis_hash_names_the_network_or_none() -> None:
+    from trading_pump.infra.rpc_pool import MAINNET_GENESIS_HASH
+
+    pool = RpcConnectionPool(endpoints=["https://a.example"])
+    endpoint = pool.endpoints[0]
+    session = MagicMock()
+    session.closed = False
+    pool._session = session
+    answer = AsyncMock()
+    answer.json = AsyncMock(return_value={"result": MAINNET_GENESIS_HASH})
+    session.post.return_value.__aenter__.return_value = answer
+    assert await pool.endpoint_genesis_hash(endpoint) == MAINNET_GENESIS_HASH
+    payload = session.post.call_args.kwargs["json"]
+    assert payload["method"] == "getGenesisHash"
+
+    for body in ({"error": {"code": -32601}}, ["not", "a", "dict"], {"result": 7}):
+        answer.json = AsyncMock(return_value=body)
+        assert await pool.endpoint_genesis_hash(endpoint) is None
+    session.post.side_effect = RuntimeError("socket dropped")
+    assert await pool.endpoint_genesis_hash(endpoint) is None
+    assert endpoint.consecutive_failures == 0  # a config check, not a breaker trip

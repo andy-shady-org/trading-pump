@@ -138,9 +138,9 @@ Files:
 
 ## 6. Day to day
 
-* **Health.** No entries while market data is stale, the feed or the RPC is
-  degraded, or the breaker is locked; the dashboard says which. A degraded
-  condition alerts after `degradation_alert_minutes`
+* **Health.** No entries while market data is stale or the breaker is
+  locked. A degraded feed, RPC or RPC network shows on the dashboard with
+  its cause and alerts after `degradation_alert_minutes`
   ([dev/RUNBOOK.md §4](dev/RUNBOOK.md#4-when-something-goes-wrong)).
 * **Pause** with `kill -USR1 <pid>`; again to resume. Exits continue.
 * **Stop** with `Ctrl-C` or `SIGTERM`. Open positions are kept in the status

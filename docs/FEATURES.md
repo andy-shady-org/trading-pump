@@ -24,10 +24,15 @@ PumpSwap.
 * **Exit value** is what selling the position into the pool returns after the
   swap fee, not the spot price (BUG-136).
 * **Health**: every successful pool read tells the engine market data is
-  flowing; the migration feed and the RPC report degraded data
-  (`pumpportal feed`, `solana rpc`) through `set_degraded`, so the engine
-  pauses entries and alerts after `degradation_alert_minutes`. With no
-  working RPC there are no entries (BUG-149).
+  flowing, and entries pause once it goes stale (`health_timeout_seconds`);
+  with no working RPC there are no entries (BUG-149). The migration feed,
+  the RPC and the RPC network report degraded conditions (`pumpportal feed`,
+  `solana rpc`, `rpc network`) through `set_degraded`: shown on the dashboard
+  with their cause and alerted after `degradation_alert_minutes`. An RPC
+  error is a failed read, never "pool missing" (BUG-159).
+* **RPC network check** at start: every endpoint's genesis hash is checked;
+  one on devnet, testnet or an unknown network is dropped from the pool, and
+  when none is on mainnet `rpc network` is reported degraded (BUG-160).
 * **Status rows** on the dashboard: PumpPortal connection and migrations
   seen, graduates followed and readings, pool reads ok / failed with the last
   error, healthy RPC endpoints, capture rows written; the lane's rule.

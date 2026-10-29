@@ -33,6 +33,9 @@ Keep one status file per module and mode (trading-core refuses another's).
   `PUMPFUN_RPC_URLS` (BUG-149, BUG-151).
 - `trading-core check --config configs/<run>.json` passes (it builds the
   module, so a bad `module_settings` key fails here).
+- The RPC endpoints are on **mainnet-beta**: the module checks this at start
+  (BUG-160), and a smoke run must capture `curve_poll` rows and replay before
+  a counted run starts.
 - `trading-core modules` lists `pumpfun`, and the installed versions are the
   tags you mean to run (`pip show trading-core trading-pump`).
 - Alerts: one `TRADING_CORE_ALERT_*` provider set and a test alert received.
@@ -85,6 +88,8 @@ read Health, events, money). Module specifics:
 | What you see | What it means | What to do |
 |---|---|---|
 | Health: `pumpportal feed` degraded; PumpPortal `disconnected` | The migration socket is down. It reconnects on its own with a doubling wait (to 30 s), pings every 20 s, and drops a socket silent for 300 s (BUG-150) | Nothing, unless it lasts: check PumpPortal's status. No migrations means no new graduates, so no entries; held positions are still priced from their pools |
+| Health: `rpc network` degraded, or an event `RPC endpoint on the wrong network` | An endpoint serves devnet, testnet or an unknown network (BUG-160). With a mainnet endpoint left it was dropped from the pool; with none, every pool reads as missing and nothing is captured | Fix `PUMPFUN_RPC_URL(S)` (a provider gives each key a mainnet and a devnet URL), check with `runtime-pump/diag-rpc.py`, restart |
+| Every observation ends `missing`, no `curve_poll` rows, "market data stale" | The pools could not be read: a wrong-network endpoint (above) or an endpoint failing every read (`solana rpc`, BUG-159) | As above; `trading-pump replay` on such a capture says it holds no pool readings |
 | Health: `solana rpc` degraded; pool reads failing | Pool reads fail. The RPC pool stops sending to an endpoint that rate limits or fails three times (doubling cooldown, one probe at a time, BUG-151); entries stop while reads fail (BUG-149); held quotes go stale, so exits are refused and retried with the engine's backoff | Check the key's plan and usage. A 429 saying the credits are used up will not recover by waiting: switch to another key and restart. Data recorded with no healthy endpoint is not a valid paper sample: note the window |
 | Pool reads ok, graduates followed stays at `max_mints` | The follow list is full; new graduates are skipped (`list_full` in the tracker stats) | Raise `graduation.max_mints` if the RPC budget allows; the lane only sees graduates that are followed |
 | Observations end `missing` | The RPC did not have the pool within `pool_missing_grace_seconds` (60 s) | A few are normal (empty or unrelated migration events). Many mean a lagging RPC node: try another endpoint |
