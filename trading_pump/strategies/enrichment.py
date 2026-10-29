@@ -265,6 +265,80 @@ def evaluate_cluster_graph(
     return analyzer.evaluate(mint, graph, trades=trades)
 
 
+def _creator_holding(coin_data: dict[str, Any]) -> Any:
+    """The creator's share as the record states it, else from ``initialBuy``."""
+    value = (
+        coin_data.get("creatorHoldingPct")
+        or coin_data.get("creator_holding_pct")
+        or coin_data.get("creatorPct")
+        or coin_data.get("dev_holding_pct")
+    )
+    if value is None:
+        value = creator_initial_buy_pct(coin_data)
+    return value
+
+
+def _listed_holders(holders_data: list[Any]) -> list[tuple[str, int]]:
+    top_holders_list = []
+    for h in holders_data:
+        if isinstance(h, dict):
+            w = str(h.get("address") or h.get("wallet") or "")
+            amt = int(h.get("amount") or h.get("balance") or 0)
+            if w:
+                top_holders_list.append((w, amt))
+    return top_holders_list
+
+
+def _cluster_analysis(
+    config: ScreeningSettings,
+    mint: str,
+    coin_data: dict[str, Any],
+    holder_distribution: HolderDistribution | None,
+    *,
+    creator: str | None,
+    creator_pct: float,
+) -> ClusterAnalysisVerdict | None:
+    """The FEAT-26 verdict when the record carries funding links."""
+    funding_links = (
+        coin_data.get("funding_links") or coin_data.get("fundingLinks") or []
+    )
+    cluster_trades = coin_data.get("trades") or coin_data.get("recent_trades") or []
+    if not (funding_links or coin_data.get("cluster_analysis")):
+        return None
+    top_h = holder_distribution.top_holders if holder_distribution else []
+    total_supp = (
+        holder_distribution.total_supply
+        if holder_distribution
+        else 1_000_000_000_000_000
+    )
+    return evaluate_cluster_graph(
+        config,
+        mint,
+        top_holders=top_h,
+        creator_wallet=str(creator) if creator else None,
+        creator_balance=(int(creator_pct * total_supp) if creator_pct > 0 else 0),
+        total_supply=total_supp,
+        funding_links=(funding_links if isinstance(funding_links, list) else None),
+        trades=cluster_trades if isinstance(cluster_trades, list) else None,
+    )
+
+
+def _log_verdict(mint: str, verdict: TokenScreeningVerdict) -> None:
+    if verdict.passed:
+        logger.info(
+            "Anti-rug screening PASSED for %s | risk score: %.1f/100",
+            mint,
+            verdict.risk_score,
+        )
+    else:
+        logger.warning(
+            "Anti-rug screening REJECTED %s | risk score: %.1f/100 | reasons: %s",
+            mint,
+            verdict.risk_score,
+            verdict.reasons,
+        )
+
+
 class TokenEnricher:
     """Handles off-chain token metadata enrichment, creator profiling, and anti-rug
     screening.
@@ -313,129 +387,35 @@ class TokenEnricher:
         if cached_verdict is not None:
             return cached_verdict
 
-        # Stream payloads (e.g. PumpPortal newToken) carry no socials or holders, so
-        # always look the token up and fetch on-chain holders, in parallel (BUG-95).
-        fetched, chain_holders = await asyncio.gather(
-            self._fetch_coin(mint), self._fetch_largest_holders(mint)
-        )
-        coin_data = merge_token_data(fetched, token_data or {})
-        if not TokenMetadata.from_dict(coin_data).social_links_count():
-            coin_data = merge_token_data(
-                coin_data, await self._fetch_offchain_metadata(coin_data)
-            )
-
+        coin_data, chain_holders = await self._token_record(mint, token_data)
         metadata = TokenMetadata.from_dict(coin_data) if coin_data else None
-
-        dev_profile = None
         creator = resolve_creator(token_data, coin_data)
-        if creator and self.api:
-            try:
-                creator_coins = await asyncio.wait_for(
-                    self.api.get_creator_coins(creator, limit=20),
-                    timeout=self.lookup_timeout_seconds,
-                )
-                coins_list: list[Any] | None = None
-                if isinstance(creator_coins, list):
-                    coins_list = creator_coins
-                elif isinstance(creator_coins, dict):
-                    coins_list = (
-                        creator_coins.get("coins") or creator_coins.get("items") or []
-                    )
-                if coins_list is not None:
-                    # A real 24h count of 0 stays 0 (BUG-58).
-                    dev_profile = DevWalletProfile(
-                        creator_address=creator,
-                        tokens_launched_24h=count_launches_last_24h(coins_list),
-                        total_tokens_launched=len(coins_list),
-                    )
-            except Exception as exc:
-                logger.debug("Creator profile query for %s failed: %s", creator, exc)
-                dev_profile = DevWalletProfile(creator_address=str(creator))
-        elif creator:
-            dev_profile = DevWalletProfile(creator_address=str(creator))
+        dev_profile = await self._dev_profile(creator)
+        bonding_curve_pda = self._curve_pda(mint)
 
-        bonding_curve_pda = None
-        if self.execution:
-            try:
-                pda, _ = self.execution.get_bonding_curve_pda(mint)
-                bonding_curve_pda = str(pda)
-            except Exception:
-                pass
-
-        holder_distribution = None
-        holders_data = coin_data.get("holders") or coin_data.get("topHolders")
-        creator_holding_val = (
-            coin_data.get("creatorHoldingPct")
-            or coin_data.get("creator_holding_pct")
-            or coin_data.get("creatorPct")
-            or coin_data.get("dev_holding_pct")
-        )
-        if creator_holding_val is None:
-            creator_holding_val = creator_initial_buy_pct(coin_data)
+        creator_holding_val = _creator_holding(coin_data)
         creator_pct = (
             float(creator_holding_val) if creator_holding_val is not None else 0.0
         )
-
-        if not isinstance(holders_data, list) and chain_holders:
-            holder_distribution = HolderDistribution(
-                creator_initial_pct=creator_pct,
-                bonding_curve_address=bonding_curve_pda,
-                top_holders=self._label_curve_account(mint, chain_holders),
-            )
-        elif isinstance(holders_data, list):
-            top_holders_list = []
-            for h in holders_data:
-                if isinstance(h, dict):
-                    w = str(h.get("address") or h.get("wallet") or "")
-                    amt = int(h.get("amount") or h.get("balance") or 0)
-                    if w:
-                        top_holders_list.append((w, amt))
-            total_supply = int(
-                coin_data.get("totalSupply")
-                or coin_data.get("total_supply")
-                or 1_000_000_000_000_000
-            )
-            holder_distribution = HolderDistribution(
-                total_supply=total_supply,
-                creator_initial_pct=creator_pct,
-                bonding_curve_address=bonding_curve_pda,
-                top_holders=top_holders_list,
-            )
-        elif creator_holding_val is not None:
-            holder_distribution = HolderDistribution(
-                creator_initial_pct=creator_pct,
-                bonding_curve_address=bonding_curve_pda,
-            )
+        holder_distribution = self._holder_distribution(
+            mint,
+            coin_data,
+            chain_holders,
+            creator_holding_val=creator_holding_val,
+            creator_pct=creator_pct,
+            bonding_curve_pda=bonding_curve_pda,
+        )
 
         cluster_analysis = None
         if active_config.enable_cluster_analysis:
-            funding_links = (
-                coin_data.get("funding_links") or coin_data.get("fundingLinks") or []
+            cluster_analysis = _cluster_analysis(
+                active_config,
+                mint,
+                coin_data,
+                holder_distribution,
+                creator=creator,
+                creator_pct=creator_pct,
             )
-            cluster_trades = (
-                coin_data.get("trades") or coin_data.get("recent_trades") or []
-            )
-            if funding_links or coin_data.get("cluster_analysis"):
-                top_h = holder_distribution.top_holders if holder_distribution else []
-                total_supp = (
-                    holder_distribution.total_supply
-                    if holder_distribution
-                    else 1_000_000_000_000_000
-                )
-                cluster_analysis = evaluate_cluster_graph(
-                    active_config,
-                    mint,
-                    top_holders=top_h,
-                    creator_wallet=str(creator) if creator else None,
-                    creator_balance=(
-                        int(creator_pct * total_supp) if creator_pct > 0 else 0
-                    ),
-                    total_supply=total_supp,
-                    funding_links=(
-                        funding_links if isinstance(funding_links, list) else None
-                    ),
-                    trades=cluster_trades if isinstance(cluster_trades, list) else None,
-                )
 
         verdict = evaluate_token_heuristics(
             active_config,
@@ -448,22 +428,106 @@ class TokenEnricher:
             cache=self.screening_cache,
             use_cache=True,
         )
-
-        if verdict.passed:
-            logger.info(
-                "Anti-rug screening PASSED for %s | risk score: %.1f/100",
-                mint,
-                verdict.risk_score,
-            )
-        else:
-            logger.warning(
-                "Anti-rug screening REJECTED %s | risk score: %.1f/100 | reasons: %s",
-                mint,
-                verdict.risk_score,
-                verdict.reasons,
-            )
-
+        _log_verdict(mint, verdict)
         return verdict
+
+    async def _token_record(
+        self, mint: str, token_data: dict[str, Any] | None
+    ) -> tuple[dict[str, Any], list[tuple[str, int]]]:
+        """The merged token record and the on-chain largest holders.
+
+        Stream payloads (e.g. PumpPortal newToken) carry no socials or holders,
+        so always look the token up and fetch on-chain holders, in parallel
+        (BUG-95)."""
+        fetched, chain_holders = await asyncio.gather(
+            self._fetch_coin(mint), self._fetch_largest_holders(mint)
+        )
+        coin_data = merge_token_data(fetched, token_data or {})
+        if not TokenMetadata.from_dict(coin_data).social_links_count():
+            coin_data = merge_token_data(
+                coin_data, await self._fetch_offchain_metadata(coin_data)
+            )
+        return coin_data, chain_holders
+
+    async def _dev_profile(self, creator: str | None) -> DevWalletProfile | None:
+        """The creator's launch history; an address-only profile when the
+        lookup is unavailable or fails."""
+        if not creator:
+            return None
+        if not self.api:
+            return DevWalletProfile(creator_address=str(creator))
+        try:
+            return await self._creator_history(self.api, creator)
+        except Exception as exc:
+            logger.debug("Creator profile query for %s failed: %s", creator, exc)
+            return DevWalletProfile(creator_address=str(creator))
+
+    async def _creator_history(
+        self, api: PumpFunApiClient, creator: str
+    ) -> DevWalletProfile | None:
+        creator_coins = await asyncio.wait_for(
+            api.get_creator_coins(creator, limit=20),
+            timeout=self.lookup_timeout_seconds,
+        )
+        coins_list: list[Any] | None = None
+        if isinstance(creator_coins, list):
+            coins_list = creator_coins
+        elif isinstance(creator_coins, dict):
+            coins_list = creator_coins.get("coins") or creator_coins.get("items") or []
+        if coins_list is None:
+            return None
+        # A real 24h count of 0 stays 0 (BUG-58).
+        return DevWalletProfile(
+            creator_address=creator,
+            tokens_launched_24h=count_launches_last_24h(coins_list),
+            total_tokens_launched=len(coins_list),
+        )
+
+    def _curve_pda(self, mint: str) -> str | None:
+        if not self.execution:
+            return None
+        try:
+            pda, _ = self.execution.get_bonding_curve_pda(mint)
+            return str(pda)
+        except Exception:
+            return None
+
+    def _holder_distribution(
+        self,
+        mint: str,
+        coin_data: dict[str, Any],
+        chain_holders: list[tuple[str, int]],
+        *,
+        creator_holding_val: Any,
+        creator_pct: float,
+        bonding_curve_pda: str | None,
+    ) -> HolderDistribution | None:
+        """Holders from the record, else from the chain, else the creator only."""
+        holders_data = coin_data.get("holders") or coin_data.get("topHolders")
+        if isinstance(holders_data, list):
+            top_holders_list = _listed_holders(holders_data)
+            return HolderDistribution(
+                total_supply=int(
+                    coin_data.get("totalSupply")
+                    or coin_data.get("total_supply")
+                    or 1_000_000_000_000_000
+                ),
+                creator_initial_pct=creator_pct,
+                bonding_curve_address=bonding_curve_pda,
+                top_holders=top_holders_list,
+            )
+        if chain_holders:
+            return HolderDistribution(
+                creator_initial_pct=creator_pct,
+                bonding_curve_address=bonding_curve_pda,
+                top_holders=self._label_curve_account(mint, chain_holders),
+            )
+        if creator_holding_val is not None:
+            return HolderDistribution(
+                creator_initial_pct=creator_pct,
+                bonding_curve_address=bonding_curve_pda,
+            )
+        return None
 
     async def _fetch_coin(self, mint: str) -> dict[str, Any]:
         """Pump.fun API record for the mint, or ``{}`` if not (yet) indexed."""

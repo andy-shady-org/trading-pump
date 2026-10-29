@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -320,16 +320,7 @@ class SybilWashTradingDetector:
     ) -> SybilWashVerdict:
         """Analyze a sequence of trade events for sybil wash-trading patterns."""
         current_time = float(now if now is not None else time.time())
-        cutoff_time = current_time - self.time_window_seconds
-
-        # Filter trades within analysis window; an empty window means no wash
-        # activity, never a fallback to the full history (BUG-79).
-        recent_trades: list[dict[str, Any]] = []
-        for t in trades or ():
-            ts = float(t.get("timestamp") or current_time)
-            if ts >= cutoff_time:
-                recent_trades.append(t)
-
+        recent_trades = self._recent(trades, current_time)
         if not recent_trades:
             return SybilWashVerdict(
                 is_wash_trading=False,
@@ -343,107 +334,45 @@ class SybilWashTradingDetector:
                 risk_penalty=0.0,
             )
 
-        total_sol_volume = sum(
-            float(t.get("sol_amount") or t.get("amount_sol") or 0.0)
-            for t in recent_trades
-        )
-
+        total_sol_volume = sum(_trade_sol(t) for t in recent_trades)
         sybil_wallets: set[str] = set()
         sybil_trade_indices: set[int] = set()
-        detected_cycles = 0
-        reasons: list[str] = []
 
         # 1. Clustered wallet coordination check
         if cluster_graph is not None:
-            clusters = cluster_graph.compute_clusters()
-            syndicate_wallets = {
-                w for c in clusters if len(c.wallets) >= 2 for w in c.wallets
-            }
-            if syndicate_wallets:
-                # Check for rapid buy-sell micro swaps between syndicate members
-                for i, t in enumerate(recent_trades):
-                    user = str(t.get("user") or t.get("wallet_address") or "").strip()
-                    if user in syndicate_wallets:
-                        sybil_wallets.add(user)
-                        sybil_trade_indices.add(i)
+            _mark_syndicate_trades(
+                recent_trades, cluster_graph, sybil_wallets, sybil_trade_indices
+            )
 
         # 2. Cyclic buy/sell pattern detection (e.g. A buys -> B buys -> A sells -> B
         # sells)
         wallet_sequence = [
             (
-                str(t.get("user") or t.get("wallet_address") or "").strip(),
+                _trade_wallet(t),
                 bool(t.get("is_buy", True)),
-                float(t.get("sol_amount") or t.get("amount_sol") or 0.0),
+                _trade_sol(t),
                 float(t.get("timestamp") or 0.0),
             )
             for t in recent_trades
         ]
-
-        # Detect alternating ping-pong trades between pairs of wallets
-        pair_trade_counts: dict[tuple[str, str], int] = defaultdict(int)
-        for i in range(len(wallet_sequence) - 1):
-            w1, buy1, amt1, _ = wallet_sequence[i]
-            w2, buy2, amt2, _ = wallet_sequence[i + 1]
-            if w1 and w2 and w1 != w2:
-                pair = (w1, w2) if w1 < w2 else (w2, w1)
-                pair_trade_counts[pair] += 1
-                if pair_trade_counts[pair] >= 3:
-                    # Alternating ping-pong detected
-                    sybil_wallets.add(w1)
-                    sybil_wallets.add(w2)
-                    sybil_trade_indices.add(i)
-                    sybil_trade_indices.add(i + 1)
-                    detected_cycles += 1
-
-        # 3. Detect rapid round-trip churn: Same wallet buying and selling repeatedly
-        # with near zero profit
-        wallet_actions: dict[str, list[tuple[int, bool, float]]] = defaultdict(list)
-        for idx, (w, is_buy, amt, _) in enumerate(wallet_sequence):
-            if w:
-                wallet_actions[w].append((idx, is_buy, amt))
-
-        for w, actions in wallet_actions.items():
-            if len(actions) >= 4:
-                buys = sum(1 for _, is_buy, _ in actions if is_buy)
-                sells = sum(1 for _, is_buy, _ in actions if not is_buy)
-                if buys >= 2 and sells >= 2:
-                    # Rapid churning detected
-                    sybil_wallets.add(w)
-                    for idx, _, _ in actions:
-                        sybil_trade_indices.add(idx)
-                    detected_cycles += 1
-
-        # Compute wash volume
-        wash_volume_sol = sum(
-            float(
-                recent_trades[i].get("sol_amount")
-                or recent_trades[i].get("amount_sol")
-                or 0.0
-            )
-            for i in sybil_trade_indices
+        detected_cycles = _mark_ping_pong(
+            wallet_sequence, sybil_wallets, sybil_trade_indices
+        )
+        # 3. Rapid round-trip churn: one wallet buying and selling repeatedly
+        detected_cycles += _mark_churn(
+            wallet_sequence, sybil_wallets, sybil_trade_indices
         )
 
+        wash_volume_sol = sum(_trade_sol(recent_trades[i]) for i in sybil_trade_indices)
         wash_ratio = (
             float(wash_volume_sol / total_sol_volume) if total_sol_volume > 0.0 else 0.0
         )
         is_wash = (wash_ratio >= self.max_wash_ratio and len(sybil_wallets) >= 2) or (
             detected_cycles >= 2 and wash_ratio >= 0.15
         )
-
-        penalty = 0.0
-        if is_wash:
-            penalty = min(60.0, 30.0 + wash_ratio * 40.0)
-            reasons.append(
-                f"Sybil wash-trading detected: {wash_ratio:.1%} of volume is "
-                f"coordinated across {len(sybil_wallets)} wallets ({detected_cycles} "
-                "cycles)"
-            )
-        elif wash_ratio > 0.10:
-            penalty = wash_ratio * 20.0
-            reasons.append(
-                f"Elevated wash trading activity: {wash_ratio:.1%} volume churn "
-                "detected"
-            )
+        penalty, reasons = _wash_penalty(
+            is_wash, wash_ratio, len(sybil_wallets), detected_cycles
+        )
 
         return SybilWashVerdict(
             is_wash_trading=is_wash,
@@ -456,6 +385,107 @@ class SybilWashTradingDetector:
             reasons=reasons,
             risk_penalty=penalty,
         )
+
+    def _recent(
+        self, trades: Sequence[dict[str, Any]], current_time: float
+    ) -> list[dict[str, Any]]:
+        """Trades within the analysis window; an empty window means no wash
+        activity, never a fallback to the full history (BUG-79)."""
+        cutoff_time = current_time - self.time_window_seconds
+        recent_trades: list[dict[str, Any]] = []
+        for t in trades or ():
+            ts = float(t.get("timestamp") or current_time)
+            if ts >= cutoff_time:
+                recent_trades.append(t)
+        return recent_trades
+
+
+_WalletStep = tuple[str, bool, float, float]
+
+
+def _trade_sol(trade: Mapping[str, Any]) -> float:
+    return float(trade.get("sol_amount") or trade.get("amount_sol") or 0.0)
+
+
+def _trade_wallet(trade: Mapping[str, Any]) -> str:
+    return str(trade.get("user") or trade.get("wallet_address") or "").strip()
+
+
+def _mark_syndicate_trades(
+    trades: Sequence[Mapping[str, Any]],
+    graph: FundingClusterGraph,
+    wallets: set[str],
+    indices: set[int],
+) -> None:
+    """Trades by members of a multi-wallet funding cluster."""
+    syndicate_wallets = {
+        w for c in graph.compute_clusters() if len(c.wallets) >= 2 for w in c.wallets
+    }
+    # Check for rapid buy-sell micro swaps between syndicate members
+    for i, t in enumerate(trades):
+        user = _trade_wallet(t)
+        if user in syndicate_wallets:
+            wallets.add(user)
+            indices.add(i)
+
+
+def _mark_ping_pong(
+    sequence: Sequence[_WalletStep], wallets: set[str], indices: set[int]
+) -> int:
+    """Alternating trades between a pair of wallets; returns cycles found."""
+    cycles = 0
+    pair_trade_counts: dict[tuple[str, str], int] = defaultdict(int)
+    for i in range(len(sequence) - 1):
+        w1 = sequence[i][0]
+        w2 = sequence[i + 1][0]
+        if not (w1 and w2 and w1 != w2):
+            continue
+        pair = (w1, w2) if w1 < w2 else (w2, w1)
+        pair_trade_counts[pair] += 1
+        if pair_trade_counts[pair] >= 3:
+            # Alternating ping-pong detected
+            wallets.add(w1)
+            wallets.add(w2)
+            indices.add(i)
+            indices.add(i + 1)
+            cycles += 1
+    return cycles
+
+
+def _mark_churn(
+    sequence: Sequence[_WalletStep], wallets: set[str], indices: set[int]
+) -> int:
+    """One wallet buying and selling repeatedly; returns cycles found."""
+    wallet_actions: dict[str, list[tuple[int, bool]]] = defaultdict(list)
+    for idx, (w, is_buy, _, _) in enumerate(sequence):
+        if w:
+            wallet_actions[w].append((idx, is_buy))
+    cycles = 0
+    for w, actions in wallet_actions.items():
+        buys = sum(1 for _, is_buy in actions if is_buy)
+        sells = len(actions) - buys
+        if len(actions) >= 4 and buys >= 2 and sells >= 2:
+            # Rapid churning detected
+            wallets.add(w)
+            indices.update(idx for idx, _ in actions)
+            cycles += 1
+    return cycles
+
+
+def _wash_penalty(
+    is_wash: bool, wash_ratio: float, wallet_count: int, cycles: int
+) -> tuple[float, list[str]]:
+    if is_wash:
+        return min(60.0, 30.0 + wash_ratio * 40.0), [
+            f"Sybil wash-trading detected: {wash_ratio:.1%} of volume is "
+            f"coordinated across {wallet_count} wallets ({cycles} "
+            "cycles)"
+        ]
+    if wash_ratio > 0.10:
+        return wash_ratio * 20.0, [
+            f"Elevated wash trading activity: {wash_ratio:.1%} volume churn " "detected"
+        ]
+    return 0.0, []
 
 
 @dataclass(slots=True)
@@ -534,23 +564,18 @@ class FundingClusterAnalyzer:
                 token_balance=creator_balance,
                 is_creator=True,
             )
-
-        if top_holders:
-            for addr, bal in top_holders:
-                if addr:
-                    is_creator = bool(creator_wallet and addr == creator_wallet)
-                    graph.add_wallet(
-                        addr,
-                        token_balance=bal,
-                        is_creator=is_creator,
-                        is_top_holder=True,
-                    )
-
-        if funding_links:
-            for child, funder, sol in funding_links:
-                if child and funder:
-                    graph.add_funding_link(child, funder, sol_amount=sol)
-
+        for addr, bal in top_holders or ():
+            if addr:
+                is_creator = bool(creator_wallet and addr == creator_wallet)
+                graph.add_wallet(
+                    addr,
+                    token_balance=bal,
+                    is_creator=is_creator,
+                    is_top_holder=True,
+                )
+        for child, funder, sol in funding_links or ():
+            if child and funder:
+                graph.add_funding_link(child, funder, sol_amount=sol)
         return graph
 
     def evaluate(
@@ -566,22 +591,7 @@ class FundingClusterAnalyzer:
         concentration_index = graph.calculate_cluster_concentration_index(clusters)
         max_single_fraction = graph.get_max_single_cluster_fraction(clusters)
 
-        # Multi-wallet clusters (clusters linking >= 2 token-holding wallets / creator)
-        multi_wallet_clusters = [
-            c
-            for c in clusters
-            if sum(
-                1
-                for w in c.wallets
-                if graph.nodes.get(w)
-                and (
-                    graph.nodes[w].token_balance > 0
-                    or graph.nodes[w].is_top_holder
-                    or graph.nodes[w].is_creator
-                )
-            )
-            >= 2
-        ]
+        multi_wallet_clusters = _multi_wallet_clusters(graph, clusters)
         total_clustered_wallets = sum(len(c.wallets) for c in multi_wallet_clusters)
 
         # Sybil wash evaluation
@@ -593,45 +603,15 @@ class FundingClusterAnalyzer:
 
         reasons: list[str] = []
         flags: dict[str, Any] = {}
-        risk_score = 0.0
-        hard_failed = False
-
-        # 1. Total cluster concentration evaluation
-        if concentration_index >= self.max_cluster_concentration_pct:
-            excess = concentration_index - self.max_cluster_concentration_pct
-            penalty = min(
-                50.0,
-                30.0 + (excess / max(0.01, self.max_cluster_concentration_pct)) * 20.0,
-            )
-            risk_score += penalty
-            reasons.append(
-                f"Insider cluster concentration {concentration_index:.1%} exceeds "
-                f"limit {self.max_cluster_concentration_pct:.1%} "
-                f"({len(multi_wallet_clusters)} syndicate clusters detected)"
-            )
-            flags["insider_cluster_detected"] = True
-            hard_failed = True
-        elif concentration_index > 0.10:
-            risk_score += concentration_index * 30.0
-            reasons.append(
-                f"Moderate insider cluster concentration: {concentration_index:.1%} "
-                "of supply in linked wallets"
-            )
-
-        # 2. Single dominant cluster evaluation
-        if max_single_fraction >= self.max_single_cluster_pct:
-            excess_single = max_single_fraction - self.max_single_cluster_pct
-            penalty_single = min(
-                40.0,
-                25.0 + (excess_single / max(0.01, self.max_single_cluster_pct)) * 15.0,
-            )
-            risk_score += penalty_single
-            reasons.append(
-                f"Dominant single funding cluster holds {max_single_fraction:.1%} of "
-                f"supply (cap: {self.max_single_cluster_pct:.1%})"
-            )
-            flags["dominant_cluster_detected"] = True
-            hard_failed = True
+        # 1. Total cluster concentration, 2. a single dominant cluster
+        concentration_risk, concentration_failed = self._concentration_risk(
+            concentration_index, len(multi_wallet_clusters), reasons, flags
+        )
+        dominant_risk, dominant_failed = self._dominant_cluster_risk(
+            max_single_fraction, reasons, flags
+        )
+        risk_score = 0.0 + concentration_risk + dominant_risk
+        hard_failed = concentration_failed or dominant_failed
 
         # 3. Sybil wash trading evaluation
         is_sybil_wash = False
@@ -640,8 +620,7 @@ class FundingClusterAnalyzer:
             is_sybil_wash = sybil_verdict.is_wash_trading
             wash_ratio = sybil_verdict.wash_volume_ratio
             risk_score += sybil_verdict.risk_penalty
-            if sybil_verdict.reasons:
-                reasons.extend(sybil_verdict.reasons)
+            reasons.extend(sybil_verdict.reasons)
             if is_sybil_wash:
                 flags["sybil_wash_detected"] = True
                 hard_failed = True
@@ -664,6 +643,74 @@ class FundingClusterAnalyzer:
             flags=flags,
             timestamp=time.monotonic(),
         )
+
+    def _concentration_risk(
+        self,
+        concentration_index: float,
+        cluster_count: int,
+        reasons: list[str],
+        flags: dict[str, Any],
+    ) -> tuple[float, bool]:
+        """Risk from the supply share of all linked clusters; True: hard fail."""
+        if concentration_index >= self.max_cluster_concentration_pct:
+            excess = concentration_index - self.max_cluster_concentration_pct
+            reasons.append(
+                f"Insider cluster concentration {concentration_index:.1%} exceeds "
+                f"limit {self.max_cluster_concentration_pct:.1%} "
+                f"({cluster_count} syndicate clusters detected)"
+            )
+            flags["insider_cluster_detected"] = True
+            return (
+                min(
+                    50.0,
+                    30.0
+                    + (excess / max(0.01, self.max_cluster_concentration_pct)) * 20.0,
+                ),
+                True,
+            )
+        if concentration_index > 0.10:
+            reasons.append(
+                f"Moderate insider cluster concentration: {concentration_index:.1%} "
+                "of supply in linked wallets"
+            )
+            return concentration_index * 30.0, False
+        return 0.0, False
+
+    def _dominant_cluster_risk(
+        self, max_single_fraction: float, reasons: list[str], flags: dict[str, Any]
+    ) -> tuple[float, bool]:
+        """Risk from the largest single cluster; True: hard fail."""
+        if max_single_fraction < self.max_single_cluster_pct:
+            return 0.0, False
+        excess_single = max_single_fraction - self.max_single_cluster_pct
+        reasons.append(
+            f"Dominant single funding cluster holds {max_single_fraction:.1%} of "
+            f"supply (cap: {self.max_single_cluster_pct:.1%})"
+        )
+        flags["dominant_cluster_detected"] = True
+        return (
+            min(
+                40.0,
+                25.0 + (excess_single / max(0.01, self.max_single_cluster_pct)) * 15.0,
+            ),
+            True,
+        )
+
+
+def _multi_wallet_clusters(
+    graph: FundingClusterGraph, clusters: Sequence[FundingCluster]
+) -> list[FundingCluster]:
+    """Clusters linking >= 2 token-holding wallets (or the creator)."""
+    return [c for c in clusters if _holding_wallets(graph, c) >= 2]
+
+
+def _holding_wallets(graph: FundingClusterGraph, cluster: FundingCluster) -> int:
+    count = 0
+    for w in cluster.wallets:
+        node = graph.nodes.get(w)
+        if node and (node.token_balance > 0 or node.is_top_holder or node.is_creator):
+            count += 1
+    return count
 
 
 __all__ = [
