@@ -2,7 +2,7 @@
 
 What building and running `pumpfun-trading` (since 2026-10-28 `trading-pump`, the trading-core module) has cost so far, and what each running bot costs to keep going. Record every new payment here as it happens, in the currency it was paid in. Amounts are not converted: the project pays in USD, EUR, GBP and SOL, and an exchange rate picked later would make the totals look more exact than they are.
 
-Last updated: 2026-10-28.
+Last updated: 2026-10-30.
 
 ---
 
@@ -45,6 +45,20 @@ Last updated: 2026-10-28.
 ### 2.3 On-chain trading
 
 None. Every run so far has been paper (`dry_run` / `paper_trade`): no transaction fees, priority fees, Jito tips or token-account rent have been paid. Live costs per trade are modelled in [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md) and booked in the audit trail once a funded wallet runs ([`RELEASE-GATE.md`](../archive/pumpfun-trading/dev/RELEASE-GATE.md)).
+
+### 2.4 Claude invoices
+
+From the operator's Claude billing page (invoice list as given on 2026-10-30, all paid). The 2026-10-22 invoice is the monthly subscription in §1; the others are one-off and counted in §5.
+
+| Date | Amount | Note |
+| :--- | ---: | :--- |
+| 2026-10-22 | €22.59 | Monthly subscription (§1); not counted again in §5 |
+| 2026-10-29 | $56.48 | |
+| 2026-10-29 | $25.10 | |
+| 2026-10-29 | $25.10 | |
+| 2026-10-30 | $25.10 | |
+| 2026-10-30 | €96.21 | |
+| **One-off total** | **$131.78 and €96.21** | |
 
 ---
 
@@ -111,7 +125,7 @@ Helius gives each key an HTTPS endpoint and a WebSocket one (`wss://mainnet.heli
 
 | Currency | Recurring | One-off |
 | :--- | :--- | :--- |
-| USD | $49.00 / month (Helius) | – |
-| EUR | €22.59 / month (Claude) | €544.07 (JetBrains AI credits) |
+| USD | $49.00 / month (Helius) | $131.78 (Claude invoices, §2.4) |
+| EUR | €22.59 / month (Claude) | €640.28 (JetBrains AI credits €544.07, Claude invoice €96.21, §2.4) |
 | GBP | £376.00 / year (JetBrains) | – |
 | SOL | ≈ 0.8 SOL / month per bot (PumpPortal, measured) | 0.21 SOL (PumpPortal key funding: 0.03 SOL, then 0.18 SOL on 2026-10-26) |
