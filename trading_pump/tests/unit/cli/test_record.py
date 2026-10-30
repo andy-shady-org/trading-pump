@@ -276,7 +276,9 @@ def test_record_cli_backfill_writes_one_unrotated_file(
     run_record_cli(args)
     assert policies == [record_cli.BACKFILL_RETENTION]
     assert policies[0].max_bytes == 0  # RotatedFileSink never rotates
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["bars.jsonl", "tokens.json"]
+    # trading-core 0.2.2 locks each sink's file with a ``.lock`` beside it (TC-7).
+    written = sorted(p.name for p in tmp_path.iterdir() if p.suffix != ".lock")
+    assert written == ["bars.jsonl", "tokens.json"]
 
 
 def test_record_cli_binance_page_limit_and_blocked_host(

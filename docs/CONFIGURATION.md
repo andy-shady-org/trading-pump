@@ -112,7 +112,7 @@ file's (BUG-157).
 |---|---|---|
 | `reconnect_delay_seconds` | `1` | First wait after a disconnect; doubles to 30 s and resets once a connection is up. |
 | `heartbeat_seconds` | `20` | Ping interval (`0` = no pings). PumpPortal answers pings. |
-| `idle_timeout_seconds` | `300` | Reconnect after this long without a message (`0` = never). A half-open socket once sat silent for 3 h. |
+| `idle_timeout_seconds` | `1800` | Reconnect after this long without a message (`0` = never). A half-open socket once sat silent for 3 h (BUG-150); the migration feed is silent between graduations (up to 18 minutes in rc.9), so a shorter wait reconnects for nothing (BUG-163). The pings (`heartbeat_seconds`) catch a dead socket first. |
 
 ## `screening`: the anti-rug screen (FEAT-04, FEAT-26)
 

@@ -62,7 +62,7 @@ class MigrationFeed:
     stream_url: str
     reconnect_delay_seconds: float = 1.0
     stream_heartbeat_seconds: float | None = 20.0
-    stream_idle_timeout_seconds: float | None = 300.0
+    stream_idle_timeout_seconds: float | None = 1800.0
     on_state: Callable[[bool, str], None] | None = None
     connected: bool = False
     stats: dict[str, int] = field(default_factory=dict)

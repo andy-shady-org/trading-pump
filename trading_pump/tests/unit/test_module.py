@@ -442,3 +442,15 @@ async def test_an_unconfirmed_endpoint_is_kept_and_mainnet_alone_is_quiet() -> N
         "Client", (), {"rpc_pool": _GenesisPool({"https://d.example": DEVNET})}
     )()
     assert await unbound.check_rpc_network() == ["d.example serves devnet"]
+
+
+@pytest.mark.regression("BUG-163")
+def test_the_migration_feed_waits_out_a_quiet_spell_before_reconnecting() -> None:
+    """The migration-only subscription is silent between graduations; in
+    rc.9's first 24 h the longest gap was 1,081 s and 56 gaps passed 300 s,
+    so the old 300 s idle timeout reconnected about twice an hour for nothing.
+    The 20 s pings stay the dead-socket check."""
+    module, *_ = _module()
+
+    assert module.feed.stream_idle_timeout_seconds == 1800.0 > 1_081
+    assert module.feed.stream_heartbeat_seconds == 20.0

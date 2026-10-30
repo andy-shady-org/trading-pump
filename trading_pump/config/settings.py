@@ -191,11 +191,16 @@ class CaptureSettings:
 
 @dataclass(frozen=True)
 class StreamSettings:
-    """PumpPortal WebSocket timing (BUG-150): pings and the idle reconnect."""
+    """PumpPortal WebSocket timing (BUG-150): pings and the idle reconnect.
+
+    The migration-only subscription is silent between graduations (in rc.9's
+    first 24 h: 56 gaps over 5 minutes, none over 18), so the idle reconnect
+    waits 30 minutes; the 20 s pings catch a dead socket sooner (BUG-163).
+    """
 
     reconnect_delay_seconds: float = 1.0
     heartbeat_seconds: float = 20.0
-    idle_timeout_seconds: float = 300.0
+    idle_timeout_seconds: float = 1800.0
 
     def __post_init__(self) -> None:
         _positive(self, "reconnect_delay_seconds")

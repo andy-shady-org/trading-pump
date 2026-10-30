@@ -10,6 +10,12 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Fixed
+- The migration feed's idle reconnect waits 1,800 s, not 300 s: a migration-only subscription is silent between graduations, and rc.9 reconnected about twice an hour for nothing (BUG-163). The 20 s pings still catch a dead socket.
+
+### Changed
+- With trading-core 0.2.2 a capture file has one writer (TC-7: rc.10's config kept rc.9's capture path and the two runs rotated one file from under each other); a second run on the same capture stops at start. The module's log records reach the run's log file (TC-6).
+
 ## [0.4.0-rc.3] - 2026-10-29
 
 The rc.10 build, on trading-core `v0.2.1`. One change of behaviour: the PumpSwap fee tier on the mint's real supply (BUG-162), from the fee check against real trades. The rest is restructuring that changes nothing, and two research read-outs. Paper only.
