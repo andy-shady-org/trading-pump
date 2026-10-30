@@ -10,6 +10,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Added
+- The capture is listed with the engine's files in the dashboard's Engine panel (`files()`, trading-core 0.2.2's new module hook): its name when it is in the run's data folder, in yellow by its path from that folder when it is not (rc.10's shared capture would have read `../rc9/capture.jsonl`). On an older trading-core the hook is simply not called.
+
 ### Fixed
 - The migration feed's idle reconnect waits 1,800 s, not 300 s: a migration-only subscription is silent between graduations, and rc.9 reconnected about twice an hour for nothing (BUG-163). The 20 s pings still catch a dead socket.
 
