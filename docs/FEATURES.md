@@ -76,7 +76,47 @@ The pre-registered rule from the rc.8 read-out, as a trading-core pipeline
   the signal price plus `slippage_bps`.
 
 Exits are the engine's (paper example: +20% take profit, −15% stop, 30
-minutes max hold). Details and evidence: [STRATEGY.md](STRATEGY.md).
+minutes max hold) unless the lane sets its own (FEAT-79 below). Details and
+evidence: [STRATEGY.md](STRATEGY.md).
+
+Lane keys added in 0.4.0-rc.4 (all off by default, so a 0.4.0-rc.3 config
+trades the same): `max_ratio` (an upper bound on the signal ratio),
+`first_pool_min_sol` / `first_pool_max_sol` (a band on the first reading's
+pool SOL), `slippage_bps` (the lane's own limit, over `execution`'s) and
+`exits`.
+
+### 3.1 The `pumpswap_instant` lane (FEAT-78, paper)
+
+A second lane over the same graduates, for the **instant graduations**:
+coins whose first pool reading already shows a market cap of 1,000–2,000 SOL
+and 130–200 SOL in the pool (bought out of the curve in a block or two, not
+the 410.88 SOL standard pool). It buys the ones that are **holding, not
+running**: signal price 1.00–1.10× the first price at the same 60 s reading.
+Off by default (`instant.enabled`).
+
+* The scout tags each graduate with the lane whose first-reading band it is
+  in (`pumpswap_instant` first, else the standard lane); the filter checks
+  that lane's bands and the analyst its ratio band and slippage. Each signal
+  and position carries its lane as its `strategy`, so the verdict and
+  `trading-core-audit pnl --group-by strategy` judge them apart.
+* Both lanes share the one graduation tracker, so they must use the same
+  `signal_after_seconds` / `signal_window_seconds`, and their market-cap
+  bands may not overlap (checked at start).
+* Defaults are the replayed rule: ratio [1.0, 1.10), market cap 1,000–2,000,
+  pool 130–200 SOL, exits +50% / −15% / 30 min.
+
+### 3.2 Per-lane exits (FEAT-79)
+
+`lane.exits` and `instant.exits` take trading-core's `ExitRules` keys
+(`stop_loss_pct`, `take_profit_pct`, `take_profit_fraction`,
+`trailing_activation_pct`, `trailing_drop_pct`, `max_hold_seconds`). The
+module's `should_exit` evaluates a position's own lane's rules on its mark
+(the exit value of selling into the pool), so the wider take-profit the
+replay favours (+50% against the engine example's +20%) applies to the lanes
+that asked for it. A stale mark only lets the time limit fire. A lane
+without `exits` returns no decision and the engine's `exits` apply, so a
+config that uses lane exits sets the engine's `exits` to `{}`: an engine
+take-profit at +20% would otherwise close a position before the lane's +50%.
 
 ## 4. PumpSwap paper execution and costs
 

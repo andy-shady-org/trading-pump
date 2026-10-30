@@ -17,7 +17,9 @@ token (6 decimals), shown in µSOL. The module:
   modelled network fee, priority fee, tip and rent (``execution.py``);
 * values open positions at what selling into the pool would return now,
   after the fee (the circuit breaker's exit value, pumpfun BUG-136);
-* proposes entries through the ``pumpswap_momentum`` lane (FEAT-76);
+* proposes entries through the ``pumpswap_momentum`` lane (FEAT-76) and,
+  when enabled, the ``pumpswap_instant`` lane (FEAT-78), and sells each
+  lane's positions on that lane's own exits (FEAT-79);
 * refuses live orders until the live gate (``execution.LiveExecutor``).
 """
 
@@ -41,6 +43,7 @@ from trading_core.module.base import (
 from trading_core.money import QuoteAsset
 from trading_core.ops.retention import RetentionPolicy
 from trading_core.positions import Position
+from trading_core.strategy.exits import ExitDecision, evaluate_exit
 from trading_core.strategy.pipeline import StrategyPipeline
 
 from trading_pump import __version__
@@ -68,7 +71,12 @@ from trading_pump.market import (
 )
 from trading_pump.recorder import ReplayRecorder
 from trading_pump.strategies.enrichment import TokenEnricher
-from trading_pump.strategies.pumpswap_momentum import LANE, build_pipeline
+from trading_pump.strategies.pumpswap_momentum import (
+    LANE,
+    LANE_INSTANT,
+    Lanes,
+    build_pipeline,
+)
 
 logger = logging.getLogger("trading_pump.module")
 
@@ -156,11 +164,12 @@ class PumpModule(TradingModule):
             if capture.path
             else None
         )
-        lane = self.settings.lane
+        self.lanes = Lanes(self.settings.lane, self.settings.instant)
+        enabled = self.settings.enabled_lanes()
         self.tracker = GraduateTracker(
             self.settings.graduation,
             signal_after_seconds=(
-                float(lane.signal_after_seconds) if lane.enabled else None
+                float(enabled[0][1].signal_after_seconds) if enabled else None
             ),
             record=self._record,
         )
@@ -383,22 +392,38 @@ class PumpModule(TradingModule):
 
     # -- strategy ----------------------------------------------------------------
     def pipeline(self) -> StrategyPipeline | None:
-        if not self.settings.lane.enabled:
+        named = self.lanes.named()
+        if not named:
             return None
         if self._pipeline is None:
             enricher = self.enricher
-            if self.settings.lane.screen_entries and enricher is None:
+            if any(lane.screen_entries for _, lane in named) and enricher is None:
                 enricher = self.enricher = TokenEnricher(
                     execution_client=self.client, config=self.settings.screening
                 )
             self._pipeline = build_pipeline(
                 self.tracker,
-                self.settings.lane,
+                self.lanes,
                 self.settings.execution,
                 clock=self.clock,
                 enricher=enricher,
             )
         return self._pipeline
+
+    def should_exit(
+        self, position: Position, quote: MarketQuote | None, now: float
+    ) -> ExitDecision | None:
+        """The position's lane exits (FEAT-79), when the lane has any: a
+        wider take-profit than the engine's, per lane. A lane without exit
+        rules, or a position of no known lane, leaves the decision to the
+        engine's generic ``exits``."""
+        if position.strategy not in (LANE, LANE_INSTANT):
+            return None
+        rules = self.lanes.settings(position.strategy).exits
+        if not rules.any_enabled:
+            return None
+        price = None if position.price_stale else position.mark_price
+        return evaluate_exit(position, rules, price=price, now=now)
 
     # -- valuation -----------------------------------------------------------------
     def exit_value(self, position: Position, quote: MarketQuote | None = None) -> float:
@@ -457,22 +482,24 @@ class PumpModule(TradingModule):
         return (("Capture", str(path)),) if self.recorder is not None and path else ()
 
     def strategy_rows(self) -> Sequence[tuple[str, str]]:
-        lane = self.settings.lane
-        if not lane.enabled:
+        named = self.lanes.named()
+        if not named:
             return [("Lane", "off (record-only)")]
-        return [
-            ("Lane", LANE),
-            (
-                "Signal",
-                f">= {lane.min_ratio:g}x first price at "
-                f"{lane.signal_after_seconds:g}s (+{lane.signal_window_seconds:g}s)",
-            ),
-            (
-                "Standard pool",
-                f"first MC {lane.first_market_cap_min_sol:.0f}-"
-                f"{lane.first_market_cap_max_sol:.0f} SOL",
-            ),
-        ]
+        rows: list[tuple[str, str]] = []
+        for name, lane in named:
+            prefix = "" if name == LANE else "Instant "
+            rows.append((f"{prefix}Lane", name))
+            rows.append((f"{prefix}Signal", _signal_text(lane)))
+            rows.append(
+                (
+                    "Standard pool" if name == LANE else "Instant pool",
+                    f"first MC {lane.first_market_cap_min_sol:.0f}-"
+                    f"{lane.first_market_cap_max_sol:.0f} SOL",
+                )
+            )
+            if lane.exits.any_enabled:
+                rows.append((f"{prefix}Exits", _exits_text(lane)))
+        return rows
 
     # -- operations -------------------------------------------------------------------
     def is_public_identifier(self, segment: str) -> bool:
@@ -481,6 +508,7 @@ class PumpModule(TradingModule):
     def provenance(self) -> Mapping[str, Any]:
         return {
             "lane": asdict(self.settings.lane),
+            "instant": asdict(self.settings.instant),
             "graduation": asdict(self.settings.graduation),
             "execution": asdict(self.settings.execution),
             "capture_path": self.settings.capture.path,
@@ -490,6 +518,30 @@ class PumpModule(TradingModule):
                 for mint, fee in list(self.fees.items())[:5]
             },
         }
+
+
+def _signal_text(lane: Any) -> str:
+    band = f">= {lane.min_ratio:g}x" + (
+        f" and < {lane.max_ratio:g}x" if lane.max_ratio else ""
+    )
+    return (
+        f"{band} first price at {lane.signal_after_seconds:g}s "
+        f"(+{lane.signal_window_seconds:g}s)"
+    )
+
+
+def _exits_text(lane: Any) -> str:
+    rules = lane.exits
+    parts = []
+    if rules.take_profit_pct:
+        parts.append(f"TP +{rules.take_profit_pct:.0%}")
+    if rules.stop_loss_pct:
+        parts.append(f"SL -{rules.stop_loss_pct:.0%}")
+    if rules.trailing_drop_pct:
+        parts.append(f"trail {rules.trailing_drop_pct:.0%}")
+    if rules.max_hold_seconds:
+        parts.append(f"max {rules.max_hold_seconds / 60:g} min")
+    return " · ".join(parts)
 
 
 __all__ = ["PUMP_QUOTE", "PumpModule", "QuoteUnavailable"]

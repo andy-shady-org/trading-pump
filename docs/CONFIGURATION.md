@@ -66,10 +66,46 @@ One decision per graduate, at the first pool reading at least
 | `first_market_cap_max_sol` | `821.76` | ... and at most this (2×). About 60% of PumpPortal's migration events are empty or unrelated pools. |
 | `min_pool_sol` | `0` | Least SOL in the pool at the signal reading (`0` = off). |
 | `screen_entries` | `false` | Run the anti-rug screen (`screening`) on each candidate. Off: the rule was pre-registered without it. |
+| `max_ratio` | `0` | Buy only below this multiple (`0` = no upper bound). Must be above `min_ratio`. |
+| `first_pool_min_sol` | `0` | The first reading's pool must hold at least this much SOL (`0` = off) ... |
+| `first_pool_max_sol` | `0` | ... and at most this (`0` = off). |
+| `slippage_bps` | (none) | The lane's own limit over the signal price, 0–9999; left out, `execution.slippage_bps` applies. |
+| `exits` | `{}` | The lane's own exits (FEAT-79), trading-core's `ExitRules` keys: `stop_loss_pct`, `take_profit_pct`, `take_profit_fraction`, `trailing_activation_pct`, `trailing_drop_pct`, `max_hold_seconds`. Empty: the engine's `exits` apply. |
 
-The exits are the engine's `exits` (the paper example: take profit `0.2`,
-stop loss `0.15`, `max_hold_seconds` `1800`), and sizing is the engine's
-`order_size` and `risk`.
+Without `exits`, the exits are the engine's `exits` (the paper example: take
+profit `0.2`, stop loss `0.15`, `max_hold_seconds` `1800`). With them, the
+module decides the lane's exits on its own mark and the engine's exits still
+run after it, so **set the engine's `exits` to `{}`** in a config that uses
+lane exits: an engine take profit at `0.2` would close a position before a
+lane's `0.5`. Sizing is the engine's `order_size` and `risk`.
+
+```json
+"lane": {
+  "min_ratio": 1.2,
+  "exits": {"take_profit_pct": 0.5, "stop_loss_pct": 0.15, "max_hold_seconds": 1800}
+}
+```
+
+## `instant`: the `pumpswap_instant` lane (FEAT-78)
+
+The lane for instant graduations (a first reading at 1,000–2,000 SOL market
+cap and 130–200 SOL in the pool), holding at 1.00–1.10× a minute later
+([STRATEGY.md](STRATEGY.md#6-the-pumpswap_instant-lane-feat-78)). The same
+keys as `lane`, with these defaults:
+
+| Key | Default |
+|---|---|
+| `enabled` | `false` |
+| `signal_after_seconds` / `signal_window_seconds` | `60` / `30` (must equal `lane`'s when both are on) |
+| `min_ratio` / `max_ratio` | `1.0` / `1.10` |
+| `first_market_cap_min_sol` / `first_market_cap_max_sol` | `1000` / `2000` (may not overlap `lane`'s band when both are on) |
+| `first_pool_min_sol` / `first_pool_max_sol` | `130` / `200` |
+| `min_pool_sol`, `screen_entries`, `slippage_bps` | `0`, `false`, (none) |
+| `exits` | `{"take_profit_pct": 0.5, "stop_loss_pct": 0.15, "max_hold_seconds": 1800}` |
+
+`"instant": {"enabled": true}` turns it on with the replayed rule. A graduate
+whose first reading is in the instant band goes to this lane; any other goes
+to `lane` (when `lane` is on), so each graduate gets one decision.
 
 ## `execution`: paper fills and modelled costs
 
