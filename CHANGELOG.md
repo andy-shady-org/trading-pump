@@ -10,6 +10,13 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+## [0.4.0-rc.4] - 2026-10-30
+
+The rc.11 build, on trading-core `v0.2.2`. Two features for more trades and bigger winners: a second lane for the instant graduations (FEAT-78) and per-lane exits, so both lanes run a +50% take-profit (FEAT-79). Both are off by default, so an rc.3 config trades the same. Also the market recorder's move to trading-scout and BUG-163. Paper only.
+
+### Research
+- rc.9 and rc.10 replays through the engine (STRATEGY-PIVOT [§6.18](docs/dev/STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)). The instant lane passes every verdict check except the count, in-sample. On the standard lane a +50% take-profit beats +20%, and loosening the entry (ratio 1.1 or 10% slippage) does not. The engine's profit-ratchet breaker halts a paper run for hours after a small give-back; rc.11 uses `baseline`.
+
 ### Removed
 - **Deprecation: `trading-pump record --market` (FEAT-74) moved to trading-scout** (2026-10-30), with `services/market_recorder.py` and its tests, so this module carries no cross-chain code. trading-scout runs it as the `scout` module under `trading-core run` and adds a sell check of every followed pool and per-launchpad read-outs. `--market` now prints where it went and exits 2; the `--market-*` options are gone. The slow-lane recorders (`--jupiter-quotes`, `--backfill-bars`) stay for now.
 
@@ -24,6 +31,21 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ### Changed
 - With trading-core 0.2.2 a capture file has one writer (TC-7: rc.10's config kept rc.9's capture path and the two runs rotated one file from under each other); a second run on the same capture stops at start. The module's log records reach the run's log file (TC-6).
+
+#### Release record – v0.4.0rc4 (2026-10-30)
+- Commit: the tagged commit on `main` after the `release/v0.4.0rc4` merge; trading-core `v0.2.2` (`e64526b`)
+- Release gate: `nox -s format lint mypy tests audit package` passed on Linux, 807 tests, 100% statement and branch coverage on 3.11–3.14, no known vulnerabilities, the wheel private and without tests. Still to do: CI on the tag, the smoke run (`configs/smoke-rc11.json`, README §2), the restart drill.
+- Reference replay: the rc.9 capture, 2026-10-29 08:30 → 10-30 17:54 UTC (1,097 migrations), through this code at 125 bps with `runtime-pump/configs/rc11-paper.json`: 143 positions, net +0.366 SOL, no breaker trips, no risk refusals, 10 execution refusals.
+  - `pumpswap_instant`: 80 positions, +0.314 SOL (+19.6% a trade, 72% won). The verdict passes every check except the count.
+  - `pumpswap_momentum`: 63 positions, +0.053 SOL (+4.2% a trade). Both halves and both days are positive; it fails the count and the interval.
+  - The rc.10 config on the same capture: 60 positions, +0.061 SOL.
+- **Pre-registration (rc.11)**, fixed before the run starts and never edited after:
+  - `configs/rc11-paper.json`: sha256 `8449526d59d2989166b915f59f1a498d117dfc41087210a87d6802043a158473`
+  - `configs/verdict-rc11-standard.json` (`"strategy": "pumpswap_momentum"`): file sha256 `05417ba6e97089938bc301086321320ca14ba1eab0c553febcc785bc625b0f9b`, verdict rule hash `620ae5f7…`
+  - `configs/verdict-rc11-instant.json` (`"strategy": "pumpswap_instant"`): file sha256 `0a5c8a520818034c4c9d00b855f3abe1453e815a26f5f8abcf3979aafda3ce87`, verdict rule hash `6561daf7…`
+  - Each lane is judged alone with rc.9's rule: ≥ 100 closed positions; adjusted net > 0 after a 50 bps exit haircut and a 25,000-lamport tip floor; both halves positive; ≥ 50% of UTC days positive; positive without the best 3; 90% bootstrap interval of the mean above 0.
+  - A lane that passes goes to the live gate. A lane that fails is not re-tuned on the same data.
+- Capital stage: 0 (paper)
 
 ## [0.4.0-rc.3] - 2026-10-29
 
