@@ -451,6 +451,11 @@ class PumpModule(TradingModule):
             rows.append(("Capture", f"{self.recorder.records_written} rows"))
         return rows
 
+    def files(self) -> Sequence[tuple[str, str]]:
+        """The capture, for the Engine panel's file list (trading-core 0.2.2)."""
+        path = self.settings.capture.path
+        return (("Capture", str(path)),) if self.recorder is not None and path else ()
+
     def strategy_rows(self) -> Sequence[tuple[str, str]]:
         lane = self.settings.lane
         if not lane.enabled:
