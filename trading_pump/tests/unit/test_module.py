@@ -190,6 +190,7 @@ async def test_migrations_start_tracking_and_reads_reach_the_host(
     assert host.degraded == {CONDITION_RPC: "rpc down", CONDITION_FEED: "closed"}
     assert MINT in module.readings and len(module.tracker) == 1
     assert dict(module.status_rows())["Capture"].endswith("rows")
+    assert module.files() == (("Capture", str(tmp_path / "capture.jsonl")),)
     await module.stop()
     rows = [
         json.loads(line)
@@ -303,6 +304,7 @@ def test_status_strategy_and_provenance_rows() -> None:
     assert rows["Graduates"] == "0 followed · 0 readings"
     assert rows["Pool reads"] == "0 ok · 0 failed · rpc down"
     assert "Capture" not in rows and "RPC endpoints" not in rows
+    assert module.files() == ()
     strategy = dict(module.strategy_rows())
     assert strategy["Lane"] == "pumpswap_momentum"
     assert strategy["Signal"] == ">= 1.2x first price at 60s (+30s)"

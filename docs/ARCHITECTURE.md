@@ -18,6 +18,7 @@ Solana, Pump.fun and PumpSwap. The contract between the two is trading-core's
 | `exit_value(position, quote)` | The SOL a sell of the position would return after the fee (BUG-136) |
 | `pipeline()` | `graduations → standard_pool → [anti_rug] → momentum` (`strategies/pumpswap_momentum.py`), or none when the lane is off |
 | `format_price`, `status_rows`, `strategy_rows` | µSOL prices; feed, graduates, pool reads, RPC, capture rows; the lane's rule |
+| `files` | The capture file (when on), listed in the Engine panel with the engine's files |
 | `provenance()` | Lane, graduation and execution settings, capture path, RPC endpoint count, fees seen |
 | `is_public_identifier` | Solana public keys (mints, pools) are public, not secrets |
 | host callbacks | `notify_market_data()` on every good pool read; `set_degraded("pumpportal feed" / "solana rpc" / "rpc network", ...)` |
