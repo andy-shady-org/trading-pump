@@ -132,10 +132,9 @@ FEAT-76 rule was pre-registered without it.
 `trading-pump record` (also `trading-pump-recorder`), each in its own
 process, record-only, no wallet:
 
-* **Cross-chain market recorder (FEAT-74)**, `--market`: new pools and
-  momentum lists on Solana, Base and BSC from GeckoTerminal, followed on
-  DexScreener for up to 7 days; token fallback for pools a pair lookup
-  misses; state saved for restarts ([dev/RUNBOOK.md §5](dev/RUNBOOK.md)).
+* **Cross-chain market recorder (FEAT-74)**: moved to trading-scout on
+  2026-10-30 (its FEAT-1, with a sell check and per-launchpad read-outs);
+  `--market` now only says so.
 * **Slow-lane data (FEAT-65 phase 0)**, `--jupiter-quotes` and
   `--backfill-bars`: Jupiter round-trip quotes and prices for liquid Solana
   tokens (`configs/slow_lane_tokens.json`), priority-fee samples, and daily /
@@ -228,5 +227,5 @@ reason is in [dev/TODO.md, Not ported](dev/TODO.md#not-ported).
 | 41 | Scripted risk drills (FEAT-69) | Not ported (`pumpfun-drill` drove `TradingBot`) |
 | 42 | Launch sample and post-exit tracking (FEAT-72) | Not ported (launch mode is NO-GO, §6.13) |
 | 43 | Graduation tracking (FEAT-73) | Here (§2) |
-| 44 | Cross-chain market recorder (FEAT-74) | Here (§7) |
+| 44 | Cross-chain market recorder (FEAT-74) | Moved to trading-scout (2026-10-30) |
 | 45 | Launch entry filters (FEAT-75) | Not ported (launch mode) |

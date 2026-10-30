@@ -174,49 +174,11 @@ Both APIs are used keyless (no Jupiter key needed).
 
 ### 5.2 Cross-chain market recorder (FEAT-74)
 
-Record-only data on the coins Pump.fun lanes never see: other Solana
-launchpads (Meteora, Raydium LaunchLab, PumpSwap pools), Base and BSC, and
-old coins when they start trending
-([`FEATURES.md` §7](../FEATURES.md#7-research-recorders)). No wallet and no
-RPC: GeckoTerminal and DexScreener, keyless and paced, so it costs no RPC
-credits.
-
-1. Start it and leave it running:
-   ```bash
-   cd runtime && mkdir -p market
-   trading-pump record --market -o market/market.jsonl     # Ctrl-C / SIGTERM stops it cleanly
-   ```
-   Defaults: Solana, Base and BSC (`--market-chains solana,base,bsc,eth` adds
-   Ethereum); every new pool followed except Pump.fun curves, of which 10%
-   are (`--market-sample solana:pump-fun=0.1`); trending (5 min, 1 h) and
-   top 24 h volume lists every 5 minutes (`--market-no-lists` turns them
-   off). The follow list is saved to `market/state.json` every minute, so a
-   restart resumes it; the first minutes after a start fill the lists at
-   GeckoTerminal's pace (about one chain a minute).
-2. Health checks: a `market_stats` row every 10 minutes.
-   ```bash
-   jq -c 'select(.event=="market_stats") | {following, by_chain, snapshots, errors, rate_limited, discovery_gaps, token_matched}' market/market.jsonl | tail -n 3
-   ```
-   `rate_limited` climbing means a free limit changed: stop it and raise the
-   gaps in `services/market_recorder.py`. `discovery_gaps` counts discovery
-   passes where every page was new (Solana launches outran four pages a
-   minute); a few a day are fine. `following` should settle in the
-   thousands, below the 20,000 cap (`--market-max-followed`).
-3. Disk: about 600 bytes a row, roughly 1 GB a day before compression; parts
-   rotate at 100 MB and are gzipped, and all 300 are kept (no age limit).
-   Move old parts into `archive/` with the runs they belong to.
-4. Reading the data:
-   ```bash
-   jq -c 'select(.event=="market_pool" and .followed) | {chain, source, dex, pool, created_at, liquidity_usd}' market/market.jsonl   # what was picked, and why
-   jq -c 'select(.event=="market_snapshot") | {timestamp, chain, pool, age_seconds, price_usd, liquidity_usd, txns}' market/market.jsonl
-   jq -c 'select(.event=="market_end") | {chain, pool, source, cause, followed_seconds}' market/market.jsonl
-   ```
-   A rule counts only on what it could have seen when it fired: join
-   snapshots to `market_pool` rows by `chain` + `pool`, enter at the first
-   snapshot that meets the rule, use the later snapshots for the outcome,
-   and include the pools that ended `dead`. Rows with `matched: "token"`
-   price the coin's most liquid pair (`pair_address`), not the pool
-   GeckoTerminal listed.
+Moved to trading-scout on 2026-10-30: it runs as that repository's `scout`
+module under `trading-core run`, with a sell check of every followed pool and
+a per-launchpad read-out (its `docs/dev/RUNBOOK.md`). `trading-pump record
+--market` now only says so. The rc.8 data it wrote (`market/market.jsonl`)
+reads the same way with `trading-scout readout`.
 
 ## 6. Drills
 
@@ -249,4 +211,4 @@ executor, run these by hand on a paper config in a scratch folder:
 | Replay a capture | `trading-pump replay --config F --capture C... --out DIR` |
 | Variables in use | `trading-pump env` |
 | Slow-lane quotes / bars | `trading-pump record --jupiter-quotes`, `--backfill-bars` (§5.1) |
-| Cross-chain market data | `trading-pump record --market` (§5.2) |
+| Cross-chain market data | trading-scout (moved 2026-10-30, §5.2) |

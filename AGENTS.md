@@ -91,7 +91,7 @@ Every learning from pumpfun-trading is kept below, in its original words, with w
 - **[CAPTURE] Observe Without Touching:** rc.3 records curves the bot never trades (screen-reject sample, discovered near-graduation curves). Keep such data off every decision path (no watch list, promotion, shadow book or `GraduationEngine` feed), poll it in its own task, tag its rows (`source` in `RECORD_ONLY_POLL_SOURCES`, `observation_*` events) and skip them in replay and the shadow tools, or a "measurement" changes fills and parity. Never let a record-only API call share the screening client's retry loop or breaker. *[Applies: here.]*
 - **[OPS] One Policy Per File:** a folder-wide prune with the audit policy deleted replay parts the replay policy was meant to keep, and the first 20 h of a 37 h run were gone before anyone looked (BUG-157). Prune each file by its own name and policy, never by extension; after a long run, check that the oldest capture row is near the start time before analysing it. *[Applies: here.]*
 - **[STREAMS] Retry On A Fresh Connection:** a PumpPortal top-up at 15:49 was not accepted by the probe on the connection that had refused it, and both rc.7 bots stayed blocked (BUG-156). When a provider refuses on a connection, retry on a new one; never let a reconnect reset a degraded status before the feed proves it works, and check the funding source's on-chain history before guessing at a cause. *[Applies: retired code: the trade feed; the rule holds for any keyed connection.]*
-- **[DATA] One Pool, Several Names:** GeckoTerminal and DexScreener disagree on ids: four.meme curves are `<token>:4meme` on DexScreener, and some BSC pools (PancakeSwap Infinity, Uniswap v4) are not indexed there at all, so 40% of a live run's BSC pools came back missing (FEAT-74). When joining two data providers, match on the token as a fallback, mark what was substituted, and check the miss rate on live data per chain before trusting a recorder. *[Applies: here.]*
+- **[DATA] One Pool, Several Names:** GeckoTerminal and DexScreener disagree on ids: four.meme curves are `<token>:4meme` on DexScreener, and some BSC pools (PancakeSwap Infinity, Uniswap v4) are not indexed there at all, so 40% of a live run's BSC pools came back missing (FEAT-74). When joining two data providers, match on the token as a fallback, mark what was substituted, and check the miss rate on live data per chain before trusting a recorder. *[Applies: trading-scout (the recorder moved there on 2026-10-30).]*
 - **[ANALYSIS] Charts Show Survivors:** the operator saw many coins on charts that graduated, crashed and then ran, and asked why the bot missed them (2026-10-26). Of 39 fast graduates in the rc.6 data that fell below half the graduation price within 15 minutes, none recovered: charts and trending lists show the coins that survived. Before building for a pattern seen on charts, measure how often it happens across every coin it could have happened to (FEAT-73). *[Applies: everywhere.]*
 - **[CAPTURE] Record The Population, Not The Selection:** rc.3 followed only the 14% of launches its screen passed or sampled, and dropped every coin at its sell, so ideas the operator raised (buy at launch, hold through the first dip, take +10%) could not be tested on it (user correction, 2026-10-24). Sample the whole population from its first event and keep following each exit for a while, record-only and off every decision path (FEAT-72). *[Applies: here.]*
 - **[DATA] Probe Free APIs Before Picking Defaults:** the keyless Jupiter API allowed 5 requests per ~10 s, and GeckoTerminal sent `Retry-After: 0` while still limiting, the odd 500, and a 401 at its ~6-month history limit (FEAT-65 recorder). Check a free endpoint's real limits by hand before setting pacing defaults, retry 429 / 5xx with bounded growing waits (never trust a zero reset), treat a paging 401 as end of history, and keep such recorders in their own process. *[Applies: here.]*
@@ -145,7 +145,7 @@ trading-pump/
 │   ├── config/           # env.py (credentials only), settings.py (PumpSettings)
 │   ├── infra/            # Multi-provider RPC connection pool, latency routing, breaker, failover
 │   ├── sdk/              # Curve and PumpSwap maths, fee config, transaction builders, costs, Jito
-│   ├── services/         # Record-only research recorders (market, slow lane)
+│   ├── services/         # Record-only research recorder (slow lane); the market recorder moved to trading-scout
 │   ├── strategies/       # pumpswap_momentum (the lane), anti-rug screening, observations
 │   ├── streams/          # PumpPortal WebSocket host (reconnect, pings, key handling)
 │   └── tests/            # 100% coverage; see docs/dev/TESTING.md
@@ -216,7 +216,7 @@ trading-pump/
 * `trading-core check --config F`: validate settings and build the module.
 * `trading-core-audit pnl / cuts / verdict`, `trading-core-events`: read a run.
 * `trading-pump replay --config F --capture C... --out DIR`: replay captures through the engine.
-* `trading-pump record --market | --jupiter-quotes | --backfill-bars` (also `trading-pump-recorder`): research recorders.
+* `trading-pump record --jupiter-quotes | --backfill-bars` (also `trading-pump-recorder`): research recorders (`--market` moved to trading-scout).
 * `trading-pump env`: which variables are set (names only).
 
 ---

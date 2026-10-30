@@ -106,9 +106,10 @@ rule on the data it came from.
 
 ### 4.5 Research recorders
 
-`trading-pump record --market` (cross-chain pools) and `--jupiter-quotes` /
-`--backfill-bars` (slow-lane data) run in their own process
-([CLI.md](CLI.md#trading-pump-record)).
+`trading-pump record --jupiter-quotes` / `--backfill-bars` (slow-lane data)
+run in their own process ([CLI.md](CLI.md#trading-pump-record)). The
+cross-chain market recorder (`--market`) moved to trading-scout on
+2026-10-30.
 
 ## 5. From pumpbot
 
@@ -121,7 +122,8 @@ rule on the data it came from.
 | `pumpfun-audit pnl / cuts / verdict` | `trading-core-audit pnl / cuts / verdict` (old trails are read: `mint` and `*_sol` names are accepted) |
 | `pumpfun-audit reconcile` | not ported yet (needed before live, [dev/TODO.md](dev/TODO.md)) |
 | `pumpfun-events` | `trading-core-events` |
-| `pumpfun-recorder --market / --jupiter-quotes / --backfill-bars` | `trading-pump record ...` (same flags) |
+| `pumpfun-recorder --market` | trading-scout (the `scout` module, since 2026-10-30) |
+| `pumpfun-recorder --jupiter-quotes / --backfill-bars` | `trading-pump record ...` (same flags) |
 | `pumpfun-recorder --ws-url ...` (stream capture) | not ported; the module's capture records the graduation rows |
 | `pumpfun-replay` | `trading-pump replay` for graduation captures; the launch / momentum replay, sweeps and `--compare-audit` are not ported |
 | `pumpfun-optimize`, `pumpfun-arb`, `pumpfun-drill` | not ported |

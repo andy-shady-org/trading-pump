@@ -2,7 +2,7 @@
 
 What building and running `pumpfun-trading` (since 2026-10-28 `trading-pump`, the trading-core module) has cost so far, and what each running bot costs to keep going. Record every new payment here as it happens, in the currency it was paid in. Amounts are not converted: the project pays in USD, EUR, GBP and SOL, and an exchange rate picked later would make the totals look more exact than they are.
 
-Last updated: 2026-10-28.
+Last updated: 2026-10-30.
 
 ---
 
@@ -46,6 +46,20 @@ Last updated: 2026-10-28.
 
 None. Every run so far has been paper (`dry_run` / `paper_trade`): no transaction fees, priority fees, Jito tips or token-account rent have been paid. Live costs per trade are modelled in [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md) and booked in the audit trail once a funded wallet runs ([`RELEASE-GATE.md`](../archive/pumpfun-trading/dev/RELEASE-GATE.md)).
 
+### 2.4 Claude invoices
+
+From the operator's Claude billing page (invoice list as given on 2026-10-30, all paid). The 2026-10-22 invoice is the monthly subscription in §1; the others are one-off and counted in §5.
+
+| Date | Amount | Note |
+| :--- | ---: | :--- |
+| 2026-10-22 | €22.59 | Monthly subscription (§1); not counted again in §5 |
+| 2026-10-29 | $56.48 | |
+| 2026-10-29 | $25.10 | |
+| 2026-10-29 | $25.10 | |
+| 2026-10-30 | $25.10 | |
+| 2026-10-30 | €96.21 | |
+| **One-off total** | **$131.78 and €96.21** | |
+
 ---
 
 ## 3. Running Costs Per Bot
@@ -63,7 +77,7 @@ A standard RPC call costs 1 credit (`getAccountInfo`, `getMultipleAccounts`, `ge
 
 (`rpc_pool_telemetry`: total requests less rate-limited ones; every request after 07:01 UTC failed.) That run read each held curve with its own call every second; since `fix/runtime-rpc-outage` all held curves are one call per second, so expect less. Two bots on the measured load use about 6.3 M credits a month: inside the Developer plan's 10 M, six times the Free plan's 1 M. Each bot should have its own key ([`RUNBOOK.md` §5.8](../archive/pumpfun-trading/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)); check on the Helius dashboard whether a second key draws on the same credits.
 
-The cross-chain market recorder (FEAT-74) uses no Helius credits: GeckoTerminal and DexScreener are free and keyless (about 7 and at most 240 requests a minute). Its cost is disk: about 1 GB of rows a day before compression, about a tenth of that gzipped.
+The cross-chain market recorder (FEAT-74, in trading-scout since 2026-10-30) uses no Helius credits: GeckoTerminal and DexScreener are free and keyless (about 7 and at most 240 requests a minute). Its cost is disk: about 1 GB of rows a day before compression, about a tenth of that gzipped.
 
 Measured in rc.8 (37.2 h, Developer plan, no rate limits): the capture bot (launch buying plus graduation tracking and followed launches) made 305,836 requests (258,548 `getMultipleAccounts`), about 5.9 M per 30 days; the pilot (launch buying only) 205,986, about 4.0 M. Together about 9.9 M per 30 days: at the plan's 10 M, so a third bot or a faster graduation poll needs the next plan or a second Helius key on its own plan.
 
@@ -111,7 +125,7 @@ Helius gives each key an HTTPS endpoint and a WebSocket one (`wss://mainnet.heli
 
 | Currency | Recurring | One-off |
 | :--- | :--- | :--- |
-| USD | $49.00 / month (Helius) | – |
-| EUR | €22.59 / month (Claude) | €544.07 (JetBrains AI credits) |
+| USD | $49.00 / month (Helius) | $131.78 (Claude invoices, §2.4) |
+| EUR | €22.59 / month (Claude) | €640.28 (JetBrains AI credits €544.07, Claude invoice €96.21, §2.4) |
 | GBP | £376.00 / year (JetBrains) | – |
 | SOL | ≈ 0.8 SOL / month per bot (PumpPortal, measured) | 0.21 SOL (PumpPortal key funding: 0.03 SOL, then 0.18 SOL on 2026-10-26) |

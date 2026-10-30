@@ -10,6 +10,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Removed
+- **Deprecation: `trading-pump record --market` (FEAT-74) moved to trading-scout** (2026-10-30), with `services/market_recorder.py` and its tests, so this module carries no cross-chain code. trading-scout runs it as the `scout` module under `trading-core run` and adds a sell check of every followed pool and per-launchpad read-outs. `--market` now prints where it went and exits 2; the `--market-*` options are gone. The slow-lane recorders (`--jupiter-quotes`, `--backfill-bars`) stay for now.
+
 ### Added
 - The capture is listed with the engine's files in the dashboard's Engine panel (`files()`, trading-core 0.2.2's new module hook): its name when it is in the run's data folder, in yellow by its path from that folder when it is not (rc.10's shared capture would have read `../rc9/capture.jsonl`). On an older trading-core the hook is simply not called.
 

@@ -63,7 +63,7 @@ trading_pump/
 ├── infra/rpc_pool.py    # multi-endpoint RPC pool with breaker and failover
 ├── api/client.py        # Pump.fun public API
 ├── streams/websocket.py # PumpPortal WebSocket host (reconnect, pings, key handling)
-├── services/            # market_recorder (FEAT-74), slow_lane (FEAT-65)
+├── services/            # slow_lane (FEAT-65); the FEAT-74 market recorder moved to trading-scout
 ├── cli/                 # trading-pump (main.py), the recorders (record.py)
 └── tests/               # unit/ (mirrors the source), integration/, property/, support/
 ```

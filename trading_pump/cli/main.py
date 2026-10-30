@@ -1,8 +1,8 @@
 """``trading-pump``: the module's own tools (the engine is ``trading-core``).
 
 * ``trading-pump record ...``: the record-only research recorders
-  (``--market``, ``--jupiter-quotes``, ``--backfill-bars``), as
-  ``trading-pump-recorder``;
+  (``--jupiter-quotes``, ``--backfill-bars``), as ``trading-pump-recorder``
+  (the cross-chain ``--market`` recorder moved to trading-scout);
 * ``trading-pump replay --config F --capture C [C ...] --out DIR``: replay
   captures through trading-core's engine with the module (``replay.py``);
 * ``trading-pump env``: which ``PUMPFUN_*`` variables are set and read

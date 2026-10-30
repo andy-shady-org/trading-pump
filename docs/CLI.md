@@ -84,7 +84,6 @@ Record-only research recorders, each in its own process next to the engine
 
 | Mode | What | Default output |
 |---|---|---|
-| `--market` | FEAT-74: new pools and trending / top-volume lists on Solana, Base and BSC (GeckoTerminal), each followed on DexScreener for up to 7 days | `market/market.jsonl` |
 | `--jupiter-quotes` | FEAT-65 phase 0: Jupiter round-trip quotes (0.02 / 0.1 / 0.5 SOL), prices and priority-fee samples for a token list, every 5 minutes | `slow_lane/jupiter_quotes.jsonl` |
 | `--backfill-bars` | FEAT-65 phase 0: daily / hourly OHLCV bars from GeckoTerminal (about 6 months) or Binance (`--bar-source binance`, since listing), then exit | `slow_lane/bars.jsonl` (`binance_bars.jsonl`) |
 
@@ -93,10 +92,8 @@ Without a mode it prints an error and exits 2.
 Common options: `-o/--output` (path), `-d/--duration` (seconds),
 `--batch-size` (rows per write, 50), `--flush-interval` (2 s).
 
-`--market`: `--market-chains` (`solana,base,bsc`; `eth` too if wanted),
-`--market-sample CHAIN:DEX=SHARE,...` (`solana:pump-fun=0.1`),
-`--market-state` (`market/state.json`, `''` for none),
-`--market-max-followed` (20,000), `--market-no-lists`.
+`--market` (FEAT-74, the cross-chain market recorder) moved to trading-scout
+on 2026-10-30; the flag now prints where it went and exits 2.
 
 `--jupiter-quotes` / `--backfill-bars`: `--tokens` (token list JSON, default
 `configs/slow_lane_tokens.json`'s list), `--quote-interval` (300 s),
