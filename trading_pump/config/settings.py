@@ -24,6 +24,8 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, TypeVar
 
+from trading_core.strategy.exits import ExitRules
+
 from trading_pump.strategies.filters import ScreeningSettings
 
 # Market cap (SOL) of a curve that has just completed: 85 SOL real plus the
@@ -113,16 +115,88 @@ class LaneSettings:
     first_market_cap_max_sol: float = 2.0 * GRADUATION_MARKET_CAP_SOL
     min_pool_sol: float = 0.0
     screen_entries: bool = False
+    # rc11 (FEAT-78, FEAT-79): a ceiling on the ratio (0: none), a band on
+    # the first reading's pool SOL (max 0: none), the lane's own slippage
+    # (None: ``execution.slippage_bps``) and its own exits (all 0: the
+    # engine's ``exits`` apply instead).
+    max_ratio: float = 0.0
+    first_pool_min_sol: float = 0.0
+    first_pool_max_sol: float = 0.0
+    slippage_bps: int | None = None
+    exits: ExitRules = field(default_factory=ExitRules)
 
     def __post_init__(self) -> None:
+        if isinstance(self.exits, Mapping):
+            object.__setattr__(self, "exits", ExitRules.from_mapping(self.exits))
+        if not isinstance(self.exits, ExitRules):
+            raise ValueError("LaneSettings.exits must be an object")
         _positive(self, "signal_after_seconds", "signal_window_seconds", "min_ratio")
         _not_negative(
-            self, "first_market_cap_min_sol", "first_market_cap_max_sol", "min_pool_sol"
+            self,
+            "first_market_cap_min_sol",
+            "first_market_cap_max_sol",
+            "min_pool_sol",
+            "max_ratio",
+            "first_pool_min_sol",
+            "first_pool_max_sol",
         )
+        self._check_bands()
+
+    def _check_bands(self) -> None:
         if self.first_market_cap_max_sol < self.first_market_cap_min_sol:
             raise ValueError(
                 "LaneSettings.first_market_cap_max_sol must be >= the minimum"
             )
+        if (
+            self.first_pool_max_sol
+            and self.first_pool_max_sol < self.first_pool_min_sol
+        ):
+            raise ValueError("LaneSettings.first_pool_max_sol must be >= the minimum")
+        if self.max_ratio and self.max_ratio <= self.min_ratio:
+            raise ValueError("LaneSettings.max_ratio must be above min_ratio (0: none)")
+        if self.slippage_bps is not None and not 0 <= int(self.slippage_bps) < 10_000:
+            raise ValueError("LaneSettings.slippage_bps must be within 0..9999")
+
+    def market_cap_band(self) -> tuple[float, float]:
+        return (
+            float(self.first_market_cap_min_sol),
+            float(self.first_market_cap_max_sol),
+        )
+
+    def accepts_first(self, market_cap_sol: float, pool_sol: float) -> bool:
+        """Whether a graduate's first reading falls in this lane's bands."""
+        low, high = self.market_cap_band()
+        if not low <= market_cap_sol <= high:
+            return False
+        if pool_sol < float(self.first_pool_min_sol):
+            return False
+        return not (
+            self.first_pool_max_sol and pool_sol > float(self.first_pool_max_sol)
+        )
+
+
+@dataclass(frozen=True)
+class InstantLaneSettings(LaneSettings):
+    """The ``pumpswap_instant`` lane (FEAT-78): coins launched and graduated
+    in one go by their launch bots (first pool ~145 SOL, market cap ~1,200
+    SOL instead of 85 SOL and 410.88 SOL). Their bots push the price up for
+    the first minutes, then dump it. The lane buys at the signal reading
+    when the price is 1.0-1.1x the first one, never a coin already running
+    (>= 1.1x lost in the rc9 / rc10 replay), and sells on its own exits.
+    Off by default."""
+
+    enabled: bool = False
+    min_ratio: float = 1.0
+    max_ratio: float = 1.10
+    first_market_cap_min_sol: float = 1_000.0
+    first_market_cap_max_sol: float = 2_000.0
+    first_pool_min_sol: float = 130.0
+    first_pool_max_sol: float = 200.0
+    exits: ExitRules = field(
+        default_factory=lambda: ExitRules(
+            stop_loss_pct=0.15, take_profit_pct=0.50, max_hold_seconds=1800.0
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -210,6 +284,7 @@ class StreamSettings:
 _NESTED: dict[str, type] = {
     "graduation": GraduationSettings,
     "lane": LaneSettings,
+    "instant": InstantLaneSettings,
     "execution": ExecutionSettings,
     "capture": CaptureSettings,
     "stream": StreamSettings,
@@ -222,6 +297,7 @@ class PumpSettings:
 
     graduation: GraduationSettings = field(default_factory=GraduationSettings)
     lane: LaneSettings = field(default_factory=LaneSettings)
+    instant: InstantLaneSettings = field(default_factory=InstantLaneSettings)
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
     capture: CaptureSettings = field(default_factory=CaptureSettings)
     stream: StreamSettings = field(default_factory=StreamSettings)
@@ -241,6 +317,38 @@ class PumpSettings:
             built["screening"] = ScreeningSettings.from_mapping(values["screening"])
         return cls(**built)
 
+    def __post_init__(self) -> None:
+        lanes = self.enabled_lanes()
+        if len(lanes) < 2:
+            return
+        first, second = (lane for _, lane in lanes)
+        if (first.signal_after_seconds, first.signal_window_seconds) != (
+            second.signal_after_seconds,
+            second.signal_window_seconds,
+        ):
+            raise ValueError(
+                "lane and instant must share signal_after_seconds and "
+                "signal_window_seconds (one signal reading per graduate)"
+            )
+        (a_low, a_high), (b_low, b_high) = (
+            first.market_cap_band(),
+            second.market_cap_band(),
+        )
+        if a_low <= b_high and b_low <= a_high:
+            raise ValueError(
+                "lane and instant first market cap bands overlap: each graduate "
+                "must belong to one lane"
+            )
+
+    def enabled_lanes(self) -> list[tuple[str, LaneSettings]]:
+        """``(settings key, lane)`` of every enabled lane, the instant lane first
+        (its band is checked before the standard one)."""
+        return [
+            (key, lane)
+            for key, lane in (("instant", self.instant), ("lane", self.lane))
+            if lane.enabled
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -250,6 +358,7 @@ __all__ = [
     "CaptureSettings",
     "ExecutionSettings",
     "GraduationSettings",
+    "InstantLaneSettings",
     "LaneSettings",
     "PumpSettings",
     "StreamSettings",

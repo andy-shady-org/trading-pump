@@ -10,13 +10,17 @@ from trading_core.strategy.pipeline import Candidate
 from trading_pump.config.settings import (
     ExecutionSettings,
     GraduationSettings,
+    InstantLaneSettings,
     LaneSettings,
 )
 from trading_pump.graduates import GraduateTracker
+from trading_pump.market import PoolReading
 from trading_pump.strategies.filters import TokenScreeningVerdict
 from trading_pump.strategies.pumpswap_momentum import (
     LANE,
+    LANE_INSTANT,
     GraduationScout,
+    Lanes,
     MomentumAnalyst,
     ScreeningFilter,
     StandardPoolFilter,
@@ -227,3 +231,119 @@ def test_candidate_metrics_without_readings() -> None:
         "migrated_at": 0.0,
         "age_seconds": 5.0,
     }
+
+
+# -- rc11: the instant lane (FEAT-78) and per-lane settings ----------------------
+INSTANT = InstantLaneSettings(enabled=True)
+
+
+def _instant_reading(mint: str, at: float, scale: float = 1.0) -> PoolReading:
+    """A bot-launched graduate's pool: ~145 SOL against ~121M tokens, a first
+    market cap near 1,200 SOL; ``scale`` multiplies the price."""
+    quote, base = 145_000_000_000, 120_800_000_000_000
+    root = scale**0.5
+    return PoolReading(
+        mint=mint, at=at, base_reserve=int(base / root), quote_reserve=int(quote * root)
+    )
+
+
+def _instant(tracker: GraduateTracker, mint: str = MINT, ratio: float = 1.05) -> None:
+    tracker.add(mint, now=0.0)
+    tracker.update(_instant_reading(mint, 2.0))
+    tracker.update(_instant_reading(mint, 61.0, scale=ratio))
+
+
+def test_lanes_classify_each_graduate_by_its_first_reading() -> None:
+    tracker = _tracker()
+    _instant(tracker, MINT)
+    _graduate(tracker, SAMPLE_PUMP_MINT)
+    lanes = Lanes(LaneSettings(), INSTANT)
+    instant, standard = tracker.get(MINT), tracker.get(SAMPLE_PUMP_MINT)
+    assert instant is not None and standard is not None
+    assert instant.first is not None and 1_150 < instant.first.market_cap_sol < 1_250
+    assert lanes.classify(instant) == LANE_INSTANT
+    assert lanes.classify(standard) == LANE
+    assert [name for name, _ in lanes.named()] == [LANE_INSTANT, LANE]
+    assert lanes.settings(LANE_INSTANT) is INSTANT
+    assert lanes.settings("anything else") is lanes.standard
+    # The instant lane off: everything is the standard lane's.
+    off = Lanes(LaneSettings(), InstantLaneSettings())
+    assert off.classify(instant) == LANE and off.instant is None
+    assert off.settings(LANE_INSTANT) is off.standard
+    # The standard lane off: only the instant band is proposed.
+    only = Lanes(LaneSettings(enabled=False), INSTANT)
+    assert only.classify(standard) is None and only.classify(instant) == LANE_INSTANT
+    assert [name for name, _ in only.named()] == [LANE_INSTANT]
+    assert Lanes.of(lanes) is lanes
+
+
+async def test_the_scout_tags_each_candidate_with_its_lane() -> None:
+    tracker = _tracker()
+    _instant(tracker, MINT)
+    _graduate(tracker, SAMPLE_PUMP_MINT)
+    scout = GraduationScout(
+        tracker, Lanes(LaneSettings(enabled=False), INSTANT), clock=Clock(62.0)
+    )
+    [candidate] = await scout.discover()
+    assert candidate.instrument_id == MINT and candidate.data["lane"] == LANE_INSTANT
+    assert scout.stats == {"proposed_pumpswap_instant": 1, "no_lane": 1}
+
+
+async def test_the_pool_filter_checks_the_candidates_own_lane_bands() -> None:
+    tracker = _tracker()
+    _instant(tracker, MINT)
+    screen = StandardPoolFilter(tracker, Lanes(LaneSettings(), INSTANT))
+    ok = await screen.screen(Candidate(MINT, data={"lane": LANE_INSTANT}))
+    assert ok.passed
+    # Judged as a standard graduation, the same pool is outside the band.
+    standard = await screen.screen(Candidate(MINT, data={"lane": LANE}))
+    assert "first market cap" in standard.reason
+    narrow = StandardPoolFilter(
+        tracker,
+        Lanes(
+            LaneSettings(), InstantLaneSettings(enabled=True, first_pool_max_sol=140)
+        ),
+    )
+    pool = await narrow.screen(Candidate(MINT, data={"lane": LANE_INSTANT}))
+    assert not pool.passed and "first pool 145.0 SOL outside" in pool.reason
+
+
+@pytest.mark.parametrize(
+    ("ratio", "signals"), [(0.99, False), (1.0, True), (1.09, True), (1.11, False)]
+)
+async def test_the_instant_lane_buys_inside_its_ratio_band_only(
+    ratio: float, signals: bool
+) -> None:
+    tracker = _tracker()
+    _instant(tracker, MINT, ratio=ratio)
+    analyst = MomentumAnalyst(
+        tracker, Lanes(LaneSettings(), INSTANT), ExecutionSettings(slippage_bps=500)
+    )
+    signal = await analyst.evaluate(Candidate(MINT, data={"lane": LANE_INSTANT}), {})
+    assert (signal is not None) is signals
+    if signal is not None:
+        assert signal.strategy == LANE_INSTANT
+        assert signal.reason.startswith("pumpswap_instant: ")
+
+
+async def test_a_lane_slippage_overrides_the_execution_setting() -> None:
+    tracker = _tracker()
+    _graduate(tracker, signal_scale=1.3)
+    lanes = Lanes(LaneSettings(slippage_bps=1_000))
+    analyst = MomentumAnalyst(tracker, lanes, ExecutionSettings(slippage_bps=500))
+    signal = await analyst.evaluate(Candidate(MINT), {})
+    graduate = tracker.get(MINT)
+    assert signal is not None and graduate is not None
+    assert graduate.signal_reading is not None
+    assert signal.limit_price == pytest.approx(graduate.signal_reading.price * 1.10)
+    assert signal.strategy == LANE
+
+
+def test_screening_applies_when_either_lane_asks_for_it() -> None:
+    enricher: Any = FakeEnricher(TokenScreeningVerdict(MINT, True, 0.0))
+    lanes = Lanes(
+        LaneSettings(enabled=False),
+        InstantLaneSettings(enabled=True, screen_entries=True),
+    )
+    pipeline = build_pipeline(_tracker(), lanes, ExecutionSettings(), enricher=enricher)
+    assert "anti_rug" in pipeline.describe()

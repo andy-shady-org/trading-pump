@@ -7,7 +7,7 @@ schedule is in [`TODO.md`](TODO.md). When a feature's code ships, move it to
 ships there and keep the missing parts here (AGENTS, Feature Docs Track
 Code).
 
-This list continues pumpfun-trading's (next free ID: **FEAT-78**). On
+This list continues pumpfun-trading's (next free ID: **FEAT-80**). On
 2026-10-28 it was split by owner: the venue proposals below stayed; the Web
 UI platform and the engine-level proposals (FEAT-10, FEAT-31 to FEAT-38,
 FEAT-41, FEAT-43 to FEAT-46, FEAT-48) moved to trading-core's
@@ -46,6 +46,8 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-47 | Replay analytics on Parquet + DuckDB | Suggested | P3 | backlog |
+
+Built without a proposal (2026-10-30, from the rc.9 / rc.10 replays, [`STRATEGY-PIVOT.md` §6.18](STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)): FEAT-78 (the `pumpswap_instant` lane) and FEAT-79 (per-lane exits), in [`FEATURES.md` §3.1–§3.2](../FEATURES.md#31-the-pumpswap_instant-lane-feat-78-paper).
 
 Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34, FEAT-35, FEAT-36, FEAT-37, FEAT-38, FEAT-41, FEAT-43, FEAT-44, FEAT-45, FEAT-46, FEAT-48. Shipped and moved to `FEATURES.md` earlier (pumpfun-trading, 2026-10-20): FEAT-49, FEAT-50, FEAT-42, FEAT-51, FEAT-52, FEAT-53, FEAT-58; of those only the parts listed in [`FEATURES.md` §10](../FEATURES.md#10-what-became-of-pumpfun-tradings-features) are still here.
 

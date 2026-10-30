@@ -456,3 +456,82 @@ def test_the_migration_feed_waits_out_a_quiet_spell_before_reconnecting() -> Non
 
     assert module.feed.stream_idle_timeout_seconds == 1800.0 > 1_081
     assert module.feed.stream_heartbeat_seconds == 20.0
+
+
+# -- rc11: per-lane exits (FEAT-79) and the instant lane (FEAT-78) ---------------
+def _held(
+    strategy: str | None, mark: float, *, opened_at: float = 0.0, stale: bool = False
+) -> Position:
+    return Position(
+        MINT,
+        size=10.0,
+        entry_price=1.0,
+        cost_basis=10.0,
+        opened_at=opened_at,
+        mark_price=mark,
+        price_stale=stale,
+        strategy=strategy,
+    )
+
+
+def test_a_lane_with_exits_sells_on_its_own_wider_take_profit() -> None:
+    module, *_ = _module(
+        lane={"exits": {"take_profit_pct": 0.5, "stop_loss_pct": 0.15}}
+    )
+    # +30%: under the lane's +50% target, so no exit (the engine's +20% would).
+    assert module.should_exit(_held("pumpswap_momentum", 1.3), None, 10.0) is None
+    decision = module.should_exit(_held("pumpswap_momentum", 1.5), None, 10.0)
+    assert decision is not None and decision.reason == "take_profit"
+    stop = module.should_exit(_held("pumpswap_momentum", 0.85), None, 10.0)
+    assert stop is not None and stop.reason == "stop_loss"
+    # A position of no known lane is left to the engine's exits.
+    assert module.should_exit(_held("manual", 2.0), None, 10.0) is None
+    assert module.should_exit(_held(None, 2.0), None, 10.0) is None
+
+
+def test_a_lane_without_exits_leaves_the_engine_exits_in_charge() -> None:
+    module, *_ = _module()
+    assert module.should_exit(_held("pumpswap_momentum", 5.0), None, 10.0) is None
+
+
+def test_the_instant_lane_exits_and_a_stale_price_only_times_out() -> None:
+    module, *_ = _module(instant={"enabled": True})
+    held = _held("pumpswap_instant", 1.6)
+    decision = module.should_exit(held, None, 10.0)
+    assert decision is not None and decision.reason == "take_profit"
+    stale = _held("pumpswap_instant", 0.1, stale=True)
+    assert module.should_exit(stale, None, 10.0) is None
+    late = module.should_exit(stale, None, 1_800.0)
+    assert late is not None and late.reason == "max_hold"
+
+
+def test_strategy_rows_and_provenance_name_both_lanes() -> None:
+    module, *_ = _module(
+        instant={
+            "enabled": True,
+            "exits": {
+                "take_profit_pct": 0.5,
+                "stop_loss_pct": 0.15,
+                "trailing_drop_pct": 0.2,
+                "max_hold_seconds": 1800,
+            },
+        },
+        lane={"exits": {"stop_loss_pct": 0.2}},
+    )
+    rows = dict(module.strategy_rows())
+    assert rows["Instant Lane"] == "pumpswap_instant"
+    assert rows["Instant Signal"] == ">= 1x and < 1.1x first price at 60s (+30s)"
+    assert rows["Instant pool"] == "first MC 1000-2000 SOL"
+    assert rows["Instant Exits"] == "TP +50% · SL -15% · trail 20% · max 30 min"
+    assert rows["Lane"] == "pumpswap_momentum" and rows["Exits"] == "SL -20%"
+    assert module.provenance()["instant"]["enabled"] is True
+    target, *_ = _module(lane={"exits": {"take_profit_pct": 0.5}})
+    assert dict(target.strategy_rows())["Exits"] == "TP +50%"
+
+
+def test_the_pipeline_runs_with_the_instant_lane_alone() -> None:
+    module, *_ = _module(instant={"enabled": True}, lane={"enabled": False})
+    assert module.pipeline() is not None
+    assert module.tracker.signal_after_seconds == 60.0
+    off, *_ = _module(lane={"enabled": False})
+    assert off.pipeline() is None and off.tracker.signal_after_seconds is None

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import pytest
+from trading_core.strategy.exits import ExitRules
 
 from trading_pump.config.settings import (
     GRADUATION_MARKET_CAP_SOL,
     CaptureSettings,
     ExecutionSettings,
     GraduationSettings,
+    InstantLaneSettings,
     LaneSettings,
     PumpSettings,
     StreamSettings,
@@ -96,6 +98,17 @@ def test_module_settings_must_be_an_object() -> None:
             {"first_market_cap_min_sol": 10, "first_market_cap_max_sol": 5},
             "first_market_cap_max_sol must be >= the minimum",
         ),
+        (LaneSettings, {"max_ratio": -1}, "max_ratio must not be negative"),
+        (LaneSettings, {"max_ratio": 1.1}, "max_ratio must be above min_ratio"),
+        (
+            LaneSettings,
+            {"first_pool_min_sol": 10, "first_pool_max_sol": 5},
+            "first_pool_max_sol must be >= the minimum",
+        ),
+        (LaneSettings, {"slippage_bps": 10_000}, "slippage_bps must be within"),
+        (LaneSettings, {"slippage_bps": -1}, "slippage_bps must be within"),
+        (LaneSettings, {"exits": 5}, "exits must be an object"),
+        (LaneSettings, {"exits": {"stop": 1}}, "Unknown exit rule keys: stop"),
         (ExecutionSettings, {"slippage_bps": -1}, "slippage_bps must not be negative"),
         (
             ExecutionSettings,
@@ -116,3 +129,64 @@ def test_each_section_validates_its_values(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         kind(**values)
+
+
+def test_lane_exits_are_read_from_an_object() -> None:
+    settings = PumpSettings.from_mapping(
+        {"lane": {"exits": {"take_profit_pct": 0.5, "stop_loss_pct": 0.15}}}
+    )
+    assert settings.lane.exits == ExitRules(take_profit_pct=0.5, stop_loss_pct=0.15)
+    assert LaneSettings().exits == ExitRules() and not LaneSettings().exits.any_enabled
+    assert settings.to_dict()["lane"]["exits"]["take_profit_pct"] == 0.5
+
+
+def test_the_instant_lane_is_off_with_the_replayed_rule_as_its_defaults() -> None:
+    instant = PumpSettings.from_mapping({}).instant
+    assert isinstance(instant, InstantLaneSettings) and instant.enabled is False
+    assert (instant.min_ratio, instant.max_ratio) == (1.0, 1.10)
+    assert instant.market_cap_band() == (1_000.0, 2_000.0)
+    assert (instant.first_pool_min_sol, instant.first_pool_max_sol) == (130.0, 200.0)
+    assert instant.exits == ExitRules(
+        stop_loss_pct=0.15, take_profit_pct=0.50, max_hold_seconds=1800.0
+    )
+    assert PumpSettings.from_mapping({}).enabled_lanes() == [
+        ("lane", PumpSettings().lane)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cap", "pool", "accepted"),
+    [
+        (1_200.0, 145.0, True),
+        (999.0, 145.0, False),
+        (2_001.0, 145.0, False),
+        (1_200.0, 129.0, False),
+        (1_200.0, 201.0, False),
+    ],
+)
+def test_a_lane_accepts_a_first_reading_inside_its_bands(
+    cap: float, pool: float, accepted: bool
+) -> None:
+    assert InstantLaneSettings().accepts_first(cap, pool) is accepted
+    # No pool ceiling when first_pool_max_sol is 0.
+    assert LaneSettings().accepts_first(410.0, 5_000.0)
+
+
+def test_both_lanes_enabled_must_share_the_signal_and_not_overlap() -> None:
+    both = PumpSettings.from_mapping({"instant": {"enabled": True}})
+    assert [key for key, _ in both.enabled_lanes()] == ["instant", "lane"]
+    with pytest.raises(ValueError, match="share signal_after_seconds"):
+        PumpSettings.from_mapping(
+            {"instant": {"enabled": True, "signal_after_seconds": 90}}
+        )
+    with pytest.raises(ValueError, match="bands overlap"):
+        PumpSettings.from_mapping(
+            {"instant": {"enabled": True, "first_market_cap_min_sol": 800}}
+        )
+    only = PumpSettings.from_mapping(
+        {
+            "instant": {"enabled": True, "signal_after_seconds": 90},
+            "lane": {"enabled": False},
+        }
+    )
+    assert [key for key, _ in only.enabled_lanes()] == ["instant"]

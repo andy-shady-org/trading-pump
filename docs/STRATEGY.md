@@ -1,8 +1,11 @@
 # Strategy
 
-trading-pump has one lane, `pumpswap_momentum` (FEAT-76): buy a coin that
-has just graduated from its Pump.fun bonding curve to PumpSwap and is still
-holding its price a minute later. It runs in paper only. This page says what
+trading-pump has two lanes over the same graduates, both in paper only.
+`pumpswap_momentum` (FEAT-76): buy a coin that has just graduated from its
+Pump.fun bonding curve to PumpSwap and is still holding its price a minute
+later. `pumpswap_instant` (FEAT-78, from 0.4.0-rc.4, §6): buy an *instant*
+graduation, a coin whose curve was bought out in one go, while it is
+holding, not running. This page says what
 the rule is, why it is this rule, how its prices and costs are computed, and
 how it is judged. The evidence is in
 [dev/STRATEGY-PIVOT.md §6](dev/STRATEGY-PIVOT.md#6-results-log); pumpbot's
@@ -51,7 +54,8 @@ For every graduate followed (FEAT-73,
    The order is limited to the signal price plus `slippage_bps` (5%).
 5. **One decision per graduate.** A coin that fails is never looked at again.
 6. **Exits** are the engine's `ExitRules`: take profit at +20%, stop at −15%,
-   out after 30 minutes at most. The engine marks the position with the
+   out after 30 minutes at most; or the lane's own (`lane.exits`, FEAT-79,
+   §6). The engine marks the position with the
    module's exit value (what selling into the pool would return after the
    fee) on every cycle.
 7. **Size** is the engine's `order_size` (0.02 SOL in the example), within
@@ -125,7 +129,9 @@ Rules pumpbot learnt that apply to any lane here:
 |---|---|
 | Rule found on rc.8 (16.6 h) | done, §6.13 |
 | Lane, paper executor, replay on the new stack | done; the replay reproduces the read-out (+1.1% per trade at 125 bps, −0.4% at 200 bps, NO-GO on count and interval), §6.14 |
-| 72 h paper run on fresh data, pre-registered verdict | next ([dev/TODO.md](dev/TODO.md#feat-76-pumpswap-post-graduation-momentum-lane)) |
+| 72 h paper run on fresh data, pre-registered verdict | rc.9 and rc.10 running ([dev/TODO.md](dev/TODO.md#feat-76-pumpswap-post-graduation-momentum-lane)) |
+| Instant lane (FEAT-78) and lane exits (FEAT-79), replayed through the engine on rc.9's 33 h | done: the instant lane passes every verdict check but the count (80 of 100), §6.18 |
+| rc.11: both lanes, 72 h paper, a verdict per lane | next |
 | PumpSwap buy builder checked against mainnet, one live round trip reconciled | only if the paper run passes |
 | Stage 0 / Stage 1 live gate | after that ([dev/RELEASE-GATE.md](dev/RELEASE-GATE.md)) |
 
@@ -133,3 +139,39 @@ Known risks (from the FEAT-76 proposal): the edge is small next to the
 noise and sensitive to latency; snipers trade the migration block, so live
 fills may be worse than paper's next reading. The fee tier was checked on
 real third-party trades (§6.16); our own first live fill still has to confirm it.
+
+## 6. The `pumpswap_instant` lane (FEAT-78)
+
+**Why.** rc.10 bought 7 of 310 graduates. About 60% of migrations never
+reach the standard lane: their first pool is not the 410.88 SOL market cap of
+a just-completed curve. One group among them is regular: coins whose first
+reading shows a market cap of **1,000–2,000 SOL with 130–200 SOL in the
+pool**, about 125 of 1,079 migrations in 33 h. Their launch bots buy the
+whole curve in a block or two and keep buying for the first minutes after the
+migration; chasing them at 1.1× or more loses, but the ones still **at
+1.00–1.10× their first price after 60 s** climb on (rc.9 / rc.10 replays,
+[dev/STRATEGY-PIVOT.md §6.18](dev/STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)).
+
+**The rule** (`instant`, [CONFIGURATION.md](CONFIGURATION.md#instant-the-pumpswap_instant-lane-feat-78)):
+
+1. The graduate's first reading is in the instant band (market cap
+   1,000–2,000 SOL, pool 130–200 SOL); it goes to this lane, never to the
+   standard one.
+2. At the same signal reading as the standard lane (60 s, 30 s window), buy
+   when the price is at least 1.00× and below 1.10× the first price.
+3. Exits are the lane's own: take profit **+50%**, stop −15%, out after 30
+   minutes. The wide take-profit is the point: the winners run, and +20%
+   would sell them early.
+
+**Risks.** The pattern is other people's launch bots and can change in a day;
+it is watched weekly while the lane runs. Stops fill well below −15%: a
+coin being dumped falls far in the 2 s between pool reads, −57% on average
+in the replay, so the lane lives on its win rate. The size is the
+engine's `order_size` (0.02 SOL), which bounds a rug. The buy path is
+paper only, like the standard lane's.
+
+**Wider take-profits on the standard lane.** `lane.exits` (FEAT-79) lets
+the standard lane run its own exits too. A lane's exits are decided by the
+module on the pool mark; the engine's `exits` must then be `{}`, or the
+engine's +20% fires first ([CONFIGURATION.md](CONFIGURATION.md#lane-the-pumpswap_momentum-lane-feat-76)).
+
