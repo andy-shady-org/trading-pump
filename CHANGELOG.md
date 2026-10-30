@@ -10,6 +10,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Removed
+- **Deprecation: `trading-pump record --market` (FEAT-74) moved to trading-scout** (2026-10-30), with `services/market_recorder.py` and its tests, so this module carries no cross-chain code. trading-scout runs it as the `scout` module under `trading-core run` and adds a sell check of every followed pool and per-launchpad read-outs. `--market` now prints where it went and exits 2; the `--market-*` options are gone. The slow-lane recorders (`--jupiter-quotes`, `--backfill-bars`) stay for now.
+
 ### Fixed
 - The migration feed's idle reconnect waits 1,800 s, not 300 s: a migration-only subscription is silent between graduations, and rc.9 reconnected about twice an hour for nothing (BUG-163). The 20 s pings still catch a dead socket.
 

@@ -77,7 +77,7 @@ A standard RPC call costs 1 credit (`getAccountInfo`, `getMultipleAccounts`, `ge
 
 (`rpc_pool_telemetry`: total requests less rate-limited ones; every request after 07:01 UTC failed.) That run read each held curve with its own call every second; since `fix/runtime-rpc-outage` all held curves are one call per second, so expect less. Two bots on the measured load use about 6.3 M credits a month: inside the Developer plan's 10 M, six times the Free plan's 1 M. Each bot should have its own key ([`RUNBOOK.md` §5.8](../archive/pumpfun-trading/dev/RUNBOOK.md#58-rpc-and-stream-outages-bug-145-to-bug-151)); check on the Helius dashboard whether a second key draws on the same credits.
 
-The cross-chain market recorder (FEAT-74) uses no Helius credits: GeckoTerminal and DexScreener are free and keyless (about 7 and at most 240 requests a minute). Its cost is disk: about 1 GB of rows a day before compression, about a tenth of that gzipped.
+The cross-chain market recorder (FEAT-74, in trading-scout since 2026-10-30) uses no Helius credits: GeckoTerminal and DexScreener are free and keyless (about 7 and at most 240 requests a minute). Its cost is disk: about 1 GB of rows a day before compression, about a tenth of that gzipped.
 
 Measured in rc.8 (37.2 h, Developer plan, no rate limits): the capture bot (launch buying plus graduation tracking and followed launches) made 305,836 requests (258,548 `getMultipleAccounts`), about 5.9 M per 30 days; the pilot (launch buying only) 205,986, about 4.0 M. Together about 9.9 M per 30 days: at the plan's 10 M, so a third bot or a faster graduation poll needs the next plan or a second Helius key on its own plan.
 

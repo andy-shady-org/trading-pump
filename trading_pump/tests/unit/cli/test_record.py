@@ -1,4 +1,5 @@
-"""Unit tests for ``cli/record.py``: the market, Jupiter-quote and bar recorders.
+"""Unit tests for ``cli/record.py``: the Jupiter-quote and bar recorders, and
+the moved market recorder's flag.
 
 pumpfun-recorder's stream harvester, synthetic scenarios and REST trade
 export were retired with the pumpbot replay engine; their tests went with
@@ -39,11 +40,19 @@ def test_record_cli_without_a_recorder_exits_2(output: Console) -> None:
 def test_record_main_parses_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[Any] = []
     monkeypatch.setattr(record_cli, "run_record_cli", seen.append)
-    monkeypatch.setattr("sys.argv", ["trading-pump-recorder", "--market"])
+    monkeypatch.setattr("sys.argv", ["trading-pump-recorder", "--jupiter-quotes"])
 
     record_cli.main()
 
-    assert seen[0].market is True
+    assert seen[0].jupiter_quotes is True
+
+
+def test_record_cli_market_says_where_it_moved(output: Console) -> None:
+    with pytest.raises(SystemExit) as exc:
+        run_record_cli(build_record_parser().parse_args(["--market"]))
+    assert exc.value.code == 2
+    text = " ".join(output.export_text().split())
+    assert "--market moved to trading-scout" in text
 
 
 def _klines(url: str, params: Any) -> Any:
@@ -343,95 +352,6 @@ def test_record_cli_bar_since_needs_binance_and_a_date(
     assert record_cli.utc_date("2024-01-01") == 1_704_067_200.0
 
 
-def test_record_cli_market_writes_its_own_file_and_resumes_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
-) -> None:
-    # FEAT-74: its own directory, its own rotation, a state file by default.
-    _SlowLaneHttp.instances.clear()
-    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
-    monkeypatch.chdir(tmp_path)
-    seen: dict[str, Any] = {}
-
-    async def fake_run(self: Any, *, stop: Any, duration_seconds: Any) -> Any:
-        seen.update(
-            chains=self.config.chains,
-            sample=self.config.sample,
-            lists=self.config.lists,
-            max_followed=self.config.max_followed,
-            state=self.state_path,
-            duration=duration_seconds,
-            policy=self.sink.policy,
-        )
-        self.sink.record_snapshot({"event": "market_stats", "venue": "market"})
-        self.stats.new_pools = 4
-        self.stats.ended = {"dead": 1}
-        return self.stats
-
-    monkeypatch.setattr(record_cli.market_recorder.MarketRecorder, "run", fake_run)
-    args = build_record_parser().parse_args(
-        [
-            "--market",
-            "--market-chains",
-            "solana,base",
-            "--market-sample",
-            "solana:pump-fun=0.05",
-            "--market-max-followed",
-            "500",
-            "--market-no-lists",
-            "--duration",
-            "5",
-            "--flush-interval",
-            "0.01",
-        ]
-    )
-    run_record_cli(args)
-
-    assert seen["chains"] == ("solana", "base")
-    assert seen["sample"] == {"solana:pump-fun": 0.05}
-    assert (seen["lists"], seen["max_followed"], seen["duration"]) == (False, 500, 5.0)
-    assert seen["state"] == Path(record_cli.DEFAULT_MARKET_STATE)
-    assert seen["policy"].max_age_days == 0 and seen["policy"].max_files == 300
-    path = tmp_path / record_cli.DEFAULT_MARKET_OUTPUT
-    assert [json.loads(line)["venue"] for line in path.read_text().splitlines()] == [
-        "market"
-    ]
-    assert not (tmp_path / "market_replay.jsonl").exists()
-    assert _SlowLaneHttp.instances[0].closed
-    text = output.export_text()
-    assert "Market Recorder (FEAT-74, record-only)" in text
-    assert "Chains: solana, base" in text and "Lists: off" in text
-    assert "Market Recorder Summary" in text and "dead 1" in text
-
-
-def test_record_cli_market_refuses_an_unknown_chain(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
-) -> None:
-    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
-    args = build_record_parser().parse_args(
-        ["--market", "--market-chains", "tron", "-o", str(tmp_path / "m.jsonl")]
-    )
-    with pytest.raises(SystemExit) as exc:
-        run_record_cli(args)
-    assert exc.value.code == 2
-    assert "unknown chain" in output.export_text()
-
-
-def test_record_cli_market_without_state_stops_on_interrupt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: Console
-) -> None:
-    monkeypatch.setattr(record_cli.slow_lane, "AiohttpJson", _SlowLaneHttp)
-
-    async def interrupted(*_: Any, **__: Any) -> Any:
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(record_cli.market_recorder.MarketRecorder, "run", interrupted)
-    args = build_record_parser().parse_args(
-        ["--market", "--market-state", "", "-o", str(tmp_path / "m.jsonl")]
-    )
-    run_record_cli(args)
-    assert "(no state file)" in output.export_text()
-
-
 def test_stop_on_signals_skips_loops_without_signal_support() -> None:
     import asyncio
 
@@ -456,10 +376,9 @@ def test_stop_on_signals_skips_loops_without_signal_support() -> None:
 @pytest.mark.parametrize(
     ("flag", "stop"),
     [
-        ("--market", KeyboardInterrupt()),
-        ("--market", SystemExit(0)),
         ("--jupiter-quotes", KeyboardInterrupt()),
         ("--jupiter-quotes", SystemExit(0)),
+        ("--jupiter-quotes", SystemExit(3)),
     ],
 )
 def test_record_cli_stops_quietly_when_the_loop_is_interrupted(
@@ -476,17 +395,3 @@ def test_record_cli_stops_quietly_when_the_loop_is_interrupted(
     monkeypatch.setattr(record_cli.asyncio, "run", interrupted)
     args = build_record_parser().parse_args([flag, "-o", str(tmp_path / "x.jsonl")])
     run_record_cli(args)
-
-
-def test_record_cli_market_passes_a_failing_exit_code_on(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def failed(coroutine: Any) -> None:
-        coroutine.close()
-        raise SystemExit(3)
-
-    monkeypatch.setattr(record_cli.asyncio, "run", failed)
-    args = build_record_parser().parse_args(["--market", "-o", str(tmp_path / "m")])
-    with pytest.raises(SystemExit) as exc:
-        run_record_cli(args)
-    assert exc.value.code == 3
