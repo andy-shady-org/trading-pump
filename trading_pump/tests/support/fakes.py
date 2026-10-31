@@ -312,6 +312,9 @@ class FakePoolSource:
         self.fee_error: Exception | None = None
         self.fee = SwapFee(fee_bps, "fake")
         self.reads: list[tuple[list[str], float]] = []
+        self.names: dict[str, Any] = {}
+        self.name_reads: list[list[str]] = []
+        self.name_error: Exception | None = None
 
     def set(self, mint: str, base: int, quote: int) -> None:
         self.rejections.pop(mint, None)
@@ -343,6 +346,12 @@ class FakePoolSource:
         if self.fee_error is not None:
             raise self.fee_error
         return self.fee
+
+    async def read_names(self, mints: Sequence[str]) -> Any:
+        self.name_reads.append(list(mints))
+        if self.name_error is not None:
+            raise self.name_error
+        return {mint: self.names[mint] for mint in mints if mint in self.names}
 
 
 @dataclass

@@ -176,6 +176,8 @@ class GraduationScout(Scout):
             found.append(
                 Candidate(
                     graduate.mint,
+                    # The token's name for people (display only), if read yet.
+                    name=graduate.name.label if graduate.name else None,
                     source=self.name,
                     data=candidate_metrics(graduate, now, lane),
                 )
@@ -289,6 +291,7 @@ class MomentumAnalyst(Analyst):
         )
         return Signal(
             candidate.instrument_id,
+            name=candidate.name,
             reason=f"{name}: {ratio:.2f}x the first pool price after "
             f"{graduate.signal_reading.at - graduate.migrated_at:.0f}s",
             limit_price=price * (1.0 + int(slippage) / 10_000.0),

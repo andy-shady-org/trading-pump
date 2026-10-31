@@ -347,3 +347,22 @@ def test_screening_applies_when_either_lane_asks_for_it() -> None:
     )
     pipeline = build_pipeline(_tracker(), lanes, ExecutionSettings(), enricher=enricher)
     assert "anti_rug" in pipeline.describe()
+
+
+async def test_the_token_name_travels_from_the_graduate_to_the_signal() -> None:
+    from trading_pump.names import TokenName
+
+    tracker = _tracker()
+    clock = Clock(62.0)
+    scout = GraduationScout(tracker, LaneSettings(), clock=clock)
+    _graduate(tracker, MINT)
+    _graduate(tracker, SAMPLE_PUMP_MINT)
+    tracker.named([MINT], {MINT: TokenName("Fomo Family", "FOMO")})
+
+    named, unnamed = await scout.discover()
+    assert (named.instrument_id, named.name) == (MINT, "Fomo Family (FOMO)")
+    assert unnamed.name is None  # not read yet: the address is shown
+
+    analyst = MomentumAnalyst(tracker, LaneSettings(), ExecutionSettings())
+    signal = await analyst.evaluate(named, {})
+    assert signal is not None and signal.name == "Fomo Family (FOMO)"

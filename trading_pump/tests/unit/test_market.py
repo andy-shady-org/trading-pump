@@ -392,3 +392,22 @@ async def test_unreadable_decimals_are_none(
     client.mints[SAMPLE_MINT] = mint_account
     info = await RpcPoolSource(client).inspect_new_pool("Pool", SAMPLE_MINT, limit=5)
     assert info.decimals is None
+
+
+async def test_rpc_source_reads_token_names_from_the_mints() -> None:
+    from trading_pump.names import TokenName
+
+    client = FakeClient()
+    client.mints[GRADUATE_MINT] = _account(
+        TOKEN_2022_PROGRAM_ID_STR, base64.b64decode(GRADUATE_MINT_B64)
+    )
+    client.mints[SAMPLE_MINT] = _mint(10**15)  # an SPL mint: no name in it
+    source = RpcPoolSource(client, timeout_seconds=7.0)
+
+    names = await source.read_names([GRADUATE_MINT, SAMPLE_MINT, SAMPLE_PUMP_MINT])
+
+    assert names == {GRADUATE_MINT: TokenName("the future is bright", "bright")}
+    assert client.reads == [[GRADUATE_MINT, SAMPLE_MINT, SAMPLE_PUMP_MINT]]
+    assert source.stats == {"name_reads": 1}
+    assert await source.read_names([]) == {}
+    assert len(client.reads) == 1

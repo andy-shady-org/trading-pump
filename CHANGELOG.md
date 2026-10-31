@@ -12,6 +12,9 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 
 ## [Unreleased]
 
+### Added
+- **Token names (FEAT-91):** each graduate's name and symbol are read from its Token-2022 mint (the TokenMetadata extension), in one batched `getMultipleAccounts` after a pool read, and carried in the lane's signal. The dashboard's Name column shows `Name (SYMBOL)` and the audit trail's `instrument_name` has it; events and the trade ledger show the name, and the Instrument column the shortened mint address (`instrument_label`, asked without the name by trading-core 0.3.1). Display only: no decision reads it; a failed read is counted (`name_errors`) and retried at most three times. Needs trading-core ≥ 0.3.1, which escapes module text on the dashboard (TC-8) and shows the id in the Instrument column (TC-9) ([FEATURES §2.0](docs/FEATURES.md#20-token-names-feat-91)).
+
 ### Docs
 - Release steps (2026-10-31): merge in the GitHub UI, sign and push the tag on the Mac (never in the UI: a tag GitHub creates is unsigned), then optionally publish the GitHub Release on the existing tag; a tag ruleset on `v*` blocks moving or deleting a release tag (`CONTRIBUTING.md`). README badges: code style, signed releases, stars, issues, forks, pull requests, contributors, licence (static: the repository is private). `SECURITY.md` gains "Signed releases".
 - Costs split by owner (2026-10-31): the development costs (Claude subscription and invoices, JetBrains licence and AI credits) moved, unedited, to trading-core's `docs/dev/COSTS.md`; `docs/dev/COSTS.md` here keeps this module's (Helius, PumpPortal) and points there. Features that cross repositories carry **Needs** / **Needed by** links.

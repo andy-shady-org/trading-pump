@@ -98,7 +98,7 @@ Not this repository's: the recorder and every open item it had moved to **tradin
 
 ## Module and tooling
 
-- [ ] **Trusted loading (trading-core 0.3.0, FEAT-89 / FEAT-90; this repository is under its Needed by):** the next release (`v0.4.0`) declares `trading-core>=0.3.0,<0.4` in `pyproject.toml` and is tagged with `git tag -s`; `runtime-pump` has a `modules.toml` (written 2026-10-31) and needs `allowed_signers` with the signing key (trading-core's `SECURITY.md`, "Signed releases"). Its `bin/install-release.sh` already refuses an unsigned tag (`ALLOW_UNSIGNED=1` for the old ones).
+- [ ] **Trusted loading (trading-core 0.3.0, FEAT-89 / FEAT-90; this repository is under its Needed by):** the next release (`v0.4.0`) declares `trading-core>=0.3.1,<0.4` in `pyproject.toml` (0.3.1 for TC-8, which FEAT-91 token names need) and is tagged with `git tag -s`; `runtime-pump` has a `modules.toml` (written 2026-10-31) and needs `allowed_signers` with the signing key (trading-core's `SECURITY.md`, "Signed releases"). Its `bin/install-release.sh` already refuses an unsigned tag (`ALLOW_UNSIGNED=1` for the old ones).
 - [ ] Status rows: per-endpoint RPC latency and breaker state, Jito bundle status once live (carried from "Terminal dashboard" in the archived roadmap; the dashboard itself is trading-core's)
 - [ ] A `trading-pump capture-summary` (or `trading-core-audit` filter) for graduation captures: graduates, standard share, readings per graduate, observation causes; today the read-out uses scripts and `jq`
 

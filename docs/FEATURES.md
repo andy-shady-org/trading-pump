@@ -59,6 +59,29 @@ row shape (`migration`, `observation_start`, `curve_poll` with
 `source: "graduation"`, `observation_end` with cause, polls and first / last /
 peak pool SOL), so the rc.8 read-out scripts work on it.
 
+### 2.0 Token names (FEAT-91)
+
+Each graduate's name and symbol are read from its mint account: Pump.fun
+coins are Token-2022 mints with the TokenMetadata extension, so one
+`getMultipleAccounts` call (batched, up to 100 mints) after a pool read
+covers every new graduate, with no third-party API. The name goes into the
+lane's signal, so a position shows it in the dashboard's **Name** column
+(`Fomo Family (FOMO)`; the symbol only when it adds something), in events
+and the trade ledger, and in the audit trail's `instrument_name`; the
+**Instrument** column shows the mint address, shortened (`7rAX7yVr…pump`;
+trading-core 0.3.1 asks `instrument_label` for it without the name, its
+TC-9). Names are display only: no lane, filter or fill
+reads them, a failed read is counted (`name_errors`) and retried at most
+three times, and a graduate without a name shows its address. The name is
+whatever the coin's creator typed, so control characters are removed and it
+is cut at 32 characters (symbols at 12); trading-core escapes it before
+display (its TC-8, fixed in 0.3.1). Replays have no names (a capture holds
+none). New pools that are not graduations (FEAT-80) are not named.
+
+- **Needs:** trading-core ≥ 0.3.1 (TC-8: module text escaped on the
+  dashboard; TC-9: the Instrument column shows the id); the next release
+  raises the floor.
+
 ### 2.1 New PumpSwap pools that are not graduations (FEAT-80, record-only)
 
 Off by default (`new_pools.enabled`). trading-scout's first run saw about

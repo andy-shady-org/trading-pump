@@ -65,6 +65,15 @@ def test_identity_and_quote_asset() -> None:
     assert not module.is_public_identifier("deadbeef" * 5)
 
 
+def test_events_show_the_name_and_the_instrument_column_the_mint() -> None:
+    module, *_ = _module()
+    mint = "7rAX7yVrshXZouWzge7xwiDVuY1btETuoYvGgNVApump"
+    assert module.instrument_label(mint) == "7rAX7yVr…pump"
+    assert module.instrument_label(mint, "crime (🐱)") == "crime (🐱)"  # events
+    assert module.instrument_label("ShortId") == "ShortId"
+    assert module.instrument_label("", None) == "-"
+
+
 def test_unknown_settings_are_refused() -> None:
     with pytest.raises(ValueError, match="Unknown module_settings keys: lanes"):
         PumpModule(source=FakePoolSource(), credentials=Credentials(), lanes={})

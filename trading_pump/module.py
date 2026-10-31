@@ -475,6 +475,15 @@ class PumpModule(TradingModule):
             return "-"
         return f"{price * 1e6:.4f} µSOL"
 
+    def instrument_label(self, instrument_id: str, name: str | None = None) -> str:
+        """The token's name for events and the trade ledger (FEAT-91), else
+        the mint address shortened (``7rAX7yVr…pump``), which is what the
+        positions table's Instrument column asks for (trading-core 0.3.1)."""
+        if name:
+            return name
+        text = str(instrument_id or "-")
+        return text if len(text) <= 14 else f"{text[:8]}…{text[-4:]}"
+
     def status_rows(self) -> Sequence[tuple[str, str]]:
         feed = self.feed
         stats = self.tracker.stats

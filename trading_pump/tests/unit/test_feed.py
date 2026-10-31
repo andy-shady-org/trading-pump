@@ -201,3 +201,29 @@ async def test_the_loop_polls_until_stopped_and_survives_a_bug(
 
     assert len(calls) == 3 and sleeps == [2.0, 2.0, 2.0]
     assert poller.stats["loop_errors"] == 1 and "bug" in caplog.text
+
+
+async def test_new_graduates_are_named_after_the_read_and_a_failure_is_forgotten(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from trading_pump.names import TokenName
+
+    source = FakePoolSource()
+    source.set(SAMPLE_MINT, GRADUATION_BASE_RESERVE, GRADUATION_QUOTE_RESERVE)
+    source.names[SAMPLE_MINT] = TokenName("Cat", "CAT")
+    poller, tracker, seen = _poller(source)
+    tracker.add(SAMPLE_MINT, now=0.0)
+    source.name_error = RuntimeError("down: https://rpc.example/?api-key=SECRET")
+
+    with caplog.at_level(logging.DEBUG, logger="trading_pump.feed"):
+        assert await poller.poll_once() == 1
+    assert poller.stats["name_errors"] == 1 and seen["failed"] == []
+    assert "SECRET" not in caplog.text
+
+    source.name_error = None
+    await poller.poll_once(20.0)
+    assert source.name_reads == [[SAMPLE_MINT], [SAMPLE_MINT]]
+    graduate = tracker.get(SAMPLE_MINT)
+    assert graduate is not None and graduate.name == TokenName("Cat", "CAT")
+    await poller.read_names()  # nothing left to name: no read
+    assert len(source.name_reads) == 2
