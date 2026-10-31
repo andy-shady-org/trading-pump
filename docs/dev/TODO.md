@@ -53,7 +53,7 @@ run on the new stack (`v0.4.0rc1`).
 ## Live gate for the PumpSwap lane
 
 Only after the FEAT-76 paper run passes. The staged gate is
-[`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate).
+[`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate).
 
 - [ ] PumpSwap buy builder (`sdk/pumpswap_execution.py`) checked against real mainnet transactions, as the sell was (BUG-123): account order, the fee recipients, the creator vault, Token-2022; pinned to real account bytes in tests
 - [ ] `LiveExecutor`: build, send (Jito or RPC), confirm, and return the `Fill` with costs from the transaction meta (`sdk/costs.py`); refuse wherever the paper fill refuses; never a fallback price

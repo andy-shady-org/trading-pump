@@ -43,7 +43,7 @@ Keep one status file per module and mode (trading-core refuses another's).
   compression (rc.8); `capture.max_files` × `max_bytes` must hold the whole
   run (BUG-157's lesson). The default, 100 × 50 MB, holds about two weeks.
 - For live (not built yet): a dedicated hot wallet holding only the stage's
-  capital ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate)).
+  capital ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate)).
 
 ## 3. A paper run that counts
 

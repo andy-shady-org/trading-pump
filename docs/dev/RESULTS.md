@@ -13,7 +13,7 @@ written is edited back (a correction is a new dated line).
   their time:
   - "Stage 0" means the paper stage, now **Stage 1**; "Stage 1" the live
     canary, now **Stage 2**; "Stage 2" scale-up, now **Stage 3**
-    ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate)).
+    ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate)).
   - "PASS", "FAIL", "adopted" and "not evidence" are older verdict words;
     new entries use **GO**, **NO-GO** or **INCONCLUSIVE**.
   - Runs are named by the release candidate of the time (rc.1 to rc.11).

@@ -7,7 +7,7 @@
 > results log that was §6 is now [`RESULTS.md`](RESULTS.md), and the lanes
 > that trade today are in [`docs/STRATEGY.md`](../STRATEGY.md). "Stage 0"
 > here means the paper stage, now Stage 1
-> ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-live-capital-gate)).
+> ([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate)).
 
 Branch: `strategy-pivot-momentum`. Sprints: **Phase 4c, 24E–24I** in [`TODO.md`](../archive/pumpfun-trading/dev/TODO.md#phase-4c-strategy-pivot-income-track-ahead-of-phase-5). Features: FEAT-51, FEAT-52, FEAT-53 (implemented, [`FEATURES.md` §33–35](../archive/pumpfun-trading/FEATURES.md)) and FEAT-54 ([`PROPOSED-FEATURES.md`](../archive/pumpfun-trading/dev/PROPOSED-FEATURES.md#2-terminal-income-track-income)).
 

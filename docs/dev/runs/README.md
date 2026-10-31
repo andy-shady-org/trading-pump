@@ -61,7 +61,7 @@ The format is trading-core's `docs/dev/DOCUMENTATION.md` §8.2.
 The two pumpbot pilot logs moved here from `releases/` on 2026-10-31,
 unedited. They were written as running checkpoint logs, not in this format,
 and their "Stage 0" is the paper stage, now Stage 1
-([`RELEASE-GATE.md` §3](../RELEASE-GATE.md#3-live-capital-gate)).
+([`RELEASE-GATE.md` §3](../RELEASE-GATE.md#3-capital-gate)).
 
 The runs before rc.11 on the new stack (rc.9 on `v0.4.0rc2`, rc.10 on
 `v0.4.0rc3`) have no file here: their pre-registration is in their
