@@ -5,7 +5,7 @@ pumpfun-trading listed (§10). Only shipped code is listed here; unbuilt work
 is in [dev/PROPOSED-FEATURES.md](dev/PROPOSED-FEATURES.md) and open items in
 [dev/TODO.md](dev/TODO.md). "Shipped" means the code works and is tested, not
 that a lane makes money: results are in
-[dev/STRATEGY-PIVOT.md §6](dev/STRATEGY-PIVOT.md#6-results-log).
+[dev/RESULTS.md §6](dev/RESULTS.md#6-results-log).
 
 ## 1. A trading-core module (`pumpfun`)
 
@@ -289,7 +289,7 @@ reason is in [dev/TODO.md, Not ported](dev/TODO.md#not-ported).
 | 23 | Log retention and compression (FEAT-22) | Core (`RotatedFileSink`), used by the capture |
 | 24 | Dynamic slippage and priority fees (FEAT-23) | Not ported (fixed `slippage_bps` and priority fee) |
 | 25 | Capital rotation and displacement (FEAT-24) | Not ported |
-| 26 | Pre-graduation harvester (FEAT-25) | Not ported (NO-GO, STRATEGY-PIVOT §6.11) |
+| 26 | Pre-graduation harvester (FEAT-25) | Not ported (NO-GO, RESULTS §6.11) |
 | 27 | Funding cluster graph and Sybil detector (FEAT-26) | Here, inside screening (§6) |
 | 28 | Hyperparameter optimizer (FEAT-27) | Not ported |
 | 29 | Jito back-running and arbitrage (FEAT-28) | Not ported |

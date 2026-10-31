@@ -8,7 +8,7 @@ graduation, a coin whose curve was bought out in one go, while it is
 holding, not running. This page says what
 the rule is, why it is this rule, how its prices and costs are computed, and
 how it is judged. The evidence is in
-[dev/STRATEGY-PIVOT.md §6](dev/STRATEGY-PIVOT.md#6-results-log); pumpbot's
+[dev/RESULTS.md §6](dev/RESULTS.md#6-results-log); pumpbot's
 strategy manual (launch sniping, momentum, pre-graduation, tiers, Kelly
 sizing) is [archived](archive/pumpfun-trading/STRATEGY.md).
 
@@ -82,7 +82,7 @@ party's quote:
   the mint's real supply (as the program prices it; burns take it below 1B
   tokens, BUG-162), else the AMM `global_config` total, never below
   `fee_bps_floor`. Checked against 94 real trades of fresh graduates
-  ([dev/STRATEGY-PIVOT.md §6.16](dev/STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)):
+  ([dev/RESULTS.md §6.16](dev/RESULTS.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)):
   125 bps a side below 420 SOL, 120 bps from there, and the pool maths
   reproduces their fills. Replays use a fixed fee (`--fee-bps`, 125 by
   default); 200 is a stress, not a plausible fee.
@@ -150,7 +150,7 @@ pool**, about 125 of 1,079 migrations in 33 h. Their launch bots buy the
 whole curve in a block or two and keep buying for the first minutes after the
 migration; chasing them at 1.1× or more loses, but the ones still **at
 1.00–1.10× their first price after 60 s** climb on (rc.9 / rc.10 replays,
-[dev/STRATEGY-PIVOT.md §6.18](dev/STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)).
+[dev/RESULTS.md §6.18](dev/RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)).
 
 **The rule** (`instant`, [CONFIGURATION.md](CONFIGURATION.md#instant-the-pumpswap_instant-lane-feat-78)):
 

@@ -54,7 +54,7 @@ through a fresh trading-core engine with the module, on a simulated clock:
   reads the pool;
 * the swap fee is fixed at `--fee-bps` a side (125 by default), because a
   capture does not record the fee tier at each moment. Run it at 200 as well:
-  at 0.02 SOL a trade the result moves with the fee (STRATEGY-PIVOT §6.14).
+  at 0.02 SOL a trade the result moves with the fee (RESULTS §6.14).
 
 The engine and module settings come from `--config`, the same file a paper
 run uses, with three changes: mode is paper, every file goes into `--out`

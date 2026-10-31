@@ -2,7 +2,7 @@
 
 Open work only. Finished items move to [`DONE.md`](DONE.md) under their
 heading, with their CHANGELOG release; evidence and results go to
-[`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log). Check a
+[`RESULTS.md` §6](RESULTS.md#6-results-log). Check a
 completion against the code before ticking or moving it.
 
 This list continues pumpfun-trading's. On 2026-10-28 its TODO was split by
@@ -20,13 +20,13 @@ where to find it. The list as it stood is archived unchanged:
 | **Now** | Close the migration: CI on 3.11–3.14, a paper run on the new stack, then retire pumpfun-trading | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
 | **Now** | FEAT-76 / FEAT-78: rc.11, both lanes with wider take-profits, 72 h paper with a pre-registered verdict per lane, ends 2026-11-02 ~19:00 UTC; rc.11-tp20 (TP +20%) beside it; pools-1 (FEAT-80, record-only) | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane) |
 | **Then** | Only if the lane passes: the PumpSwap buy builder, reconcile, one live round trip, Stage 0 / Stage 1 | [Live gate](#live-gate-for-the-pumpswap-lane) |
-| **Later** | Research read-outs (graduation paths, cross-chain); a second venue only with evidence (the slow lane was NO-GO, [STRATEGY-PIVOT §6.15](STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
+| **Later** | Research read-outs (graduation paths, cross-chain); a second venue only with evidence (the slow lane was NO-GO, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
 
 ## Migration gate (before pumpfun-trading is deleted)
 
 Done: the history import, the module and lane, the docs split, the replay
 of the rc.8 graduation rows through the new stack
-([STRATEGY-PIVOT §6.14](STRATEGY-PIVOT.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28)),
+([RESULTS §6.14](RESULTS.md#614-feat-76-on-the-new-stack-the-rc8-graduations-replayed-through-trading-core-2026-10-28)),
 CI green on 3.11–3.14, and the rc.9 tags installed in the runtime folder
 ([DONE.md](DONE.md#migration-onto-trading-core-2026-10-28-changelogmd-unreleased--040)).
 
@@ -39,12 +39,12 @@ CI green on 3.11–3.14, and the rc.9 tags installed in the runtime folder
 Done: the paper lane, the PumpSwap paper executor priced from the pool and
 the fee config, the replay, the pre-registered verdict file
 (`configs/verdict_rules.json`) ([FEATURES.md §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper)), and the fee check against real swaps
-([STRATEGY-PIVOT §6.16](STRATEGY-PIVOT.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)).
+([RESULTS §6.16](RESULTS.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29)).
 pumpfun-trading's planned rc.9 build (BUG-157 fixed) is superseded: the
 capture here is pruned by its own policy only, and "rc.9" now names the first
 run on the new stack (`v0.4.0rc1`).
 
-- [ ] **rc.11** (`v0.4.0rc4` on trading-core `v0.2.2`): a 72 h paper run of both lanes side by side with rc.10, from `runtime-pump/configs/rc11-paper.json`: the standard lane on rc.10's entry (ratio 1.2, 5% slippage) with its own exits +50% / −15% / 30 min (FEAT-79), an A/B against rc.10's +20% on the same graduates, and the instant lane (FEAT-78) with its defaults and 10% slippage; engine `exits` `{}`; breaker `drawdown_reference_mode` `"baseline"`. Pre-registered per lane (`verdict-rc11-*.json`, `"strategy"` set): record each rule's sha256 before the start; judge each lane alone; pass as for rc.9. Replay evidence: [STRATEGY-PIVOT §6.18](STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)
+- [ ] **rc.11** (`v0.4.0rc4` on trading-core `v0.2.2`): a 72 h paper run of both lanes side by side with rc.10, from `runtime-pump/configs/rc11-paper.json`: the standard lane on rc.10's entry (ratio 1.2, 5% slippage) with its own exits +50% / −15% / 30 min (FEAT-79), an A/B against rc.10's +20% on the same graduates, and the instant lane (FEAT-78) with its defaults and 10% slippage; engine `exits` `{}`; breaker `drawdown_reference_mode` `"baseline"`. Pre-registered per lane (`verdict-rc11-*.json`, `"strategy"` set): record each rule's sha256 before the start; judge each lane alone; pass as for rc.9. Replay evidence: [RESULTS §6.18](RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)
 - [ ] Weekly while rc.11 runs: the instant family's share of migrations and its 60 s ratio distribution (the pattern is other people's launch bots and can change), and a sell check of the instant pools (trading-scout)
 - [ ] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges
 - [ ] Optional, if the RPC budget allows: a 1 s fast phase for the first 3 minutes (`fast_poll_interval_seconds`), since the result moved with one reading of delay (§6.13)
@@ -69,7 +69,7 @@ Only after the FEAT-76 paper run passes. The staged gate is
 ### Graduation tracking (FEAT-73)
 Built and ported ([FEATURES.md §2](../FEATURES.md#2-graduation-tracking-feat-73)). Carried over:
 - [ ] Run a 24 h capture (`configs/capture.example.json`); check the followed count stays below `max_mints` and the RPC credit use matches [`COSTS.md` §3.1](COSTS.md#31-helius-rpc-credits)
-- [ ] Read-out: per graduate the path over 4 h relative to the graduation price (410.88 SOL), split into coins complete at creation, curve filled within 5 minutes and slower; how often a crash below 0.5× comes back above 1× / 2×; and whether any entry rule (after the first crash, after a new high, by pool SOL) beats PumpSwap costs in both halves of the run and the next. Record it in `STRATEGY-PIVOT.md` §6
+- [ ] Read-out: per graduate the path over 4 h relative to the graduation price (410.88 SOL), split into coins complete at creation, curve filled within 5 minutes and slower; how often a crash below 0.5× comes back above 1× / 2×; and whether any entry rule (after the first crash, after a new high, by pool SOL) beats PumpSwap costs in both halves of the run and the next. Record it in `RESULTS.md` §6
 - [ ] PumpSwap buys on any rule other than FEAT-76 only if that read-out finds one
 - The read-out of the curve *before* graduation (launch sample joined to graduation rows) needs the launch sample, which was not ported; see [Not ported](#not-ported)
 

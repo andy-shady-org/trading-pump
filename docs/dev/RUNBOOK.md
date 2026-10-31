@@ -77,7 +77,7 @@ Keep one status file per module and mode (trading-core refuses another's).
    The replay should land on the same positions within the fee difference;
    a gap means the replay or the run is wrong, and it is a bug until
    explained. Record the verdict, both hashes and the provenance in the
-   release record and the result in [`STRATEGY-PIVOT.md` §6](STRATEGY-PIVOT.md#6-results-log).
+   release record and the result in [`RESULTS.md` §6](RESULTS.md#6-results-log).
    Leave out of the verdict any window with no healthy RPC endpoint (§4).
 
 ## 4. When something goes wrong

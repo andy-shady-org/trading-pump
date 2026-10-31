@@ -962,7 +962,7 @@ Found while writing behaviour tests to bring coverage back to 95%. None is on th
 
 ## 11. Stage 0 Pilot on v0.2.0, Checkpoint 1 (2026-10-17)
 
-Found in the first 14 h of the official Stage 0 paper pilot. Evidence and figures: [`releases/v0.2.0-stage0.md`](releases/v0.2.0-stage0.md).
+Found in the first 14 h of the official Stage 0 paper pilot. Evidence and figures: [`releases/v0.2.0-stage0.md`](runs/v0.2.0-stage0.md).
 
 ### BUG-104: Phantom Paper Profit From Mismatched Entry and Exit Prices on Non-Standard Curves [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`_handle_new_token_event` → `_buy_token(mint, current_market_cap)` uses the stream's `marketCapSol` or the 27.96 SOL default; `_refresh_active_positions_market_caps` and `_handle_trade_update` then price the position from `get_bonding_curve_state`), `pumpfun_trading/sdk/execution.py` (`decode_bonding_curve_data`)
@@ -1006,7 +1006,7 @@ Found in the first 14 h of the official Stage 0 paper pilot. Evidence and figure
 
 ## 12. Entry Hardening Before the Next Stage 0 (2026-10-17)
 
-Found in the v0.2.0 Stage 0 checkpoint-1 data ([`releases/v0.2.0-stage0.md`](releases/v0.2.0-stage0.md)). Fixed on `fix/stage0-entry-hardening` together with two paper-fidelity changes (latency penalty, screening data in captures) listed in `TODO.md` Sprint 24A.
+Found in the v0.2.0 Stage 0 checkpoint-1 data ([`releases/v0.2.0-stage0.md`](runs/v0.2.0-stage0.md)). Fixed on `fix/stage0-entry-hardening` together with two paper-fidelity changes (latency penalty, screening data in captures) listed in `TODO.md` Sprint 24A.
 
 ### BUG-108: Bot Buys Tokens That Are Not Pump.fun Launches [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`_handle_new_token_event`), `pumpfun_trading/execution/executor.py` (`execute_buy`, paper path), `pumpfun_trading/sdk/execution.py` (`get_bonding_curve_state`, `_fetch_trade_curve_state`)
@@ -1039,7 +1039,7 @@ Found while wiring the daily summary and degradation alerts. Fixed on `sprint-24
 
 ## 14. Stage 0 Pilot on v0.2.1 (2026-10-17)
 
-Found in the first minutes of the v0.2.1 Stage 0 run ([`releases/v0.2.1-stage0.md`](releases/v0.2.1-stage0.md)). Left open during the run, because a fix would restart the 72 h clock.
+Found in the first minutes of the v0.2.1 Stage 0 run ([`releases/v0.2.1-stage0.md`](runs/v0.2.1-stage0.md)). Left open during the run, because a fix would restart the 72 h clock.
 
 ### BUG-111: A Sell During an In-Flight Buy Breaks the Lifecycle State [RESOLVED]
 * **Location:** `pumpfun_trading/bot/lifecycle.py` (`VALID_STATE_TRANSITIONS`, `settled_state`), `pumpfun_trading/bot/run.py` (sell and buy state transitions)
@@ -1052,7 +1052,7 @@ Found in the first minutes of the v0.2.1 Stage 0 run ([`releases/v0.2.1-stage0.m
 
 ## 15. Stage 0 Close-out on v0.2.1 (2026-10-17)
 
-Found when the v0.2.1 Stage 0 run was closed after its circuit breaker tripped at T + 60 min ([`releases/v0.2.1-stage0.md`](releases/v0.2.1-stage0.md#close-out--2026-10-17-1314-t--1-h-33-min)).
+Found when the v0.2.1 Stage 0 run was closed after its circuit breaker tripped at T + 60 min ([`releases/v0.2.1-stage0.md`](runs/v0.2.1-stage0.md#close-out--2026-10-17-1314-t--1-h-33-min)).
 
 ### BUG-112: Token-Trade Subscription Silently Refused [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`_subscribe_to_token_trades`, `_handle_message`, `_run_health_loop`), `pumpfun_trading/bot/event_router.py`
@@ -1149,7 +1149,7 @@ Found while analysing the first 12.7 h of the v0.3.0-rc.1 capture (`runtime/capt
 * **Description:** the paper executor waits `paper_entry_delay_seconds` (1.5 s in `capture.json` / `canary.json`), re-reads the curve and cuts the fill by `paper_entry_slippage_bps` (100), because a live buy lands after screening and confirmation. Replay bought at the price of the snapshot that confirmed the signal and could exit on the very next snapshot.
 * **Impact:** medium: `--compare-audit` showed replay 0.016 SOL better than paper over 62 positions (allowed ±0.010), and every confirmed-lane replay result was optimistic: the v0.2.3 capture went from +0.139 to +0.062 SOL with the fix, and the 8-buyer variant that looked positive on the new capture (+0.021) is −0.003. No trading decision used replay directly, but the go/no-go does.
 * **Resolution:** entries that are not mirrored from recorded fills are booked at the signal and filled at the last recorded price at signal + delay; until then the position takes no exits. A penalty keeps `1 − bps/10,000` of the tokens and raises the entry market cap to match, replacing the engine's own entry slippage; without the two settings nothing changes. Buys still landing at the end of the data fill at the last price. `entry_metrics` gain `fill_market_cap_sol` and `fill_drift_pct`.
-* **Verification:** `regression("BUG-121")` tests in `tests/unit/engines/test_replay.py`: a dip during the delay does not stop out the unfilled position and the fill uses the price at signal + delay, a penalty without a delay, a fill at the end of the data, and no change without the settings. On the capture the parity gap fell from +0.023 to +0.014 SOL; the rest is curve reads that see trades the capture's trade stream does not, plus unmatched positions ([`STRATEGY-PIVOT.md` §6.3](STRATEGY-PIVOT.md#63-v030-rc1-capture-no-go-2026-10-19)).
+* **Verification:** `regression("BUG-121")` tests in `tests/unit/engines/test_replay.py`: a dip during the delay does not stop out the unfilled position and the fill uses the price at signal + delay, a penalty without a delay, a fill at the end of the data, and no change without the settings. On the capture the parity gap fell from +0.023 to +0.014 SOL; the rest is curve reads that see trades the capture's trade stream does not, plus unmatched positions ([`STRATEGY-PIVOT.md` §6.3](RESULTS.md#63-v030-rc1-capture-no-go-2026-10-19)).
 
 ### BUG-122: Stream Reconnects Are Not Counted [RESOLVED]
 * **Location:** `pumpfun_trading/bot/run.py` (`_record_connection_loss`, the `WebSocketStreamHost` hooks `on_stream_exception` / `on_stream_ended`)
