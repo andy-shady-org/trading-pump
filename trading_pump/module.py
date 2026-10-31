@@ -476,8 +476,11 @@ class PumpModule(TradingModule):
         return f"{price * 1e6:.4f} µSOL"
 
     def instrument_label(self, instrument_id: str, name: str | None = None) -> str:
-        """The mint address, shortened (``7rAX7yVr…pump``): the dashboard's
-        Name column already shows the token's name."""
+        """The token's name for events and the trade ledger (FEAT-91), else
+        the mint address shortened (``7rAX7yVr…pump``), which is what the
+        positions table's Instrument column asks for (trading-core 0.3.1)."""
+        if name:
+            return name
         text = str(instrument_id or "-")
         return text if len(text) <= 14 else f"{text[:8]}…{text[-4:]}"
 
