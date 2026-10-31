@@ -1,4 +1,4 @@
-# Proposed Features
+# Proposed features
 
 Unbuilt features for trading-pump only: candidate proposals and the venue
 backlog. Shipped features are in [`docs/FEATURES.md`](../FEATURES.md); the
@@ -7,7 +7,20 @@ schedule is in [`TODO.md`](TODO.md). When a feature's code ships, move it to
 ships there and keep the missing parts here (AGENTS, Feature Docs Track
 Code).
 
-This list continues pumpfun-trading's (next free ID: **FEAT-82**; FEAT-81, per-strategy limits and the Strategies panel, was built in trading-core 0.2.3). On
+**IDs.** `FEAT-<n>` is one series across trading-core and every module.
+The next free number is kept in trading-core's
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-89 on 2026-10-31): take it there and
+bump it in the same pull request. FEAT-81, per-strategy limits and the
+Strategies panel, was built in trading-core 0.2.3. trading-scout's own
+FEAT-1, the cross-chain market recorder that moved there from here, is
+FEAT-74; its FEAT-2 to FEAT-8 are FEAT-82 to FEAT-88.
+
+**Stage numbers.** Entries written before 2026-10-31 number the capital
+stages from paper: their "Stage 0" is Stage 1 (paper) today, their
+"Stage 1" is Stage 2 (live canary)
+([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate)).
+
+This list continues pumpfun-trading's. On
 2026-10-28 it was split by owner: the venue proposals below stayed; the Web
 UI platform and the engine-level proposals (FEAT-10, FEAT-31 to FEAT-38,
 FEAT-41, FEAT-43 to FEAT-46, FEAT-48) moved to trading-core's
@@ -26,7 +39,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 
 ---
 
-## 1. Catalogue Summary
+## 1. Catalogue summary
 
 | ID | Feature | Class | Priority | Sprint |
 |---|---|---|---|---|
@@ -53,7 +66,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 
 ---
 
-## 2. Venue Income Track (Income)
+## 2. Venue income track (Income)
 
 ### FEAT-76: PumpSwap Post-Graduation Momentum Lane
 * **Status (2026-10-28):** phase 2 (paper lane, PumpSwap paper executor priced from the pool and the fee config, replay) is **built** in trading-pump 0.4.0 and listed in [`FEATURES.md` §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper); the replay of the rc.8 rows reproduces the read-out (§6.14). Phase 1's 72 h graduation-only capture is replaced by a 72 h paper run, which records the same rows. **Not built:** phase 3 (the live buy, reconcile, the live gate). The proposal below is as it was written on 2026-10-28.
@@ -225,7 +238,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 
 ---
 
-## 3. Venue Enhancements (Suggested and conditional)
+## 3. Venue enhancements (Suggested and conditional)
 
 ### FEAT-39: Production Yellowstone gRPC Transport
 * **Class / Priority:** Income (conditional) · P1 — schedule in Sprint 24D if canary data shows entries lost to latency (fills well above the signal price, or tokens already pumped by the time the buy lands); otherwise after Sprint 28

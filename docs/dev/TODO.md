@@ -2,8 +2,12 @@
 
 Open work only. Finished items move to [`DONE.md`](DONE.md) under their
 heading, with their CHANGELOG release; evidence and results go to
-[`RESULTS.md` §6](RESULTS.md#6-results-log). Check a
-completion against the code before ticking or moving it.
+[`RESULTS.md`](RESULTS.md#6-results-log), and a counted run's
+pre-registration and read-out to its record in [`runs/`](runs/README.md).
+Check a completion against the code before ticking or moving it. Capital
+stages are numbered as in [`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate)
+(1 paper, 2 live canary, 3 scale-up); items carried from pumpfun-trading say
+which old stage they meant.
 
 This list continues pumpfun-trading's. On 2026-10-28 its TODO was split by
 owner: venue work stayed here, engine and platform work (Phase 5 and 6, the
@@ -17,10 +21,11 @@ where to find it. The list as it stood is archived unchanged:
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | Close the migration: CI on 3.11–3.14, a paper run on the new stack, then retire pumpfun-trading | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
-| **Now** | FEAT-76 / FEAT-78: rc.11, both lanes with wider take-profits, 72 h paper with a pre-registered verdict per lane, ends 2026-11-02 ~19:00 UTC; rc.11-tp20 (TP +20%) beside it; pools-1 (FEAT-80, record-only) | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane) |
-| **Then** | Only if the lane passes: the PumpSwap buy builder, reconcile, one live round trip, Stage 0 / Stage 1 | [Live gate](#live-gate-for-the-pumpswap-lane) |
-| **Later** | Research read-outs (graduation paths, cross-chain); a second venue only with evidence (the slow lane was NO-GO, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
+| **Now** | rc.11: both lanes, 72 h paper, a pre-registered verdict per lane; ends 2026-11-02 18:58:56 UTC. Beside it rc.11-tp20 (TP +20%, exploratory) and pools-1 (FEAT-80, record-only). At the end: each lane's verdict and read-out in [`runs/rc11.md`](runs/rc11.md) and `RESULTS.md` | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane), [`runs/`](runs/README.md) |
+| **Next** | `pump-12`, the next counted run: the instant lane's take-profit (a lower fixed target or the adaptive one) chosen on the full rc.11 and rc.11-tp20 data, per-lane pauses on (trading-core 0.2.3, FEAT-81), pre-registered in `runs/pump-12.md`; release `v0.4.0` first if it needs code | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane) |
+| **Next** | Close the migration: a capture that replays to its run's positions, the runtime data moved, pumpfun-trading archived | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
+| **Then** | Only for a lane whose Stage 1 verdict is GO: the PumpSwap buy builder, `LiveExecutor`, reconcile, one live round trip, then Stage 2 (live canary) | [Live gate](#live-gate-for-the-pumpswap-lane) |
+| **Later** | Research read-outs (pools-1's new pools, graduation paths); a second migration source (FEAT-77); a second venue only with evidence (the slow lane was NO-GO, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
 
 ## Migration gate (before pumpfun-trading is deleted)
 
@@ -44,25 +49,28 @@ pumpfun-trading's planned rc.9 build (BUG-157 fixed) is superseded: the
 capture here is pruned by its own policy only, and "rc.9" now names the first
 run on the new stack (`v0.4.0rc1`).
 
-- [ ] **rc.11** (`v0.4.0rc4` on trading-core `v0.2.2`): a 72 h paper run of both lanes side by side with rc.10, from `runtime-pump/configs/rc11-paper.json`: the standard lane on rc.10's entry (ratio 1.2, 5% slippage) with its own exits +50% / −15% / 30 min (FEAT-79), an A/B against rc.10's +20% on the same graduates, and the instant lane (FEAT-78) with its defaults and 10% slippage; engine `exits` `{}`; breaker `drawdown_reference_mode` `"baseline"`. Pre-registered per lane (`verdict-rc11-*.json`, `"strategy"` set): record each rule's sha256 before the start; judge each lane alone; pass as for rc.9. Replay evidence: [RESULTS §6.18](RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)
+- [ ] **rc.11** (`v0.4.0rc4` on trading-core `v0.2.2`, started 2026-10-30 18:58:56 UTC): a 72 h paper run of both lanes from `runtime-pump/configs/rc11-paper.json`: the standard lane on rc.10's entry (ratio 1.2, 5% slippage) with its own exits +50% / −15% / 30 min (FEAT-79), and the instant lane (FEAT-78) with its defaults and 10% slippage; engine `exits` `{}`; breaker `drawdown_reference_mode` `"baseline"`. Pre-registered per lane (`verdict-rc11-*.json`, `"strategy"` set; hashes in [`runs/rc11.md`](runs/rc11.md)); judge each lane alone and add the read-out there. Replay evidence: [RESULTS §6.18](RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)
+- [ ] **rc.11-tp20** (exploratory, not counted, started 2026-10-31 06:00:15 UTC): read it against rc.11 over the same hours, per lane ([`runs/rc11-tp20.md`](runs/rc11-tp20.md))
+- [ ] **pump-12**: decide the instant lane's take-profit between a lower fixed target and the adaptive one (lower quartile of recent instant graduates' peaks), on the full rc.11 data ([RESULTS §6.19](RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31)); a changed rule, so replay it first (Stage 0); per-lane pauses on (`strategies` in the engine settings, trading-core 0.2.3); write `runs/pump-12.md` before the start
 - [ ] Weekly while rc.11 runs: the instant family's share of migrations and its 60 s ratio distribution (the pattern is other people's launch bots and can change), and a sell check of the instant pools (trading-scout)
 - [ ] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges
 - [ ] Optional, if the RPC budget allows: a 1 s fast phase for the first 3 minutes (`fast_poll_interval_seconds`), since the result moved with one reading of delay (§6.13)
-- [ ] Market recorder before it can pick a venue: a sell-quote check per followed pool (Jupiter on Solana), coverage of Raydium LaunchLab / stonkfun / memefun pools (GeckoTerminal OHLCV or on-chain reads), and per-chain cost and gas at the trade size
+- The cross-chain market recorder's items (sell checks, launchpad coverage, per-chain costs) are trading-scout's: see [Cross-chain market recorder (FEAT-74)](#cross-chain-market-recorder-feat-74)
 
 ## Live gate for the PumpSwap lane
 
-Only after the FEAT-76 paper run passes. The staged gate is
-[`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate).
+Only after a lane's Stage 1 (paper) verdict is GO. The staged gate is
+[`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate); these items are its
+§4.2.
 
 - [ ] PumpSwap buy builder (`sdk/pumpswap_execution.py`) checked against real mainnet transactions, as the sell was (BUG-123): account order, the fee recipients, the creator vault, Token-2022; pinned to real account bytes in tests
 - [ ] `LiveExecutor`: build, send (Jito or RPC), confirm, and return the `Fill` with costs from the transaction meta (`sdk/costs.py`); refuse wherever the paper fill refuses; never a fallback price
 - [ ] One live PumpSwap sell at the smallest size before any lane relies on it with real capital (carried from Sprint 24H: the sell instruction is pinned to mainnet accounts, but no transaction from this code has landed)
 - [ ] Port `reconcile` (pumpbot's `bot/reconcile.py`, `pumpfun-audit reconcile`) as the module's implementation of trading-core's reconciliation contract (trading-core TODO): on-chain Δ SOL against the audit trail's realized PnL, every full exit showing a negative rent cost (carried from Sprint 24B, *partly done read-only*: the cost parser reads rent refund, fee and priority fee correctly on third-party sells)
 - [ ] One live round trip at the smallest size, reconciled
-- [ ] Stage 0: 72 h paper with replay recording on the release build (rule hash recorded first); Stage 1: live canary on a dedicated hot wallet at 0.02 SOL, daily wallet reconciliation logged every canary day, every discrepancy in `BUGS.md` and fixed before continuing (carried from Sprint 24A)
-- [ ] Tip experiment before Stage 1: 0 / 25k / 50k lamports per side, on landing rates (carried from Sprint 24E; tips were 83% of the separately listed costs at 0.01 SOL on the curve)
-- **Acceptance (Stage 1, from Sprint 24A):** ≥ 100 closed trades, net PnL after fees, tips and rent positive, reconciliation gap within tolerance every day, 0 lost or double-sold positions. Only then raise capital (Stage 2).
+- [ ] Stage 1: 72 h paper with replay recording on the release build (rule hashes in the run record first); Stage 2: live canary on a dedicated hot wallet at 0.02 SOL, daily wallet reconciliation logged every canary day, every discrepancy in `BUGS.md` and fixed before continuing (carried from Sprint 24A, where these were Stage 0 and Stage 1)
+- [ ] Tip experiment before Stage 2: 0 / 25k / 50k lamports per side, on landing rates (carried from Sprint 24E; tips were 83% of the separately listed costs at 0.01 SOL on the curve)
+- **Acceptance (Stage 2, Sprint 24A's Stage 1):** ≥ 100 closed positions, net PnL after fees, tips and rent positive, reconciliation gap within tolerance every day, 0 lost or double-sold positions. Only then raise capital (Stage 3).
 
 ## Research (record-only)
 
@@ -81,12 +89,12 @@ Done (2026-10-31): (b) measured for 15 minutes on the public RPC: `programSubscr
 
 ### New PumpSwap pools that are not graduations (FEAT-80)
 Built record-only ([FEATURES.md §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
-- [ ] A record-only run of 24–72 h (`runtime-pump/configs/pools-1.json`: lanes off, `new_pools` on, its own data folder): pools followed per hour, the share that are SOL pairs and were dated exactly, lookup errors, and the RPC credits used
+- [ ] **pools-1**, a record-only run of 24–72 h (`v0.4.0rc5`, `runtime-pump/configs/pools-1.json`: lanes off, `new_pools` on, its own data folder; started 2026-10-31 07:29:11 UTC, [`runs/pools-1.md`](runs/pools-1.md)): pools followed per hour, the share that are SOL pairs and were dated exactly, lookup errors, and the RPC credits and WebSocket data used
 - [ ] Read-out on its capture: the paths from the first reading (1.2× in 15 minutes, 2× in an hour, dead by an hour), by creator and launchpad where the coin creator shows it, against the graduates in the same hours; an executable round trip at 0.02 SOL from the pool's own maths and its fee (the fee config's tiers may not apply to these pools: read what they pay first, as §6.16 did for graduates)
 - [ ] Only if the read-out shows an edge after costs: a pre-registered lane on them (the module's third), replayed first; replay must then read `new_pool` rows
 
 ### Cross-chain market recorder (FEAT-74)
-Moved to **trading-scout** on 2026-10-30 with its open items (its `docs/dev/TODO.md`), so this module carries no cross-chain code. There the sell check is built (its FEAT-2: an `eth_call` round trip on Base and BSC, a Jupiter round trip on Solana), the per-launchpad read-out too (FEAT-3, four.meme graduates first), and the first 72 h run is pre-registered. Still open there: the momentum read-out, Tron, Moonshot's graduates, Uniswap v4 sell checks. A chain that passes its read-out gets a module of its own, not a lane here.
+Not this repository's: the recorder and every open item it had moved to **trading-scout** on 2026-10-30 (its `docs/dev/TODO.md`; trading-scout's own FEAT-1 is FEAT-74 in the shared series). A chain that passes its read-out there gets a module of its own, not a lane here.
 
 ## Module and tooling
 

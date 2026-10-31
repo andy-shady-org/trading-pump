@@ -1,13 +1,17 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
 | Version | Supported |
 |---------|-----------|
-| 0.4.x (trading-pump, the trading-core module) | :white_check_mark: |
+| The latest `0.4.x` release (trading-pump, the trading-core module); from `v0.4.0` on, plain `vX.Y.Z` | :white_check_mark: |
+| `v0.4.0rc1` to `v0.4.0rc5` (the last pre-releases) | :white_check_mark: until `v0.4.0` is tagged; runs registered on them keep their version |
 | 0.3.x and older (pumpfun-trading, `pumpbot`) | :x: retired |
 
-## Reporting a Vulnerability
+Fixes go into a new PATCH release (`v0.4.1`), never into a re-tagged
+version ([`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy)).
+
+## Reporting a vulnerability
 
 Please do not report security vulnerabilities publicly in GitHub.
 
