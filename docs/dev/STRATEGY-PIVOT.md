@@ -193,6 +193,9 @@ Price impact and entry latency come on top and are modelled by `paper_entry_dela
 | 2026-10-30 | same | pumpswap_momentum | rc.10 entry, lane exits TP **+50%** / SL −15% / 30 min (FEAT-79) | 60 | +0.071 | 38% | **adopted for rc.11**: +5.9% per trade, halves +1.5% / +10.2% (§6.18) |
 | 2026-10-30 | same | pumpswap_momentum | ratio 1.1, 10% slippage, TP +50% | 111 | +0.014 | 32% | rejected: +0.6% per trade, second half −9.5% (§6.18) |
 | 2026-10-30 | same | pumpswap_instant | instant band, ratio 1.00–1.10, 10% slippage, TP +50% / SL −15% / 30 min (FEAT-78) | 80 | +0.283 | 71% | **adopted for rc.11**: +17.7% per trade, halves +11.4% / +20.0%; verdict passes all but the count (80 of 100) (§6.18) |
+| 2026-10-30 | rc.9 paper run, stopped by the operator after 58.4 h (2026-10-29 08:27 → 10-30 18:53 UTC), `v0.4.0rc2` on trading-core `v0.2.0` | pumpswap_momentum | `configs/rc9-paper.json` (ratio 1.2, TP +20% / SL −15% / 30 min, 0.02 SOL) | 55 | +0.034 | 58.2% | **NO-GO on the count** (55 of 100); net, halves and days pass; fails without the best 3 and on the interval (§6.19) |
+| 2026-10-30 | rc.10 paper run, stopped by the operator after 9.9 h (2026-10-30 09:01 → 18:53 UTC), `v0.4.0rc3` on trading-core `v0.2.1` | pumpswap_momentum | `configs/rc10-paper.json` (rc.9's rule) | 8 | +0.004 | 50.0% | too short to judge; superseded by rc.11 (§6.19) |
+| 2026-10-31 | instant-lane entries: rc.9 capture (A, 82) and rc.11 live (B, 30 Oct 18:58 → 31 Oct 08:30 UTC, 22), rc.11's rule replayed on each path | pumpswap_instant | TP +50% / SL −15% / 30 min, 2% cost a side | 82 / 22 | — | 72% / 41% | **crashes are not predictable before entry**; the pump height fell from ~2.3× to ~1.3×; +50% is the lane's weak point (§6.19) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -518,4 +521,41 @@ Items 2 and 3 of the "top 10 strategies" review: the **pullback entry** (wait fo
 - **The frozen rc.11 config, both lanes together** (instant as above; standard on rc.10's entry with TP +50%), on the same capture: 143 positions, net +0.366 SOL. The instant lane makes 80 positions, +0.314 SOL; the standard lane makes 63 positions, +0.053 SOL, both halves positive. There were no breaker trips and no risk refusals. The rc.10 config made 60 positions, +0.061 SOL ([`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0-rc.4 release record).
 - **The breaker:** with rc.10's `adaptive_ratchet`, the first two-lane replay halted new buys at 2026-10-30 10:49 UTC for the rest of the capture, after the day gave back half of a +0.044 SOL realized peak: 126 positions instead of 191. A paper run that has to reach a count runs with `"baseline"` (the 10% daily and 25% cumulative drawdown locks stay).
 - **Reading:** a second lane worth a counted run. The instant lane is in-sample and its pattern is other people's bots, so it gets rc.11's pre-registered verdict on fresh data, a rule of its own, and a weekly check of its share and ratio distribution. On the standard lane, the wider take-profit helps a little and loosening the entry does not: rc.11 keeps rc.10's entry with TP +50%, an A/B against rc.10 on the same graduates. Replay configs, the per-lane script and the audit trails: `runtime-pump/analysis-rc11/`.
+- **Note (2026-10-31):** `runtime-pump/analysis-rc11/` was deleted on 2026-10-30 at the operator's request. The numbers above are the record. Every replay can be run again from `runtime-pump/data/rc9/capture.jsonl*` with `configs/rc11-paper.json` (its file paths removed) and the variants the table names.
+
+### 6.19 rc.9 and rc.10 stopped early; why the instant lane crashed (2026-10-31)
+
+**rc.9 and rc.10, final.** The operator stopped both on 2026-10-30 at about 18:53 UTC to start rc.11 on the same graduates. Neither reached 72 h; both are judged by `configs/verdict_rules.json` (rc.9's pre-registered rule) as they stood:
+
+| Run | Ran for | Positions | Net SOL | Win | Verdict |
+|---|---|---|---|---|---|
+| rc.9 (`v0.4.0rc2`) | 58.4 h | 55 (32 take profit +0.149, 23 stop −0.116) | +0.034 | 58.2% | NO-GO: 55 of 100 positions. Passes: adjusted net +0.025, both halves, every UTC day. Fails: without the best 3 (−0.002), 90% interval of the mean (lower bound −0.0008) |
+| rc.10 (`v0.4.0rc3`) | 9.9 h | 8 | +0.004 | 50% | Not judged: 8 positions |
+
+**Reading.** rc.9's rule (ratio 1.2, TP +20%) made money but about a position an hour, too slowly to ever reach a verdict in 72 h; that is why rc.11 adds the instant lane. rc.10 only confirmed that rc.9's code change (BUG-162) did not move the result.
+
+**The instant lane's first night.** In rc.11's first 11 hours, the instant lane made 17 trades at −25% each, 35% won, against +19.6% and 72% in the replay (§6.18). Six trades lost 64–96% in a single 2-second step from a gain, which no stop can catch. Question: can those coins be told apart before the buy?
+
+- **Data.** Every instant-band graduate whose 60 s price was 1.00–1.10× its first, with rc.11's rule replayed on its recorded path (entry 1.5 s after the signal, TP +50% / SL −15% / 30 min, 2% cost a side). **A**: the rc.9 capture, 29 Oct 08:30 → 30 Oct 17:54 UTC, 82 entries, 13 crashes (a trade at −40% or worse). **B**: rc.11 live, 30 Oct 18:58 → 31 Oct 08:30 UTC (no overlap), 22 entries, 9 crashes.
+- **Before the buy, crashes look like the rest.** These were compared, crash against not, in both sets: first market cap and pool, the delay to the first reading, readings before the signal, the signal ratio, its high and low, the drawdown, the volatility, the share of up-ticks, the pool's SOL change, the last 10 s, and the hour. Every median matches within noise. The share of up-ticks is a little higher before a crash (0.83 against 0.75 in A, 0.79 against 0.69 in B), too weak to filter on. These coins are pushed up by their launch bots, smoothly and alike; nothing in the first minute says when the operator will sell.
+- **Nearly every instant coin is dumped; the pump height changes.** Of A's 128 instant graduates, 114 fell below 0.6× their 60 s price within the 4 h followed. What changed between A and B is how high they went first: A's coins peaked at a median 2.3× their 60 s price before the fall, B's at 1.3×. In A, entries reached +50% at a median 9.7 min after the migration (56 of 82); in B at 22 min, and only 8 of 22 did.
+- **Take-profits, fixed and adaptive** (per trade, A / B):
+
+  | Rule | A | B |
+  |---|---|---|
+  | TP +50% (rc.11) | +18.6% | −20.7% |
+  | TP +30% | +16.8% | −6.7% |
+  | TP +20% | +9.9% | −3.2% |
+  | TP +15% | +6.0% | +2.4% |
+  | Adaptive: lower quartile of the peaks of the instant graduates of the last 6 h, ×0.9 (known before the entry only) | +12.0% | +8.8% |
+  | Same, last 2 / 3 / 4 / 8 h | +12.4 / +13.8 / +13.3 / +12.1% | −6.2 / −3.4 / +2.6 / −4.7% |
+  | Same with a median, or a 12–24 h memory | +16 to +22% | −8 to −20% |
+
+- **The per-lane pause (trading-core 0.2.3, FEAT-81)** limits losses at the edges and does not change the sign: B at TP +50% goes from −0.091 to −0.078 SOL with a 10-close / −0.03 SOL / 120 min pause; at TP +30%, a 5-close / −0.02 SOL pause turns B from −0.029 to +0.016 SOL (18 trades).
+- **Reading.**
+  1. No pre-entry filter is supported: crashes cannot be predicted from the first minute.
+  2. The lane is a race against a dump that comes to almost every coin; its edge is the pump height, which moved by a factor of two within a day.
+  3. TP +50% is the lane's weak point: best in the high-pump period, worst in the low one. Lower fixed targets earn less and hold up better.
+  4. The adaptive target is a candidate, not a result: positive in both periods at a 6 h memory, but its sign in B flips with the memory length, which is what noise on 22 trades looks like.
+  5. Nothing changes in rc.11 (pre-registered). rc.11-tp20 measures +20% live on the same coins; rc.12 decides between a lower fixed target and the adaptive one on the full rc.11 data, with the per-lane pause on.
 

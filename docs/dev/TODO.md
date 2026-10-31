@@ -18,7 +18,7 @@ where to find it. The list as it stood is archived unchanged:
 | When | Work | Where |
 |---|---|---|
 | **Now** | Close the migration: CI on 3.11–3.14, a paper run on the new stack, then retire pumpfun-trading | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
-| **Next** | FEAT-76 / FEAT-78: rc.11, both lanes with wider take-profits, 72 h paper with a pre-registered verdict per lane (rc.9 and rc.10 still running) | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane) |
+| **Now** | FEAT-76 / FEAT-78: rc.11, both lanes with wider take-profits, 72 h paper with a pre-registered verdict per lane, ends 2026-11-02 ~19:00 UTC; rc.11-tp20 (TP +20%) beside it; pools-1 (FEAT-80, record-only) | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane) |
 | **Then** | Only if the lane passes: the PumpSwap buy builder, reconcile, one live round trip, Stage 0 / Stage 1 | [Live gate](#live-gate-for-the-pumpswap-lane) |
 | **Later** | Research read-outs (graduation paths, cross-chain); a second venue only with evidence (the slow lane was NO-GO, [STRATEGY-PIVOT §6.15](STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
 
@@ -44,7 +44,6 @@ pumpfun-trading's planned rc.9 build (BUG-157 fixed) is superseded: the
 capture here is pruned by its own policy only, and "rc.9" now names the first
 run on the new stack (`v0.4.0rc1`).
 
-- [ ] **rc.9:** 72 h paper run on fresh data with `configs/paper.example.json` on `v0.4.0rc2` (signal 60 s, ratio 1.2, standard pool, TP +20%, stop −15%, 30 min hold, 0.02 SOL, 1.5 s paper entry delay): record the verdict rule's sha256 and the run provenance before it starts; judge with `trading-core-audit verdict --rules configs/verdict_rules.json`; pass = the verdict's GO (≥ 100 positions, both halves positive, 90% interval above 0, positive without the best 3), and better than a random entry on the same graduates
 - [ ] **rc.11** (`v0.4.0rc4` on trading-core `v0.2.2`): a 72 h paper run of both lanes side by side with rc.10, from `runtime-pump/configs/rc11-paper.json`: the standard lane on rc.10's entry (ratio 1.2, 5% slippage) with its own exits +50% / −15% / 30 min (FEAT-79), an A/B against rc.10's +20% on the same graduates, and the instant lane (FEAT-78) with its defaults and 10% slippage; engine `exits` `{}`; breaker `drawdown_reference_mode` `"baseline"`. Pre-registered per lane (`verdict-rc11-*.json`, `"strategy"` set): record each rule's sha256 before the start; judge each lane alone; pass as for rc.9. Replay evidence: [STRATEGY-PIVOT §6.18](STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)
 - [ ] Weekly while rc.11 runs: the instant family's share of migrations and its 60 s ratio distribution (the pattern is other people's launch bots and can change), and a sell check of the instant pools (trading-scout)
 - [ ] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges
