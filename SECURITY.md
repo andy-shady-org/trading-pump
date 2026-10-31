@@ -27,3 +27,18 @@ Please contact me directly via GitHub.
   URLs that are shown (BUG-118).
 * The test suite deletes every `PUMPFUN_*` and `TRADING_CORE_*` variable
   before each test and blocks the network.
+
+## Signed releases
+
+Every release tag of this repository, from `v0.4.0` on, is signed with the
+operator's SSH key (`git tag -s`), made on the operator's Mac and never in
+the GitHub web UI. Each runtime's `bin/install-release.sh` refuses a tag
+whose signature does not verify against its `allowed_signers`, and
+trading-core (0.3.0 and later) refuses to start a live run on a module
+checkout that is not a clean, signed release tag. Setup, the release steps
+and what to do if the key is lost: trading-core's `SECURITY.md`, "Signed
+releases"; this repository's steps: [`CONTRIBUTING.md`](CONTRIBUTING.md#releases).
+
+Tags made before signing (`v0.4.0rc1` to `v0.4.0rc5` (and pumpfun-trading's tags before them)) are not signed; installing one again
+needs `ALLOW_UNSIGNED=1`, and a live run on it is refused.
+

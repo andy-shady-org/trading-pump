@@ -13,6 +13,7 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 ## [Unreleased]
 
 ### Docs
+- Release steps (2026-10-31): merge in the GitHub UI, sign and push the tag on the Mac (never in the UI: a tag GitHub creates is unsigned), then optionally publish the GitHub Release on the existing tag; a tag ruleset on `v*` blocks moving or deleting a release tag (`CONTRIBUTING.md`). README badges: code style, signed releases, stars, issues, forks, pull requests, contributors, licence (static: the repository is private). `SECURITY.md` gains "Signed releases".
 - Costs split by owner (2026-10-31): the development costs (Claude subscription and invoices, JetBrains licence and AI credits) moved, unedited, to trading-core's `docs/dev/COSTS.md`; `docs/dev/COSTS.md` here keeps this module's (Helius, PumpPortal) and points there. Features that cross repositories carry **Needs** / **Needed by** links.
 - **The documentation follows trading-core's `docs/dev/DOCUMENTATION.md`** (2026-10-31), the standard for trading-core and every module: the same layout, style, words, versioning, capital stages, run names, records and IDs in every repository. Nothing in the code changes.
   - **Results log moved:** `docs/dev/STRATEGY-PIVOT.md` §6 (the table and §6.1–§6.19) is now [`docs/dev/RESULTS.md`](docs/dev/RESULTS.md), moved whole and unedited with its §6.N numbering, so every link to a section still lands; STRATEGY-PIVOT keeps §1–§5 as pumpfun-trading's history and says so in its title.
