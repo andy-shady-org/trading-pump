@@ -114,6 +114,6 @@ disk use) are in [dev/RUNBOOK.md §5](dev/RUNBOOK.md#5-research-recorders).
 trading-pump env
 ```
 
-A table of the six variables the module reads, each `set`, `set as <alias>`
+A table of the seven variables the module reads, each `set`, `set as <alias>`
 or `unset`, with what it is for; then one warning per other `PUMPFUN_*`
 variable that is set, naming what replaces it. Values are never printed.
