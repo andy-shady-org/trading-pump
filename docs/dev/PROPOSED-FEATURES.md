@@ -9,7 +9,7 @@ Code).
 
 **IDs.** `FEAT-<n>` is one series across trading-core and every module.
 The next free number is kept in trading-core's
-`docs/dev/PROPOSED-FEATURES.md` (FEAT-92 on 2026-10-31; FEAT-91 is token names, built here): take it there and
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-105 on 2026-10-31; FEAT-91 is token names, built here; FEAT-96 to FEAT-100 below are the pump-12 plan's): take it there and
 bump it in the same pull request. FEAT-81, per-strategy limits and the
 Strategies panel, was built in trading-core 0.2.3. trading-scout's own
 FEAT-1, the cross-chain market recorder that moved there from here, is
@@ -49,6 +49,11 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | ID | Feature | Class | Priority | Sprint |
 |---|---|---|---|---|
 | FEAT-76 | PumpSwap post-graduation momentum lane (paper first) | Income | P1 | proposed 2026-10-28 from the rc.8 read-out ([`RESULTS.md` §6.13](RESULTS.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)) |
+| FEAT-96 | Holder snapshot at the signal, record-only (from the CloddsBot review) | Income | P1 | pump-12 build ([`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) item D1) |
+| FEAT-97 | Instant-lane exits: adaptive target and tiers (cross-component: **Needs** trading-core FEAT-92) | Income | P1 | pump-12 build (items B2, B3) |
+| FEAT-98 | Operator tags: Mayhem mode and reused names, live and backfilled (from the CloddsBot review) | Income | P1 | backfill at the deep analysis; live tag in the pump-12 build (item D3) |
+| FEAT-99 | Jito bundles for the live path (from the CloddsBot review) | Income | P2 | live gate, only for a lane with a Stage 1 GO (item F2) |
+| FEAT-100 | Rug alarm: watch the top holders of open positions | Income | P3 | only if the deep analysis's pre-dump study finds a lead (item D4) |
 | FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) |
 | FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
 | FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built |
@@ -58,7 +63,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-61 | Create-slot bundle proxy | Income | P3 | inputs recorded in rc.3; gate not built |
 | FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled; refocused on graduates 2026-10-29: read-out from FEAT-74 data first ([`TODO.md`](TODO.md#cross-chain-market-recorder-feat-74)) |
 | FEAT-77 | On-chain migration feed as a fallback for PumpPortal | Reliability | P2 | proposed 2026-10-29; the PumpSwap pool subscription is measured (47 messages a second, every swap) and cannot tell a migration from an old graduate without dating each pool; the fallback is not built ([`TODO.md`](TODO.md#on-chain-migration-feed-feat-77-fallback-for-pumpportal)) |
-| FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P3 | not scheduled |
+| FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P2 | creator's funder: backfill at the deep analysis, recorded in pump-12 (item D2) |
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
 | FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | — | **NO-GO** 2026-10-29: costs pass (0–37 bps, phase 0), but the pre-registered walk-forward on the Binance history lost in every counted half-year and never beat random timing (RESULTS §6.15); not built |
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
@@ -84,6 +89,47 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   3. **Live.** A PumpSwap buy builder checked against real mainnet transactions (like the sell, BUG-123), one live round trip at the smallest size reconciled, then the Stage 0 / Stage 1 gate (`RELEASE-GATE.md` §3).
 * **Risks:** the edge is small next to the noise and sensitive to latency; snipers trade the migration block itself, so live fills may be worse than paper's next reading; standard graduations are about 40% of PumpPortal's migration events (the rest are empty or unrelated pools and must be filtered by pool SOL and price); a 2% cost a side is an assumption until live fills measure it.
 * **Dependencies:** BUG-157 fix (rc.9). **Impact:** a lane on the same chain, wallet and code base, with on-chain prices instead of third-party quotes.
+
+### FEAT-96: Holder Snapshot At The Signal, Record-Only
+* **Class / Priority:** Income · P1 (proposed 2026-10-31 from the CloddsBot review, `claude/cloddsbot-review-2026-10-31.md` in the project; pump-12 build, [`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) item D1)
+* **Goal:** measure, for every graduate the lanes decide on, how concentrated its supply is at the moment of the decision, so a rug filter can be tested on data that exists. The instant lane's crashes cannot be told apart from the first minute's prices (RESULTS §6.19); who holds the supply has never been recorded for graduates.
+* **Why not the old screen as it is:** `lane.screen_entries` runs pumpbot's anti-rug screen (FEAT-04, FEAT-26), built for bonding-curve coins: it relabels the curve's token account and takes the rest as holders. On a graduate the largest holder is the PumpSwap pool's base vault, so its top-5 share is meaningless there. Mint and freeze authority and LP lock, which generic token checkers report, are the same for every graduate (revoked, burned at migration) and tell nothing.
+* **Design:**
+  - At the signal reading of every in-band graduate (both lanes, bought or not), `getTokenLargestAccounts` (20 accounts) and one `getMultipleAccounts` for their owners, through `rpc_pool`, off the entry path (an entry never waits for it).
+  - Excluded: the pool's base vault and any account owned by the PumpSwap program or its fee recipients. Shares are of the supply outside the pool.
+  - Recorded as a `holders` capture row (mint, time, seconds since migration): top-1, top-5 and top-10 share; accounts above dust among the 20; the coin creator's share (creator from the pool's `coin_creator`); the owners (for FEAT-63 and FEAT-100).
+  - For instant-band graduates, two more snapshots at 3 and 6 minutes after the migration, to see supply move before a dump (the pre-dump study, item D4).
+  - Copied into the position's `entry_metrics` when the graduate is bought, so `trading-core-audit` can group by it.
+  - Record-only: no lane reads it in pump-12. Replay keeps reading old captures without these rows.
+* **Cost:** about 15–20 graduates an hour fall in the two bands (of 30–40 migration events), 2 calls each, plus 4 more per instant graduate: small against the RPC plan (`COSTS.md` §3.1); measured in the pump-12 smoke run.
+* **Then:** the pump-12 read-out tests the pre-registered hypothesis (plan item D1); a filter on it is pump-13's question, judged on data it was not chosen on.
+* **Dependencies:** none (FEAT-73's tracker, the pool decoder, `rpc_pool`). **Impact:** the first holder data on graduates; if supply concentration predicts the dumps, the largest lever on the instant lane's 52–67% break-even win rate.
+
+### FEAT-97: Instant-Lane Exits: Adaptive Target And Tiers (cross-component)
+* **Class / Priority:** Income · P1 (pump-12 build, plan items B2 and B3)
+* **Needs:** trading-core FEAT-92 (tiered take-profit with a following stop) in trading-core `0.4.0`; FEAT-93 (stall exit) only if the deep analysis adopts it. This release raises the `pyproject.toml` floor to `trading-core>=0.4.0,<0.5`.
+* **Goal:** exits that follow how high the launch bots are pushing coins this day. RESULTS §6.19: the instant lane's edge is the pump height, which halved within a day (median peak 2.3× the 60 s price on rc.9, 1.3× on rc.11's first night); a fixed +50% was best in one period and worst in the other.
+* **Design:**
+  - **Adaptive target:** the lane keeps the peaks of the instant-band graduates it followed (peak within 30 minutes of the 60 s reading, divided by that reading), counting only graduates whose 30 minutes are over, so the value is known before the entry. At each entry the take-profit is `scale × quantile(peaks of the last memory_hours)`, clipped to `[floor_pct, cap_pct]`, with `min_samples` below which the fixed target applies. Settings `instant.exits_adaptive`: `memory_hours` (6), `quantile` (0.25), `scale` (0.9), `min_samples`, `floor_pct`, `cap_pct`: values chosen at the deep analysis, never on pump-12.
+  - The target used is stamped into the position's `entry_metrics` (`take_profit_target`), so replay, the audit trail and the read-out reproduce every exit.
+  - **Tiers:** the lane's `exits` take FEAT-92's `take_profit_tiers` and `stop_after_tier_pct` as they are (`ExitRules.from_mapping`); with the adaptive target on, the tier gains are multiples of it (`[[0.5, 0.5], [1.0, 0.25]]` = half at half the target, a quarter at the target), so tiers move with the day's pump height.
+  - `should_exit` builds each position's `ExitRules` from its stamped target; the momentum lane can use the same keys.
+  - Replay computes the peaks from the capture's graduation rows exactly as the live lane does (a test pins both to one capture).
+* **Tests:** the peak memory (only finished graduates, the time window, quantile, clip, too few samples); the stamped target; tier gains from the target; replay and live agreeing on one capture; settings errors.
+* **Impact:** the exit rule that held up in both the high-pump and low-pump periods in §6.19 (+12.0% / +8.8% per trade at a 6 h memory), now with partial profit taken early. In-sample until pump-12 judges it.
+
+### FEAT-98: Operator Tags: Mayhem Mode And Reused Names
+* **Class / Priority:** Income · P1 (from the CloddsBot review; backfill at the deep analysis, live tag in the pump-12 build, plan item D3)
+* **Goal:** tag every graduate with two cheap signs of how it was launched, and test them as rug filters on rc.9 and rc.11 **before** pump-12, which is possible because both can be read today for old coins:
+  - **Mayhem mode:** pump.fun coins launched in its Mayhem mode use a separate program and curve flag (CloddsBot names the program `MAyh…` and reads byte 81 of the curve account; check both against pump.fun's own IDL before use, as BUG-123 did for the sell). Whether our graduate feed sees them, and whether they rug at a different rate, is unknown.
+  - **Reused names:** 79% of instant graduates share a name with another (MR BEAST ×20, GTA6 ×19: the rug study, 2026-10-31). A template name reused within 24 h is an operator's fingerprint even when the creator wallet is new each time.
+* **Design:**
+  - Live: on the first reading of a graduate, read its curve account (one account, batched with FEAT-91's name read) for the Mayhem flag, and count graduates in the last 24 h with the same normalized name (case-folded, spaces and emoji removed) and the same symbol. Recorded on the graduate's capture row and in `entry_metrics` (`mayhem`, `name_seen_24h`, `symbol_seen_24h`).
+  - Backfill: `trading-pump tag-capture <capture>` reads the mints in a capture, fetches names and curve flags as they are now (mint and curve accounts outlive the graduation), and writes a sidecar JSONL that replay and the read-out scripts join by mint.
+* **Then:** at the deep analysis, crash rate and lane result by tag on rc.9, rc.11 and rc.11-tp20. A tag that separates crashes on **every** capture can be a pre-registered entry filter in pump-12 (chosen on old data, judged on new). Otherwise record-only.
+* **Dependencies:** FEAT-91 (the name read). **Impact:** a possible filter available on day one of pump-12 rather than a run later.
+
+---
 
 ### FEAT-54: Smart-Wallet Discovery, Copy Simulation & Reviewed Watch List
 * **Class / Priority:** Income · P2 (Sprint 24I, after 24H; [`STRATEGY-PIVOT.md` §2.4](STRATEGY-PIVOT.md#24-lane-3--reviewed-smart-wallets-feat-54-p2)). Phase 1 scorer shipped ([`FEATURES.md` §37](../archive/pumpfun-trading/FEATURES.md)); steps 3–6 below are not built
@@ -208,6 +254,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 * **Dependencies:** the RPC provider's WebSocket limits and billing. **Impact:** no blind runs when PumpPortal is down; no change to any decision.
 
 ### FEAT-63: Funding-Source Lookup For The Cluster Analyser
+* **Status (2026-10-31):** scheduled for pump-12 ([`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) item D2), narrowed to the **coin creator's** funder: for each graduate, the creator wallet's first incoming SOL transfer (funder, amount, funder's age, the funder's other coins in the last 24 h), recorded on the graduate's capture row, off the entry path. The deep analysis backfills it on rc.9 and rc.11 (the rug study found 253 creators for 258 instant coins, none reused, so the funder is the next place an operator shows); a funder pattern that separates crashes on every capture can be a pre-registered pump-12 filter. Top-holder funders (the original design below) follow only if the creator's funder shows something.
 * **Class / Priority:** Income · P3 (proposed 2026-10-20, split out of `FEATURES.md` §27; not scheduled)
 * **Goal:** Make the FEAT-26 funding-cluster and sybil analyser (`strategies/cluster.py`) run on live tokens.
 * **Evidence:** `bot/enrichment.py` only builds the funding graph when the Pump.fun API record carries `funding_links` (or a ready `cluster_analysis`); the API never sends either, so the analyser has never run outside tests.
@@ -245,6 +292,23 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 
 ## 3. Venue enhancements (Suggested and conditional)
 
+### FEAT-99: Jito Bundles For The Live Path
+* **Class / Priority:** Income · P2 (from the CloddsBot review; part of the live gate below, only for a lane with a Stage 1 GO, plan item F2)
+* **Goal:** land the live PumpSwap buy and sell quickly and out of sight of sandwich bots: send each as a Jito bundle with a tip instead of through the public RPC path, and measure whether that pays for its tip.
+* **Design:**
+  - `LiveExecutor` (live gate) gets a send mode, `execution.send: "jito" | "rpc"`: a bundle of one transaction that carries its own tip transfer to one of Jito's tip accounts (chosen at random per send), submitted to the block engine, its status polled to landed, failed or expired; on expiry, a fresh blockhash and one retry, never a second fill.
+  - Tip in lamports per side from settings (`execution.tip_lamports`), written to the fill's `cost_breakdown` as `tip` (the field and the verdict's tip floor exist).
+  - The PumpSwap instruction is built from pump.fun's own `pump-swap-sdk` IDL (account order, fee recipients, creator vault, Token-2022), pinned to real mainnet transactions in tests as the sell was (BUG-123). CloddsBot uses the same SDK; its code is not copied.
+  - Status rows: bundles sent, landed, expired, median landing delay (the TODO's "Jito bundle status" row).
+* **Measure:** the tip experiment already in the live gate (0 / 25k / 50k lamports per side) runs with `send` both ways: landing rate, delay from signal to landing, slippage against the quote, tip cost. Jito is kept only where slippage saved exceeds the tip.
+* **Dependencies:** the PumpSwap buy builder and `LiveExecutor` (live gate). **Impact:** execution only; no edge of its own, but on a lane whose margin is a few percent, a sandwich or a missed block is the margin.
+
+### FEAT-100: Rug Alarm: Watch The Top Holders Of Open Positions (conditional)
+* **Class / Priority:** Income · P3, **built only if** the deep analysis's pre-dump study (plan item D4) finds that supply moves before the dump in a useful share of crashes, early enough for a 1–2 s read cycle to act on
+* **Goal:** exit an instant-lane position when the wallets holding its supply start moving it, before the sell that crashes the pool. Most dumps are one swap (79% of crashes are a single reading losing over 60%), and no stop can catch those; an alarm helps only when tokens move to a new wallet, or are split across wallets, first.
+* **Design:** for each open position, subscribe (`accountSubscribe`) to the token accounts of its top holders from the FEAT-96 snapshot; a transfer out of a top-10 account above a share of supply, or a creator-funded wallet (FEAT-63) moving, fires an `alarm` exit at the next reading. Record-only first (alarm rows, no exit), replayed on the capture for its hit rate and false alarms, then pre-registered as an exit.
+* **Dependencies:** FEAT-96, FEAT-63; the provider's WebSocket limits. **Impact:** if the lead exists, it turns some −40% to −95% rug fills into small losses.
+
 ### FEAT-39: Production Yellowstone gRPC Transport
 * **Class / Priority:** Income (conditional) · P1 — schedule in Sprint 24D if canary data shows entries lost to latency (fills well above the signal price, or tokens already pumped by the time the buy lands); otherwise after Sprint 28
 * **Goal:** Real Geyser streaming instead of the WebSocket fallback.
@@ -268,6 +332,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 ## 4. Sequence
 
 1. **FEAT-76** paper run, then its live phase ([`TODO.md`](TODO.md#feat-76-pumpswap-post-graduation-momentum-lane)).
+   **pump-12** ([`PUMP-12-PLAN.md`](PUMP-12-PLAN.md)): FEAT-96, FEAT-97 (with trading-core FEAT-92 and FEAT-95), FEAT-98 and FEAT-63's creator funder in its build; FEAT-99 with the live gate; FEAT-100 only after the pre-dump study.
 2. The research read-outs that could feed a proposal: graduation paths (FEAT-73 data, FEAT-64), cross-chain (FEAT-74 data), the slow lane walk-forward (FEAT-65).
 3. Everything that needs the trade feed or a curve lane (FEAT-54 to FEAT-61) only with new evidence that a curve-side rule beats costs; launch mode is NO-GO.
 4. FEAT-39 only if live fills show latency costs entries; FEAT-40 only with a lane that needs it; FEAT-62 as a separate trading-core module, capture first; FEAT-47 when a capture is too big for JSONL tools.

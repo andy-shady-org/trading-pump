@@ -21,6 +21,7 @@ is fixed. Below is only what is particular to trading-pump.
 | [`DONE.md`](DONE.md) | Finished work under the heading it had in `TODO.md` (pumpfun-trading's Phases 0–5 and what is finished here) |
 | [`BUGS.md`](BUGS.md) | Every bug since pumpfun-trading BUG-01: cause, fix and test, and where each fix lives after the split |
 | [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md) | Venue features not built yet, by FEAT ID |
+| [`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) | The plan for the next counted run, item by item (written before rc.11 ended; the pre-registration is `runs/pump-12.md`) |
 | [`TESTING.md`](TESTING.md) | The `nox` gate, CI, the test layout, isolation, markers, conventions |
 | [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md) | Decisions and why, as ADR-NNN (ADR-008 the test layout, ADR-009 the split onto trading-core) |
 | [`COSTS.md`](COSTS.md) | What this module pays (Helius, PumpPortal, later on-chain fees) and what a run costs; every new payment for this module goes here. Development costs are trading-core's |
