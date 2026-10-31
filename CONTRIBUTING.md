@@ -73,10 +73,10 @@ it is tagged gets a new PATCH, never a re-tag. The policy is
    record ([§5](docs/dev/RELEASE-GATE.md#5-release-record)), after the
    release gate ([§2](docs/dev/RELEASE-GATE.md#2-release-gate-every-release)).
 2. Merge it by pull request.
-3. Tag the merge commit on `main` with an annotated **private** tag and push
+3. Tag the merge commit on `main` with an annotated, signed **private** tag and push
    the tag. Don't create GitHub Releases.
 
 ```bash
-git tag -a v0.4.0 -m "v0.4.0"
+git tag -s v0.4.0 -m "v0.4.0"
 git push origin v0.4.0
 ```

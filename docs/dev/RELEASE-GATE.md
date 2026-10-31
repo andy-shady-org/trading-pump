@@ -270,9 +270,11 @@ lane runs on.
   that needs a fix after it is tagged gets a new PATCH, never a re-tag.
   (trading-pump's `v0.4.0rc1` to `v0.4.0rc5` were the last; its next release
   is `v0.4.0`.)
-- **The tag** is annotated and private: `git tag -a vX.Y.Z -m "vX.Y.Z"` on
-  the merge commit on `main` that passed the release gate, then
-  `git push origin vX.Y.Z`. Nothing is published to a package index and no
+- **The tag** is annotated, signed and private: `git tag -s vX.Y.Z -m "vX.Y.Z"`
+  with the operator's SSH signing key (trading-core's `SECURITY.md`, "Signed
+  releases"), on the merge commit on `main` that passed the release gate;
+  `git tag -v vX.Y.Z`, then `git push origin vX.Y.Z`. Runtimes install and
+  trust only signed tags. Nothing is published to a package index and no
   GitHub Release is created.
 - **The version** lives in two places, changed in the release commit only:
   `pyproject.toml` (`version = "X.Y.Z"`) and the package's `__version__`.
@@ -325,7 +327,7 @@ written before this standard keep their headings (§10).
   the table in §6.1.
 - **The tag goes on the merge commit** of `release/vX.Y.Z` into `main`:
   ```bash
-  git tag -a v0.4.0 -m "v0.4.0"
+  git tag -s v0.4.0 -m "v0.4.0"
   git push origin v0.4.0
   ```
 - **The version** is in `pyproject.toml` and `trading_pump/__init__.py`
