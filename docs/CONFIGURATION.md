@@ -107,6 +107,27 @@ keys as `lane`, with these defaults:
 whose first reading is in the instant band goes to this lane; any other goes
 to `lane` (when `lane` is on), so each graduate gets one decision.
 
+## `new_pools`: new PumpSwap pools that are not graduations (FEAT-80)
+
+Record-only and off by default ([FEATURES.md §2.1](FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
+The pools found are followed on `graduation`'s schedule and share its
+`max_mints` list. The RPC WebSocket is `PUMPFUN_RPC_WS_URL`, or the RPC URL
+with `wss://` ([ENVIRONMENT.md](ENVIRONMENT.md)).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Subscribe to PumpSwap's pool accounts and follow the new pools that are not graduations. |
+| `warmup_seconds` | `1800` | Pools first seen in this long after the first connection are only remembered (the busy existing pools). |
+| `max_age_seconds` | `600` | A pool looked up later is followed only if it was created at most this long ago. |
+| `signature_limit` | `100` | Signatures read to date a pool (1–1000); a pool with fewer has its exact creation time. |
+| `max_lookups` | `4` | Lookups running at once. |
+| `idle_timeout_seconds` | `60` | Reconnect when the stream is silent this long (it carries every PumpSwap swap). |
+
+The stream carries about 36 kB a second (about 3 GB a day): check the RPC
+provider's WebSocket pricing before a long run. Lookups are about one
+`getSignaturesForAddress` and one `getMultipleAccounts` per pool seen for
+the first time after the warm-up.
+
 ## `execution`: paper fills and modelled costs
 
 | Key | Default | Meaning |

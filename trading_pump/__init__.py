@@ -6,7 +6,7 @@ that is the same on every market (risk, the circuit breaker, net-PnL
 accounting, the audit trail, alerts, the dashboard) is trading-core's.
 """
 
-__version__ = "0.4.0rc4"
+__version__ = "0.4.0rc5"
 
 from trading_core.ops.redact import register_public_identifier
 

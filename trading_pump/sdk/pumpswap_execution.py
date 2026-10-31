@@ -42,6 +42,9 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
     # mint -> (pool, base vault, quote vault), filled by the first batched read
     # (FEAT-73); a pool's vault addresses never change.
     _pumpswap_vaults: dict[str, tuple[str, str, str]]
+    # Mints whose pool holds SOL as its base and the coin as its quote
+    # (FEAT-80: how most non-graduate PumpSwap pools are made).
+    _pumpswap_sol_base: set[str]
 
     @staticmethod
     def _account_bytes(value: dict[str, Any] | None) -> bytes:
@@ -107,6 +110,35 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
             "market_cap_sol": pumpswap_market_cap_sol(base_reserve, quote_reserve),
             "base_token_program": str(vaults["base"].get("owner") or ""),
         }
+
+    def remember_pumpswap_pool(
+        self,
+        mint: str,
+        address: str,
+        base_vault: str,
+        quote_vault: str,
+        *,
+        sol_is_base: bool = False,
+    ) -> None:
+        """Read ``mint`` from this pool from now on (FEAT-80: a new pool that
+        is not the mint's canonical one, found by the new-pool feed).
+        ``sol_is_base``: the pool holds SOL as its base and ``mint`` as its
+        quote, the reverse of a graduation pool."""
+        cache = getattr(self, "_pumpswap_vaults", None)
+        if cache is None:
+            cache = self._pumpswap_vaults = {}
+        cache[str(mint)] = (str(address), str(base_vault), str(quote_vault))
+        flipped = self._sol_base_mints()
+        if sol_is_base:
+            flipped.add(str(mint))
+        else:
+            flipped.discard(str(mint))
+
+    def _sol_base_mints(self) -> set[str]:
+        flipped = getattr(self, "_pumpswap_sol_base", None)
+        if flipped is None:
+            flipped = self._pumpswap_sol_base = set()
+        return flipped
 
     async def get_pumpswap_pool_states(
         self,
@@ -200,13 +232,17 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
         if not base_value or not quote_value:
             return None, "missing"
         try:
-            base_reserve = token_account_amount(self._account_bytes(base_value))
-            quote_reserve = (
-                token_account_amount(self._account_bytes(quote_value))
-                + pool.virtual_quote_reserves
-            )
+            base_amount = token_account_amount(self._account_bytes(base_value))
+            quote_amount = token_account_amount(self._account_bytes(quote_value))
         except Exception:
             return None, "decode_error"
+        if mint in self._sol_base_mints():
+            # SOL is the pool's base (FEAT-80): the coin is the quote side,
+            # and the virtual quote reserve (0 on such pools) is not SOL.
+            base_reserve, quote_reserve = quote_amount, base_amount
+        else:
+            base_reserve = base_amount
+            quote_reserve = quote_amount + pool.virtual_quote_reserves
         return {
             "pool": pool.address,
             "base_reserve": base_reserve,
@@ -226,7 +262,13 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
             pool = decode_pool(address, self._account_bytes(value))
         except Exception:
             return None, "decode_error"
-        if pool.base_mint != mint or pool.quote_mint != WSOL_MINT_STR:
+        pair = (pool.base_mint, pool.quote_mint)
+        expected = (
+            (WSOL_MINT_STR, mint)
+            if mint in self._sol_base_mints()
+            else (mint, WSOL_MINT_STR)
+        )
+        if pair != expected:
             return None, "not_sol_pair"
         return pool, ""
 

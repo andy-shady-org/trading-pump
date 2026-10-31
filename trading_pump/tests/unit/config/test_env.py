@@ -190,3 +190,44 @@ def test_every_variable_the_old_manual_documented_has_a_hint() -> None:
     documented = set(re.findall(r"`(PUMPFUN_[A-Z0-9_]+)`", manual))
     unhinted = sorted(documented - set(REPLACED_ENV_VARS) - known_env_names())
     assert unhinted == []
+
+
+@pytest.mark.parametrize(
+    ("env", "connect", "display"),
+    [
+        ({}, "wss://api.mainnet-beta.solana.com", "wss://api.mainnet-beta.solana.com"),
+        (
+            {"PUMPFUN_RPC_URL": "https://rpc.example/?api-key=SECRET"},
+            "wss://rpc.example/?api-key=SECRET",
+            "wss://rpc.example",
+        ),
+        (
+            {"PUMPFUN_RPC_URL": "http://localhost:8899"},
+            "ws://localhost:8899",
+            "ws://localhost",
+        ),
+        (
+            {
+                "PUMPFUN_RPC_URL": "https://rpc.example",
+                "PUMPFUN_RPC_WS_URL": "wss://ws.example/v1/SECRET",
+            },
+            "wss://ws.example/v1/SECRET",
+            "wss://ws.example",
+        ),
+    ],
+)
+def test_the_rpc_websocket_follows_the_rpc_url_unless_set(
+    env: dict[str, str], connect: str, display: str
+) -> None:
+    creds = load_credentials(env)
+    assert creds.rpc_ws_connect_url() == connect
+    assert creds.rpc_ws_display_url == display
+    assert "SECRET" not in repr(creds)
+
+
+def test_an_rpc_url_of_another_scheme_is_used_as_it_is() -> None:
+    creds = Credentials(rpc_urls=("wss://already.example",))
+    assert creds.rpc_ws_connect_url() == "wss://already.example"
+    assert Credentials(rpc_urls=()).rpc_ws_connect_url() == (
+        "wss://api.mainnet-beta.solana.com"
+    )

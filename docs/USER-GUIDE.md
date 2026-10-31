@@ -157,7 +157,7 @@ Files:
 |---|---|
 | [STRATEGY.md](STRATEGY.md) | The lane, its prices and costs, how it is judged |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every `module_settings` key, and the pumpbot key map |
-| [ENVIRONMENT.md](ENVIRONMENT.md) | The six variables, and what replaced the rest |
+| [ENVIRONMENT.md](ENVIRONMENT.md) | The seven variables, and what replaced the rest |
 | [CLI.md](CLI.md) | Every command |
 | [FEATURES.md](FEATURES.md) | What ships, and what became of every pumpbot feature |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the module implements trading-core's contract |

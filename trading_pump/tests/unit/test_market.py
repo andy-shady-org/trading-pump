@@ -12,6 +12,7 @@ from trading_pump.market import (
     FEE_SOURCE_FLOOR,
     FEE_SOURCE_GLOBAL,
     FEE_SOURCE_TIER,
+    NewPoolInfo,
     PoolReading,
     RpcPoolSource,
     buy_tokens_out,
@@ -101,6 +102,8 @@ class FakeClient:
         self.global_config: dict[str, Any] | None = None
         self.mints: dict[str, dict[str, Any] | None] = {}
         self.reads: list[list[str]] = []
+        self.signatures: list[dict[str, Any]] = []
+        self.remembered: dict[str, tuple[str, str, str, bool]] = {}
 
     async def get_pumpswap_pool_states(
         self, mints: Any, *, rejected: Any = None, timeout_seconds: float = 5.0
@@ -119,6 +122,23 @@ class FakeClient:
             **self.mints,
         }
         return [table.get(address) for address in addresses]
+
+    async def get_signatures_for_address(
+        self, address: str, *, limit: int, timeout_seconds: float = 5.0
+    ) -> list[dict[str, Any]]:
+        self.reads.append([f"signatures:{address}:{limit}"])
+        return list(self.signatures)
+
+    def remember_pumpswap_pool(
+        self,
+        mint: str,
+        address: str,
+        base_vault: str,
+        quote_vault: str,
+        *,
+        sol_is_base: bool = False,
+    ) -> None:
+        self.remembered[mint] = (address, base_vault, quote_vault, sol_is_base)
 
 
 def _fee_config_bytes(tiers: list[tuple[int, int, int, int]]) -> bytes:
@@ -315,3 +335,60 @@ async def test_a_known_supply_is_kept_when_a_later_read_fails() -> None:
 def test_a_drained_pool_has_no_fee_market_cap() -> None:
     drained = PoolReading(SAMPLE_MINT, at=1.0, base_reserve=0, quote_reserve=5)
     assert drained.fee_market_cap_lamports(10**15) == 0
+
+
+# -- FEAT-80: pools found by the new-pool feed ----------------------------------
+
+
+def test_a_registered_pool_is_handed_to_the_client() -> None:
+    client = FakeClient()
+    source = RpcPoolSource(client)
+    source.register_pool(SAMPLE_MINT, "Pool", "Base", "Quote")
+    source.register_pool(SAMPLE_PUMP_MINT, "P2", "B2", "Q2", sol_is_base=True)
+    assert client.remembered == {
+        SAMPLE_MINT: ("Pool", "Base", "Quote", False),
+        SAMPLE_PUMP_MINT: ("P2", "B2", "Q2", True),
+    }
+
+
+@pytest.mark.parametrize(
+    ("signatures", "limit", "expected"),
+    [
+        # The whole history fit: created at the oldest signature.
+        ([{"blockTime": 30}, {"blockTime": 10}], 5, NewPoolInfo(10.0, True, 2, 6)),
+        # The lookup was full: the oldest seen is an upper bound.
+        ([{"blockTime": 30}, {"blockTime": 20}], 2, NewPoolInfo(20.0, False, 2, 6)),
+        # No block times (or none at all): no creation time.
+        ([{"signature": "x"}], 5, NewPoolInfo(None, True, 1, 6)),
+    ],
+)
+async def test_inspect_new_pool_dates_the_pool_by_its_signatures(
+    signatures: list[dict[str, Any]], limit: int, expected: NewPoolInfo
+) -> None:
+    client = FakeClient()
+    client.signatures = signatures
+    client.mints[SAMPLE_MINT] = _mint(10**15)
+    source = RpcPoolSource(client)
+
+    info = await source.inspect_new_pool("Pool", SAMPLE_MINT, limit=limit)
+
+    assert info == expected
+    assert client.reads == [[f"signatures:Pool:{limit}"], [SAMPLE_MINT]]
+
+
+@pytest.mark.parametrize(
+    "mint_account",
+    [
+        None,
+        _mint(10**15, owner=PUMP_AMM_PROGRAM_ID),
+        {"owner": TOKEN_PROGRAM_ID_STR, "data": [123, "base64"]},
+        _account(TOKEN_2022_PROGRAM_ID_STR, bytes(44)),
+    ],
+)
+async def test_unreadable_decimals_are_none(
+    mint_account: dict[str, Any] | None,
+) -> None:
+    client = FakeClient()
+    client.mints[SAMPLE_MINT] = mint_account
+    info = await RpcPoolSource(client).inspect_new_pool("Pool", SAMPLE_MINT, limit=5)
+    assert info.decimals is None

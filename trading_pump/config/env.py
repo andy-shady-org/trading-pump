@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import base58
 from solders.keypair import Keypair
@@ -26,6 +27,7 @@ from trading_pump.streams.websocket import split_stream_api_key, stream_connect_
 PRIVATE_KEY_ENV = "PUMPFUN_PRIVATE_KEY"
 RPC_URL_ENV = "PUMPFUN_RPC_URL"
 RPC_URLS_ENV = "PUMPFUN_RPC_URLS"
+RPC_WS_URL_ENV = "PUMPFUN_RPC_WS_URL"
 STREAM_URL_ENV = "PUMPFUN_STREAM_URL"
 STREAM_API_KEY_ENV = "PUMPFUN_STREAM_API_KEY"
 JUPITER_API_KEY_ENV = "PUMPFUN_JUPITER_API_KEY"
@@ -41,6 +43,11 @@ MODULE_ENV_VARS: dict[str, tuple[tuple[str, ...], str]] = {
     RPC_URLS_ENV: (
         ("SOLANA_RPC_URLS",),
         "comma-separated extra RPC endpoints for failover",
+    ),
+    RPC_WS_URL_ENV: (
+        (),
+        "Solana RPC WebSocket for the new-pool feed (default: the primary "
+        "RPC endpoint with wss://)",
     ),
     STREAM_URL_ENV: (("PUMPFUN_WS_URL",), "PumpPortal WebSocket URL"),
     STREAM_API_KEY_ENV: ((), "PumpPortal API key, appended to the stream URL"),
@@ -275,6 +282,7 @@ class Credentials:
     rpc_urls: tuple[str, ...] = ()
     stream_url: str = PUMPPORTAL_URL
     stream_api_key: str | None = None
+    rpc_ws_url: str | None = None
 
     def __repr__(self) -> str:
         return (
@@ -300,6 +308,25 @@ class Credentials:
     def stream_connect_url(self) -> str:
         """The URL to connect with, key added for PumpPortal only. Never log it."""
         return stream_connect_url(self.stream_url, self.stream_api_key)
+
+    def rpc_ws_connect_url(self) -> str:
+        """The Solana RPC WebSocket (FEAT-80): ``PUMPFUN_RPC_WS_URL``, else
+        the primary RPC endpoint with ``wss://`` (``ws://`` for ``http://``),
+        as most providers serve both on one URL. Never log it: it may carry
+        the provider's key."""
+        if self.rpc_ws_url:
+            return self.rpc_ws_url
+        url = self.rpc_urls[0] if self.rpc_urls else PUBLIC_RPC_URL
+        for plain, secure in (("https://", "wss://"), ("http://", "ws://")):
+            if url.startswith(plain):
+                return secure + url[len(plain) :]
+        return url
+
+    @property
+    def rpc_ws_display_url(self) -> str:
+        """The RPC WebSocket's scheme and host only, safe to show."""
+        parts = urlsplit(self.rpc_ws_connect_url())
+        return f"{parts.scheme}://{parts.hostname or ''}"
 
     def keypair(self) -> Keypair:
         """The wallet; raises when no key is configured."""
@@ -329,6 +356,7 @@ def load_credentials(env: Mapping[str, str] | None = None) -> Credentials:
         rpc_urls=tuple(urls) or (PUBLIC_RPC_URL,),
         stream_url=_first(source, STREAM_URL_ENV) or PUMPPORTAL_URL,
         stream_api_key=_first(source, STREAM_API_KEY_ENV),
+        rpc_ws_url=_first(source, RPC_WS_URL_ENV),
     )
 
 
@@ -342,6 +370,7 @@ __all__ = [
     "REPLACED_ENV_VARS",
     "RPC_URLS_ENV",
     "RPC_URL_ENV",
+    "RPC_WS_URL_ENV",
     "STREAM_API_KEY_ENV",
     "STREAM_URL_ENV",
     "decode_keypair",

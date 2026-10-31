@@ -40,6 +40,8 @@ DISCOVERY_SOURCE = "discovery"
 LAUNCH_SAMPLE_SOURCE = "launch_sample"
 POST_EXIT_SOURCE = "post_exit"
 GRADUATION_SOURCE = "graduation"
+# New PumpSwap pools that are not Pump.fun graduations (FEAT-80).
+NEW_POOL_SOURCE = "new_pool"
 RECORD_ONLY_POLL_SOURCES = frozenset(
     {
         REJECT_SAMPLE_SOURCE,
@@ -47,6 +49,7 @@ RECORD_ONLY_POLL_SOURCES = frozenset(
         LAUNCH_SAMPLE_SOURCE,
         POST_EXIT_SOURCE,
         GRADUATION_SOURCE,
+        NEW_POOL_SOURCE,
     }
 )
 # Salt for the launch sample, so it is drawn independently of the reject sample.
@@ -354,6 +357,7 @@ def _created_at(raw_created: Any) -> float | None:
 __all__ = [
     "DISCOVERY_SOURCE",
     "GRADUATION_SOURCE",
+    "NEW_POOL_SOURCE",
     "LAUNCH_SAMPLE_SALT",
     "LAUNCH_SAMPLE_SOURCE",
     "OBSERVATION_END_EVENT",

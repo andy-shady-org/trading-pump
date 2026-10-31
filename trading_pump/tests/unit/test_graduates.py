@@ -166,3 +166,51 @@ def test_without_a_lane_there_is_no_signal_time_and_no_recorder_is_fine() -> Non
     assert graduate is not None and graduate.signal_time is None
     tracker.update(make_reading(SAMPLE_MINT, at=100.0))
     assert graduate.signal_reading is None
+
+
+# -- FEAT-80: new pools that are not graduations --------------------------------
+
+
+def test_a_new_pool_is_followed_and_recorded_but_never_offered_to_a_lane() -> None:
+    rows: list[dict[str, Any]] = []
+    tracker = _tracker(rows)
+
+    graduate = tracker.add_new_pool(
+        SAMPLE_MINT, "Pool111", now=100.0, details={"created_at": 95.0}
+    )
+
+    assert graduate is not None and graduate.source == "new_pool"
+    assert graduate.decided and graduate.signal_time is None
+    assert graduate.pool == "Pool111"
+    # No migration row: replay counts migrations, and this is none.
+    assert rows == [
+        {
+            "timestamp": 100.0,
+            "mint": SAMPLE_MINT,
+            "event": "observation_start",
+            "source": "new_pool",
+            "migrated_at": 100.0,
+            "pool": "Pool111",
+            "created_at": 95.0,
+        }
+    ]
+    tracker.update(make_reading(SAMPLE_MINT, at=102.0))
+    tracker.end(SAMPLE_MINT, "ttl", 200.0)
+    assert [(r["event"], r["source"]) for r in rows[1:]] == [
+        ("curve_poll", "new_pool"),
+        ("observation_end", "new_pool"),
+    ]
+    assert tracker.stats["new_pools"] == 1
+
+
+def test_a_new_pool_of_a_followed_mint_or_a_full_list_is_not_followed() -> None:
+    tracker = _tracker(max_mints=1)
+    tracker.add(SAMPLE_PUMP_MINT, now=1.0)
+
+    # A graduate's second pool keeps the graduate's own observation.
+    assert tracker.add_new_pool(SAMPLE_PUMP_MINT, "Pool111", now=2.0) is None
+    assert tracker.add_new_pool(SAMPLE_MINT, "Pool222", now=2.0) is None
+
+    assert tracker.stats["new_pool_duplicates"] == 1
+    assert tracker.stats["list_full"] == 1
+    assert "new_pools" not in tracker.stats

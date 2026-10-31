@@ -10,6 +10,24 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+## [0.4.0-rc.5] - 2026-10-31
+
+The pools-1 build, on trading-core `v0.2.2`. One record-only feature, off by default: the capture of new PumpSwap pools that are not Pump.fun graduations (FEAT-80). Trading is unchanged: an rc.4 config runs the same. Paper only.
+
+### Added
+- **New PumpSwap pools that are not graduations, record-only (FEAT-80, off by default):** `new_pools.enabled` subscribes to PumpSwap's pool accounts over the RPC WebSocket (`PUMPFUN_RPC_WS_URL`, new; by default the RPC URL with `wss://`). After a 30-minute warm-up, each pool seen for the first time is dated by its signatures, and a SOL pair created in the last 10 minutes is followed like a graduate with `source: "new_pool"`. Both pool orders are read, SOL as quote (graduation pools) and SOL as base (how most of these pools are made), on the 301- and 287-byte layouts. No lane sees these pools, and replay skips their rows. A `New pools` status row shows the feed; `pumpswap pool feed` is degraded while it is disconnected ([`FEATURES.md` §2.1](docs/FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
+
+#### Release record – v0.4.0rc5 (2026-10-31)
+- Commit: the tagged commit on `main` after the `release/v0.4.0rc5` merge; trading-core `v0.2.2` (`e64526b`)
+- Release gate: `nox -s format lint mypy tests audit package` passed on Linux, 859 tests, 100% statement and branch coverage on 3.11–3.14, no known vulnerabilities, the wheel private and without tests. Still to do: CI on the tag, the restart drill.
+- Measurement, 15 minutes on the public RPC: `programSubscribe` on PumpSwap pool accounts carries every swap's pool write (47 messages and 36 kB a second, 832 pools). A canonical pool seen for the first time is an old graduate trading again, not a migration.
+- Smoke test: this code, record-only, on the public mainnet RPC, 18 minutes with a 5-minute warm-up.
+  - It found 15 new non-graduate pools in 13 minutes, each 5–10 s after its creation; all held SOL as the base.
+  - It read each pool 60–186 times, and skipped 478 graduates' pools and 29 pairs without SOL.
+  - 3 lookups failed on the public RPC's rate limit.
+- Run: `runtime-pump/configs/pools-1.json` is record-only (both lanes off, `new_pools` on, its own `data/pools-1/`), so there is no verdict to pre-register.
+- Capital stage: 0 (paper)
+
 ## [0.4.0-rc.4] - 2026-10-30
 
 The rc.11 build, on trading-core `v0.2.2`. Two features for more trades and bigger winners: a second lane for the instant graduations (FEAT-78) and per-lane exits, so both lanes run a +50% take-profit (FEAT-79). Both are off by default, so an rc.3 config trades the same. Also the market recorder's move to trading-scout and BUG-163. Paper only.

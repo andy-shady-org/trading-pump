@@ -31,7 +31,8 @@ credentials read by `config/env.py`; the two never mix.
 
 ```text
 PumpPortal subscribeMigration ──> MigrationFeed (feed.py) ──> GraduateTracker (graduates.py)
-                                                                  │  follows each pool 4 h
+RPC programSubscribe (PumpSwap pools, FEAT-80, optional)          ▲   │  follows each pool 4 h
+   ──> NewPoolFeed ──> NewPoolWatcher (pools.py) ── new pools ────┘   │  (new pools: record-only)
                        PoolPoller (feed.py) <─────── due mints ───┘
                             │ batch reads (RpcPoolSource, market.py → sdk.get_pumpswap_pool_states)
                             ├──> PoolReading per pool ──> tracker.update ──> capture rows (recorder.py)
@@ -53,6 +54,7 @@ trading_pump/
 ├── market.py            # PoolReading, SwapFee, pool maths, RpcPoolSource
 ├── graduates.py         # GraduateTracker: who is followed, readings, capture rows
 ├── feed.py              # MigrationFeed (PumpPortal) and PoolPoller
+├── pools.py             # NewPoolFeed and NewPoolWatcher: new non-graduate pools (FEAT-80)
 ├── execution.py         # PaperExecutor, LiveExecutor, Holdings
 ├── replay.py            # capture playback through the engine
 ├── recorder.py          # ReplayRecorder: the capture file (core RotatedFileSink)

@@ -306,3 +306,30 @@ async def test_a_given_rpc_pool_is_used_and_names_the_rpc_url() -> None:
     assert named.rpc_url == "https://named.example"
     for client in (pooled, empty, named):
         await client.close()
+
+
+async def test_signatures_for_address_come_back_newest_first_as_dicts() -> None:
+    client = _client()
+    answer = {
+        "result": [{"signature": "a", "blockTime": 2}, "junk", {"signature": "b"}]
+    }
+    rpc = AsyncMock(return_value=answer)
+    with patch.object(client, "_request_rpc_json", rpc):
+        rows = await client.get_signatures_for_address("Pool111", limit=100)
+    assert rows == [{"signature": "a", "blockTime": 2}, {"signature": "b"}]
+    payload = rpc.call_args.args[0]
+    assert payload["method"] == "getSignaturesForAddress"
+    assert payload["params"] == ["Pool111", {"limit": 100, "commitment": "confirmed"}]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [{"error": {"code": -32005, "message": "slow down"}}, {"result": None}, {}],
+)
+async def test_a_failed_signature_read_raises(answer: dict[str, Any]) -> None:
+    client = _client()
+    with (
+        patch.object(client, "_request_rpc_json", AsyncMock(return_value=answer)),
+        pytest.raises(RuntimeError, match="getSignaturesForAddress failed"),
+    ):
+        await client.get_signatures_for_address("Pool111", limit=10)
