@@ -1,14 +1,25 @@
 # Changelog
 
-All notable changes to `trading-pump`, and before it to `pumpfun-trading`, are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow the SemVer policy in [`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy). While the version is `0.x`, a MINOR release may change settings keys, CLI flags or file formats; such changes are listed under **Changed**.
+All notable changes to `trading-pump`, and before it to `pumpfun-trading`, are recorded here, newest first. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), as trading-core's `docs/dev/DOCUMENTATION.md` §5.4 sets it out, and versions follow semantic versioning as set in [`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy).
 
-This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private git tags only: never published to PyPI or as public GitHub Releases. Only tagged versions run on a funded wallet.
+- **Versions.** `MAJOR.MINOR.PATCH`, tagged `vX.Y.Z`. **No pre-releases from now on:** `0.4.0-rc.1` to `0.4.0-rc.5` were the last, and the next release is `0.4.0`. While the version is `0.x`, a MINOR release may change settings keys, CLI options or file formats; such changes are listed under **Changed** and **Upgrading**.
+- **Sections** appear only when they have entries, in this order: Added, Changed, Deprecated, Removed, Fixed, Security, Research, Docs, Upgrading, then the release record ([`RELEASE-GATE.md` §5](docs/dev/RELEASE-GATE.md#5-release-record)). Every entry names the BUG and FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/dev/BUGS.md) and [`docs/dev/PROPOSED-FEATURES.md`](docs/dev/PROPOSED-FEATURES.md)).
+- **Old entries keep their headings and words.** Entries written before 2026-10-31 are not edited: their `0.4.0-rc.N` headings, `#### Release record` blocks, run names (rc.9, rc.11) and stage numbers stay (their "Capital stage: 0 (paper)" is Stage 1 in today's numbering, [`RELEASE-GATE.md` §3](docs/dev/RELEASE-GATE.md#3-capital-gate)).
 
-Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/dev/BUGS.md) and [`docs/dev/PROPOSED-FEATURES.md`](docs/dev/PROPOSED-FEATURES.md)) and ends with its release record ([`RELEASE-GATE.md` §5](docs/dev/RELEASE-GATE.md#5-release-record)).
+This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private git tags only: never published to PyPI or as public GitHub Releases. Only tagged versions run a counted run or a funded wallet.
 
 **History.** The entries from 0.1.0 to 0.3.0-rc.8 are pumpfun-trading's, kept as written: they describe the `pumpbot` runtime, its commands and variables, and link the [archived documents](docs/archive/pumpfun-trading/INDEX.md). Since 0.4.0 this repository is the trading-core module. The engine parts of those entries (risk, circuit breaker, accounting, audit tools, alerts, health, lifecycle, persistence, dashboard) are trading-core's now; trading-core's `CHANGELOG.md` lists the pumpfun-trading fixes and features it inherited, with the release each came in.
 
 ## [Unreleased]
+
+### Docs
+- **The documentation follows trading-core's `docs/dev/DOCUMENTATION.md`** (2026-10-31), the standard for trading-core and every module: the same layout, style, words, versioning, capital stages, run names, records and IDs in every repository. Nothing in the code changes.
+  - **Results log moved:** `docs/dev/STRATEGY-PIVOT.md` §6 (the table and §6.1–§6.19) is now [`docs/dev/RESULTS.md`](docs/dev/RESULTS.md), moved whole and unedited with its §6.N numbering, so every link to a section still lands; STRATEGY-PIVOT keeps §1–§5 as pumpfun-trading's history and says so in its title.
+  - **Run records:** [`docs/dev/runs/`](docs/dev/runs/README.md) holds one record per run, its pre-registration written before the start and its read-out at the end: rc.11 (its pre-registration copied from the 0.4.0-rc.4 release record), rc.11-tp20 (exploratory, not counted), pools-1 (record-only), and pumpbot's v0.2.0 / v0.2.1 pilot logs, moved from `docs/dev/releases/` unedited. The next counted run is named `pump-12`.
+  - **Capital stages renumbered:** 0 Evidence (replay or study), 1 Paper (≥ 72 h), 2 Live canary, 3 Scale-up ([`RELEASE-GATE.md` §3](docs/dev/RELEASE-GATE.md#3-capital-gate)). The old 0 / 1 / 2 (paper / canary / scale-up) stay in records written before 2026-10-31. Both lanes are in Stage 1; none has passed it.
+  - **Release candidates dropped:** versions are plain `vX.Y.Z` from now on; `v0.4.0rc1` to `v0.4.0rc5` were the last pre-releases and the next release is `v0.4.0` ([`RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy), CONTRIBUTING, SECURITY).
+  - `RELEASE-GATE.md` retitled "Release gate", with §1 as the one place that says what is running; the standard's release-record template (§5) and versioning policy (§6). `docs/dev/README.md` indexes every developer page.
+  - Stale statements fixed: two lanes, not one (README, USER-GUIDE, STRATEGY, ARCHITECTURE, AGENTS); seven `PUMPFUN_*` variables are read, not six (USER-GUIDE, CLI; a dated note under ADR-009); the migration feed's idle timeout is 1,800 s (RUNBOOK, BUG-163); the `runtime-pump` layout and run names (RUNBOOK); the FEAT-80 WebSocket's ~3 GB a day (COSTS); the FEAT-74 items point to trading-scout (TODO); FEAT IDs come from trading-core's shared series, next free FEAT-89 (PROPOSED-FEATURES); 859 tests (TESTING).
 
 ## [0.4.0-rc.5] - 2026-10-31
 
