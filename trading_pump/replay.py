@@ -45,6 +45,7 @@ from trading_pump.market import (
     SwapFee,
 )
 from trading_pump.module import PumpModule
+from trading_pump.names import TokenName
 from trading_pump.strategies.observation import (
     GRADUATION_SOURCE,
     OBSERVATION_END_EVENT,
@@ -186,6 +187,10 @@ class CapturePoolSource:
 
     async def swap_fee(self, reading: PoolReading) -> SwapFee:
         return SwapFee(int(self.fee_bps), FEE_SOURCE_REPLAY)
+
+    async def read_names(self, mints: Sequence[str]) -> dict[str, TokenName]:
+        """A capture holds no names: replayed positions show their address."""
+        return {}
 
 
 class ReplayClock:

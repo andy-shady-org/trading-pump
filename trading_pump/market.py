@@ -8,7 +8,9 @@ readings, so a capture of readings replays the same way.
 A :class:`PoolSource` produces readings and the fee a swap would pay. The
 live one, :class:`RpcPoolSource`, batch-reads the pools over RPC through the
 SDK (FEAT-73's ``get_pumpswap_pool_states``) and the fee from the PumpSwap
-fee accounts; ``trading_pump.replay`` has one that answers from a capture.
+fee accounts, and the graduates' token names from their mint accounts
+(``read_names``, for display only); ``trading_pump.replay`` has one that
+answers from a capture.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from typing import Any, Protocol
 
 from solders.pubkey import Pubkey
 
+from trading_pump.names import TokenName, decode_token_name
 from trading_pump.sdk.execution_types import (
     PUMP_FEE_PROGRAM_ID,
     TOKEN_2022_PROGRAM_ID_STR,
@@ -172,6 +175,12 @@ class PoolSource(Protocol):
 
     async def swap_fee(self, reading: PoolReading) -> SwapFee:
         """The fee a swap at this reading pays."""
+
+    async def read_names(self, mints: Sequence[str]) -> dict[str, TokenName]:
+        """The token names it could read (display only; the rest are left out).
+
+        Raises when the source itself failed.
+        """
 
 
 class PoolStateClient(Protocol):
@@ -334,6 +343,20 @@ class RpcPoolSource:
         supply = _decode_mint_supply(value)
         if supply is not None:
             self._supplies[mint] = (moment, supply)
+
+    async def read_names(self, mints: Sequence[str]) -> dict[str, TokenName]:
+        """Names from the mint accounts, in one ``getMultipleAccounts``."""
+        if not mints:
+            return {}
+        values = await self.client._get_accounts(
+            list(mints), timeout_seconds=self.timeout_seconds
+        )
+        self._count("name_reads")
+        named = {
+            mint: decode_token_name(value)
+            for mint, value in zip(mints, values, strict=True)
+        }
+        return {mint: name for mint, name in named.items() if name is not None}
 
     async def swap_fee(self, reading: PoolReading) -> SwapFee:
         tiers, config, supply = await self._fee_inputs(reading.mint)

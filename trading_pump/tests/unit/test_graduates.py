@@ -214,3 +214,25 @@ def test_a_new_pool_of_a_followed_mint_or_a_full_list_is_not_followed() -> None:
     assert tracker.stats["new_pool_duplicates"] == 1
     assert tracker.stats["list_full"] == 1
     assert "new_pools" not in tracker.stats
+
+
+def test_token_names_are_asked_for_graduates_only_and_three_times_at_most() -> None:
+    from trading_pump.graduates import MAX_NAME_READS
+    from trading_pump.names import TokenName
+
+    tracker = GraduateTracker(GraduationSettings())
+    tracker.add(SAMPLE_MINT, now=0.0)
+    tracker.add(SAMPLE_PUMP_MINT, now=0.0)
+    tracker.add_new_pool("Mint3333", "Pool111", now=1.0, details={})
+    assert tracker.names_due() == [SAMPLE_MINT, SAMPLE_PUMP_MINT]
+    assert tracker.names_due(limit=1) == [SAMPLE_MINT]
+
+    cat = TokenName("Cat", "CAT")
+    tracker.named([SAMPLE_MINT, SAMPLE_PUMP_MINT, "gone"], {SAMPLE_MINT: cat})
+    assert tracker.get(SAMPLE_MINT).name == cat  # type: ignore[union-attr]
+    assert tracker.names_due() == [SAMPLE_PUMP_MINT]
+    for _ in range(MAX_NAME_READS - 1):
+        tracker.named([SAMPLE_PUMP_MINT], {})
+    assert tracker.names_due() == []
+    assert tracker.stats["named"] == 1
+    assert tracker.stats["unnamed_reads"] == MAX_NAME_READS

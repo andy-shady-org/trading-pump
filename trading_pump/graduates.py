@@ -22,6 +22,7 @@ from typing import Any
 
 from trading_pump.config.settings import GraduationSettings
 from trading_pump.market import PoolReading
+from trading_pump.names import TokenName
 from trading_pump.sdk.pumpswap import canonical_pool_address
 from trading_pump.strategies.observation import (
     GRADUATION_SOURCE,
@@ -32,6 +33,9 @@ from trading_pump.strategies.observation import (
 )
 
 MIGRATION_EVENT = "migration"
+# Token names: at most this many mints per read, and three tries each.
+NAME_BATCH = 100
+MAX_NAME_READS = 3
 
 Recorder = Callable[[dict[str, Any]], None]
 
@@ -56,6 +60,10 @@ class Graduate:
     # ``graduation``, or ``new_pool`` for a new pool that is not a Pump.fun
     # graduation (FEAT-80): recorded, never proposed to a lane.
     source: str = GRADUATION_SOURCE
+    # The token's name and symbol from its mint (display only), and how many
+    # times it was asked for.
+    name: TokenName | None = None
+    name_reads: int = 0
 
     def age(self, now: float) -> float:
         return max(0.0, now - self.migrated_at)
@@ -179,6 +187,27 @@ class GraduateTracker:
     def due(self, now: float) -> list[str]:
         """Graduates whose next reading is due."""
         return self.observations.due(now)
+
+    def names_due(self, limit: int = NAME_BATCH) -> list[str]:
+        """Graduates whose token name is still unknown (asked at most
+        ``MAX_NAME_READS`` times; new pools are never named)."""
+        return [
+            graduate.mint
+            for graduate in self.graduates.values()
+            if graduate.source == GRADUATION_SOURCE
+            and graduate.name is None
+            and graduate.name_reads < MAX_NAME_READS
+        ][:limit]
+
+    def named(self, asked: list[str], found: dict[str, TokenName]) -> None:
+        """Store the names read for ``asked``; the rest are asked again later."""
+        for mint in asked:
+            graduate = self.graduates.get(mint)
+            if graduate is None:
+                continue
+            graduate.name_reads += 1
+            graduate.name = found.get(mint)
+            self._count("named" if graduate.name else "unnamed_reads")
 
     def expire(self, now: float) -> list[str]:
         """End the observations older than ``observation_seconds``."""

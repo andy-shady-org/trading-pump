@@ -175,7 +175,22 @@ class PoolPoller:
             self._count(f"rejected_{reason}")
             self.tracker.rejected(mint, reason, moment)
         self._count("readings", len(readings))
+        await self.read_names()
         return len(readings)
+
+    async def read_names(self) -> None:
+        """The token names of new graduates, after the pools are read: one
+        batched read, display only, so a failure is counted and forgotten."""
+        asked = self.tracker.names_due()
+        if not asked:
+            return
+        try:
+            found = await self.source.read_names(asked)
+        except Exception as exc:
+            self._count("name_errors")
+            logger.debug("token names not read: %s", redact_text(str(exc)))
+            return
+        self.tracker.named(asked, found)
 
     async def run(
         self,

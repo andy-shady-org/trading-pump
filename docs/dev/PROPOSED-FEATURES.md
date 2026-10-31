@@ -9,7 +9,7 @@ Code).
 
 **IDs.** `FEAT-<n>` is one series across trading-core and every module.
 The next free number is kept in trading-core's
-`docs/dev/PROPOSED-FEATURES.md` (FEAT-91 on 2026-10-31): take it there and
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-92 on 2026-10-31; FEAT-91 is token names, built here): take it there and
 bump it in the same pull request. FEAT-81, per-strategy limits and the
 Strategies panel, was built in trading-core 0.2.3. trading-scout's own
 FEAT-1, the cross-chain market recorder that moved there from here, is
