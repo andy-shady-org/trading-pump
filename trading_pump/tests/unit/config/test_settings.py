@@ -12,6 +12,7 @@ from trading_pump.config.settings import (
     GraduationSettings,
     InstantLaneSettings,
     LaneSettings,
+    NewPoolSettings,
     PumpSettings,
     StreamSettings,
 )
@@ -122,6 +123,10 @@ def test_module_settings_must_be_an_object() -> None:
         (CaptureSettings, {"flush_interval_seconds": 0}, "must be positive"),
         (StreamSettings, {"reconnect_delay_seconds": 0}, "must be positive"),
         (StreamSettings, {"idle_timeout_seconds": -1}, "must not be negative"),
+        (NewPoolSettings, {"max_age_seconds": 0}, "max_age_seconds must be positive"),
+        (NewPoolSettings, {"warmup_seconds": -1}, "warmup_seconds must not be"),
+        (NewPoolSettings, {"max_lookups": 0}, "max_lookups must be positive"),
+        (NewPoolSettings, {"signature_limit": 1001}, "within 1..1000"),
     ],
 )
 def test_each_section_validates_its_values(
@@ -190,3 +195,14 @@ def test_both_lanes_enabled_must_share_the_signal_and_not_overlap() -> None:
         }
     )
     assert [key for key, _ in only.enabled_lanes()] == ["instant"]
+
+
+def test_the_new_pool_capture_is_off_by_default_and_read_from_its_section() -> None:
+    assert PumpSettings().new_pools == NewPoolSettings()
+    assert not NewPoolSettings().enabled
+    settings = PumpSettings.from_mapping(
+        {"new_pools": {"enabled": True, "warmup_seconds": 0, "_note": "x"}}
+    )
+    assert settings.new_pools.enabled and settings.new_pools.warmup_seconds == 0
+    with pytest.raises(ValueError, match="Unknown new_pools keys: speed"):
+        PumpSettings.from_mapping({"new_pools": {"speed": 1}})

@@ -24,7 +24,7 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 pumpfun-trading's norms are kept (originals in `docs/archive/pumpfun-trading/AGENTS.md`), reworded where the code they named moved or was retired, and new ones added for the module.
 - **The Module Owns The Venue, The Core Owns The Run:** Solana, Pump.fun and PumpSwap knowledge lives here; sizing, risk, the breaker, exits, accounting, persistence, alerts and the dashboard are trading-core's. Never re-implement an engine concern in this package; if the contract cannot express something, change trading-core (with its own test and `TC-<n>` bug) and pin the version here.
 - **Fail Closed, Never Guess:** a failed pool read makes the quote stale and the fill refused (`ExecutionRefused`); a missing balance raises (BUG-158); a drained pool is a result, not a gap. No fallback number (a default price, a placeholder market cap, a simulated balance) may reach a decision or a fill.
-- **Credentials In The Environment, Everything Else In Settings:** only the six `MODULE_ENV_VARS` (`docs/ENVIRONMENT.md`) are read from the environment; every other choice is a validated `module_settings` key (`PumpSettings`, unknown keys are errors). Never read a new `PUMPFUN_*` variable without adding it to `MODULE_ENV_VARS` and the manual (the test checks both).
+- **Credentials In The Environment, Everything Else In Settings:** only the seven `MODULE_ENV_VARS` (`docs/ENVIRONMENT.md`) are read from the environment; every other choice is a validated `module_settings` key (`PumpSettings`, unknown keys are errors). Never read a new `PUMPFUN_*` variable without adding it to `MODULE_ENV_VARS` and the manual (the test checks both).
 - **Asynchronous Jito Bundle Polling:** Never block the event loop when waiting for Jito bundle statuses; always use non-blocking `asyncio` polling or websocket event confirmation.
 - **Micro-Lamport Compute Budget Management:** Every transaction builder must explicitly append a `SetComputeUnitPrice` and a tight, simulated `SetComputeUnitLimit` instruction to prevent transaction drops or wasted fee capital.
 - **Zero-Copy Alignment Checks:** Any structural or byte change to a decoder (`sdk/`, `streams/`) must match the program's real account layout; pin it to real mainnet account bytes in `tests/support/payloads.py`.
@@ -124,6 +124,7 @@ Every learning from pumpfun-trading is kept below, in its original words, with w
 - **[STRATEGY] Look For The Trade, Keep The Gate:** the operator corrected a run of "this will not work" read-outs (2026-10-30): the job is to find rules that make money. Lead with the best variant, its trade count and its risks; let the pre-registered verdict and the out-of-sample run do the rejecting, not the tone of the read-out. *[Applies: everywhere.]*
 - **[EXITS] Lane Exits Need Empty Engine Exits:** the engine runs its own `exits` after the module's `should_exit` returns nothing, so with an engine take profit at +20% a lane's +50% would never be reached. A config that uses `lane.exits` / `instant.exits` (FEAT-79) sets the engine's `exits` to `{}`. *[Applies: here.]*
 - **[RISK] A Profit Ratchet Starves A Paper Sample:** in the rc.11 replay the engine's `adaptive_ratchet` breaker halted new buys for the last 7 h after the day gave back half of a +0.044 SOL peak (one or two stop-outs at 0.02 SOL), so the run stopped sampling exactly after its losses. A paper run that must reach a verdict count uses `drawdown_reference_mode` `"baseline"` (the daily and cumulative drawdown locks stay); the ratchet is a live-capital choice, made at Stage 1. *[Applies: here.]*
+- **[STREAMS] A Pool Subscription Sees Every Swap:** a `programSubscribe` on PumpSwap's pool accounts was expected to fire on pool creation and LP changes; PumpSwap writes the pool account on every swap, so it carried 47 messages (36 kB) a second for 832 pools in 15 minutes, and first seen did not mean new (FEAT-80, 2026-10-31). Measure a subscription's volume before designing on it, and date an account by its history (`getSignaturesForAddress`), never by when a stream first showed it. *[Applies: here.]*
 
 ## Project Overview
 
@@ -140,6 +141,7 @@ trading-pump/
 │   ├── market.py         # PoolReading, SwapFee, PumpSwap pool maths, RpcPoolSource
 │   ├── graduates.py      # GraduateTracker (FEAT-73): who is followed, readings, capture rows
 │   ├── feed.py           # MigrationFeed (PumpPortal subscribeMigration), PoolPoller
+│   ├── pools.py          # NewPoolFeed (RPC programSubscribe), NewPoolWatcher: new non-graduate pools (FEAT-80)
 │   ├── execution.py      # PaperExecutor (pool-priced fills, every cost), LiveExecutor (refuses)
 │   ├── replay.py         # capture playback through the engine (trading-pump replay)
 │   ├── recorder.py       # the capture file (core RotatedFileSink)
@@ -172,7 +174,7 @@ trading-pump/
 * [**`docs/USER-GUIDE.md`**](docs/USER-GUIDE.md): Start here: concepts, install, run, judge, replay, from pumpbot.
 * [**`docs/STRATEGY.md`**](docs/STRATEGY.md): The FEAT-76 lane, its evidence, prices and costs, and how it is judged.
 * [**`docs/CONFIGURATION.md`**](docs/CONFIGURATION.md): Every `module_settings` key, and the pumpbot key map.
-* [**`docs/ENVIRONMENT.md`**](docs/ENVIRONMENT.md): The six variables read, and what replaced the rest (checked by a test).
+* [**`docs/ENVIRONMENT.md`**](docs/ENVIRONMENT.md): The seven variables read, and what replaced the rest (checked by a test).
 * [**`docs/CLI.md`**](docs/CLI.md): `trading-pump record / replay / env` and the trading-core commands used with them.
 * [**`docs/FEATURES.md`**](docs/FEATURES.md): Shipped features, and what became of each pumpfun-trading feature.
 * [**`docs/ARCHITECTURE.md`**](docs/ARCHITECTURE.md): How the module meets trading-core's contract; data flow; layout.

@@ -7,7 +7,7 @@ schedule is in [`TODO.md`](TODO.md). When a feature's code ships, move it to
 ships there and keep the missing parts here (AGENTS, Feature Docs Track
 Code).
 
-This list continues pumpfun-trading's (next free ID: **FEAT-80**). On
+This list continues pumpfun-trading's (next free ID: **FEAT-81**). On
 2026-10-28 it was split by owner: the venue proposals below stayed; the Web
 UI platform and the engine-level proposals (FEAT-10, FEAT-31 to FEAT-38,
 FEAT-41, FEAT-43 to FEAT-46, FEAT-48) moved to trading-core's
@@ -39,7 +39,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-60 | Buy-timing (drizzle / burst) inputs | Income | P3 | inputs recorded in rc.3 (no edge yet); gate not built |
 | FEAT-61 | Create-slot bundle proxy | Income | P3 | inputs recorded in rc.3; gate not built |
 | FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled; refocused on graduates 2026-10-29: read-out from FEAT-74 data first ([`TODO.md`](TODO.md#cross-chain-market-recorder-feat-74)) |
-| FEAT-77 | On-chain migration feed as a fallback for PumpPortal | Reliability | P2 | proposed 2026-10-29; measure the subscription's volume first ([`TODO.md`](TODO.md#on-chain-migration-feed-feat-77-fallback-for-pumpportal)) |
+| FEAT-77 | On-chain migration feed as a fallback for PumpPortal | Reliability | P2 | proposed 2026-10-29; the PumpSwap pool subscription is measured (47 messages a second, every swap) and cannot tell a migration from an old graduate without dating each pool; the fallback is not built ([`TODO.md`](TODO.md#on-chain-migration-feed-feat-77-fallback-for-pumpportal)) |
 | FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P3 | not scheduled |
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
 | FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | — | **NO-GO** 2026-10-29: costs pass (0–37 bps, phase 0), but the pre-registered walk-forward on the Binance history lost in every counted half-year and never beat random timing (STRATEGY-PIVOT §6.15); not built |
@@ -47,7 +47,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-47 | Replay analytics on Parquet + DuckDB | Suggested | P3 | backlog |
 
-Built without a proposal (2026-10-30, from the rc.9 / rc.10 replays, [`STRATEGY-PIVOT.md` §6.18](STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)): FEAT-78 (the `pumpswap_instant` lane) and FEAT-79 (per-lane exits), in [`FEATURES.md` §3.1–§3.2](../FEATURES.md#31-the-pumpswap_instant-lane-feat-78-paper).
+Built without a proposal (2026-10-30, from the rc.9 / rc.10 replays, [`STRATEGY-PIVOT.md` §6.18](STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)): FEAT-78 (the `pumpswap_instant` lane) and FEAT-79 (per-lane exits), in [`FEATURES.md` §3.1–§3.2](../FEATURES.md#31-the-pumpswap_instant-lane-feat-78-paper). Built record-only on 2026-10-31: FEAT-80, the capture of new PumpSwap pools that are not graduations ([`FEATURES.md` §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)); a lane on them is not built and waits for its capture.
 
 Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34, FEAT-35, FEAT-36, FEAT-37, FEAT-38, FEAT-41, FEAT-43, FEAT-44, FEAT-45, FEAT-46, FEAT-48. Shipped and moved to `FEATURES.md` earlier (pumpfun-trading, 2026-10-20): FEAT-49, FEAT-50, FEAT-42, FEAT-51, FEAT-52, FEAT-53, FEAT-58; of those only the parts listed in [`FEATURES.md` §10](../FEATURES.md#10-what-became-of-pumpfun-tradings-features) are still here.
 

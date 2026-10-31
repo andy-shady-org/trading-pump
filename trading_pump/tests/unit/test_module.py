@@ -19,6 +19,7 @@ from trading_core.positions import Position
 from trading_pump.config.env import Credentials, load_credentials
 from trading_pump.feed import CONDITION_FEED, CONDITION_RPC
 from trading_pump.module import PUMP_QUOTE, PumpModule, QuoteUnavailable
+from trading_pump.pools import CONDITION_POOL_FEED
 from trading_pump.sdk.execution import PumpFunExecutionClient
 from trading_pump.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
 from trading_pump.tests.support.factories import (
@@ -535,3 +536,45 @@ def test_the_pipeline_runs_with_the_instant_lane_alone() -> None:
     assert module.tracker.signal_after_seconds == 60.0
     off, *_ = _module(lane={"enabled": False})
     assert off.pipeline() is None and off.tracker.signal_after_seconds is None
+
+
+# -- FEAT-80: the new-pool capture ----------------------------------------------
+
+
+async def test_the_new_pool_feed_runs_only_when_enabled_and_stops_with_the_module() -> (
+    None
+):
+    module = PumpModule(
+        source=FakePoolSource(),
+        credentials=Credentials(rpc_urls=("https://rpc.example/?api-key=SECRET",)),
+        capture={"path": None},
+        new_pools={"enabled": True, "warmup_seconds": 0},
+    )
+    started: list[str] = []
+
+    async def run_forever(name: str) -> None:
+        started.append(name)
+        await asyncio.sleep(3600)
+
+    module.feed.run = lambda: run_forever("feed")
+    module.pool_feed.run = lambda: run_forever("pools")
+    await module.start()
+    await asyncio.sleep(0)
+    assert sorted(started) == ["feed", "pools"] and len(module._tasks) == 3
+    assert module.pool_feed.stream_url == "wss://rpc.example"
+    assert module.pool_feed.stream_connect_url().endswith("api-key=SECRET")
+    await module.stop()
+    assert module._tasks == [] and module.pool_feed.stream_stop_requested()
+
+
+def test_new_pool_rows_status_and_provenance(tmp_path: Path) -> None:
+    module, _, _, host = _module(new_pools={"enabled": True})
+    rows = dict(module.status_rows())
+    assert rows["New pools"].startswith("disconnected · 0 new followed")
+    assert module.provenance()["new_pools"]["enabled"] is True
+    module._pool_feed_state(False, "connection closed")
+    assert host.degraded[CONDITION_POOL_FEED] == "connection closed"
+    module.bind(None)  # type: ignore[arg-type]
+    module._pool_feed_state(True, "")
+    off, *_ = _module()
+    assert "New pools" not in dict(off.status_rows())

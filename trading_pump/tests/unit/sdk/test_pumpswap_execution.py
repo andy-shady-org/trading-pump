@@ -362,3 +362,75 @@ async def test_an_rpc_answer_without_accounts_is_a_failed_read_not_missing_pools
     ):
         await client.get_pumpswap_pool_states([GRADUATED_MINT], rejected=rejected)
     assert rejected == {}
+
+
+async def test_a_remembered_pool_is_read_without_resolving_the_canonical_one() -> None:
+    # FEAT-80: a new pool found on-chain is read at its own address.
+    client = _client()
+    other = "NewPoo1111111111111111111111111111111111111"
+    accounts = _accounts()
+    accounts[other] = accounts.pop(GRADUATED_POOL)
+    rpc, calls = _counting_rpc(accounts)
+    client.remember_pumpswap_pool(
+        GRADUATED_MINT,
+        other,
+        GRADUATED_BASE_VAULT_ADDRESS,
+        GRADUATED_QUOTE_VAULT_ADDRESS,
+    )
+    with patch.object(client, "_request_rpc_json", rpc):
+        states = await client.get_pumpswap_pool_states([GRADUATED_MINT])
+    assert states[GRADUATED_MINT]["pool"] == other
+    assert calls == [
+        [other, GRADUATED_BASE_VAULT_ADDRESS, GRADUATED_QUOTE_VAULT_ADDRESS]
+    ]
+    client.remember_pumpswap_pool("M", "P", "B", "Q")
+    assert client._pumpswap_vaults["M"] == ("P", "B", "Q")
+
+
+async def test_a_pool_with_sol_as_its_base_reads_the_coin_from_the_quote_vault() -> (
+    None
+):
+    # FEAT-80: most non-graduate pools hold SOL as the base and the coin as
+    # the quote; the reading is the same coin / SOL pair, without the
+    # virtual quote reserve (which is not SOL there).
+    client = _client()
+    other = "NewPoo1111111111111111111111111111111111111"
+    raw = bytearray(base64.b64decode(GRADUATED_POOL_B64))
+    raw[ps.POOL_BASE_MINT_OFFSET : ps.POOL_BASE_MINT_OFFSET + 32] = bytes(
+        Pubkey.from_string(ps.WSOL_MINT_STR)
+    )
+    raw[ps.POOL_QUOTE_MINT_OFFSET : ps.POOL_QUOTE_MINT_OFFSET + 32] = bytes(
+        Pubkey.from_string(GRADUATED_MINT)
+    )
+    accounts = _accounts()
+    accounts[other] = {
+        "owner": GRADUATED_POOL_OWNER,
+        "data": [base64.b64encode(bytes(raw)).decode(), "base64"],
+    }
+    rpc, _ = _counting_rpc(accounts)
+    # The SOL vault is the pool's base vault, the coin's its quote vault.
+    client.remember_pumpswap_pool(
+        GRADUATED_MINT,
+        other,
+        GRADUATED_QUOTE_VAULT_ADDRESS,
+        GRADUATED_BASE_VAULT_ADDRESS,
+        sol_is_base=True,
+    )
+    with patch.object(client, "_request_rpc_json", rpc):
+        states = await client.get_pumpswap_pool_states([GRADUATED_MINT])
+    assert states[GRADUATED_MINT]["base_reserve"] == BASE_RESERVE
+    assert states[GRADUATED_MINT]["quote_reserve"] == 73_700_738_380
+
+    # Registered the other way round, the same pool is refused.
+    client.remember_pumpswap_pool(
+        GRADUATED_MINT,
+        other,
+        GRADUATED_QUOTE_VAULT_ADDRESS,
+        GRADUATED_BASE_VAULT_ADDRESS,
+    )
+    rejected: dict[str, str] = {}
+    with patch.object(client, "_request_rpc_json", rpc):
+        states = await client.get_pumpswap_pool_states(
+            [GRADUATED_MINT], rejected=rejected
+        )
+    assert states == {} and rejected == {GRADUATED_MINT: "not_sol_pair"}

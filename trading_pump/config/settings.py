@@ -281,6 +281,45 @@ class StreamSettings:
         _not_negative(self, "heartbeat_seconds", "idle_timeout_seconds")
 
 
+@dataclass(frozen=True)
+class NewPoolSettings:
+    """Record-only capture of new PumpSwap pools that are not Pump.fun
+    graduations (FEAT-80), off by default.
+
+    A ``programSubscribe`` on the PumpSwap program's pool accounts (the RPC
+    WebSocket, ``PUMPFUN_RPC_WS_URL``) sees every pool that trades. The
+    pools seen in the first ``warmup_seconds`` are the busy existing ones
+    and are only remembered; after that a pool seen for the first time is
+    looked up (one ``getSignaturesForAddress`` of up to
+    ``signature_limit`` signatures), and one created at most
+    ``max_age_seconds`` ago, paired with SOL and not a canonical graduation
+    pool, is followed like a graduate (``graduation``'s schedule and list)
+    with ``source: "new_pool"``: recorded, never proposed to a lane.
+    Graduates' canonical pools are skipped (an old graduate trading again
+    looks the same as a migration on this stream).
+    """
+
+    enabled: bool = False
+    warmup_seconds: float = 1800.0
+    max_age_seconds: float = 600.0
+    signature_limit: int = 100
+    max_lookups: int = 4
+    # The stream is busy (tens of messages a second): silence means trouble.
+    idle_timeout_seconds: float = 60.0
+
+    def __post_init__(self) -> None:
+        _positive(
+            self,
+            "max_age_seconds",
+            "signature_limit",
+            "max_lookups",
+            "idle_timeout_seconds",
+        )
+        _not_negative(self, "warmup_seconds")
+        if not 1 <= int(self.signature_limit) <= 1000:
+            raise ValueError("NewPoolSettings.signature_limit must be within 1..1000")
+
+
 _NESTED: dict[str, type] = {
     "graduation": GraduationSettings,
     "lane": LaneSettings,
@@ -288,6 +327,7 @@ _NESTED: dict[str, type] = {
     "execution": ExecutionSettings,
     "capture": CaptureSettings,
     "stream": StreamSettings,
+    "new_pools": NewPoolSettings,
 }
 
 
@@ -301,6 +341,7 @@ class PumpSettings:
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
     capture: CaptureSettings = field(default_factory=CaptureSettings)
     stream: StreamSettings = field(default_factory=StreamSettings)
+    new_pools: NewPoolSettings = field(default_factory=NewPoolSettings)
     screening: ScreeningSettings = field(default_factory=ScreeningSettings)
 
     @classmethod
@@ -360,6 +401,7 @@ __all__ = [
     "GraduationSettings",
     "InstantLaneSettings",
     "LaneSettings",
+    "NewPoolSettings",
     "PumpSettings",
     "StreamSettings",
 ]

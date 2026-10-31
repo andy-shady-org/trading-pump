@@ -278,6 +278,34 @@ class ExecutionClientBase:
             for index in range(len(addresses))
         ]
 
+    async def get_signatures_for_address(
+        self,
+        address: str,
+        *,
+        limit: int,
+        max_retries: int = 2,
+        timeout_seconds: float = 5.0,
+    ) -> list[dict[str, Any]]:
+        """``getSignaturesForAddress``, newest first, at most ``limit``
+        (FEAT-80: a pool's history tells when it was created). A failed read
+        raises, as ``_get_accounts`` does (BUG-159)."""
+        parsed = await self._request_rpc_json(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [address, {"limit": int(limit), "commitment": "confirmed"}],
+            },
+            max_retries=max_retries,
+            timeout_seconds=timeout_seconds,
+        )
+        result = parsed.get("result")
+        if "error" in parsed or not isinstance(result, list):
+            raise RuntimeError(
+                f"getSignaturesForAddress failed: {parsed.get('error', result)!r}"[:300]
+            )
+        return [entry for entry in result if isinstance(entry, dict)]
+
     @staticmethod
     def is_valid_pubkey(value: str) -> bool:
         try:

@@ -16,7 +16,7 @@ rc.8 read-out scripts and the module's replay read the same file.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +25,7 @@ from trading_pump.market import PoolReading
 from trading_pump.sdk.pumpswap import canonical_pool_address
 from trading_pump.strategies.observation import (
     GRADUATION_SOURCE,
+    NEW_POOL_SOURCE,
     OBSERVATION_END_EVENT,
     OBSERVATION_START_EVENT,
     CurveObservationList,
@@ -52,6 +53,9 @@ class Graduate:
     signal_time: float | None = None
     # The lane decides once per graduate (a pre-registered rule, FEAT-76).
     decided: bool = False
+    # ``graduation``, or ``new_pool`` for a new pool that is not a Pump.fun
+    # graduation (FEAT-80): recorded, never proposed to a lane.
+    source: str = GRADUATION_SOURCE
 
     def age(self, now: float) -> float:
         return max(0.0, now - self.migrated_at)
@@ -115,26 +119,62 @@ class GraduateTracker:
         except Exception:
             self._count("invalid_mints")
             return None
-        if self.observations.add(mint, now=now) is None:
-            self._count("list_full")
+        graduate = self._follow(
+            Graduate(mint=mint, migrated_at=now, pool=pool), now=now
+        )
+        if graduate is None:
             return None
-        graduate = Graduate(mint=mint, migrated_at=now, pool=pool)
         if self.signal_after_seconds is not None:
             graduate.signal_time = now + float(self.signal_after_seconds)
-        self.graduates[mint] = graduate
+        self._start_row(graduate, now, {"held": bool(held)})
+        return graduate
+
+    def add_new_pool(
+        self,
+        mint: str,
+        pool: str,
+        *,
+        now: float,
+        details: Mapping[str, Any] | None = None,
+    ) -> Graduate | None:
+        """Start following a new pool that is not a Pump.fun graduation
+        (FEAT-80): the same schedule and rows, ``source: "new_pool"``, and
+        never a lane decision. ``None`` if the mint is followed already (a
+        graduate's second pool) or the list is full."""
+        if mint in self.graduates:
+            self._count("new_pool_duplicates")
+            return None
+        graduate = Graduate(
+            mint=mint, migrated_at=now, pool=pool, decided=True, source=NEW_POOL_SOURCE
+        )
+        if self._follow(graduate, now=now) is None:
+            return None
+        self._count("new_pools")
+        self._start_row(graduate, now, dict(details or {}))
+        return graduate
+
+    def _follow(self, graduate: Graduate, *, now: float) -> Graduate | None:
+        if self.observations.add(graduate.mint, now=now) is None:
+            self._count("list_full")
+            return None
+        self.graduates[graduate.mint] = graduate
         self._count("followed")
+        return graduate
+
+    def _start_row(
+        self, graduate: Graduate, now: float, extra: Mapping[str, Any]
+    ) -> None:
         self.record(
             {
                 "timestamp": now,
-                "mint": mint,
+                "mint": graduate.mint,
                 "event": OBSERVATION_START_EVENT,
-                "source": GRADUATION_SOURCE,
+                "source": graduate.source,
                 "migrated_at": now,
-                "pool": pool,
-                "held": bool(held),
+                "pool": graduate.pool,
+                **extra,
             }
         )
-        return graduate
 
     def due(self, now: float) -> list[str]:
         """Graduates whose next reading is due."""
@@ -158,7 +198,7 @@ class GraduateTracker:
                 "timestamp": now,
                 "mint": mint,
                 "event": OBSERVATION_END_EVENT,
-                "source": GRADUATION_SOURCE,
+                "source": graduate.source,
                 "cause": cause,
                 "observed_seconds": round(max(0.0, now - entry.added_at), 1),
                 "polls": entry.polls,
@@ -179,7 +219,7 @@ class GraduateTracker:
             # The same reading again (a replay between two recorded reads).
             entry.last_polled_at = reading.at
             return graduate
-        self.record(reading.capture_row(source=GRADUATION_SOURCE))
+        self.record(reading.capture_row(source=graduate.source))
         if graduate.first is None and not reading.drained:
             graduate.first = reading
         graduate.last = reading

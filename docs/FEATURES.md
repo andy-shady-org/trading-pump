@@ -59,6 +59,46 @@ row shape (`migration`, `observation_start`, `curve_poll` with
 `source: "graduation"`, `observation_end` with cause, polls and first / last /
 peak pool SOL), so the rc.8 read-out scripts work on it.
 
+### 2.1 New PumpSwap pools that are not graduations (FEAT-80, record-only)
+
+Off by default (`new_pools.enabled`). trading-scout's first run saw about
+60 new PumpSwap pools an hour that never came through PumpPortal's migration
+feed (other launchpads' tokens and hand-made SOL pairs, 91% of them not
+Pump.fun mints), against about 35 graduations. This finds them on-chain and
+follows them like graduates, so a later lane can be judged on a capture:
+
+* **Feed:** `programSubscribe` on the PumpSwap program's pool accounts over
+  the RPC WebSocket (`PUMPFUN_RPC_WS_URL`, by default the RPC URL with
+  `wss://`): one subscription for 301-byte accounts (the current layout) and
+  one for 287 bytes (an older layout many new pools still have). PumpSwap
+  writes the pool account on every swap, so the stream carries every pool
+  that trades: about 47–73 messages and 36 kB a second (measured on
+  2026-10-31), not only new pools. Its idle timeout is 60 s and it reports
+  `pumpswap pool feed` degraded while disconnected.
+* **What is new:** the pools seen in the first `warmup_seconds` (30 min) are
+  the busy existing ones and are only remembered. After that, a pool seen
+  for the first time is looked up: one `getSignaturesForAddress` (up to
+  `signature_limit`, 100) dates it, one `getMultipleAccounts` reads the
+  mint's decimals. A SOL pair created at most `max_age_seconds` (10 min) ago
+  is followed: `observation_start` with `source: "new_pool"`, its pool,
+  `created_at` (exact when its whole history fitted), decimals, slot and
+  `sol_is_base`, then `curve_poll` / `observation_end` rows on the
+  graduation schedule. Most of these pools hold **SOL as the base and the
+  coin as the quote**, the reverse of a graduation pool (GeckoTerminal shows
+  them flipped); both orders are read as coin / SOL, and the virtual quote
+  reserve (0 on almost all of them) is recorded, not priced. Readings assume
+  6 decimals, so prices of other mints are off by a power of ten while their
+  ratios are right.
+* **Never traded:** a new pool is marked decided when it is added, so no
+  lane sees it; replay skips its rows. A graduate's second pool is not
+  followed separately.
+* **Graduates' pools are skipped:** a canonical pool seen for the first
+  time is almost always an old graduate trading again (hundreds a minute
+  after start), not a migration, so it is only counted; FEAT-77 cannot be
+  measured this way without dating each one.
+* **Dashboard:** a `New pools` status row (state, new pools followed, old
+  pools looked up, graduates' pools skipped).
+
 ## 3. The `pumpswap_momentum` lane (FEAT-76, paper)
 
 The pre-registered rule from the rc.8 read-out, as a trading-core pipeline

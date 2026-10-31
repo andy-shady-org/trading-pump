@@ -189,6 +189,42 @@ class PoolStateClient(Protocol):
         self, addresses: list[str], *, timeout_seconds: float = 5.0
     ) -> list[dict[str, Any] | None]: ...
 
+    async def get_signatures_for_address(
+        self, address: str, *, limit: int, timeout_seconds: float = 5.0
+    ) -> list[dict[str, Any]]: ...
+
+    def remember_pumpswap_pool(
+        self,
+        mint: str,
+        address: str,
+        base_vault: str,
+        quote_vault: str,
+        *,
+        sol_is_base: bool = False,
+    ) -> None: ...
+
+
+# SPL / Token-2022 mint: mint_authority COption (36), supply u64, decimals u8.
+MINT_DECIMALS_OFFSET = 44
+
+
+@dataclass(frozen=True)
+class NewPoolInfo:
+    """What one lookup says about a pool found by the new-pool feed (FEAT-80).
+
+    ``created_at`` is the block time of the pool's oldest signature when its
+    whole history fit in the lookup (``exact``); otherwise the oldest of the
+    newest ``signatures``, an upper bound on its age. ``decimals`` is the
+    base mint's (``None`` when unreadable): readings assume 6, as Pump.fun's
+    mints have, so a price on another mint is off by a power of ten while
+    its ratios are right.
+    """
+
+    created_at: float | None
+    exact: bool
+    signatures: int
+    decimals: int | None
+
 
 @dataclass
 class RpcPoolSource:
@@ -224,6 +260,43 @@ class RpcPoolSource:
             for mint, state in states.items()
         }
         return readings, rejected
+
+    def register_pool(
+        self,
+        mint: str,
+        address: str,
+        base_vault: str,
+        quote_vault: str,
+        *,
+        sol_is_base: bool = False,
+    ) -> None:
+        """Read ``mint`` from this pool (FEAT-80), not its canonical one."""
+        self.client.remember_pumpswap_pool(
+            mint, address, base_vault, quote_vault, sol_is_base=sol_is_base
+        )
+
+    async def inspect_new_pool(
+        self, address: str, mint: str, *, limit: int
+    ) -> NewPoolInfo:
+        """When the pool was created (its signatures) and the mint's decimals,
+        in two reads; a failed read raises."""
+        signatures = await self.client.get_signatures_for_address(
+            address, limit=limit, timeout_seconds=self.timeout_seconds
+        )
+        (mint_value,) = await self.client._get_accounts(
+            [mint], timeout_seconds=self.timeout_seconds
+        )
+        times = [
+            float(entry["blockTime"])
+            for entry in signatures
+            if isinstance(entry.get("blockTime"), int | float)
+        ]
+        return NewPoolInfo(
+            created_at=min(times) if times else None,
+            exact=len(signatures) < int(limit),
+            signatures=len(signatures),
+            decimals=_decode_mint_decimals(mint_value),
+        )
 
     async def _fee_inputs(self, mint: str) -> tuple[Any, Any, int | None]:
         """(fee tiers or None, global config or None, the mint's supply or
@@ -301,6 +374,17 @@ def _decode_mint_supply(value: Mapping[str, Any] | None) -> int | None:
     return supply if supply > 0 else None
 
 
+def _decode_mint_decimals(value: Mapping[str, Any] | None) -> int | None:
+    """A mint account's decimals, or ``None`` when absent, foreign or short."""
+    if not value or str(value.get("owner") or "") not in TOKEN_PROGRAMS:
+        return None
+    try:
+        raw = base64.b64decode((value.get("data") or [""])[0])
+    except Exception:
+        return None
+    return raw[MINT_DECIMALS_OFFSET] if len(raw) > MINT_DECIMALS_OFFSET else None
+
+
 def _decode(value: Mapping[str, Any] | None, owner: str, decoder: Any) -> Any:
     """Decode an account read, or ``None`` when absent, foreign or malformed."""
     if not value or str(value.get("owner") or "") != owner:
@@ -327,7 +411,9 @@ __all__ = [
     "FEE_SOURCE_REPLAY",
     "FEE_SOURCE_TIER",
     "LAMPORTS_PER_SOL",
+    "MINT_DECIMALS_OFFSET",
     "TOKEN_UNITS",
+    "NewPoolInfo",
     "PoolReading",
     "PoolSource",
     "PoolStateClient",

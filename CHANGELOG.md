@@ -10,6 +10,9 @@ Every entry lists the BUG / FEAT IDs it covers (see [`docs/dev/BUGS.md`](docs/de
 
 ## [Unreleased]
 
+### Added
+- **New PumpSwap pools that are not graduations, record-only (FEAT-80, off by default):** `new_pools.enabled` subscribes to PumpSwap's pool accounts over the RPC WebSocket (`PUMPFUN_RPC_WS_URL`, new; by default the RPC URL with `wss://`). After a 30-minute warm-up, each pool seen for the first time is dated by its signatures, and a SOL pair created in the last 10 minutes is followed like a graduate with `source: "new_pool"`. Both pool orders are read, SOL as quote (graduation pools) and SOL as base (how most of these pools are made), on the 301- and 287-byte layouts. No lane sees these pools, and replay skips their rows. A `New pools` status row shows the feed; `pumpswap pool feed` is degraded while it is disconnected ([`FEATURES.md` §2.1](docs/FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
+
 ## [0.4.0-rc.4] - 2026-10-30
 
 The rc.11 build, on trading-core `v0.2.2`. Two features for more trades and bigger winners: a second lane for the instant graduations (FEAT-78) and per-lane exits, so both lanes run a +50% take-profit (FEAT-79). Both are off by default, so an rc.3 config trades the same. Also the market recorder's move to trading-scout and BUG-163. Paper only.
