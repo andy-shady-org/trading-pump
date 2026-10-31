@@ -194,7 +194,7 @@ Laid out as trading-core's `docs/dev/DOCUMENTATION.md` §2.3 asks.
 * [**`docs/dev/BUGS.md`**](docs/dev/BUGS.md): Every bug, root cause and fix; where each fix lives after the split.
 * [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Unbuilt venue features (FEAT IDs from trading-core's shared series).
 * [**`docs/dev/TESTING.md`**](docs/dev/TESTING.md): The gate, CI, layout, isolation, conventions.
-* [**`docs/dev/COSTS.md`**](docs/dev/COSTS.md): Project costs and the measured running cost per run. Add every new payment there.
+* [**`docs/dev/COSTS.md`**](docs/dev/COSTS.md): This module's costs (Helius, PumpPortal, later on-chain fees) and the measured running cost per run; development costs are trading-core's. Add every new payment for this module there.
 * [**`docs/dev/ARCHITECTURE-DECISIONS.md`**](docs/dev/ARCHITECTURE-DECISIONS.md): ADRs (ADR-008 test layout, ADR-009 the split).
 * [**`docs/dev/releases/`**](docs/dev/releases/README.md): Release records too long for `CHANGELOG.md` (none so far).
 * [**`docs/dev/STRATEGY-PIVOT.md`**](docs/dev/STRATEGY-PIVOT.md): History: pumpfun-trading's v0.3.0 strategy plan.

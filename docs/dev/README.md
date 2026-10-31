@@ -23,7 +23,7 @@ is fixed. Below is only what is particular to trading-pump.
 | [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md) | Venue features not built yet, by FEAT ID |
 | [`TESTING.md`](TESTING.md) | The `nox` gate, CI, the test layout, isolation, markers, conventions |
 | [`ARCHITECTURE-DECISIONS.md`](ARCHITECTURE-DECISIONS.md) | Decisions and why, as ADR-NNN (ADR-008 the test layout, ADR-009 the split onto trading-core) |
-| [`COSTS.md`](COSTS.md) | What the project pays (subscriptions, RPC, data) and what a run costs; every new payment goes here |
+| [`COSTS.md`](COSTS.md) | What this module pays (Helius, PumpPortal, later on-chain fees) and what a run costs; every new payment for this module goes here. Development costs are trading-core's |
 | [`releases/`](releases/README.md) | Release records too long for `CHANGELOG.md` (none so far) |
 | [`STRATEGY-PIVOT.md`](STRATEGY-PIVOT.md) | History: pumpfun-trading's v0.3.0 strategy plan (§1–§5); its results log moved to `RESULTS.md` |
 | [`../archive/pumpfun-trading/`](../archive/pumpfun-trading/INDEX.md) | pumpfun-trading's documents as of v0.3.0rc8, frozen (only links are fixed) |

@@ -1,6 +1,8 @@
-# Project costs
+# Costs
 
-What building and running `pumpfun-trading` (since 2026-10-28 `trading-pump`, the trading-core module) has cost so far, and what each run costs to keep going. Record every new payment here as it happens, in the currency it was paid in. Amounts are not converted: the project pays in USD, EUR, GBP and SOL, and an exchange rate picked later would make the totals look more exact than they are.
+What trading-pump (pumpfun-trading until 2026-10-28) has cost so far: its own subscriptions and payments, and what each run costs to keep going. Record every new payment for this module here as it happens, in the currency it was paid in.
+
+Development costs (the Claude subscription and invoices, the JetBrains licence and AI credits) pay for every repository and are recorded in trading-core's `docs/dev/COSTS.md`; they moved there, unedited, on 2026-10-31. That page also has the project's totals, with this module's line. Amounts are not converted: the project pays in USD, EUR, GBP and SOL, and an exchange rate picked later would make the totals look more exact than they are.
 
 Last updated: 2026-10-31.
 
@@ -11,8 +13,8 @@ Last updated: 2026-10-31.
 | Service | Plan | Price | What it covers |
 | :--- | :--- | :--- | :--- |
 | Helius (Solana RPC) | Developer | $49.00 / month | 10 M credits a month, 50 RPC requests a second, 5 `sendTransaction` a second; extra credits $5 per million ([pricing](https://www.helius.dev/pricing), checked 2026-10-25). The Free plan (1 M credits, 10 requests a second) ran out during the rc.5 paper run (§4.1). |
-| JetBrains | AI Ultimate licence | £376.00 / year | IDE and AI assistant. |
-| Anthropic | Claude | €22.59 / month | Claude subscription. |
+
+The JetBrains and Claude subscriptions moved to trading-core's `docs/dev/COSTS.md` §1 (development) on 2026-10-31.
 
 ---
 
@@ -20,17 +22,7 @@ Last updated: 2026-10-31.
 
 ### 2.1 JetBrains AI credits
 
-| Date | Credits | Amount |
-| :--- | ---: | ---: |
-| 2026-10-13 | 20 | €21.34 |
-| 2026-10-14 | 10 | €10.67 |
-| 2026-10-15 | 40 | €42.67 |
-| 2026-10-16 | 40 | €42.67 |
-| 2026-10-16 | 100 | €106.68 |
-| 2026-10-16 | 100 | €106.68 |
-| 2026-10-18 | 100 | €106.68 |
-| 2026-10-20 | 100 | €106.68 |
-| **Total** | **510** | **€544.07** |
+Moved to trading-core's `docs/dev/COSTS.md` §2.1 (development) on 2026-10-31.
 
 ### 2.2 Crypto payments
 
@@ -48,10 +40,9 @@ None. Every run so far has been paper (pumpbot's `dry_run` / `paper_trade`, then
 
 ### 2.4 Claude invoices
 
-From the operator's Claude billing page (invoice list as given on 2026-10-30, all paid). The 2026-10-22 invoice is the monthly subscription in §1; the others are one-off and counted in §5.
+Moved to trading-core's `docs/dev/COSTS.md` §2.2 (development) on 2026-10-31.
 
-| Date | Amount | Note |
-| :--- | ---: | :--- |
+--- | ---: | :--- |
 | 2026-10-22 | €22.59 | Monthly subscription (§1); not counted again in §5 |
 | 2026-10-29 | $56.48 | |
 | 2026-10-29 | $25.10 | |
@@ -126,9 +117,10 @@ Helius gives each key an HTTPS endpoint and a WebSocket one (`wss://mainnet.heli
 
 ## 5. Totals to date
 
+This module's payments only; the project's totals, development included, are
+in trading-core's `docs/dev/COSTS.md` §4.
+
 | Currency | Recurring | One-off |
 | :--- | :--- | :--- |
-| USD | $49.00 / month (Helius) | $131.78 (Claude invoices, §2.4) |
-| EUR | €22.59 / month (Claude) | €640.28 (JetBrains AI credits €544.07, Claude invoice €96.21, §2.4) |
-| GBP | £376.00 / year (JetBrains) | – |
+| USD | $49.00 / month (Helius) | – |
 | SOL | ≈ 0.8 SOL / month per pumpbot run (PumpPortal trade data, measured; nothing on the new stack, §3.3) | 0.21 SOL (PumpPortal key funding: 0.03 SOL, then 0.18 SOL on 2026-10-26) |

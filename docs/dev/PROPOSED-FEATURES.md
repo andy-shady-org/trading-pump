@@ -9,11 +9,16 @@ Code).
 
 **IDs.** `FEAT-<n>` is one series across trading-core and every module.
 The next free number is kept in trading-core's
-`docs/dev/PROPOSED-FEATURES.md` (FEAT-89 on 2026-10-31): take it there and
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-91 on 2026-10-31): take it there and
 bump it in the same pull request. FEAT-81, per-strategy limits and the
 Strategies panel, was built in trading-core 0.2.3. trading-scout's own
 FEAT-1, the cross-chain market recorder that moved there from here, is
 FEAT-74; its FEAT-2 to FEAT-8 are FEAT-82 to FEAT-88.
+
+A feature that needs another repository's work takes its own ID here and
+names the other part under **Needs** or **Needed by**, with that
+repository and the release that delivers it (trading-core's
+`docs/dev/DOCUMENTATION.md` §9).
 
 **Stage numbers.** Entries written before 2026-10-31 number the capital
 stages from paper: their "Stage 0" is Stage 1 (paper) today, their
