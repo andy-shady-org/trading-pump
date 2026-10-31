@@ -61,22 +61,43 @@ secret ([`docs/dev/TESTING.md`](docs/dev/TESTING.md#ci)).
 
 ## Releases
 
-There is no release workflow and nothing is ever published to PyPI or
-another index. Versions are plain semantic versions, `vX.Y.Z`, with **no
-pre-releases** (no `rc`, `alpha` or `beta`): `v0.4.0rc1` to `v0.4.0rc5` were
-the last, and the next release is `v0.4.0`. A version that needs a fix after
-it is tagged gets a new PATCH, never a re-tag. The policy is
+Versions are plain semantic versions, `vX.Y.Z`, with **no pre-releases**
+(no `rc`, `alpha` or `beta`): `v0.4.0rc1` to `v0.4.0rc5` were the last, and
+the next release is `v0.4.0`. The policy is
 [`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy).
+There is no release workflow: a release is made by hand, in five steps.
 
-1. Branch `release/vX.Y.Z`: the version in `pyproject.toml` and
-   `trading_pump/__init__.py`, the `CHANGELOG.md` entry and its release
-   record ([§5](docs/dev/RELEASE-GATE.md#5-release-record)), after the
-   release gate ([§2](docs/dev/RELEASE-GATE.md#2-release-gate-every-release)).
-2. Merge it by pull request.
-3. Tag the merge commit on `main` with an annotated, signed **private** tag and push
-   the tag. Don't create GitHub Releases.
+1. **Gate and branch.** Run the release gate
+   ([`docs/dev/RELEASE-GATE.md` §2](docs/dev/RELEASE-GATE.md#2-release-gate-every-release)). On a `release/vX.Y.Z` branch:
+   the version in `pyproject.toml` and `trading_pump/__init__.py` (`__version__`),
+   and the `CHANGELOG.md` entry with its release record. Open a pull request.
+2. **Merge** the pull request in the GitHub UI.
+3. **Sign and push the tag on the Mac.** Never create the tag in the GitHub
+   UI: a tag GitHub creates (a new name typed in "Draft a new release") is
+   unsigned, and every runtime refuses it.
 
-```bash
-git tag -s v0.4.0 -m "v0.4.0"
-git push origin v0.4.0
-```
+   ```bash
+   git switch main && git pull
+   git tag -s v0.4.0 -m "v0.4.0"
+   git tag -v v0.4.0        # Good "git" signature for andy@shady.org ...
+   git push origin v0.4.0
+   ```
+
+4. **Publish the GitHub Release** (optional) in the UI: Releases → Draft a
+   new release → **Choose a tag** → pick the existing `v0.4.0` (do not type a
+   new name) → title `v0.4.0` → paste the notes from its `CHANGELOG.md` entry
+   → Publish release. GitHub shows the tag as Verified when the signing key
+   is on the account (trading-core's `SECURITY.md`, "Signed releases").
+5. **Install it** in the runtime with `bin/install-release.sh`, which checks
+   both tags' signatures before it builds anything.
+
+A tagged version that needs a fix gets a new PATCH, never a re-tag. Nothing
+is published to PyPI or any other package index: the code is proprietary
+([`LICENSE`](LICENSE)), and a signature does not stop anyone who has a copy
+from running it (trading-core's `SECURITY.md`, "Distribution").
+
+**Protect the release tags** (once per repository): GitHub → Settings →
+Rules → Rulesets → New ruleset → **New tag ruleset**; target tags matching
+`v*`; turn on **Restrict updates** and **Restrict deletions**, with no bypass.
+A signed tag can then never be moved or removed, from the UI or a push.
+Rulesets on a private repository need a paid GitHub plan (Pro or Team).
