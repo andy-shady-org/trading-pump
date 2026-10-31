@@ -15,8 +15,9 @@ pre-register and no stage to climb.
 - **Code:** trading-pump `v0.4.0rc5` (`a16a3a3`, the merge commit on `main`)
   on trading-core `v0.2.2` (`e64526b`).
 - **Config:** `runtime-pump/configs/pools-1.json`: both lanes off,
-  `new_pools.enabled` on, every file in its own `data/pools-1/`. Its sha256
-  is not recorded in this repository.
+  `new_pools.enabled` on, every file in its own `data/pools-1/`; sha256
+  `fda8b3650bf5f3c8a83dd625922ce8e42c183f170559c9da020d6e87ae7c0a04` (the
+  run's `RUN.txt`).
 - **Feed:** `programSubscribe` on PumpSwap's pool accounts over the RPC
   WebSocket (`PUMPFUN_RPC_WS_URL`), about 36 kB a second, about 3 GB a day
   ([`COSTS.md` §3.3](../COSTS.md#33-on-the-new-stack-trading-pump-040-from-2026-10-28)).
