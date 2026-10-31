@@ -133,12 +133,12 @@ the first time after the warm-up.
 | Key | Default | Meaning |
 |---|---|---|
 | `slippage_bps` | `500` | A buy is refused when its fill price is more than this above the signal price. |
-| `fee_bps_floor` | `0` | Least swap fee a side. The fee is the pool's tier from the PumpSwap fee config (on the market cap at the mint's real supply, BUG-162) when it can be read, else the AMM `global_config` total. Not needed for the live tiers (STRATEGY-PIVOT §6.16). |
+| `fee_bps_floor` | `0` | Least swap fee a side. The fee is the pool's tier from the PumpSwap fee config (on the market cap at the mint's real supply, BUG-162) when it can be read, else the AMM `global_config` total. Not needed for the live tiers (RESULTS §6.16). |
 | `priority_fee_lamports` | `5000` | Priority fee booked on every fill (as `priority_fee`). |
 | `compute_unit_limit` | `200000` | Compute units requested (live transactions; kept for the live gate). |
 | `use_jito` | `false` | Book a Jito tip on every fill. |
 | `jito_tip_lamports` | `0` | The tip, when `use_jito` is on. |
-| `paper_entry_delay_seconds` | `0` | Wait before a paper buy reads the pool, to model a live buy's latency (BUG-121's lesson). The paper example (and the rc.9 run) use `1.5`, pumpbot's paper latency; `2` is a fair stress test (STRATEGY-PIVOT §6.14). |
+| `paper_entry_delay_seconds` | `0` | Wait before a paper buy reads the pool, to model a live buy's latency (BUG-121's lesson). The paper example (and the rc.9 run) use `1.5`, pumpbot's paper latency; `2` is a fair stress test (RESULTS §6.14). |
 | `quote_max_age_seconds` | `15` | A held pool's reading older than this is re-read before the engine marks or exits on it; a failed read makes the quote stale. |
 | `rpc_timeout_seconds` | `10` | Timeout of one pool or fee-config read. |
 

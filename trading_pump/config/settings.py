@@ -30,7 +30,7 @@ from trading_pump.strategies.filters import ScreeningSettings
 
 # Market cap (SOL) of a curve that has just completed: 85 SOL real plus the
 # 30 SOL virtual reserve against ~279M tokens left, times 1B tokens. The rc.8
-# read-out measured graduations against it (STRATEGY-PIVOT.md §6.13).
+# read-out measured graduations against it (docs/dev/RESULTS.md §6.13).
 GRADUATION_MARKET_CAP_SOL = 410.88
 
 T = TypeVar("T")

@@ -1,4 +1,4 @@
-# Proposed Features
+# Proposed features
 
 Unbuilt features for trading-pump only: candidate proposals and the venue
 backlog. Shipped features are in [`docs/FEATURES.md`](../FEATURES.md); the
@@ -7,7 +7,25 @@ schedule is in [`TODO.md`](TODO.md). When a feature's code ships, move it to
 ships there and keep the missing parts here (AGENTS, Feature Docs Track
 Code).
 
-This list continues pumpfun-trading's (next free ID: **FEAT-82**; FEAT-81, per-strategy limits and the Strategies panel, was built in trading-core 0.2.3). On
+**IDs.** `FEAT-<n>` is one series across trading-core and every module.
+The next free number is kept in trading-core's
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-91 on 2026-10-31): take it there and
+bump it in the same pull request. FEAT-81, per-strategy limits and the
+Strategies panel, was built in trading-core 0.2.3. trading-scout's own
+FEAT-1, the cross-chain market recorder that moved there from here, is
+FEAT-74; its FEAT-2 to FEAT-8 are FEAT-82 to FEAT-88.
+
+A feature that needs another repository's work takes its own ID here and
+names the other part under **Needs** or **Needed by**, with that
+repository and the release that delivers it (trading-core's
+`docs/dev/DOCUMENTATION.md` §9).
+
+**Stage numbers.** Entries written before 2026-10-31 number the capital
+stages from paper: their "Stage 0" is Stage 1 (paper) today, their
+"Stage 1" is Stage 2 (live canary)
+([`RELEASE-GATE.md` §3](RELEASE-GATE.md#3-capital-gate)).
+
+This list continues pumpfun-trading's. On
 2026-10-28 it was split by owner: the venue proposals below stayed; the Web
 UI platform and the engine-level proposals (FEAT-10, FEAT-31 to FEAT-38,
 FEAT-41, FEAT-43 to FEAT-46, FEAT-48) moved to trading-core's
@@ -26,11 +44,11 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 
 ---
 
-## 1. Catalogue Summary
+## 1. Catalogue summary
 
 | ID | Feature | Class | Priority | Sprint |
 |---|---|---|---|---|
-| FEAT-76 | PumpSwap post-graduation momentum lane (paper first) | Income | P1 | proposed 2026-10-28 from the rc.8 read-out ([`STRATEGY-PIVOT.md` §6.13](STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)) |
+| FEAT-76 | PumpSwap post-graduation momentum lane (paper first) | Income | P1 | proposed 2026-10-28 from the rc.8 read-out ([`RESULTS.md` §6.13](RESULTS.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)) |
 | FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) |
 | FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
 | FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built |
@@ -42,23 +60,23 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-77 | On-chain migration feed as a fallback for PumpPortal | Reliability | P2 | proposed 2026-10-29; the PumpSwap pool subscription is measured (47 messages a second, every swap) and cannot tell a migration from an old graduate without dating each pool; the fallback is not built ([`TODO.md`](TODO.md#on-chain-migration-feed-feat-77-fallback-for-pumpportal)) |
 | FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P3 | not scheduled |
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
-| FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | — | **NO-GO** 2026-10-29: costs pass (0–37 bps, phase 0), but the pre-registered walk-forward on the Binance history lost in every counted half-year and never beat random timing (STRATEGY-PIVOT §6.15); not built |
+| FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | — | **NO-GO** 2026-10-29: costs pass (0–37 bps, phase 0), but the pre-registered walk-forward on the Binance history lost in every counted half-year and never beat random timing (RESULTS §6.15); not built |
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-47 | Replay analytics on Parquet + DuckDB | Suggested | P3 | backlog |
 
-Built without a proposal (2026-10-30, from the rc.9 / rc.10 replays, [`STRATEGY-PIVOT.md` §6.18](STRATEGY-PIVOT.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)): FEAT-78 (the `pumpswap_instant` lane) and FEAT-79 (per-lane exits), in [`FEATURES.md` §3.1–§3.2](../FEATURES.md#31-the-pumpswap_instant-lane-feat-78-paper). Built record-only on 2026-10-31: FEAT-80, the capture of new PumpSwap pools that are not graduations ([`FEATURES.md` §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)); a lane on them is not built and waits for its capture.
+Built without a proposal (2026-10-30, from the rc.9 / rc.10 replays, [`RESULTS.md` §6.18](RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)): FEAT-78 (the `pumpswap_instant` lane) and FEAT-79 (per-lane exits), in [`FEATURES.md` §3.1–§3.2](../FEATURES.md#31-the-pumpswap_instant-lane-feat-78-paper). Built record-only on 2026-10-31: FEAT-80, the capture of new PumpSwap pools that are not graduations ([`FEATURES.md` §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)); a lane on them is not built and waits for its capture.
 
 Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34, FEAT-35, FEAT-36, FEAT-37, FEAT-38, FEAT-41, FEAT-43, FEAT-44, FEAT-45, FEAT-46, FEAT-48. Shipped and moved to `FEATURES.md` earlier (pumpfun-trading, 2026-10-20): FEAT-49, FEAT-50, FEAT-42, FEAT-51, FEAT-52, FEAT-53, FEAT-58; of those only the parts listed in [`FEATURES.md` §10](../FEATURES.md#10-what-became-of-pumpfun-tradings-features) are still here.
 
 ---
 
-## 2. Venue Income Track (Income)
+## 2. Venue income track (Income)
 
 ### FEAT-76: PumpSwap Post-Graduation Momentum Lane
 * **Status (2026-10-28):** phase 2 (paper lane, PumpSwap paper executor priced from the pool and the fee config, replay) is **built** in trading-pump 0.4.0 and listed in [`FEATURES.md` §3–§5](../FEATURES.md#3-the-pumpswap_momentum-lane-feat-76-paper); the replay of the rc.8 rows reproduces the read-out (§6.14). Phase 1's 72 h graduation-only capture is replaced by a 72 h paper run, which records the same rows. **Not built:** phase 3 (the live buy, reconcile, the live gate). The proposal below is as it was written on 2026-10-28.
 * **Class / Priority:** Income · P1 (proposed 2026-10-28; phase 1 needs no code; supersedes the first two phases of FEAT-64 for fresh graduations)
-* **Goal:** trade the one signal that did not lose in rc.5 to rc.8: a coin that has just graduated to PumpSwap and is still at least 1.1–1.2× its first pool price 60–120 s after the migration, bought at the next reading, out at 1.2× (stop 0.85 or none). On 16.6 h of rc.8 data: +1.3% to +5.7% per trade at 2% cost a side in both halves, about 100 signals a day, but n = 42–72 and every 90% interval includes 0 ([`STRATEGY-PIVOT.md` §6.13](STRATEGY-PIVOT.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)).
+* **Goal:** trade the one signal that did not lose in rc.5 to rc.8: a coin that has just graduated to PumpSwap and is still at least 1.1–1.2× its first pool price 60–120 s after the migration, bought at the next reading, out at 1.2× (stop 0.85 or none). On 16.6 h of rc.8 data: +1.3% to +5.7% per trade at 2% cost a side in both halves, about 100 signals a day, but n = 42–72 and every 90% interval includes 0 ([`RESULTS.md` §6.13](RESULTS.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)).
 * **What exists:** graduation tracking (FEAT-73: every migrated coin's canonical pool, every 2 s for 5 minutes then 10 s, record-only), the pool decoder, `get_pumpswap_pool_states` and the PumpSwap sell path (BUG-123). Not built: a PumpSwap buy, a paper executor priced from pool reserves, a lane that acts on the graduation rows.
 * **Phases, each gated on the previous one:**
   1. **More data, no code.** A 72 h capture with graduation tracking only (no launch buying: `max_active_positions` 0 or a record-only config) on a build with BUG-157 fixed; about 1,000 standard graduations. Pre-register the rule above (one signal time and threshold, one exit set, 2% a side) before reading it; pass if it is positive in both halves and its 90% interval excludes 0, against a random-entry baseline. Add a 1 s fast phase for the first 3 minutes if the RPC budget allows (the result moved with one reading of delay).
@@ -84,7 +102,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   4. **Confirmation, not a trigger.** A tracked wallet's buy on a watched mint counts as one more piece of evidence in the momentum check (`momentum_tracked_wallet_bonus`, e.g. one fewer distinct buyer needed); it never bypasses the age / market-cap band, `_should_buy` or the cost guard. Buys it influenced record `entry_metrics.tracked_wallets`.
   5. **Automatic removal.** A wallet is disabled when its rolling net copied PnL over the last `wallet_rolling_window` (20) influenced positions drops below zero, or when its SOL at risk would exceed `wallet_max_exposure_sol`; both are audited and alerted.
   6. **Optional stand-alone lane** (`strategy=copy`), only after the confirmation use is shown positive; needs `subscribeAccountTrade` (another billed PumpPortal feed, BUG-112/120), so it gets its own subscription budget and the BUG-116 breaker.
-* **Phase 1 result (2026-10-20, rc.3 tooling):** `pumpfun-replay --wallet-scores` (`engines/wallets.py`) scores wallets by our simulated copy net. On v0.2.3 → rc.1 copying every wallet lost (−4.67 / −2.01 SOL over 4,003 / 1,286 closed copies) and the top v0.2.3 wallets lost on rc.1 as well, so no candidate file is written. The operator's example wallet `29yFzeBZ…` is a serial **creator** (100 launches screened across the two captures, all rejected), not a trader. Captures only hold trades of the bot's subscribed mints, so a real test needs a capture that records wallets' own trades ([`STRATEGY-PIVOT.md` §6.8](STRATEGY-PIVOT.md#68-stop-loss-sweep-wallet-scores-and-the-capture-rule-tool-2026-10-20)).
+* **Phase 1 result (2026-10-20, rc.3 tooling):** `pumpfun-replay --wallet-scores` (`engines/wallets.py`) scores wallets by our simulated copy net. On v0.2.3 → rc.1 copying every wallet lost (−4.67 / −2.01 SOL over 4,003 / 1,286 closed copies) and the top v0.2.3 wallets lost on rc.1 as well, so no candidate file is written. The operator's example wallet `29yFzeBZ…` is a serial **creator** (100 launches screened across the two captures, all rejected), not a trader. Captures only hold trades of the bot's subscribed mints, so a real test needs a capture that records wallets' own trades ([`RESULTS.md` §6.8](RESULTS.md#68-stop-loss-sweep-wallet-scores-and-the-capture-rule-tool-2026-10-20)).
 * **Dependencies:** FEAT-51, FEAT-52 (watch list and momentum check), a capture recorded with `configs/capture.json` that has trade flow for watched mints. **Impact:** more entry evidence at no extra message cost; per-wallet results visible in `pumpfun-audit pnl --group-by strategy`. Copy trading as its own lane stays off ([`RELEASE-GATE.md` §3.5](../archive/pumpfun-trading/dev/RELEASE-GATE.md#35-features-that-must-stay-off-until-proven)) until the 24I exit gate passes.
 
 ### FEAT-55: Creator Reputation Book
@@ -92,7 +110,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 * **Goal:** Skip launches from creators whose earlier tokens lost us money, from our own records and with no network calls (idea from PumpGrok `reputation.py`, AGPL-3.0, so idea only).
 * **Evidence:** `DevWalletProfile.rug_history_count` is checked by the screener but never set: `bot/enrichment.py` builds the profile without it, and none of the 24,521 screening records in the two captures has `creator_rugs` above 0. The check is dead code.
 * **Design (as tested):** a book keyed by creator (the screening record's `creator`), filled from closed positions in `audit_trail.jsonl`. A creator is blocked after one losing position; the PumpGrok rule ("token fell ≥ 60%") was tested too. Clean creators expire after 30 days.
-* **Offline test** (`STRATEGY-PIVOT.md` §6.5):
+* **Offline test** (`RESULTS.md` §6.5):
   - v0.2.3 (1,697 launch-mode positions): walking forward, the book blocks 203 positions worth −0.044 SOL. A random 203 would be worth −0.070, so the blocked ones were *better* than average.
   - rc.1 (118 momentum positions): only 2 creators were bought twice, because the serial-launcher screen already rejects repeat creators. The v0.2.3 book would block 6 rc.1 positions worth +0.002 SOL.
   - The "fell ≥ 60%" rule never fires on our entries (2 of 1,229 tokens): an early curve cannot fall 60% below a ~30 SOL entry because its floor is the ~28 SOL launch market cap.
@@ -105,7 +123,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   - `top_buyer_share`: the largest buyer's share of the buy volume seen before the entry.
   - `wallet_diversity`: `unique_buyers / buys × (1 − top_buyer_share)`. One wallet splitting its buys, or one whale, scores low.
   - Sniper volume: the SOL that entered the curve before the first trade we see. **No capture sees the first slots** (for 90% of mints the first recorded trade came more than 3.3 s after the create), so a true sniper *count* cannot be measured; rc.2 records `first_poll_sol_growth` (create → first curve poll) as the proxy.
-* **Offline test** (`STRATEGY-PIVOT.md` §6.5), compared with keeping a random share of the same size:
+* **Offline test** (`RESULTS.md` §6.5), compared with keeping a random share of the same size:
 
   | Keep rule | v0.2.3 replay | rc.1 replay | rc.1 paper |
   |---|---|---|---|
@@ -130,7 +148,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   - `round_trip_share`: each wallet's matched volume, `2 × min(bought, sold)`, over all volume; 1.0 means every SOL in came back out of the same wallets.
   - `quick_flips`: a wallet reversing direction within 2 s. PumpPortal trade messages carry no slot, so this receive-time window stands in for "buy and sell in one slot".
   - Not measured: shared funders. That needs a funding lookup per wallet (`getSignaturesForAddress` + `getTransaction`), which is too slow and too many RPC calls for the 1.5 s entry path; revisit with Geyser (FEAT-39) or as an offline enrichment of captures.
-* **Offline test** (`data/analysis-2026-10-20/wash.py`, `STRATEGY-PIVOT.md` §6.6), skipping flagged entries and comparing the kept net with a random cut of the same size:
+* **Offline test** (`data/analysis-2026-10-20/wash.py`, `RESULTS.md` §6.6), skipping flagged entries and comparing the kept net with a random cut of the same size:
 
   | Skip rule | v0.2.3 replay (117) | rc.1 replay (105) | rc.1 paper (118) |
   |---|---|---|---|
@@ -177,7 +195,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   3. **Execution (only after phase 2 passes).** Buy and sell builders checked against real mainnet transactions, a `venue` field on positions, trade records and `pumpfun-audit pnl --group-by`, the venue's migration exit, then a 72 h paper pilot and the normal Stage 0 gate (`RELEASE-GATE.md` §3.1) before any capital.
 * **Risks:** fewer launches means fewer trades, so a small edge may not cover fixed costs; the "cleaner signal" may just be fewer data points; a second venue doubles the data and cost surface the operator has to watch. The decision rules are the same as on Pump.fun (AGENTS learnings "Beat a random cut", "Model the latency you pay").
 * **Dependencies:** none for phase 1; FEAT-58 / FEAT-59 shadow tooling for phase 2. Do not start it while the rc.2 / rc.3 Pump.fun captures and the pre-graduation pilot are still unread. **Impact:** an evidence-based answer on a second Solana venue at the cost of a recorder and one capture; no trading change until phase 3.
-* **Update (2026-10-29):** the question has moved. Launch buying on Pump.fun is NO-GO (§6.13) and the one positive signal is post-graduation (FEAT-76), so the Moonshot question is whether its *graduates* behave like PumpSwap's after costs, not its launches. Moonshot graduates migrate to open AMMs (Raydium or Meteora; the target and its fees are to be read from mainnet), whose new pools the FEAT-74 market recorder already discovers through GeckoTerminal. Phase 1 therefore starts as a read-out of recorder data (TODO, FEAT-74), with no new decoder. It is very small: 18 Moonshot pools (`moonshot` 10, `moonit` 8) against 2,866 PumpSwap pools in rc.8's 38 h ([`STRATEGY-PIVOT.md` §6.17](STRATEGY-PIVOT.md#617-launchpads-in-the-rc8-cross-chain-data-2026-10-29)), so no pre-registered verdict (≥ 100 positions) is reachable in a reasonable run; FEAT-76's own count is near that minimum on 72 h of Pump.fun graduates. Revisit only if its share grows. A buy path would be a separate trading-core module (Raydium / Meteora pool maths, fees and builders), not a lane here.
+* **Update (2026-10-29):** the question has moved. Launch buying on Pump.fun is NO-GO (§6.13) and the one positive signal is post-graduation (FEAT-76), so the Moonshot question is whether its *graduates* behave like PumpSwap's after costs, not its launches. Moonshot graduates migrate to open AMMs (Raydium or Meteora; the target and its fees are to be read from mainnet), whose new pools the FEAT-74 market recorder already discovers through GeckoTerminal. Phase 1 therefore starts as a read-out of recorder data (TODO, FEAT-74), with no new decoder. It is very small: 18 Moonshot pools (`moonshot` 10, `moonit` 8) against 2,866 PumpSwap pools in rc.8's 38 h ([`RESULTS.md` §6.17](RESULTS.md#617-launchpads-in-the-rc8-cross-chain-data-2026-10-29)), so no pre-registered verdict (≥ 100 positions) is reachable in a reasonable run; FEAT-76's own count is near that minimum on 72 h of Pump.fun graduates. Revisit only if its share grows. A buy path would be a separate trading-core module (Raydium / Meteora pool maths, fees and builders), not a lane here.
 
 ### FEAT-77: On-Chain Migration Feed As A Fallback For PumpPortal
 * **Class / Priority:** Reliability · P2 (proposed 2026-10-29; no code)
@@ -209,7 +227,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 
 ### FEAT-65: Slow Lane, Daily-Bar Trend On Liquid Solana Tokens Via Jupiter
 * **Class / Priority:** Income · P3 (proposed 2026-10-21; a deliberate change of direction, considered only if the rc.3 Pump.fun lanes are also NO-GO). Phase 0 data recorder shipped in rc.3 ([`FEATURES.md` §37](../archive/pumpfun-trading/FEATURES.md)); design steps 2–5 below are not built
-* **Status (2026-10-29): NO-GO, closed.** The gate in Design 5 was tested as a pre-registered walk-forward on the Binance history and failed every condition ([`STRATEGY-PIVOT.md` §6.15](STRATEGY-PIVOT.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)). Steps 2–5 will not be built for this rule; a different rule would need its own pre-registered test first.
+* **Status (2026-10-29): NO-GO, closed.** The gate in Design 5 was tested as a pre-registered walk-forward on the Binance history and failed every condition ([`RESULTS.md` §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)). Steps 2–5 will not be built for this rule; a different rule would need its own pre-registered test first.
 * **Goal:** A strategy where the edge is analysis and discipline rather than speed: hours-to-days holds on liquid Solana tokens (SOL, JUP and similar), where our 1.5 s latency and per-trade fixed costs barely matter.
 * **Why it is separate:** everything in the bot today is built for minutes-old bonding curves (curve math, order flow, watch TTL, 1 s refresh, exits in seconds). This lane needs its own data, backtester and position logic.
 * **Phase 0, data (shipped in rc.3, record-only):** `pumpfun-recorder --jupiter-quotes` samples Jupiter round-trip quotes (buy SOL → token, then sell those tokens back) at 0.02 / 0.1 / 0.5 SOL every 5 min for `configs/slow_lane_tokens.json`, with route, pools, price impact, round-trip cost, Jupiter price / liquidity and priority-fee samples for the quoted pools; `--backfill-bars` downloads GeckoTerminal daily / hourly bars, or Binance public klines with `--bar-source binance`. Both keyless (`lite-api.jup.ag`, GeckoTerminal public API), in their own process and files (RUNBOOK §6.4). A quote is valid only when taken, so these series cannot be fetched later; bar history can. Limits found on 2026-10-21: the keyless Jupiter API allowed 5 requests per ~10 s, and GeckoTerminal's public history ends after about 6 months (a multi-year backtest needs another bar source). CoinGecko's free Demo plan was checked and is no fix: its OHLC history is limited to the past 365 days (full history needs a paid plan). `--bar-source binance` (Binance public spot klines, keyless) gives each `<SYMBOL>USDT` pair since its listing: about 2.5 years for most of the list, 6 for SOL; mSOL and jitoSOL have no pair.
@@ -221,11 +239,11 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   5. **Gate.** Walk-forward backtest net positive on at least two unseen periods and better than the random-entry baseline, then a paper run of several weeks (trade count is low), then the normal Stage 0 / Stage 1 gates.
 * **What carries over:** wallet and keys, `infra/rpc_pool`, the cost model, audit trail, `pumpfun-audit pnl` and reconciliation, risk breakers, alerts and the terminal dashboard.
 * **Risks:** edges in liquid assets are small and regime-dependent (expect low single-digit returns, not doubling); few trades make evidence slow to collect; overfitting a backtest is easy (same rule as the AGENTS learning "Beat a random cut"). Roughly Phase 5-sized work.
-* **Dependencies:** the rc.3 verdict (`STRATEGY-PIVOT.md` §6); a Jupiter swap client; ideally Sprint 28 (`bot/run.py` decomposition) so the lane does not grow `run.py`. **Impact:** a lane that does not depend on winning latency races against searchers.
+* **Dependencies:** the rc.3 verdict (`RESULTS.md` §6); a Jupiter swap client; ideally Sprint 28 (`bot/run.py` decomposition) so the lane does not grow `run.py`. **Impact:** a lane that does not depend on winning latency races against searchers.
 
 ---
 
-## 3. Venue Enhancements (Suggested and conditional)
+## 3. Venue enhancements (Suggested and conditional)
 
 ### FEAT-39: Production Yellowstone gRPC Transport
 * **Class / Priority:** Income (conditional) · P1 — schedule in Sprint 24D if canary data shows entries lost to latency (fills well above the signal price, or tokens already pumped by the time the buy lands); otherwise after Sprint 28

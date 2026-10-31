@@ -54,7 +54,7 @@ through a fresh trading-core engine with the module, on a simulated clock:
   reads the pool;
 * the swap fee is fixed at `--fee-bps` a side (125 by default), because a
   capture does not record the fee tier at each moment. Run it at 200 as well:
-  at 0.02 SOL a trade the result moves with the fee (STRATEGY-PIVOT §6.14).
+  at 0.02 SOL a trade the result moves with the fee (RESULTS §6.14).
 
 The engine and module settings come from `--config`, the same file a paper
 run uses, with three changes: mode is paper, every file goes into `--out`
@@ -114,6 +114,6 @@ disk use) are in [dev/RUNBOOK.md §5](dev/RUNBOOK.md#5-research-recorders).
 trading-pump env
 ```
 
-A table of the six variables the module reads, each `set`, `set as <alias>`
+A table of the seven variables the module reads, each `set`, `set as <alias>`
 or `unset`, with what it is for; then one warning per other `PUMPFUN_*`
 variable that is set, naming what replaces it. Values are never printed.

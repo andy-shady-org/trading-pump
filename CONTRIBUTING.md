@@ -14,8 +14,9 @@ what actually happened (with the full traceback), and what you expected.
 ## Pull requests
 
 * Open an issue first and discuss the change.
-* Work on a branch named `fix/<short-description>` or
-  `feature/<short-description>`; PRs from `main` are not accepted.
+* Work on a branch named `fix/<short-description>`,
+  `feature/<short-description>`, `docs/<short-description>` or, for a
+  release, `release/vX.Y.Z`; PRs from `main` are not accepted.
 * New behaviour comes with tests (mirrored layout, [`docs/dev/TESTING.md`](docs/dev/TESTING.md));
   a bug fix comes with a `BUGS.md` entry and a `@pytest.mark.regression("BUG-xx")` test.
 * CI must pass: Black, Ruff, flake8, mypy, pip-audit, and the tests with
@@ -58,13 +59,24 @@ tests-<version>` on 3.11, 3.12, 3.13 and 3.14, and `nox -s lint mypy audit
 package` on 3.14. It checks out trading-core with the `TRADING_CORE_TOKEN`
 secret ([`docs/dev/TESTING.md`](docs/dev/TESTING.md#ci)).
 
+## Releases
+
 There is no release workflow and nothing is ever published to PyPI or
-another index. A release is an annotated **private** git tag on the release
-commit, with its `CHANGELOG.md` entry and release record
-([`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy)).
-Don't create GitHub Releases.
+another index. Versions are plain semantic versions, `vX.Y.Z`, with **no
+pre-releases** (no `rc`, `alpha` or `beta`): `v0.4.0rc1` to `v0.4.0rc5` were
+the last, and the next release is `v0.4.0`. A version that needs a fix after
+it is tagged gets a new PATCH, never a re-tag. The policy is
+[`docs/dev/RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy).
+
+1. Branch `release/vX.Y.Z`: the version in `pyproject.toml` and
+   `trading_pump/__init__.py`, the `CHANGELOG.md` entry and its release
+   record ([§5](docs/dev/RELEASE-GATE.md#5-release-record)), after the
+   release gate ([§2](docs/dev/RELEASE-GATE.md#2-release-gate-every-release)).
+2. Merge it by pull request.
+3. Tag the merge commit on `main` with an annotated, signed **private** tag and push
+   the tag. Don't create GitHub Releases.
 
 ```bash
-git tag -a v0.4.0 -m "v0.4.0"
+git tag -s v0.4.0 -m "v0.4.0"
 git push origin v0.4.0
 ```

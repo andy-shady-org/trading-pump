@@ -2,9 +2,11 @@
 
 trading-pump plugs Pump.fun graduates into trading-core. It follows every
 coin that leaves its Pump.fun bonding curve for a PumpSwap pool, reads the
-pool on chain, decides in one lane (`pumpswap_momentum`) whether to buy, and
-simulates the fill against the pool with every fee (paper). Live orders are
-refused until the lane has passed paper ([dev/RELEASE-GATE.md](dev/RELEASE-GATE.md)).
+pool on chain, decides in one of two lanes whether to buy
+(`pumpswap_momentum` for standard graduations, `pumpswap_instant` for
+instant ones), and simulates the fill against the pool with every fee
+(paper). Live orders are refused: no lane has passed the paper stage of the
+capital gate yet ([dev/RELEASE-GATE.md](dev/RELEASE-GATE.md#1-current-status)).
 
 This repository continues **pumpfun-trading**: its history, bug record,
 results log and documents are kept here (the old guides are in
@@ -21,9 +23,20 @@ audit tools, alerts, the dashboard) is now trading-core's.
 * **Graduation tracking.** The module follows every graduate's pool for 4 h
   (every 2 s for the first 5 minutes, then 10 s) and records every reading,
   whether it trades or not.
-* **The lane.** One minute after the migration, a coin still at 1.2× its
-  first pool price is bought; out at +20%, −15% or after 30 minutes
-  ([STRATEGY.md](STRATEGY.md)).
+* **The lanes.** A *lane* is one entry rule with its own exits and its own
+  verdict; every signal and position carries its lane's name as its
+  `strategy`. Each graduate goes to at most one lane, by its first reading
+  ([STRATEGY.md](STRATEGY.md)):
+  * `pumpswap_momentum` (FEAT-76): a standard graduate (first market cap
+    near 410.88 SOL) still at ≥ 1.2× its first pool price a minute after
+    the migration is bought; out at +20%, −15% or after 30 minutes, or at
+    the lane's own exits (`lane.exits`, FEAT-79).
+  * `pumpswap_instant` (FEAT-78, off by default): an instant graduate (first
+    reading 1,000–2,000 SOL market cap, 130–200 SOL in the pool) still at
+    1.00–1.10× its first price a minute later is bought; out at +50%, −15%
+    or after 30 minutes.
+* **New pools** (FEAT-80, off by default): new PumpSwap pools that are not
+  graduations, followed and recorded like graduates; no lane trades them.
 * **Paper fills** are computed from the pool's reserves with the swap fee and
   the network costs, from a fresh read for every fill.
 * **The engine** (trading-core) runs the loop: sizing, the risk gate, the
@@ -69,12 +82,25 @@ The lane is off; every migration and pool reading goes to
 `data/capture/capture.jsonl` (rotated, gzipped). Use this to collect data
 for a new rule without trading.
 
-### 4.2 Paper trading (FEAT-76)
+### 4.2 Paper trading
 
 ```bash
 cp configs/paper.example.json configs/paper.json
 trading-core check --config configs/paper.json
 trading-core run --config configs/paper.json
+```
+
+The example runs the standard lane only. To run both lanes, merge these
+keys into your copy: the instant lane on, the standard lane with its own
+exits, and the engine's `exits` emptied (or the engine's +20% take-profit
+closes positions before a lane's +50%):
+
+```json
+"exits": {},
+"module_settings": {
+  "lane": {"exits": {"take_profit_pct": 0.5, "stop_loss_pct": 0.15, "max_hold_seconds": 1800}},
+  "instant": {"enabled": true}
+}
 ```
 
 The dashboard (trading-core `docs/TERMINAL-UI.md`) shows prices in µSOL and
@@ -83,7 +109,8 @@ pool reads, healthy RPC endpoints, capture rows, and the lane's rule. The
 run writes `data/paper/status.json`, `audit.jsonl`, `events.jsonl`,
 `trading-core.log` and `capture.jsonl`.
 
-Before a run that counts, fix the verdict rule and record its hash
+Before a run that counts, fix one verdict rule per lane and record the
+hashes in the run's record before the start
 ([dev/RUNBOOK.md §3](dev/RUNBOOK.md#3-a-paper-run-that-counts)).
 
 ### 4.3 Judge it
@@ -92,6 +119,10 @@ Before a run that counts, fix the verdict rule and record its hash
 trading-core-audit pnl --path data/paper/audit.jsonl --group-by reason
 trading-core-audit verdict --path data/paper/audit.jsonl --rules configs/verdict_rules.json
 ```
+
+`configs/verdict_rules.json` judges `pumpswap_momentum`; for the instant
+lane, copy it with `"strategy": "pumpswap_instant"` and judge each lane with
+its own file.
 
 ### 4.4 Replay a capture
 
@@ -127,7 +158,7 @@ cross-chain market recorder (`--market`) moved to trading-scout on
 | `pumpfun-recorder --ws-url ...` (stream capture) | not ported; the module's capture records the graduation rows |
 | `pumpfun-replay` | `trading-pump replay` for graduation captures; the launch / momentum replay, sweeps and `--compare-audit` are not ported |
 | `pumpfun-optimize`, `pumpfun-arb`, `pumpfun-drill` | not ported |
-| `PUMPFUN_*` variables | six are read ([ENVIRONMENT.md](ENVIRONMENT.md)); the rest warn with their replacement |
+| `PUMPFUN_*` variables | seven are read ([ENVIRONMENT.md](ENVIRONMENT.md)); the rest warn with their replacement |
 | the bot config file | engine keys + `module_settings` ([CONFIGURATION.md](CONFIGURATION.md#from-a-pumpbot-config)) |
 
 Files:
@@ -155,13 +186,14 @@ Files:
 
 | Page | For |
 |---|---|
-| [STRATEGY.md](STRATEGY.md) | The lane, its prices and costs, how it is judged |
+| [STRATEGY.md](STRATEGY.md) | Both lanes, their prices and costs, how they are judged |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every `module_settings` key, and the pumpbot key map |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | The seven variables, and what replaced the rest |
 | [CLI.md](CLI.md) | Every command |
 | [FEATURES.md](FEATURES.md) | What ships, and what became of every pumpbot feature |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the module implements trading-core's contract |
 | [dev/RUNBOOK.md](dev/RUNBOOK.md) | Operating a run, incidents, the research recorders |
-| [dev/RELEASE-GATE.md](dev/RELEASE-GATE.md) | Release checklist and the live capital gate |
-| [dev/STRATEGY-PIVOT.md](dev/STRATEGY-PIVOT.md) | The evidence: every result since v0.2.3 |
+| [dev/RELEASE-GATE.md](dev/RELEASE-GATE.md) | What is running now, the release checklist and the capital gate's stages |
+| [dev/RESULTS.md](dev/RESULTS.md) | The evidence: every run, replay and study since v0.2.3, with its verdict |
+| [dev/runs/](dev/runs/README.md) | One record per run: what it was for and how it ended |
 | [dev/TODO.md](dev/TODO.md), [dev/BUGS.md](dev/BUGS.md), [dev/TESTING.md](dev/TESTING.md) | Maintainers |

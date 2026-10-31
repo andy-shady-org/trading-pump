@@ -30,17 +30,18 @@ pumpfun-trading's norms are kept (originals in `docs/archive/pumpfun-trading/AGE
 - **Zero-Copy Alignment Checks:** Any structural or byte change to a decoder (`sdk/`, `streams/`) must match the program's real account layout; pin it to real mainnet account bytes in `tests/support/payloads.py`.
 - **Volatile Key Erasure:** Code that handles the private key must keep it in `Credentials` (hidden `repr`) and drop references as soon as the signer is built; never log, persist or put it in settings.
 - **Fail-Fast Risk Validation:** All pre-execution checks run before the instruction assembly layer: the venue checks (standard pool, screening with its Gini and concentration caps) as pipeline filters here, the portfolio checks in trading-core's single risk gate (`risk/limits.py`) and breaker. Never add a risk check inside an executor or builder.
-- **Income Path First:** A lane must show net income after every cost before anything is built on it. Prioritise the FEAT-76 paper run and its gates (`docs/dev/TODO.md`) over new features, report profit net of fees, priority fees, Jito tips and rent, and judge every run with a pre-registered verdict.
+- **Income Path First:** A lane must show net income after every cost before anything is built on it. Prioritise the lanes' counted paper runs and their gates (`docs/dev/TODO.md`) over new features, report profit net of fees, priority fees, Jito tips and rent, and judge every run with a pre-registered verdict.
 - **Mirrored Test Layout:** New tests go in `trading_pump/tests/unit/<pkg>/test_<module>.py` (top-level modules: `tests/unit/test_<module>.py`; cross-component flows in `integration/`, Hypothesis in `property/`), build objects and payloads from `tests/support/`, and never use coverage-named files (`test_coverage_*`, `*_boost*`, `*_full`). See `docs/dev/TESTING.md`.
 - **100% Or It Does Not Merge:** statement and branch coverage stay at 100% on Python 3.11–3.14 (`nox -s tests`); Ruff, Black, flake8 and mypy pass. Prefer deleting an unreachable branch over a pragma.
-- **Feature Docs Track Code:** Document a new, unbuilt feature in `docs/dev/PROPOSED-FEATURES.md` (next free FEAT-ID, catalogue row). When its code ships, move it to `docs/FEATURES.md` and leave a pointer behind. For a partly built feature, list what ships in `FEATURES.md`, mark the missing parts **Not built** there, and keep those parts in `PROPOSED-FEATURES.md`. Never list unbuilt work in `FEATURES.md` (FEAT-10 was listed as implemented with no code).
-- **TODO Lists Open Work Only:** `docs/dev/TODO.md` holds open items; finished work lives in `docs/dev/DONE.md` under its original heading. When a section's last box is ticked, move it to `DONE.md` with a link to its CHANGELOG release; in a partly done section, move the ticked items and leave one "Done:" line. Verify a completion against the code before ticking or moving it, put evidence and results in `STRATEGY-PIVOT.md` §6 or `releases/`, not in TODO, and never leave an open box in `DONE.md` (mark it superseded, moved or closed with the reason).
-- **History Is Kept, Not Rewritten:** `docs/archive/pumpfun-trading/` is frozen (only link fixes); `BUGS.md`, `CHANGELOG.md`, `DONE.md` and `STRATEGY-PIVOT.md` are appended to, never edited back. A port of retired code brings the fixes and tagged tests of every bug `BUGS.md` lists for it.
+- **Feature Docs Track Code:** Document a new, unbuilt feature in `docs/dev/PROPOSED-FEATURES.md` (the next free FEAT-ID, taken from trading-core's `docs/dev/PROPOSED-FEATURES.md`; catalogue row). When its code ships, move it to `docs/FEATURES.md` and leave a pointer behind. For a partly built feature, list what ships in `FEATURES.md`, mark the missing parts **Not built** there, and keep those parts in `PROPOSED-FEATURES.md`. Never list unbuilt work in `FEATURES.md` (FEAT-10 was listed as implemented with no code).
+- **TODO Lists Open Work Only:** `docs/dev/TODO.md` holds open items; finished work lives in `docs/dev/DONE.md` under its original heading. When a section's last box is ticked, move it to `DONE.md` with a link to its CHANGELOG release; in a partly done section, move the ticked items and leave one "Done:" line. Verify a completion against the code before ticking or moving it, put evidence and results in `docs/dev/RESULTS.md` or a run record in `docs/dev/runs/`, not in TODO, and never leave an open box in `DONE.md` (mark it superseded, moved or closed with the reason).
+- **History Is Kept, Not Rewritten:** `docs/archive/pumpfun-trading/` is frozen (only link fixes); `BUGS.md`, `CHANGELOG.md`, `DONE.md`, `RESULTS.md`, `STRATEGY-PIVOT.md` and every run record's pre-registration are appended to, never edited back; what moves leaves a one-line pointer. A port of retired code brings the fixes and tagged tests of every bug `BUGS.md` lists for it.
 - **Small Functions:** flake8 enforces McCabe complexity ≤ 7. Split a function that grows past it into named helpers with the same behaviour (nested functions count toward the one that holds them); never raise `max-complexity` or add `# noqa: C901`.
+- **Docs Follow trading-core's `docs/dev/DOCUMENTATION.md`:** one standard for every repository: the layout (`RESULTS.md` for results, `runs/<run>.md` for each counted run, written before it starts), sentence-case headings, the words (lane, position, run, verdict GO / NO-GO / INCONCLUSIVE), capital Stages 0–3 (0 evidence, 1 paper, 2 live canary, 3 scale-up), run names (`pump-<n>`, next `pump-12`), plain semver with no pre-releases (next release `v0.4.0`), FEAT IDs from trading-core's `PROPOSED-FEATURES.md`. Status lives only in `RELEASE-GATE.md` §1, `TODO.md` and `RESULTS.md`. When this repository and the standard disagree, fix this repository.
 
 ## Learnings Log & Avoided Mistakes
 
-Every learning from pumpfun-trading is kept below, in its original words, with where it applies now: **here** (code in this repository), **trading-core** (the code moved there; the rule is in trading-core's `AGENTS.md` too), **retired code** (code not ported; apply the rule if it is ported back), or **everywhere** (a working practice). File paths in these entries name pumpfun-trading's layout at the time. New learnings follow at the end.
+Every learning from pumpfun-trading is kept below, in its original words (so entries before 2026-10-31 use the old stage numbers: their Stage 0 is paper, now Stage 1, and their Stage 1 the live canary, now Stage 2), with where it applies now: **here** (code in this repository), **trading-core** (the code moved there; the rule is in trading-core's `AGENTS.md` too), **retired code** (code not ported; apply the rule if it is ported back), or **everywhere** (a working practice). File paths in these entries name pumpfun-trading's layout at the time. New learnings follow at the end.
 
 - **[CRITICAL] Slippage Calculation Target:** Avoided calculating slippage based on static REST API prices. Pump.fun bonding curve prices can shift drastically within a single slot. Always compute slippage against the dynamic, local virtual reserves tracked directly from the real-time Geyser stream. *[Applies: here.]*
 - **[EXECUTION] Jito Tip Placement:** Avoided appending Jito tips as standalone transactions or placing the tip instruction at the beginning of a transaction. The tip must be the *final instruction* inside the transaction payload within the bundle to guarantee inclusion and prevent MEV searchers from unbundling. *[Applies: here.]*
@@ -125,10 +126,11 @@ Every learning from pumpfun-trading is kept below, in its original words, with w
 - **[EXITS] Lane Exits Need Empty Engine Exits:** the engine runs its own `exits` after the module's `should_exit` returns nothing, so with an engine take profit at +20% a lane's +50% would never be reached. A config that uses `lane.exits` / `instant.exits` (FEAT-79) sets the engine's `exits` to `{}`. *[Applies: here.]*
 - **[RISK] A Profit Ratchet Starves A Paper Sample:** in the rc.11 replay the engine's `adaptive_ratchet` breaker halted new buys for the last 7 h after the day gave back half of a +0.044 SOL peak (one or two stop-outs at 0.02 SOL), so the run stopped sampling exactly after its losses. A paper run that must reach a verdict count uses `drawdown_reference_mode` `"baseline"` (the daily and cumulative drawdown locks stay); the ratchet is a live-capital choice, made at Stage 1. *[Applies: here.]*
 - **[STREAMS] A Pool Subscription Sees Every Swap:** a `programSubscribe` on PumpSwap's pool accounts was expected to fire on pool creation and LP changes; PumpSwap writes the pool account on every swap, so it carried 47 messages (36 kB) a second for 832 pools in 15 minutes, and first seen did not mean new (FEAT-80, 2026-10-31). Measure a subscription's volume before designing on it, and date an account by its history (`getSignaturesForAddress`), never by when a stream first showed it. *[Applies: here.]*
+- **[DOCS] Rewrite Links By Path, Not By Anchor:** renaming RELEASE-GATE §3's anchor with a repo-wide `sed` on `RELEASE-GATE.md#3-live-capital-gate` also rewrote a `DONE.md` link into the archived pumpbot `RELEASE-GATE.md`, which has the same anchor, and broke it (2026-10-31). When a heading or file moves, match the link's full relative path (or list the hits and check each), keep history files to link-target changes only, and run `test_docs_relative_links_and_anchors_resolve` before committing. *[Applies: everywhere.]*
 
 ## Project Overview
 
-`trading-pump` (package `trading_pump`) is the Pump.fun / PumpSwap module for trading-core, registered as `pumpfun`. It continues pumpfun-trading: same git history and tags (to `v0.3.0rc8`), same bug and feature numbering. It follows every coin that graduates to PumpSwap, reads the pools on chain, runs the FEAT-76 `pumpswap_momentum` lane in paper with every fee priced in, records a capture, and replays captures through the real engine. Live execution is refused until the lane passes paper.
+`trading-pump` (package `trading_pump`) is the Pump.fun / PumpSwap module for trading-core, registered as `pumpfun`. It continues pumpfun-trading: same git history and tags (to `v0.3.0rc8`), same bug and feature numbering. It follows every coin that graduates to PumpSwap, reads the pools on chain, runs two lanes in paper with every fee priced in (FEAT-76 `pumpswap_momentum` for standard graduations, FEAT-78 `pumpswap_instant` for instant ones, each with its own exits, FEAT-79), records a capture (and, with `new_pools` on, new non-graduate PumpSwap pools, FEAT-80), and replays captures through the real engine. Both lanes are in Stage 1 (paper); live execution is refused until a lane passes it (`docs/dev/RELEASE-GATE.md` §1).
 
 ---
 
@@ -152,7 +154,7 @@ trading-pump/
 │   ├── infra/            # Multi-provider RPC connection pool, latency routing, breaker, failover
 │   ├── sdk/              # Curve and PumpSwap maths, fee config, transaction builders, costs, Jito
 │   ├── services/         # Record-only research recorder (slow lane); the market recorder moved to trading-scout
-│   ├── strategies/       # pumpswap_momentum (the lane), anti-rug screening, observations
+│   ├── strategies/       # pumpswap_momentum (both lanes' pipeline), anti-rug screening, observations
 │   ├── streams/          # PumpPortal WebSocket host (reconnect, pings, key handling)
 │   └── tests/            # 100% coverage; see docs/dev/TESTING.md
 │       ├── conftest.py   # environment isolation only
@@ -172,7 +174,7 @@ trading-pump/
 
 ### 1. User & Operator Manuals (`docs/`)
 * [**`docs/USER-GUIDE.md`**](docs/USER-GUIDE.md): Start here: concepts, install, run, judge, replay, from pumpbot.
-* [**`docs/STRATEGY.md`**](docs/STRATEGY.md): The FEAT-76 lane, its evidence, prices and costs, and how it is judged.
+* [**`docs/STRATEGY.md`**](docs/STRATEGY.md): Both lanes (FEAT-76, FEAT-78), their evidence, prices and costs, and how they are judged.
 * [**`docs/CONFIGURATION.md`**](docs/CONFIGURATION.md): Every `module_settings` key, and the pumpbot key map.
 * [**`docs/ENVIRONMENT.md`**](docs/ENVIRONMENT.md): The seven variables read, and what replaced the rest (checked by a test).
 * [**`docs/CLI.md`**](docs/CLI.md): `trading-pump record / replay / env` and the trading-core commands used with them.
@@ -181,17 +183,21 @@ trading-pump/
 * [**`docs/archive/pumpfun-trading/`**](docs/archive/pumpfun-trading/INDEX.md): pumpfun-trading's documents as of v0.3.0rc8, unchanged.
 
 ### 2. Developer & Engineering Artifacts (`docs/dev/`)
-* [**`docs/dev/README.md`**](docs/dev/README.md): Index and workflow.
-* [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Open work only: migration gate, FEAT-76, live gate, research, Not ported.
+Laid out as trading-core's `docs/dev/DOCUMENTATION.md` §2.3 asks.
+* [**`docs/dev/README.md`**](docs/dev/README.md): Index of every developer page, the workflow, the standard.
+* [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): §1 current status (the only place), release gate, capital gate and Stages 0–3, release-record template, versioning.
+* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): The `runtime-pump` folder, preflight, smoke run, counted run, incidents, recorders, drills.
+* [**`docs/dev/RESULTS.md`**](docs/dev/RESULTS.md): The results log: every run, replay and study since v0.2.3, with its verdict (continues STRATEGY-PIVOT §6).
+* [**`docs/dev/runs/`**](docs/dev/runs/README.md): One record per run: pre-registration before the start, read-out at the end.
+* [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Open work only: Now / Next / Later, FEAT-76, live gate, research, Not ported.
 * [**`docs/dev/DONE.md`**](docs/dev/DONE.md): Finished work under its original headings.
 * [**`docs/dev/BUGS.md`**](docs/dev/BUGS.md): Every bug, root cause and fix; where each fix lives after the split.
-* [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Unbuilt venue features.
-* [**`docs/dev/STRATEGY-PIVOT.md`**](docs/dev/STRATEGY-PIVOT.md): The evidence: every result since v0.2.3.
-* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): Operating a run, incidents, recorders, drills.
-* [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): Release checklist, live capital gate, versioning.
+* [**`docs/dev/PROPOSED-FEATURES.md`**](docs/dev/PROPOSED-FEATURES.md): Unbuilt venue features (FEAT IDs from trading-core's shared series).
 * [**`docs/dev/TESTING.md`**](docs/dev/TESTING.md): The gate, CI, layout, isolation, conventions.
-* [**`docs/dev/COSTS.md`**](docs/dev/COSTS.md): Project costs and the measured running cost per run. Add every new payment there.
+* [**`docs/dev/COSTS.md`**](docs/dev/COSTS.md): This module's costs (Helius, PumpPortal, later on-chain fees) and the measured running cost per run; development costs are trading-core's. Add every new payment for this module there.
 * [**`docs/dev/ARCHITECTURE-DECISIONS.md`**](docs/dev/ARCHITECTURE-DECISIONS.md): ADRs (ADR-008 test layout, ADR-009 the split).
+* [**`docs/dev/releases/`**](docs/dev/releases/README.md): Release records too long for `CHANGELOG.md` (none so far).
+* [**`docs/dev/STRATEGY-PIVOT.md`**](docs/dev/STRATEGY-PIVOT.md): History: pumpfun-trading's v0.3.0 strategy plan.
 
 ---
 
@@ -208,10 +214,12 @@ trading-pump/
 
 3. **Execution & Anti-MEV**:
    - Prices come from the module's own pool reads, never a third-party quote.
-   - Pump.fun `BuyV2` / `SellV2` and the PumpSwap sell are built with Token-2022 detection, creator vaults and fee / volume accumulators (`sdk/`); Jito bundles with on-chain error checks. Live sending waits for the live gate.
+   - Pump.fun `BuyV2` / `SellV2` and the PumpSwap sell are built with Token-2022 detection, creator vaults and fee / volume accumulators (`sdk/`); Jito bundles with on-chain error checks. Live sending waits for Stage 2 of the capital gate.
 
 4. **Strategy & Risk Controls**:
-   - One lane, pre-registered (FEAT-76); exits and limits are the engine's.
+   - Lanes, each pre-registered and judged by its own verdict file (`"strategy"` set): `pumpswap_momentum` (FEAT-76) and `pumpswap_instant` (FEAT-78), one pipeline, each graduate to at most one lane. A lane may run its own exits in the module's `should_exit` (FEAT-79; set the engine's `exits` to `{}`).
+   - Sizing, portfolio limits and the breaker are the engine's; per-lane budgets and pauses are trading-core 0.2.3's `strategies` (FEAT-81), keyed by the lane name. Never re-implement a limit in the module.
+   - Record-only capture (graduates, `new_pools`) never reaches a lane.
    - Screening (Gini, top-5 concentration, creator history, clusters) is available and off by default.
 
 ---
@@ -232,7 +240,7 @@ trading-pump/
 * **Formatting & Linting**: Black, Ruff and flake8 clean (`nox -s format`, `nox -s lint`).
 * **Static Types**: mypy clean (`nox -s mypy`), checked as Python 3.11.
 * **Coverage**: 100% statement and branch coverage on Python 3.11–3.14 (`nox -s tests`).
-* **Docs With Code**: TODO (open), DONE (finished), FEATURES / PROPOSED-FEATURES, CONFIGURATION, ENVIRONMENT and CLI updated in the same change.
+* **Docs With Code**: TODO (open), DONE (finished), FEATURES / PROPOSED-FEATURES, CONFIGURATION, ENVIRONMENT and CLI updated in the same change; results in `docs/dev/RESULTS.md`, run records in `docs/dev/runs/` (trading-core's `docs/dev/DOCUMENTATION.md`).
 * **Bugs & Regressions**: every bug in `docs/dev/BUGS.md` (next free BUG-ID is in the file) with root cause and a tagged test; general lessons in the Learnings Log above.
 
 ---

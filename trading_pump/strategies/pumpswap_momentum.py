@@ -1,7 +1,7 @@
 """The graduate lanes: ``pumpswap_momentum`` (FEAT-76) and ``pumpswap_instant``
 (FEAT-78), one pipeline for both.
 
-The one signal that did not lose in rc.5 to rc.8 (STRATEGY-PIVOT.md §6.13):
+The one signal that did not lose in rc.5 to rc.8 (docs/dev/RESULTS.md §6.13):
 a coin that has just graduated to PumpSwap and is still at least 1.1-1.2x
 its first pool price 60-120 s after the migration, bought at the next
 reading, out at 1.2x (stop 0.85). On 16.6 h of rc.8 data that was +1.3% to
