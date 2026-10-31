@@ -7,7 +7,7 @@ schedule is in [`TODO.md`](TODO.md). When a feature's code ships, move it to
 ships there and keep the missing parts here (AGENTS, Feature Docs Track
 Code).
 
-This list continues pumpfun-trading's (next free ID: **FEAT-81**). On
+This list continues pumpfun-trading's (next free ID: **FEAT-82**; FEAT-81, per-strategy limits and the Strategies panel, was built in trading-core 0.2.3). On
 2026-10-28 it was split by owner: the venue proposals below stayed; the Web
 UI platform and the engine-level proposals (FEAT-10, FEAT-31 to FEAT-38,
 FEAT-41, FEAT-43 to FEAT-46, FEAT-48) moved to trading-core's
