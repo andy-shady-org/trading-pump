@@ -9,7 +9,7 @@ Code).
 
 **IDs.** `FEAT-<n>` is one series across trading-core and every module.
 The next free number is kept in trading-core's
-`docs/dev/PROPOSED-FEATURES.md` (FEAT-107 on 2026-11-02; FEAT-91 is token names, built here; FEAT-96 to FEAT-100 below are the pump-12 plan's, FEAT-105 and FEAT-106 its pump-13 candidates): take it there and
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-110 on 2026-11-02; FEAT-91 is token names, built here; FEAT-96 to FEAT-100 below are the pump-12 plan's, FEAT-105 and FEAT-106 its pump-13 candidates, FEAT-107 the Meteora DAMM v2 capture): take it there and
 bump it in the same pull request. FEAT-81, per-strategy limits and the
 Strategies panel, was built in trading-core 0.2.3. trading-scout's own
 FEAT-1, the cross-chain market recorder that moved there from here, is
@@ -56,6 +56,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-100 | Rug alarm: watch the top holders of open positions | Income | P3 | only if the deep analysis's pre-dump study finds a lead (item D4) |
 | FEAT-105 | Exit-policy selector: learning during a run under a frozen rule | Income | P2 | pump-13 candidate, designed on pump-12's capture ([`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule)) |
 | FEAT-106 | Crash model: trained offline, frozen per run | Income | P2 | pump-13 candidate, trained on rc.9 to pump-12 (§6.1) |
+| FEAT-107 | Meteora DAMM v2 new pools, record-only capture (from scout-1) | Income | P1 | build with `v0.4.0`; run `damm-1` beside pump-12 |
 | FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) |
 | FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
 | FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built |
@@ -159,6 +160,22 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 * **Not built:** retraining inside a run, or a model that deploys itself (ADR-010).
 * **Risks:** a small, shifting sample (walk-forward folds by day show it); operators changing their pattern once it is traded against (the weekly band check in `TODO.md`); features that are free in replay but slow live (each feature's read time is recorded and the model may only use what arrives before the entry).
 * **Impact:** if supply or funding data predicts the dumps, the largest single lever on the instant lane's break-even win rate.
+
+---
+
+### FEAT-107: Meteora DAMM v2 New Pools, Record-Only Capture
+* **Class / Priority:** Income · P1 (proposed 2026-11-02 from trading-scout's scout-1 read-out; a record-only run, `damm-1`, beside pump-12)
+* **Why:** scout-1 (72 h, trading-scout `docs/dev/runs/scout-1.md`) saw 4,338 new Meteora DAMM v2 pools on Solana. Read with only what is known about 2 minutes after a pool appears (first sell check clean, $5,000 of liquidity at entry, a pool drained before the exit counted as a total loss), the FEAT-76 rule counted from the scout's first snapshot made 156 trades at +16% a trade (gains capped at +100%), 81% won, both halves and every UTC day positive. Exploratory: DexScreener snapshots 30 s apart, eight groups tried. It needs second-resolution data with the pool's own fees before any lane.
+* **What the pools are (checked 2026-11-02 on mainnet against the program's source, MeteoraAg/damm-v2 `5398b5c`):** program `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`; pool accounts 1,112 bytes (8-byte discriminator, then `Pool`, 1,104). Offsets into `Pool`: `pool_fees` 0–160 (base fee 32 bytes at 0, mode byte at 8; dynamic fee; `init_sqrt_price`), token A and B mints at 160 and 192, vaults at 224 and 256, `liquidity` u128 at 352, `sqrt_price` u128 (Q64.64) at 448, `activation_point` u64 at 464, `activation_type` at 472 (1 = timestamp), `pool_status` 473, `collect_fee_mode` 476, `pool_type` 477, `fee_version` 478, `creator` at 640, `token_a_amount` / `token_b_amount` u64 at 672 / 680 (when `layout_version` at 688 is 1). Three scout-1 pools decoded to SOL as token A and the coin as B, as expected; all three were already drained.
+* **Fees:** five base-fee modes (time schedulers linear and exponential, a rate limiter, market-cap schedulers linear and exponential) plus a dynamic fee, against a 10⁹ denominator; scout-1's smoke run measured launch fees near 100% that decay. The capture records the fee fields raw; the maths is ported and tested against the program's own when a replay needs it, not at capture time.
+* **Discovery, measured 2026-11-02 (140 s on the public RPC):** a `programSubscribe` on the program with `dataSize` 1,112 carries every pool write: 37.5 messages and 69 kB a second (about 6 GB a day) across 224 active pools. A pool seen for the first time with `activation_point` within the last few minutes is new, found within a second. The same stream carries every followed pool's state after each swap, so the price path needs no polling.
+* **Design (record-only, reusing FEAT-80's feed shape):**
+  - `damm_pools` settings: `enabled` (false), `ws_url_env` (the WebSocket, default the public RPC, so the 6 GB a day costs no credits; a provider URL from an environment variable if the public one drops), `max_age_seconds` for "new" (300), `follow_seconds` (14,400), `max_followed`, `quote_mints` (SOL only at first), `heartbeat_seconds` (30: a batched `getMultipleAccounts` through `rpc_pool` for followed pools, so a quiet pool still has a time grid and a closed one is seen).
+  - Capture rows: `damm_pool` on discovery (pool, mints and their decimals, vaults, creator, activation point and type, collect-fee mode, pool type, fee version, the raw `pool_fees` bytes, the first price), `damm_state` on every write of a followed pool (time, slot, `sqrt_price`, `liquidity`, token amounts, status; price in SOL per coin from the mints' decimals) and `damm_end` (cause: follow time over, drained below a liquidity floor, closed).
+  - Nothing trades; replay does not read these rows yet (a lane would need it, pre-registered after a read-out).
+* **Run `damm-1`:** its own data folder and config in `runtime-pump`, 72 h or more, started with pump-12 on the same release. Read-out: pools per hour, the paths from the first reading, the fee at each minute after activation, and scout-1's rule replayed on second-resolution data with the real fee; whether the edge survives what 30-second snapshots could not show.
+* **Cost:** WebSocket from the public RPC (free; a provider's at about 3.6 M credits per 30 days if needed, `COSTS.md`); heartbeat reads about 0.1 M per 30 days; disk about 1–2 GB a day before gzip (to be measured in its smoke run).
+* **Dependencies:** FEAT-80's WebSocket host and capture writer. **Impact:** the first second-resolution data on the venue scout-1 ranked first.
 
 ---
 
