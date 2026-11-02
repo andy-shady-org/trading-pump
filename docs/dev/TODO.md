@@ -97,6 +97,7 @@ Done (2026-10-31): (b) measured for 15 minutes on the public RPC: `programSubscr
 From trading-scout's scout-1 read-out (2026-11-02): the lead group, re-read without look-ahead ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)).
 - [ ] Smoke run (30 min, `configs/damm.example.json`): pools found per hour, WebSocket bytes, capture size, heartbeat credits (the capture is built for `v0.4.0`: [`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only))
 - [ ] Run `damm-1` (record-only, 72 h or more) beside pump-12, then its read-out: paths at 1 s, the real fee by minute since activation, scout-1's rule replayed on it
+- [ ] **Before pump-13: move FEAT-107 to trading-meteora** (ADR-011; trading-core FEAT-113): the read-out of `damm-1` is done there
 
 ### New PumpSwap pools that are not graduations (FEAT-80)
 Built record-only ([FEATURES.md §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
@@ -109,6 +110,7 @@ Not this repository's: the recorder and every open item it had moved to **tradin
 
 ## Module and tooling
 
+- [ ] **FEAT-115, `0.5.0` during pump-12** (trading-core ADR-010, `docs/dev/REPOSITORIES.md` there): onto trading-solana (FEAT-112) and trading-core 0.5.0 (FEAT-110, FEAT-111); FEAT-107 removed (moved to trading-meteora); FEAT-65's slow lane retired; the release gate replays pump-12's capture to the same positions and net as `v0.4.0`
 - [ ] **Trusted loading (trading-core 0.3.0, FEAT-89 / FEAT-90; this repository is under its Needed by):** the next release (`v0.4.0`) declares `trading-core>=0.4.0,<0.5` in `pyproject.toml` (0.3.1 for TC-8 and TC-9, which FEAT-91 token names need; 0.4.0 for FEAT-92, which FEAT-97's tiers need) and is tagged with `git tag -s`; `runtime-pump` has a `modules.toml` (written 2026-10-31) and needs `allowed_signers` with the signing key (trading-core's `SECURITY.md`, "Signed releases"). Its `bin/install-release.sh` already refuses an unsigned tag (`ALLOW_UNSIGNED=1` for the old ones).
 - [ ] Status rows: per-endpoint RPC latency and breaker state, Jito bundle status once live (carried from "Terminal dashboard" in the archived roadmap; the dashboard itself is trading-core's)
 - [ ] A `trading-pump capture-summary` (or `trading-core-audit` filter) for graduation captures: graduates, standard share, readings per graduate, observation causes; today the read-out uses scripts and `jq`

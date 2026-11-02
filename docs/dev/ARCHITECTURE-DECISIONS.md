@@ -206,3 +206,11 @@ The browser talks only to the control plane. The control plane owns auth, the da
 * **Alternatives considered:** online retraining with automatic deployment (rejected: cannot be judged or reproduced, and a loss cannot be told apart from a market change or a model change); no adaptation at all (rejected: the instant lane's best exit moved within a day, so a fixed rule is a bet on one regime).
 * **Consequences:** adaptation is slower to arrive (a run to design it, a run to judge it) but every result means what it says. Replay must be able to reproduce learners, so their inputs must be in the capture.
 
+## ADR-011: FEAT-107 Lives Here Only Until trading-meteora Exists
+
+* **Status:** Accepted (2026-11-02)
+* **Context:** FEAT-107, the record-only capture of new Meteora DAMM v2 pools, was built here because this repository had the Solana plumbing it needs (RPC client, WebSocket loop, capture writer). Meteora is another exchange, not Pump.fun or PumpSwap. trading-core's ADR-010 (modules by venue, libraries by chain) gives Meteora its own module, trading-meteora, on a shared library, trading-solana; neither exists yet, and pump-12 is days away.
+* **Decision:** FEAT-107 ships in this repository's `v0.4.0` so that its record-only run, `damm-1`, starts beside pump-12. This is a temporary home. Before pump-13 it moves to trading-meteora (trading-core FEAT-113), and this repository's `0.5.0` (FEAT-115) no longer contains it. Nothing else of Meteora's (fee maths, replay of its rows, a lane) is built here.
+* **Alternatives considered:** creating trading-meteora this week by copying the shared Solana code (rejected: a second new repository to set up, sign and allowlist during pump-12's build, and copied code to remove later); waiting for trading-meteora before recording (rejected: a week of data lost, for a record-only capture whose move cannot change any verdict).
+* **Consequences:** `damm-1`'s capture is written by this repository's `v0.4.0`; trading-meteora must read those rows unchanged (its tests pin a sample). `graduation.enabled`, added with FEAT-107 to run the capture alone, stays here: it is useful for any record-only run.
+

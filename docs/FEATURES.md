@@ -124,6 +124,11 @@ follows them like graduates, so a later lane can be judged on a capture:
 
 ### 2.2 New Meteora DAMM v2 pools (FEAT-107, record-only)
 
+> [!NOTE]
+> **Temporary home** (ADR-011): this capture moves to trading-meteora
+> before pump-13 (trading-core ADR-010). It is here so that `damm-1` can run
+> beside pump-12.
+
 Off by default (`damm_pools.enabled`). trading-scout's scout-1 run
 (2026-11-02) ranked new Meteora DAMM v2 pools on Solana first among the
 groups it recorded (FEAT-76's rule, re-read without look-ahead: +16% a

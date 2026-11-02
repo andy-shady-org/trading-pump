@@ -9,7 +9,7 @@ Code).
 
 **IDs.** `FEAT-<n>` is one series across trading-core and every module.
 The next free number is kept in trading-core's
-`docs/dev/PROPOSED-FEATURES.md` (FEAT-110 on 2026-11-02; FEAT-91 is token names, built here; FEAT-96 to FEAT-100 below are the pump-12 plan's, FEAT-105 and FEAT-106 its pump-13 candidates, FEAT-107 the Meteora DAMM v2 capture): take it there and
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-116 on 2026-11-02; FEAT-91 is token names, built here; FEAT-96 to FEAT-100 below are the pump-12 plan's, FEAT-105 and FEAT-106 its pump-13 candidates, FEAT-107 the Meteora DAMM v2 capture, FEAT-115 the move onto trading-solana): take it there and
 bump it in the same pull request. FEAT-81, per-strategy limits and the
 Strategies panel, was built in trading-core 0.2.3. trading-scout's own
 FEAT-1, the cross-chain market recorder that moved there from here, is
@@ -57,6 +57,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-105 | Exit-policy selector: learning during a run under a frozen rule | Income | P2 | pump-13 candidate, designed on pump-12's capture ([`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule)) |
 | FEAT-106 | Crash model: trained offline, frozen per run | Income | P2 | pump-13 candidate, trained on rc.9 to pump-12 (§6.1) |
 | FEAT-107 | Meteora DAMM v2 new pools, record-only capture (from scout-1) | Income | P1 | capture **built** for `v0.4.0` ([`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only)); run `damm-1` beside pump-12; a lane only after its read-out |
+| FEAT-115 | Onto trading-solana and trading-core 0.5.0; FEAT-107 handed to trading-meteora (cross-component) | Suggested | P1 | `0.5.0`, during pump-12, before pump-13 (ADR-011) |
 | FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) |
 | FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
 | FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built |
@@ -165,6 +166,7 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 
 ### FEAT-107: Meteora DAMM v2 New Pools, Record-Only Capture
 * **Status (2026-11-02):** the record-only capture is **built** (`trading_pump/damm.py`, settings `damm_pools`, `graduation.enabled`) and listed in [`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only). Not built: replay of its rows, the fee maths, a lane. The proposal below is as written.
+* **Temporary home (ADR-011):** it ships here in `v0.4.0` for `damm-1` and moves to trading-meteora before pump-13 (trading-core FEAT-113, ADR-010); the fee maths, replay and any lane are built there, not here.
 * **Class / Priority:** Income · P1 (proposed 2026-11-02 from trading-scout's scout-1 read-out; a record-only run, `damm-1`, beside pump-12)
 * **Why:** scout-1 (72 h, trading-scout `docs/dev/runs/scout-1.md`) saw 4,338 new Meteora DAMM v2 pools on Solana. Read with only what is known about 2 minutes after a pool appears (first sell check clean, $5,000 of liquidity at entry, a pool drained before the exit counted as a total loss), the FEAT-76 rule counted from the scout's first snapshot made 156 trades at +16% a trade (gains capped at +100%), 81% won, both halves and every UTC day positive. Exploratory: DexScreener snapshots 30 s apart, eight groups tried. It needs second-resolution data with the pool's own fees before any lane.
 * **What the pools are (checked 2026-11-02 on mainnet against the program's source, MeteoraAg/damm-v2 `5398b5c`):** program `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`; pool accounts 1,112 bytes (8-byte discriminator, then `Pool`, 1,104). Offsets into `Pool`: `pool_fees` 0–160 (base fee 32 bytes at 0, mode byte at 8; dynamic fee; `init_sqrt_price`), token A and B mints at 160 and 192, vaults at 224 and 256, `liquidity` u128 at 352, `sqrt_price` u128 (Q64.64) at 448, `activation_point` u64 at 464, `activation_type` at 472 (1 = timestamp), `pool_status` 473, `collect_fee_mode` 476, `pool_type` 477, `fee_version` 478, `creator` at 640, `token_a_amount` / `token_b_amount` u64 at 672 / 680 (when `layout_version` at 688 is 1). Three scout-1 pools decoded to SOL as token A and the coin as B, as expected; all three were already drained.
@@ -177,6 +179,16 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 * **Run `damm-1`:** its own data folder and config in `runtime-pump`, 72 h or more, started with pump-12 on the same release. Read-out: pools per hour, the paths from the first reading, the fee at each minute after activation, and scout-1's rule replayed on second-resolution data with the real fee; whether the edge survives what 30-second snapshots could not show.
 * **Cost:** WebSocket from the public RPC (free; a provider's at about 3.6 M credits per 30 days if needed, `COSTS.md`); heartbeat reads about 0.1 M per 30 days; disk about 1–2 GB a day before gzip (to be measured in its smoke run).
 * **Dependencies:** FEAT-80's WebSocket host and capture writer. **Impact:** the first second-resolution data on the venue scout-1 ranked first.
+
+---
+
+### FEAT-115: Onto trading-solana And trading-core 0.5.0 (cross-component)
+* **Class / Priority:** Suggested · P1 (built during pump-12, released as `0.5.0` before pump-13)
+* **Needs:** trading-core FEAT-110 (shared capture writer, stream loop, replay harness) and FEAT-111 (trusted libraries), both in trading-core `0.5.0`; trading-solana FEAT-112 (`0.1.0`). This release declares `trading-core>=0.5.0,<0.6` and `trading-solana>=0.1.0,<0.2`.
+* **Goal:** this repository keeps Pump.fun on PumpSwap only (trading-core ADR-010, `REPOSITORIES.md`): the Solana plumbing comes from trading-solana, the capture writer, stream loop and replay harness from trading-core, and FEAT-107 leaves for trading-meteora (ADR-011).
+* **Design:** the file map is trading-core's `docs/dev/REPOSITORIES.md` §5. `recorder.py`, the generic part of `streams/websocket.py` and the engine-driving part of `replay.py` are replaced by trading-core's; `infra/rpc_pool.py`, `sdk/transport.py`, `sdk/jito.py`, `sdk/costs.py`, `sdk/execution_base.py`, `identifiers.py`, `names.py` and the mint decoders by trading-solana's; `damm.py`, `damm_pools` and `configs/damm.example.json` are removed; `services/slow_lane.py` (FEAT-65, NO-GO) is retired. Behaviour, settings keys (other than `damm_pools`) and capture rows are unchanged.
+* **Proof:** the release gate replays a real capture (pump-12's) through `0.5.0` to the same positions and net as `v0.4.0`. A lane keeps its stage only if the replay matches exactly (RELEASE-GATE §3).
+* **Impact:** a smaller module with one venue; a change to Meteora or to Solana plumbing no longer means a trading-pump release.
 
 ---
 
