@@ -423,6 +423,33 @@ its repository's `docs/dev/PROPOSED-FEATURES.md`.
 The record-only answers (D1–D4) decide pump-13's filters whatever the
 verdicts are.
 
+### 6.1 pump-13 candidates: learning under a frozen rule
+
+Added 2026-11-02, after the operator asked whether the bot can learn
+patterns while it runs. It can, if what is frozen is the **learning rule**
+rather than the model ([ADR-010](ARCHITECTURE-DECISIONS.md#adr-010-learning-in-runs-only-under-a-frozen-rule)):
+the run then judges the learner, and its result carries over to live. Two
+candidates, both designed on pump-12's data and judged by pump-13:
+
+| Candidate | What it learns, and from what | Adopted only if |
+|---|---|---|
+| **FEAT-105, exit-policy selector** | Every hour, which of 2–4 pre-registered exit policies did best over the last few hours, scored on **every** in-band graduate's recorded path (traded or not), so about 90 outcomes a day per policy rather than 90 trades of one | It beats the best single policy chosen in advance, on the held-out part of every capture (walk-forward over rc.9, rc.11, rc.11-tp20 and pump-12) |
+| **FEAT-106, crash model** | The chance a graduate is dumped within the holding time, from holder concentration, the creator's funder, the operator tags, time of day and the first minute; trained offline, frozen as JSON | It beats simple threshold rules on the same features out of sample on every walk-forward fold, and improves the lane's net in replay after costs |
+
+FEAT-97's adaptive take-profit in pump-12 is already the first, smallest
+learner of this kind (one value, from the last 6 hours of peaks).
+
+Order after pump-12's read-out:
+1. Read D1–D4: if no recorded feature separates the dumps, FEAT-106 waits
+   for more data, since a model cannot find a signal the features do not
+   carry.
+2. Walk-forward replays of FEAT-105 against the fixed policies on all
+   captures.
+3. Whichever passes goes into pump-13 as a lane's primary rule, frozen and
+   pre-registered; one that does not stays a challenger or is dropped.
+
+Not done: retraining inside a run, or a model that deploys itself.
+
 ## 7. Build list by repository
 
 | Repository | Release | Items |
@@ -456,3 +483,7 @@ verdicts are.
 
 - 2026-10-31: written from the rc.11 review, the crash and rug studies and
   the CloddsBot review; FEAT-92 to FEAT-104 proposed in their repositories.
+- 2026-11-02: §6.1 added (pump-13 candidates: FEAT-105 exit-policy selector,
+  FEAT-106 crash model, ADR-010). rc.11's breaker locked new buys on 1 Nov
+  at 13:23 UTC (a 10.4% daily loss, the instant lane), as its config sets;
+  noted for the read-out (A1).

@@ -193,3 +193,16 @@ The browser talks only to the control plane. The control plane owns auth, the da
 * **Alternatives considered:** a 1:1 port of pumpbot onto the core (rejected: thousands of lines of NO-GO lanes to keep tested, and pumpbot's event-driven runtime does not fit the core's cycle without a rewrite anyway); keeping pumpfun-trading and adding a thin adapter (rejected: two copies of risk and accounting drift apart); a fresh repository (rejected: loses `git log`, `git blame` and tag history for the code that is kept).
 * **Consequences:** trading-pump is small enough to keep at 100% coverage on 3.11–3.14. A lane is a pipeline plus settings; a port of an old lane must bring its bugs' regression tests with it. Decisions about the engine are made in trading-core. pumpfun-trading is retired once the gate in `docs/dev/TODO.md` (Migration gate) is met.
 * **Note (2026-10-31):** this record is kept as written on 2026-10-28. Two facts in it have moved on since: the module reads **seven** `PUMPFUN_*` variables, not six (`PUMPFUN_RPC_WS_URL` was added in 0.4.0-rc.5 for the FEAT-80 new-pool feed; `docs/ENVIRONMENT.md`, checked by a test); and STRATEGY-PIVOT's results log continues in `docs/dev/RESULTS.md`.
+
+## ADR-010: Learning In Runs Only Under A Frozen Rule
+
+* **Status:** Accepted (2026-11-02)
+* **Context:** the operator asked whether the bot can use machine learning to keep learning patterns while it runs. A counted run is evidence only because its rule is fixed before it starts (pre-registration, `runs/README.md`); a bot that retrains itself is a different rule every hour, and its verdict says nothing about the bot that would trade next week. The samples are also small (about 90 instant trades a day) and the market shifts between days (RESULTS §6.19).
+* **Decision:**
+  - A lane may adapt while it runs only through a **learning rule fixed in advance**: what it learns from, how often, and how it acts on it are settings in the run's config, hashed in the run record, and replay reproduces every decision from the capture. The verdict judges the learner. FEAT-97 (adaptive take-profit) and FEAT-105 (exit-policy selector) are of this kind.
+  - A model **trained offline** (FEAT-106) is frozen for a run: a JSON file with its hash in the run record, read by a plain evaluator, never a pickle. A new model is a new rule and needs a new counted run.
+  - No retraining inside a run, and nothing that deploys a new model or rule into a running process.
+  - A learner or model is adopted only if it beats the simple rule chosen in advance on held-out data (walk-forward), as any rule change must.
+* **Alternatives considered:** online retraining with automatic deployment (rejected: cannot be judged or reproduced, and a loss cannot be told apart from a market change or a model change); no adaptation at all (rejected: the instant lane's best exit moved within a day, so a fixed rule is a bet on one regime).
+* **Consequences:** adaptation is slower to arrive (a run to design it, a run to judge it) but every result means what it says. Replay must be able to reproduce learners, so their inputs must be in the capture.
+

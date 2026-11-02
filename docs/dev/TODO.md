@@ -57,6 +57,7 @@ run on the new stack (`v0.4.0rc1`).
   - [ ] Build: FEAT-96 (holder snapshot), FEAT-97 (instant-lane exits; needs trading-core FEAT-92), FEAT-98 (operator tags, `tag-capture`), FEAT-63's creator funder ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)); release `v0.4.0` on trading-core 0.4.0
   - [ ] Replay gate (Stage 0) on rc.9, rc.11 and rc.11-tp20 for every lane's rule; smoke run; `runs/pump-12.md` with every hash committed before the start
   - [ ] Run 168 h; read-out per lane, challenger replays, the record-only questions (D1–D4)
+- [ ] **pump-13 candidates** ([`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule), ADR-010): after pump-12's read-out, walk-forward replays of FEAT-105 (exit-policy selector) against the fixed policies, and FEAT-106 (crash model) if D1–D4 find a feature that separates the dumps
 - [ ] Weekly while rc.11 runs: the instant family's share of migrations and its 60 s ratio distribution (the pattern is other people's launch bots and can change), and a sell check of the instant pools (trading-scout)
 - [ ] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges
 - [ ] Optional, if the RPC budget allows: a 1 s fast phase for the first 3 minutes (`fast_poll_interval_seconds`), since the result moved with one reading of delay (§6.13)
