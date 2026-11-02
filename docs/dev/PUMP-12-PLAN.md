@@ -84,7 +84,7 @@ Times are Helsinki (UTC+2).
 | Tue 3 – Wed 4 Nov | Agree the design. Build trading-core 0.4.0's FEAT-92 and FEAT-95 (and FEAT-93 / FEAT-94 if adopted), trading-pump v0.4.0's FEAT-96, FEAT-97, FEAT-98 and FEAT-63's creator funder. The replay gate on every design capture (Stage 0) |
 | Thu 5 Nov | Release gates, signed tags (operator, on the Mac), install, 30-minute smoke run, run record with hashes committed |
 | Thu 5 or Fri 6 Nov | **pump-12 starts**: 168 h, to Thu 12 or Fri 13 Nov. Friday is the realistic start if the build takes the full two days |
-| During the run | Health checks twice a day. Nothing changes. If rc.11 gave a lane GO, the live buy builder is built in parallel (F1) |
+| During the run | Health checks twice a day. Nothing changes. If rc.11 gave a lane GO, the live buy builder is built in parallel (F1). `damm-1` (FEAT-107, record-only) runs beside pump-12 on the same release. The repository split is built in parallel (trading-core ADR-010): trading-core 0.5.0, trading-solana, trading-meteora (FEAT-107 moves there), trading-evm (`evm-1` starts when it is tagged), trading-pump 0.5.0 |
 | End | Verdict per lane, challenger replays, record-only read-outs, then pump-13 or Stage 2 |
 
 ## 4. The items
@@ -487,3 +487,7 @@ Not done: retraining inside a run, or a model that deploys itself.
   FEAT-106 crash model, ADR-010). rc.11's breaker locked new buys on 1 Nov
   at 13:23 UTC (a 10.4% daily loss, the instant lane), as its config sets;
   noted for the read-out (A1).
+- 2026-11-02: `damm-1` (FEAT-107, record-only) added beside pump-12 on the
+  same release; the repository split (trading-core ADR-010, this
+  repository's ADR-011 and FEAT-115) is built during pump-12, before
+  pump-13.
