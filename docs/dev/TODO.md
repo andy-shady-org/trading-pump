@@ -93,6 +93,12 @@ Done (2026-10-31): (b) measured for 15 minutes on the public RPC: `programSubscr
 - [ ] Cheaper on-chain migration signal: `logsSubscribe` mentioning the Pump.fun program (its `migrate` instruction), measured for volume first, or dating only the canonical pools whose first reading looks like a fresh graduation (about 85 SOL in the pool); the provider's WebSocket cost for FEAT-80's 3 GB a day decides whether one stream can serve both
 - [ ] If one is cheap enough: a second migration source in `feed.py` behind the same tracker (de-duplicated by mint), with its own degraded condition, so a PumpPortal outage stops neither the follow list nor the capture. Geyser / Yellowstone (paid, lower latency) stays out unless live fills show latency costs entries (FEAT-39)
 
+### Meteora DAMM v2 new pools (FEAT-107)
+From trading-scout's scout-1 read-out (2026-11-02): the lead group, re-read without look-ahead ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)).
+- [ ] Build the record-only capture (`damm_pools` settings, `damm_pool` / `damm_state` / `damm_end` rows, public-RPC `programSubscribe` with a heartbeat read), pinned to real pool bytes in tests; ship in `v0.4.0`
+- [ ] Smoke run (30 min): pools found per hour, WebSocket bytes, capture size, heartbeat credits
+- [ ] Run `damm-1` (record-only, 72 h or more) beside pump-12, then its read-out: paths at 1 s, the real fee by minute since activation, scout-1's rule replayed on it
+
 ### New PumpSwap pools that are not graduations (FEAT-80)
 Built record-only ([FEATURES.md §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
 - [ ] **pools-1**, a record-only run of 24–72 h (`v0.4.0rc5`, `runtime-pump/configs/pools-1.json`: lanes off, `new_pools` on, its own data folder; started 2026-10-31 07:29:11 UTC, [`runs/pools-1.md`](runs/pools-1.md)): pools followed per hour, the share that are SOL pairs and were dated exactly, lookup errors, and the RPC credits and WebSocket data used
