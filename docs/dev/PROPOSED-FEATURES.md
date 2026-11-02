@@ -9,7 +9,7 @@ Code).
 
 **IDs.** `FEAT-<n>` is one series across trading-core and every module.
 The next free number is kept in trading-core's
-`docs/dev/PROPOSED-FEATURES.md` (FEAT-105 on 2026-10-31; FEAT-91 is token names, built here; FEAT-96 to FEAT-100 below are the pump-12 plan's): take it there and
+`docs/dev/PROPOSED-FEATURES.md` (FEAT-107 on 2026-11-02; FEAT-91 is token names, built here; FEAT-96 to FEAT-100 below are the pump-12 plan's, FEAT-105 and FEAT-106 its pump-13 candidates): take it there and
 bump it in the same pull request. FEAT-81, per-strategy limits and the
 Strategies panel, was built in trading-core 0.2.3. trading-scout's own
 FEAT-1, the cross-chain market recorder that moved there from here, is
@@ -54,6 +54,8 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-98 | Operator tags: Mayhem mode and reused names, live and backfilled (from the CloddsBot review) | Income | P1 | backfill at the deep analysis; live tag in the pump-12 build (item D3) |
 | FEAT-99 | Jito bundles for the live path (from the CloddsBot review) | Income | P2 | live gate, only for a lane with a Stage 1 GO (item F2) |
 | FEAT-100 | Rug alarm: watch the top holders of open positions | Income | P3 | only if the deep analysis's pre-dump study finds a lead (item D4) |
+| FEAT-105 | Exit-policy selector: learning during a run under a frozen rule | Income | P2 | pump-13 candidate, designed on pump-12's capture ([`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule)) |
+| FEAT-106 | Crash model: trained offline, frozen per run | Income | P2 | pump-13 candidate, trained on rc.9 to pump-12 (§6.1) |
 | FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) |
 | FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
 | FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built |
@@ -128,6 +130,35 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
   - Backfill: `trading-pump tag-capture <capture>` reads the mints in a capture, fetches names and curve flags as they are now (mint and curve accounts outlive the graduation), and writes a sidecar JSONL that replay and the read-out scripts join by mint.
 * **Then:** at the deep analysis, crash rate and lane result by tag on rc.9, rc.11 and rc.11-tp20. A tag that separates crashes on **every** capture can be a pre-registered entry filter in pump-12 (chosen on old data, judged on new). Otherwise record-only.
 * **Dependencies:** FEAT-91 (the name read). **Impact:** a possible filter available on day one of pump-12 rather than a run later.
+
+### FEAT-105: Exit-Policy Selector: Learning During A Run Under A Frozen Rule
+* **Class / Priority:** Income · P2 (proposed 2026-11-02; a pump-13 candidate, [`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule); ADR-010)
+* **Needs:** trading-core FEAT-92 (tiers) for tiered policies; FEAT-97's peak memory (the same bookkeeping of followed graduates).
+* **Goal:** let a lane adapt to the day's market while it runs, without becoming a rule nobody can judge. The instant lane's best exit changed within a day (RESULTS §6.19: TP +50% best on rc.9, worst on rc.11's first night), and the breaker stopped rc.11 on 1 November in a low-pump spell that TP +20% rode out.
+* **Why it can learn from much more than its own trades:** every in-band graduate's pool is read every 2 s (1 s in pump-12) whether the lane buys it or not. So for **every** graduate, each candidate exit policy's result can be worked out from its readings, with the paper fill model, entry delay and fees, once the policy would have closed. That is full information: about 90 scored outcomes a day per policy on the instant lane, against 90 trades of one policy.
+* **Design:**
+  - `instant.exit_selector` (and the same for `lane`): `policies`, a list of 2–4 named exit rule sets (FEAT-79 / FEAT-92 keys, or FEAT-97's adaptive target); `window_hours` (the scoring memory); `update_minutes`; `score` (`mean` net per trade, or `lower_bound`, a one-sided interval of the mean); `min_samples`; `hysteresis` (the leader must beat the current policy by this much to switch); `default` (until `min_samples`).
+  - Each update chooses the policy with the best score on the graduates whose outcome is known in the window. A new position takes the current choice, stamped into `entry_metrics` (`exit_policy`, with the scores it was chosen on); an open position never changes policy.
+  - Deterministic from the capture: replay makes the same choices at the same times (a test pins live and replay to one capture).
+  - Status row and audit events for each switch: `exit policy: tp20_tiers (6 h: +3.1%/trade, 412 scored)`.
+* **What is pre-registered:** the policy list and the selector's settings, as a rule. The verdict judges the selector as a whole, not any one policy.
+* **Before it is adopted:** a walk-forward replay on rc.9, rc.11, rc.11-tp20 and pump-12. The selector must beat the best single policy **chosen in advance** (as the plan's maximin rule chooses) on the held-out part of every capture. If it only ties, the fixed policy is simpler and wins.
+* **Risks:** chasing noise (hysteresis and `min_samples` limit switching); a regime that turns faster than the window (the per-lane pause stays as the backstop); the scored outcomes are paper fills (the same limit as the lane's own).
+* **Impact:** the online learning that fits the data the lanes have, and the most likely route to a lane that holds up across days.
+
+### FEAT-106: Crash Model: Trained Offline, Frozen Per Run
+* **Class / Priority:** Income · P2 (proposed 2026-11-02; a pump-13 candidate, plan §6.1; ADR-010)
+* **Needs:** pump-12's record-only data: FEAT-96 (holders), FEAT-63 (creator's funder), FEAT-98 (operator tags).
+* **Goal:** estimate, at the signal, the chance that an in-band graduate is dumped within the lane's holding time, and use it to skip the riskiest coins or give them tighter exits. RESULTS §6.19 found the first minute's prices carry no such signal, so a model on those alone would learn noise; the new holder, funder and tag data is what could carry it.
+* **Data:** every in-band graduate from rc.9 to pump-12, bought or not (about 4 instant graduates an hour, so well over 1,000 by the end of pump-12), labelled from its recorded path: dumped (below half its signal price, or a single reading losing over 60%) within 6 / 15 / 30 minutes of the signal. Features: the signal reading and first-minute path, the holder snapshot, the creator's funder, the tags, hour and weekday, graduations per hour, the recent crash rate of the band.
+* **Design:**
+  - A research command, `trading-pump crash-model fit | evaluate`, on captures: walk-forward by time (train on earlier days, test on the next, never shuffled), logistic regression and shallow gradient boosting, against two baselines: the base rate and the best simple threshold rule on the same features.
+  - Judged on log-loss and AUC, and on what matters: the lane's net in replay with the model as a filter at a threshold fixed before the test, after costs.
+  - Adopted only if it beats the threshold rules out of sample on **every** fold. Then frozen: written as JSON (coefficients, or trees as plain nodes; never a pickle, which would run code on load), its sha256 in the run record, read by a small evaluator in the module so the runtime needs no ML library. scikit-learn stays a research-only extra.
+  - In the lane: `instant.crash_model` (`path`, `max_probability` to skip, or `tight_exits_above` to pick a stricter exit policy for risky coins).
+* **Not built:** retraining inside a run, or a model that deploys itself (ADR-010).
+* **Risks:** a small, shifting sample (walk-forward folds by day show it); operators changing their pattern once it is traded against (the weekly band check in `TODO.md`); features that are free in replay but slow live (each feature's read time is recorded and the model may only use what arrives before the entry).
+* **Impact:** if supply or funding data predicts the dumps, the largest single lever on the instant lane's break-even win rate.
 
 ---
 
