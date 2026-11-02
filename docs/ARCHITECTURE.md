@@ -42,6 +42,9 @@ flowchart TD
     SRC -- "PoolReading" --> GT
     SRC --> HOST["host.notify_market_data / set_degraded"]
     GT --> CAP["capture rows (recorder.py)"]
+    DWS["RPC programSubscribe on DAMM v2 pools (FEAT-107, optional)"] --> DF["DammFeed (damm.py)"]
+    DF --> DW["DammWatcher: follows new SOL pools 4 h, record-only"]
+    DW --> CAP
     GT -- "graduates only" --> SCOUT
     subgraph ENGINE["trading-core engine cycle"]
         SCOUT["GraduationScout: picks the lane"] --> FILT["StandardPoolFilter: the lane's band"]
@@ -70,6 +73,7 @@ trading_pump/
 ├── graduates.py         # GraduateTracker: who is followed, readings, capture rows
 ├── feed.py              # MigrationFeed (PumpPortal) and PoolPoller
 ├── pools.py             # NewPoolFeed and NewPoolWatcher: new non-graduate pools (FEAT-80)
+├── damm.py              # DammFeed and DammWatcher: new Meteora DAMM v2 pools, record-only (FEAT-107)
 ├── execution.py         # PaperExecutor, LiveExecutor, Holdings
 ├── replay.py            # capture playback through the engine
 ├── recorder.py          # ReplayRecorder: the capture file (core RotatedFileSink)

@@ -122,6 +122,58 @@ follows them like graduates, so a later lane can be judged on a capture:
 * **Dashboard:** a `New pools` status row (state, new pools followed, old
   pools looked up, graduates' pools skipped).
 
+### 2.2 New Meteora DAMM v2 pools (FEAT-107, record-only)
+
+Off by default (`damm_pools.enabled`). trading-scout's scout-1 run
+(2026-11-02) ranked new Meteora DAMM v2 pools on Solana first among the
+groups it recorded (FEAT-76's rule, re-read without look-ahead: +16% a
+trade, both halves and every day positive, on 30-second snapshots). This
+records them at the chain's own resolution; nothing trades them.
+
+* **Feed:** one `programSubscribe` on the DAMM v2 program
+  (`cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`), filtered to pool accounts
+  (1,112 bytes). The program writes the pool on every swap, so the stream
+  carries every active pool's state: 37.5 messages and 69 kB a second
+  (about 6 GB a day, measured on 2026-11-02). By default it is the public
+  RPC (`damm_pools.ws_url`), where it costs nothing; `use_rpc_ws_url` takes
+  `PUMPFUN_RPC_WS_URL` instead. Its idle timeout is 60 s and it reports
+  `damm v2 feed` degraded while disconnected. Every message marks market
+  data fresh, so a run with graduation tracking off stays healthy.
+* **What is new:** a pool paired with SOL whose `activation_point` is at
+  most `max_age_seconds` (5 min) old, or at most `max_future_seconds` (1 h)
+  ahead, is followed for `follow_seconds` (4 h), at most `max_followed` at
+  once. Everything else is remembered and not decoded again.
+* **Rows** (the capture file, beside any other rows):
+  - `damm_pool` when following starts: pool, slot, `coin_mint`,
+    `sol_is_a`, creator, activation point and type (1 = Unix time, 0 =
+    slot), `age_seconds`, pool type, collect-fee mode, fee version, the
+    price range (`sqrt_min_price`, `sqrt_max_price`) and the raw fee
+    settings (`pool_fees_hex`, 160 bytes: base-fee mode and schedule,
+    dynamic fee, initial price);
+  - `damm_decimals` once the coin's mint has been read;
+  - `damm_state` on every change of a followed pool (`via: "stream"`) and on
+    each heartbeat read (`via: "heartbeat"`, every 30 s): `sqrt_price`
+    (Q64.64) and `liquidity` as strings, both token amounts, status, and
+    `price_sol` (SOL a coin) once the decimals are known;
+  - `damm_end` with its cause (`follow_time`, or `closed` when the account
+    is gone).
+* **Fees** are recorded, not applied: five base-fee modes (time and
+  market-cap schedulers, linear or exponential, and a deprecated rate
+  limiter) and a dynamic fee, against a 10⁹ denominator. Launch fees start
+  near 100% and decay (scout-1's smoke run measured round trips losing up to
+  99.9%); a read-out works the fee out from `pool_fees_hex` and the
+  activation time.
+* **Without graduation tracking:** `graduation.enabled` false leaves the
+  PumpPortal feed and the pool poller off, for a run that records only DAMM
+  v2 pools (every lane must then be off).
+* **Dashboard:** a `DAMM v2` status row (state, pools followed now, pools
+  found, writes received).
+* **Checked live** (2026-11-02, the feed and watcher alone on the public
+  RPC for 150 s): 5,439 pool writes, 15 new SOL pools followed (115 too
+  old, 172 not SOL pairs), 1,807 state rows, prices from 1.4e-6 SOL a coin,
+  every decimals read answered, about 0.6 MB of rows. The 30-minute smoke
+  run under `trading-core run` is still to do ([`docs/dev/TODO.md`](dev/TODO.md)).
+
 ## 3. The `pumpswap_momentum` lane (FEAT-76, paper)
 
 The pre-registered rule from the rc.8 read-out, as a trading-core pipeline

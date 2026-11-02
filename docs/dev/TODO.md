@@ -95,8 +95,7 @@ Done (2026-10-31): (b) measured for 15 minutes on the public RPC: `programSubscr
 
 ### Meteora DAMM v2 new pools (FEAT-107)
 From trading-scout's scout-1 read-out (2026-11-02): the lead group, re-read without look-ahead ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)).
-- [ ] Build the record-only capture (`damm_pools` settings, `damm_pool` / `damm_state` / `damm_end` rows, public-RPC `programSubscribe` with a heartbeat read), pinned to real pool bytes in tests; ship in `v0.4.0`
-- [ ] Smoke run (30 min): pools found per hour, WebSocket bytes, capture size, heartbeat credits
+- [ ] Smoke run (30 min, `configs/damm.example.json`): pools found per hour, WebSocket bytes, capture size, heartbeat credits (the capture is built for `v0.4.0`: [`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only))
 - [ ] Run `damm-1` (record-only, 72 h or more) beside pump-12, then its read-out: paths at 1 s, the real fee by minute since activation, scout-1's rule replayed on it
 
 ### New PumpSwap pools that are not graduations (FEAT-80)

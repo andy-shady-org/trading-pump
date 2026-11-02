@@ -144,6 +144,7 @@ trading-pump/
 │   ├── graduates.py      # GraduateTracker (FEAT-73): who is followed, readings, capture rows
 │   ├── feed.py           # MigrationFeed (PumpPortal subscribeMigration), PoolPoller
 │   ├── pools.py          # NewPoolFeed (RPC programSubscribe), NewPoolWatcher: new non-graduate pools (FEAT-80)
+│   ├── damm.py           # DammFeed (RPC programSubscribe on DAMM v2), DammWatcher: new Meteora DAMM v2 pools, record-only (FEAT-107)
 │   ├── execution.py      # PaperExecutor (pool-priced fills, every cost), LiveExecutor (refuses)
 │   ├── replay.py         # capture playback through the engine (trading-pump replay)
 │   ├── recorder.py       # the capture file (core RotatedFileSink)
