@@ -12,6 +12,9 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 
 ## [Unreleased]
 
+### Added
+- Shared pages `docs/STRATEGY-LEDGER.md` and `docs/LESSONS.md`, copied unchanged from trading-core (its `docs/dev/DOCUMENTATION.md` §2.4), and an `AGENTS.md` section that sends every agent to them before a lane, run or venue is proposed (2026-11-03).
+
 ## [0.4.0] - 2026-11-03
 
 The last release of the PumpSwap lanes' work, on trading-core `v0.4.0`. Both lanes were judged NO-GO on rc.11 and are **closed**: nothing tried afterwards (166 exit and entry variants, short holds, an adaptive gate and selector, the supply map of 902 instant graduates, section B of the pump-12 plan on each supply-map group) passes the design gate on every capture, so `pump-12` is not run. The code stays, so every capture can be replayed. New here: the Meteora DAMM v2 capture for `damm-1` (FEAT-107, record-only, until trading-meteora takes it), token names (FEAT-91), and replayed fills at the reading nearest the order (BUG-164). A MINOR release: new settings keys (`damm_pools`, `graduation.enabled`), new capture rows, and trading-core `>=0.4.0,<0.5`.
