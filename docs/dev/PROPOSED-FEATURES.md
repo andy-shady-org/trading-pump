@@ -48,28 +48,28 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 
 | ID | Feature | Class | Priority | Sprint |
 |---|---|---|---|---|
-| FEAT-76 | PumpSwap post-graduation momentum lane (paper first) | Income | P1 | proposed 2026-10-28 from the rc.8 read-out ([`RESULTS.md` §6.13](RESULTS.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)) |
-| FEAT-96 | Holder snapshot at the signal, record-only (from the CloddsBot review) | Income | P1 | pump-12 build ([`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) item D1) |
-| FEAT-97 | Instant-lane exits: adaptive target and tiers (cross-component: **Needs** trading-core FEAT-92) | Income | P1 | pump-12 build (items B2, B3) |
-| FEAT-98 | Operator tags: Mayhem mode and reused names, live and backfilled (from the CloddsBot review) | Income | P1 | backfill at the deep analysis; live tag in the pump-12 build (item D3) |
+| FEAT-76 | PumpSwap post-graduation momentum lane (paper first) | Income | P1 | proposed 2026-10-28 from the rc.8 read-out ([`RESULTS.md` §6.13](RESULTS.md#613-rc6-to-rc8-launch-mode-pumpswap-graduations-and-the-cross-chain-market-2026-10-28)) · **venue-neutral form proposed in trading-core as FEAT-120** (its ADR-011, the strategy library) |
+| FEAT-96 | Holder snapshot at the signal, record-only (from the CloddsBot review) | Income | P1 | pump-12 build ([`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) item D1) · **venue-neutral form proposed in trading-core as FEAT-126** (its ADR-011, the strategy library) |
+| FEAT-97 | Instant-lane exits: adaptive target and tiers (cross-component: **Needs** trading-core FEAT-92) | Income | P1 | pump-12 build (items B2, B3) · **venue-neutral form proposed in trading-core as FEAT-129 (tiers: FEAT-92, built)** (its ADR-011, the strategy library) |
+| FEAT-98 | Operator tags: Mayhem mode and reused names, live and backfilled (from the CloddsBot review) | Income | P1 | backfill at the deep analysis; live tag in the pump-12 build (item D3) · **venue-neutral form proposed in trading-core as FEAT-127** (its ADR-011, the strategy library) |
 | FEAT-99 | Jito bundles for the live path (from the CloddsBot review) | Income | P2 | live gate, only for a lane with a Stage 1 GO (item F2) |
 | FEAT-100 | Rug alarm: watch the top holders of open positions | Income | P3 | only if the deep analysis's pre-dump study finds a lead (item D4) |
-| FEAT-105 | Exit-policy selector: learning during a run under a frozen rule | Income | P2 | pump-13 candidate, designed on pump-12's capture ([`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule)) |
-| FEAT-106 | Crash model: trained offline, frozen per run | Income | P2 | pump-13 candidate, trained on rc.9 to pump-12 (§6.1) |
+| FEAT-105 | Exit-policy selector: learning during a run under a frozen rule | Income | P2 | pump-13 candidate, designed on pump-12's capture ([`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule)) · **venue-neutral form proposed in trading-core as FEAT-130** (its ADR-011, the strategy library) |
+| FEAT-106 | Crash model: trained offline, frozen per run | Income | P2 | pump-13 candidate, trained on rc.9 to pump-12 (§6.1) · **venue-neutral form proposed in trading-core as FEAT-134** (its ADR-011, the strategy library) |
 | FEAT-107 | Meteora DAMM v2 new pools, record-only capture (from scout-1) | Income | P1 | capture **built** for `v0.4.0` ([`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only)); run `damm-1` beside pump-12; a lane only after its read-out |
 | FEAT-115 | Onto trading-solana and trading-core 0.5.0; FEAT-107 handed to trading-meteora (cross-component) | Suggested | P1 | `0.5.0`, during pump-12, before pump-13 (ADR-011) |
-| FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) |
-| FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) |
-| FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built |
-| FEAT-57 | Wash-trade detection as a buy filter | Income | P3 | inputs recorded in rc.2 (no edge yet); gate not built |
-| FEAT-59 | Pullback entry after the first dump | Income | P2 | shadow variants in rc.3; entry path not built |
-| FEAT-60 | Buy-timing (drizzle / burst) inputs | Income | P3 | inputs recorded in rc.3 (no edge yet); gate not built |
-| FEAT-61 | Create-slot bundle proxy | Income | P3 | inputs recorded in rc.3; gate not built |
+| FEAT-54 | Smart-wallet discovery, copy simulation & reviewed watch list | Income | P2 | 24I (phase 1 scorer shipped) · **venue-neutral form proposed in trading-core as FEAT-136** (its ADR-011, the strategy library) |
+| FEAT-55 | Creator reputation book | Income | P3 | not scheduled (no edge) · **venue-neutral form proposed in trading-core as FEAT-127** (its ADR-011, the strategy library) |
+| FEAT-56 | Sniper-volume & wallet-diversity entry filters | Income | P2 | inputs recorded in rc.2; gate not built · **venue-neutral form proposed in trading-core as FEAT-125** (its ADR-011, the strategy library) |
+| FEAT-57 | Wash-trade detection as a buy filter | Income | P3 | inputs recorded in rc.2 (no edge yet); gate not built · **venue-neutral form proposed in trading-core as FEAT-125** (its ADR-011, the strategy library) |
+| FEAT-59 | Pullback entry after the first dump | Income | P2 | shadow variants in rc.3; entry path not built · **venue-neutral form proposed in trading-core as FEAT-122** (its ADR-011, the strategy library) |
+| FEAT-60 | Buy-timing (drizzle / burst) inputs | Income | P3 | inputs recorded in rc.3 (no edge yet); gate not built · **venue-neutral form proposed in trading-core as FEAT-125** (its ADR-011, the strategy library) |
+| FEAT-61 | Create-slot bundle proxy | Income | P3 | inputs recorded in rc.3; gate not built · **venue-neutral form proposed in trading-core as FEAT-126** (its ADR-011, the strategy library) |
 | FEAT-62 | Moonshot (Solana) as a second venue, capture first | Income | P3 | not scheduled; refocused on graduates 2026-10-29: read-out from FEAT-74 data first ([`TODO.md`](TODO.md#cross-chain-market-recorder-feat-74)) |
 | FEAT-77 | On-chain migration feed as a fallback for PumpPortal | Reliability | P2 | proposed 2026-10-29; the PumpSwap pool subscription is measured (47 messages a second, every swap) and cannot tell a migration from an old graduate without dating each pool; the fallback is not built ([`TODO.md`](TODO.md#on-chain-migration-feed-feat-77-fallback-for-pumpportal)) |
-| FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P2 | creator's funder: backfill at the deep analysis, recorded in pump-12 (item D2) |
+| FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P2 | creator's funder: backfill at the deep analysis, recorded in pump-12 (item D2) · **venue-neutral form proposed in trading-core as FEAT-127** (its ADR-011, the strategy library) |
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
-| FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | — | **NO-GO** 2026-10-29: costs pass (0–37 bps, phase 0), but the pre-registered walk-forward on the Binance history lost in every counted half-year and never beat random timing (RESULTS §6.15); not built |
+| FEAT-65 | Slow lane: daily-bar trend on liquid Solana tokens via Jupiter | Income | — | **NO-GO** 2026-10-29: costs pass (0–37 bps, phase 0), but the pre-registered walk-forward on the Binance history lost in every counted half-year and never beat random timing (RESULTS §6.15); not built · **venue-neutral form proposed in trading-core as FEAT-131** (its ADR-011, the strategy library) |
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-47 | Replay analytics on Parquet + DuckDB | Suggested | P3 | backlog |
