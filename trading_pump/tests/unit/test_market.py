@@ -62,6 +62,20 @@ def test_a_standard_graduation_reads_like_the_capture() -> None:
     }
 
 
+def test_a_capture_row_reads_back_as_its_reading() -> None:
+    reading = make_reading(SAMPLE_PUMP_MINT, at=10.0, scale=1.7)
+    row = reading.capture_row(source="graduation")
+
+    back = PoolReading.from_capture_row(row, mint=SAMPLE_PUMP_MINT, at=10.0)
+
+    assert back is not None and back.price == pytest.approx(reading.price, rel=1e-9)
+    assert back.pool_sol == pytest.approx(reading.pool_sol)
+    empty = PoolReading.from_capture_row({}, mint=SAMPLE_MINT, at=1.0)
+    assert empty is not None and empty.drained
+    bad = dict(row, pool_tokens="many")
+    assert PoolReading.from_capture_row(bad, mint=SAMPLE_MINT, at=1.0) is None
+
+
 def test_a_drained_pool_is_a_reading_with_no_price() -> None:
     drained = PoolReading(SAMPLE_MINT, at=1.0, base_reserve=0, quote_reserve=5)
 

@@ -275,6 +275,52 @@ take-profit at +20% would otherwise close a position before the lane's +50%.
   costs; `trading-core-audit` reads the trail
   ([CLI.md](CLI.md#trading-pump-replay)).
 
+### 5.1 The strategy library's records (trading-core FEAT-133 and FEAT-117)
+
+trading-core's strategy library (its ADR-011) runs venue-neutral entry
+rules, gates and exits on four records: a listing, a reading, a trade print
+and a holders snapshot (`trading_core.lanes.market`). This module turns its
+captures into them (`lanes.py`), offline and live; needs a trading-core with
+the library.
+
+* **`trading-pump lane-rows`** writes a capture as the library's rows for
+  `trading-core-lanes sweep` ([CLI.md](CLI.md#trading-pump-lane-rows)). The
+  capture is read twice, first for the listings and decimals, so its parts
+  may come in any order. Generic rows only; nothing of the venue is left in
+  them:
+
+  | Capture row | Library row |
+  |---|---|
+  | `observation_start`, `source: "graduation"` | `listing`: `instrument` = `mint`, `at` = `migrated_at`, `kind: "graduation"` (no name or creator: the capture has none) |
+  | `observation_start`, `source: "new_pool"` (FEAT-80) | `listing`: `instrument` = `mint`, `at` = `created_at` (else `migrated_at`), `kind: "listing"`, `creator` = `coin_creator` (none when it is the default key) |
+  | `curve_poll` of either | `reading`: `instrument` = `mint`, `at` = `timestamp`, `price` = `PoolReading.price` from `pool_sol` / `pool_tokens` (SOL per whole token, as the module and its replay price; a new pool's by its recorded `decimals`), `liquidity` = `pool_sol` |
+  | `damm_pool` (FEAT-107) | `listing`: `instrument` = `pool`, `at` = `timestamp − age_seconds` (the activation), `kind: "listing"`, `creator` = `creator` |
+  | `damm_state` | `reading`: `instrument` = `pool`, `at` = `timestamp`, `price` from `sqrt_price`, `sol_is_a` and the coin's `damm_decimals` (what `price_sol` records), `liquidity` = the SOL amount (`a_amount` or `b_amount`), 0 when the pool's `liquidity` is 0, none on a layout without amounts |
+
+  **Skipped and counted:** a reading of a coin whose listing is not in the
+  capture (followed before its oldest part; the library would take it for
+  a new coin), a reading before its listing, a new pool or DAMM v2 pool
+  whose decimals were not read, a drained pool (price 0: the row format
+  carries no price 0), a malformed row. **Not written:** `trade` and
+  `holders` rows (the captures record no swaps by wallet and no holder
+  snapshots; the supply map's holder features are a study's CSV, not a
+  capture), `progress` (graduates have left the curve). A coin followed
+  twice keeps its first listing. On rc.9's capture the readings match
+  `CaptureMarket` (the replay's reader) one for one, 1,429,111 of them.
+* **The market book** (`PumpModule.market_book`, the `TradingModule` hook
+  of trading-core FEAT-117): the graduates' listings and readings for the
+  lanes the engine's settings compose. It is fed by the same translator on
+  the capture rows as they are written, so a lane sees live what the sweep
+  sees in the capture; new pools and DAMM v2 pools never enter it (they are
+  record-only). It starts on the engine's first call (a graduate followed
+  before that is left out: its listing is not known) and is trimmed on
+  every call: a graduate with nothing new for
+  `graduation.book_retention_seconds` (1 h) is dropped unless held
+  ([CONFIGURATION.md](CONFIGURATION.md#graduation-following-graduates-feat-73)).
+* **Not built:** the calibration (trading-core FEAT-133: the sweep must
+  reproduce RESULTS §6.20 on the rc.8 to rc.11 rows before it judges a
+  venue); it is run in trading-core.
+
 ## 6. Anti-rug screening (FEAT-04, FEAT-26)
 
 Ported from pumpbot with its keys, defaults and presets

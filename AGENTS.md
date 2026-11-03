@@ -59,7 +59,7 @@ in each (the master copies are trading-core's; its
 6. **Record the population, not the selection,** on chain, at the speed the lane would trade, with the fill's own read, and the deployer, funder and holders at the signal.
 7. **Model the latency you pay and check replay parity** before trusting a sweep.
 8. **A crash predictor is not a trade filter.** Judge a filter on the lane's result per trade on every capture.
-9. **Check the ledger's "Do not test again" table** (§6) before proposing an idea; reopen one only with the new evidence it names.
+9. **Check the ledger's "Do not test again" table** (§6) before proposing an idea. One whose scope is **Everywhere** is not tested anywhere; one that failed on a single venue is tested on another only through the strategy library (ledger §8, trading-core ADR-011), with the playbook (§5) and the design gate.
 
 **Keeping them current.** When a run or study here ends, its result goes in this repository's `docs/dev/RESULTS.md` first, then into trading-core's master ledger; when a learning in the log below applies beyond this repository, it goes into trading-core's master `docs/LESSONS.md` too. Both pages are then copied from trading-core, unchanged, to every repository (in a session that has them all, or by the operator). Never edit the copies here.
 
@@ -154,6 +154,8 @@ Every learning from pumpfun-trading is kept below, in its original words (so ent
 - **[STRATEGY] A Crash Predictor Is Not A Trade Filter:** the supply map (2026-11-03) found that instant graduates whose supply sits in wallets with identical balances crash far more often (81% against 42% on rc.9), the first coin-level rug signal in the project. Filtering on it did not help the lane: the bundled coins also pump higher before the dump, so they were the lane's best trades on rc.9 and the lane without them still lost on rc.11. Judge a filter on the lane's result per trade on every capture, never on the outcome it predicts. *[Applies: everywhere.]*
 - **[STRATEGY] Only Test What Could Be A GO:** the operator stopped a proposal (2026-11-03) that would have run a week on rules already NO-GO behind an adaptive gate, and a record-only week of data already held. Before proposing a run, show that some design passes the pre-registered gate on the data in hand; a gate that only cuts losses is not a design. *[Applies: everywhere.]*
 - **[OPS] A Cycle Count Is Not A Duration:** rc.11 and rc.11-tp20 ran `--max-cycles 259200` as "72 h" and stopped 50 and 54 minutes late, because each cycle took its period plus its work (trading-core TC-11). A run of a fixed length uses `trading-core run --run-for 72h` (or `--until`) on trading-core 0.4.0, and its record gives the planned end. *[Applies: here (runs).]*
+- **[DATA] File Order Is Not Time Order:** rotated capture parts sort as `capture.jsonl`, `.1.gz`, `.10.gz`, `.2.gz`, and PumpPortal re-reports some migrations hours later, so a reader that takes the first `observation_start` it meets listed 9 of rc.9's 1,131 coins at a later follow (2026-11-03, `lane-rows`). Read a capture's listings in a first pass and keep each coin's earliest; never let the order of the files decide a time. *[Applies: here.]*
+- **[CONTRACT] A Row Format Must Carry A Rug:** trading-core's library rows refuse a price of 0, so a drained pool cannot be written and a rug while held would vanish from a sweep instead of counting as a total loss (2026-11-03, FEAT-133). Count such rows as skipped, say so in the output, and raise it with trading-core rather than inventing a price. *[Applies: here and trading-core.]*
 
 ## Project Overview
 
@@ -174,10 +176,11 @@ trading-pump/
 │   ├── damm.py           # DammFeed (RPC programSubscribe on DAMM v2), DammWatcher: new Meteora DAMM v2 pools, record-only (FEAT-107)
 │   ├── execution.py      # PaperExecutor (pool-priced fills, every cost), LiveExecutor (refuses)
 │   ├── replay.py         # capture playback through the engine (trading-pump replay)
+│   ├── lanes.py          # captures as trading-core's strategy library records (lane-rows, market_book)
 │   ├── recorder.py       # the capture file (core RotatedFileSink)
 │   ├── identifiers.py    # Solana public keys are public (core redaction)
 │   ├── api/              # Public Pump.fun REST API client
-│   ├── cli/              # trading-pump (record, replay, env) and trading-pump-recorder
+│   ├── cli/              # trading-pump (record, replay, lane-rows, env) and trading-pump-recorder
 │   ├── config/           # env.py (credentials only), settings.py (PumpSettings)
 │   ├── infra/            # Multi-provider RPC connection pool, latency routing, breaker, failover
 │   ├── sdk/              # Curve and PumpSwap maths, fee config, transaction builders, costs, Jito
@@ -207,7 +210,7 @@ trading-pump/
 * [**`docs/STRATEGY.md`**](docs/STRATEGY.md): Both lanes (FEAT-76, FEAT-78), their evidence, prices and costs, and how they are judged.
 * [**`docs/CONFIGURATION.md`**](docs/CONFIGURATION.md): Every `module_settings` key, and the pumpbot key map.
 * [**`docs/ENVIRONMENT.md`**](docs/ENVIRONMENT.md): The seven variables read, and what replaced the rest (checked by a test).
-* [**`docs/CLI.md`**](docs/CLI.md): `trading-pump record / replay / env` and the trading-core commands used with them.
+* [**`docs/CLI.md`**](docs/CLI.md): `trading-pump record / replay / lane-rows / env` and the trading-core commands used with them.
 * [**`docs/FEATURES.md`**](docs/FEATURES.md): Shipped features, and what became of each pumpfun-trading feature.
 * [**`docs/ARCHITECTURE.md`**](docs/ARCHITECTURE.md): How the module meets trading-core's contract; data flow; layout.
 * [**`docs/archive/pumpfun-trading/`**](docs/archive/pumpfun-trading/INDEX.md): pumpfun-trading's documents as of v0.3.0rc8, unchanged.
@@ -260,6 +263,7 @@ Laid out as trading-core's `docs/dev/DOCUMENTATION.md` §2.3 asks.
 * `trading-core check --config F`: validate settings and build the module.
 * `trading-core-audit pnl / cuts / verdict`, `trading-core-events`: read a run.
 * `trading-pump replay --config F --capture C... --out DIR`: replay captures through the engine.
+* `trading-pump lane-rows --capture C... --out FILE`: a capture as trading-core's strategy library rows, for `trading-core-lanes sweep`.
 * `trading-pump record --jupiter-quotes | --backfill-bars` (also `trading-pump-recorder`): research recorders (`--market` moved to trading-scout).
 * `trading-pump env`: which variables are set (names only).
 

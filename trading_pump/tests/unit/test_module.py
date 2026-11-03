@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from trading_core.lanes.market import Listing
 from trading_core.module.base import (
     ExecutionRefused,
     MarketQuote,
@@ -19,13 +20,19 @@ from trading_core.positions import Position
 from trading_pump.config.env import Credentials, load_credentials
 from trading_pump.damm import CONDITION_DAMM_FEED
 from trading_pump.feed import CONDITION_FEED, CONDITION_RPC
+from trading_pump.lanes import SKIP_NO_LISTING
 from trading_pump.module import PUMP_QUOTE, PumpModule, QuoteUnavailable
 from trading_pump.pools import CONDITION_POOL_FEED
 from trading_pump.sdk.execution import PumpFunExecutionClient
-from trading_pump.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
+from trading_pump.tests.support.constants import (
+    SAMPLE_MINT,
+    SAMPLE_PUMP_MINT,
+    WSOL_MINT,
+)
 from trading_pump.tests.support.factories import (
     GRADUATION_BASE_RESERVE,
     GRADUATION_QUOTE_RESERVE,
+    make_reading,
 )
 from trading_pump.tests.support.fakes import FakeClock, FakeHost, FakePoolSource
 
@@ -212,6 +219,44 @@ async def test_migrations_start_tracking_and_reads_reach_the_host(
         "observation_start",
         "curve_poll",
     ]
+
+
+async def test_the_market_book_holds_graduates_from_its_first_call() -> None:
+    module, source, clock, _ = _module(graduation={"book_retention_seconds": 60})
+    reserves = (GRADUATION_BASE_RESERVE, GRADUATION_QUOTE_RESERVE)
+    for mint in (MINT, SAMPLE_PUMP_MINT, WSOL_MINT):
+        source.set(mint, *reserves)
+    module.on_migration(MINT)  # before the book: its listing is not known
+    assert module.book is None
+
+    book = module.market_book()
+    module.on_migration(SAMPLE_PUMP_MINT)
+    module.tracker.add_new_pool(WSOL_MINT, "Pool", now=clock.now)  # record-only
+    assert await module.poller.poll_once() == 3
+
+    history = book.get(SAMPLE_PUMP_MINT)
+    assert history is not None and len(book) == 1
+    assert history.listing == Listing(SAMPLE_PUMP_MINT, 1_000.0, kind="graduation")
+    (reading,) = history.readings
+    expected = make_reading(SAMPLE_PUMP_MINT, at=1_000.0)
+    assert reading.price == pytest.approx(expected.price)
+    assert reading.liquidity == pytest.approx(expected.pool_sol)
+    assert module.book_rows.stats.skipped == {SKIP_NO_LISTING: 1}
+    assert module.book_rows.stats.ignored["curve_poll/new_pool"] == 1
+
+
+def test_the_market_book_forgets_quiet_graduates_unless_held() -> None:
+    module, _, clock, _ = _module(graduation={"book_retention_seconds": 60})
+    book = module.market_book()
+    module.on_migration(MINT)
+    module.on_migration(SAMPLE_PUMP_MINT)
+    module.paper_executor.holdings.add(MINT, 1_000)
+
+    clock.advance(61.0)
+
+    assert module.market_book() is book
+    assert [history.instrument_id for history in book] == [MINT]
+    assert set(module.book_rows.listed) == {MINT}
 
 
 async def test_start_warns_about_unread_variables_and_a_key_in_the_url(

@@ -25,6 +25,9 @@ token (6 decimals), shown in µSOL. The module:
 * proposes entries through the ``pumpswap_momentum`` lane (FEAT-76) and,
   when enabled, the ``pumpswap_instant`` lane (FEAT-78), and sells each
   lane's positions on that lane's own exits (FEAT-79);
+* offers trading-core's strategy library a market book of the graduates
+  (``market_book``, trading-core FEAT-117): their listings and readings,
+  translated from the capture rows as they are written (``lanes.py``);
 * refuses live orders until the live gate (``execution.LiveExecutor``).
 """
 
@@ -39,6 +42,7 @@ from dataclasses import asdict
 from typing import Any
 
 from solders.keypair import Keypair
+from trading_core.lanes.market import MarketBook
 from trading_core.module.base import (
     Fill,
     MarketQuote,
@@ -66,6 +70,7 @@ from trading_pump.feed import (
 from trading_pump.graduates import GraduateTracker
 from trading_pump.identifiers import is_solana_pubkey
 from trading_pump.infra.rpc_pool import CLUSTER_GENESIS_HASHES, MAINNET_GENESIS_HASH
+from trading_pump.lanes import LaneRows
 from trading_pump.market import (
     LAMPORTS_PER_SOL,
     TOKEN_UNITS,
@@ -78,6 +83,7 @@ from trading_pump.market import (
 from trading_pump.pools import CONDITION_POOL_FEED, NewPoolFeed, NewPoolWatcher
 from trading_pump.recorder import ReplayRecorder
 from trading_pump.strategies.enrichment import TokenEnricher
+from trading_pump.strategies.observation import GRADUATION_SOURCE
 from trading_pump.strategies.pumpswap_momentum import (
     LANE,
     LANE_INSTANT,
@@ -183,6 +189,10 @@ class PumpModule(TradingModule):
         )
         self.readings: dict[str, PoolReading] = {}
         self.fees: dict[str, SwapFee] = {}
+        # The strategy library's book of graduates, made on the first
+        # market_book() call (the engine asks only when it runs lanes).
+        self.book: MarketBook | None = None
+        self.book_rows = LaneRows(sources=(GRADUATION_SOURCE,))
         # A replay gives the executor its own source (BUG-164); live and
         # paper runs read the pool for a fill exactly as the poller does.
         self.paper_executor = PaperExecutor(
@@ -272,6 +282,10 @@ class PumpModule(TradingModule):
     def _record(self, row: dict[str, Any]) -> None:
         if self.recorder is not None:
             self.recorder.record_snapshot(row)
+        if self.book is not None:
+            self.book_rows.learn(row)
+            for record in self.book_rows.translate(row):
+                self.book.add(record)
 
     def _damm_url(self) -> str:
         damm = self.settings.damm_pools
@@ -509,6 +523,21 @@ class PumpModule(TradingModule):
                 enricher=enricher,
             )
         return self._pipeline
+
+    def market_book(self) -> MarketBook:
+        """The graduates for trading-core's lanes (FEAT-117): each one's
+        listing at its migration and its pool readings, as the capture rows
+        are written, so a lane sees what ``trading-pump lane-rows`` makes of
+        the capture. Made on the first call: a graduate followed before it is
+        left out (its listing is not known). Trimmed on every call: a
+        graduate with no record for ``graduation.book_retention_seconds`` is
+        dropped, unless held."""
+        if self.book is None:
+            self.book = MarketBook()
+        cutoff = self.clock() - float(self.settings.graduation.book_retention_seconds)
+        self.book.forget_before(cutoff, keep=list(self.paper_executor.holdings.raw))
+        self.book_rows.forget(history.instrument_id for history in self.book)
+        return self.book
 
     def should_exit(
         self, position: Position, quote: MarketQuote | None, now: float

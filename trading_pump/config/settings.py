@@ -84,6 +84,9 @@ class GraduationSettings:
     fast_poll_interval_seconds: float = 2.0
     # A lagging RPC node may not have the pool yet when the event arrives.
     pool_missing_grace_seconds: float = 60.0
+    # The market book for trading-core's lanes (PumpModule.market_book): a
+    # graduate with no record for this long is dropped from it, unless held.
+    book_retention_seconds: float = 3_600.0
 
     def __post_init__(self) -> None:
         _positive(
@@ -92,6 +95,7 @@ class GraduationSettings:
             "max_mints",
             "poll_interval_seconds",
             "fast_poll_interval_seconds",
+            "book_retention_seconds",
         )
         _not_negative(self, "fast_seconds", "pool_missing_grace_seconds")
 

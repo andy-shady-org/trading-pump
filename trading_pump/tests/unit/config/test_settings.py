@@ -94,6 +94,11 @@ def test_module_settings_must_be_an_object() -> None:
     ("kind", "values", "message"),
     [
         (GraduationSettings, {"max_mints": 0}, "max_mints must be positive"),
+        (
+            GraduationSettings,
+            {"book_retention_seconds": 0},
+            "book_retention_seconds must be positive",
+        ),
         (GraduationSettings, {"fast_seconds": -1}, "fast_seconds must not be negative"),
         (LaneSettings, {"min_ratio": 0}, "min_ratio must be positive"),
         (LaneSettings, {"min_ratio": True}, "min_ratio must be positive"),

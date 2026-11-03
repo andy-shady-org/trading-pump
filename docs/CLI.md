@@ -11,6 +11,7 @@ Running the module is trading-core's job; trading-pump adds its own tools.
 | `trading-core-events` | trading-core | Query and tail diagnostic events |
 | `trading-pump record ...` | here | Research recorders (also `trading-pump-recorder`) |
 | `trading-pump replay ...` | here | Replay captures through the engine with the module |
+| `trading-pump lane-rows ...` | here | Write captures as trading-core's strategy library rows, for `trading-core-lanes sweep` |
 | `trading-pump env` | here | Which `PUMPFUN_*` variables are set (names only) |
 
 The trading-core commands are documented in trading-core's `docs/CLI.md`,
@@ -78,6 +79,40 @@ as they are.
 
 A replay judges a rule on recorded data. On the data a rule was found on, it
 checks the code, not the rule.
+
+## `trading-pump lane-rows`
+
+```bash
+trading-pump lane-rows \
+    --capture data/paper/capture.jsonl.3.gz data/paper/capture.jsonl.2.gz data/paper/capture.jsonl \
+    --out data/lanes/rc11.jsonl.gz [--source graduation new_pool damm]
+trading-core-lanes sweep --capture rc11=data/lanes/rc11.jsonl.gz --fee-bps 125 --stress-fee-bps 200 \
+  --haircut-bps 50 --delay 1.5 --out data/sweeps/rc11
+```
+
+Writes one or more captures (plain or gzipped parts, in any order) as the
+venue-neutral rows of trading-core's strategy library (its ADR-011,
+FEAT-133), the rows `trading-core-lanes sweep --capture NAME=FILE` reads
+([FEATURES §5.1](FEATURES.md#51-the-strategy-librarys-records-trading-core-feat-133-and-feat-117)):
+
+* a `listing` per graduate (`kind: "graduation"`, at the migration), per
+  new PumpSwap pool (at its creation, with its creator) and per DAMM v2 pool
+  (at its activation, with its creator);
+* a `reading` per pool read: the price the module prices with (SOL per
+  whole token), the SOL in the pool as `liquidity`;
+* no `trade` or `holders` rows: the captures hold no swaps by wallet and no
+  holder snapshots.
+
+`--source` picks which pools are written (default: all three); a sweep judges
+one venue at a time, so write graduates and DAMM v2 pools to separate files.
+`--out` must be a new `.jsonl` or `.jsonl.gz` file; it is written whole or
+not at all. Rows come in capture order, not time order (the sweep sorts
+them). The command prints how many rows of each kind it wrote, the rows it
+skipped and why (a reading of a coin whose listing is not in the capture, a
+reading before its listing, a coin whose decimals were not read, a drained
+pool), and the rows that are not market data (`migration`,
+`observation_end`, `damm_decimals`, `damm_end`, other runs' rows). It needs
+a trading-core with the strategy library (`trading_core.lanes`).
 
 ## `trading-pump record`
 

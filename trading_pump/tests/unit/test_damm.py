@@ -22,8 +22,10 @@ from trading_pump.damm import (
     DammFeed,
     DammWatcher,
     activation_age,
+    coin_price_sol,
     decode_damm_pool,
     mint_decimals,
+    raw_price,
     sol_per_coin,
 )
 from trading_pump.tests.support.constants import SAMPLE_MINT, WSOL_MINT
@@ -117,6 +119,9 @@ def test_a_mainnet_pool_decodes() -> None:
     assert pool.sol_amount(sol_is_a=False) == 45003818
     # 50 s after activation DexScreener showed 1.652e-7 SOL; the read 1.413e-7.
     assert sol_per_coin(pool, False, 6) == pytest.approx(1.4131168e-7)
+    assert coin_price_sol(raw_price(pool.sqrt_price), False, 6) == sol_per_coin(
+        pool, False, 6
+    )
     assert pool.state() == (
         pool.sqrt_price,
         pool.liquidity,

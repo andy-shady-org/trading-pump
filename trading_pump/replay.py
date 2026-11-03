@@ -44,8 +44,6 @@ from trading_pump.config.env import Credentials
 from trading_pump.graduates import MIGRATION_EVENT
 from trading_pump.market import (
     FEE_SOURCE_REPLAY,
-    LAMPORTS_PER_SOL,
-    TOKEN_UNITS,
     PoolReading,
     SwapFee,
 )
@@ -101,18 +99,6 @@ def _graduation_key(row: Mapping[str, Any]) -> tuple[str, float] | None:
         return None
 
 
-def _pool_reading(
-    row: Mapping[str, Any], mint: str, stamp: float
-) -> PoolReading | None:
-    """The reading a ``curve_poll`` row records (``None`` when malformed)."""
-    try:
-        quote = int(round(float(row.get("pool_sol") or 0.0) * LAMPORTS_PER_SOL))
-        base = int(round(float(row.get("pool_tokens") or 0.0) * TOKEN_UNITS))
-    except (TypeError, ValueError):
-        return None
-    return PoolReading(mint=mint, at=stamp, base_reserve=base, quote_reserve=quote)
-
-
 @dataclass
 class CaptureMarket:
     """The graduation rows of a capture, indexed for playback."""
@@ -136,7 +122,7 @@ class CaptureMarket:
                 migrated = row.get("migrated_at", stamp)
                 market.migrations.append((float(migrated or stamp), mint))
             elif event == "curve_poll":
-                reading = _pool_reading(row, mint, stamp)
+                reading = PoolReading.from_capture_row(row, mint=mint, at=stamp)
                 if reading is not None:
                     market.readings.setdefault(mint, []).append(reading)
         market._index()

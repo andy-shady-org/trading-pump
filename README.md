@@ -27,6 +27,7 @@ dashboard) is trading-core's.
 | Graduation capture (FEAT-73) | Records every graduate's pool for 4 h | always on | record-only |
 | New pools (FEAT-80) | Records new PumpSwap pools that are not graduations (`new_pools`) | off | record-only |
 | Meteora DAMM v2 pools (FEAT-107) | Records new DAMM v2 pools (`damm_pools`); moves to trading-meteora before 0.5.0 (ADR-011) | off | record-only |
+| Strategy library records (trading-core FEAT-133, FEAT-117) | `trading-pump lane-rows` writes a capture as the core library's rows for `trading-core-lanes sweep`; `market_book` offers the graduates to the core's lanes | on demand | tooling |
 
 Stages are the capital gate's (0 Evidence, 1 Paper, 2 Live canary, 3
 Scale-up). No lane has passed Stage 1, so live orders are refused. **Both
