@@ -110,6 +110,20 @@ class PoolReading:
     def age(self, now: float) -> float:
         return max(0.0, now - self.at)
 
+    @classmethod
+    def from_capture_row(
+        cls, row: Mapping[str, Any], *, mint: str, at: float
+    ) -> PoolReading | None:
+        """The reading a ``curve_poll`` row records (:meth:`capture_row`
+        read back), or ``None`` when its reserves are malformed. A row without
+        reserves reads as a drained pool."""
+        try:
+            quote = int(round(float(row.get("pool_sol") or 0.0) * LAMPORTS_PER_SOL))
+            base = int(round(float(row.get("pool_tokens") or 0.0) * TOKEN_UNITS))
+        except (TypeError, ValueError):
+            return None
+        return cls(mint=mint, at=at, base_reserve=base, quote_reserve=quote)
+
     def capture_row(self, *, source: str) -> dict[str, Any]:
         """The capture's ``curve_poll`` row (pumpfun-trading's shape, FEAT-73)."""
         return {

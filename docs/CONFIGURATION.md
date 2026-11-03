@@ -51,6 +51,7 @@ PumpSwap pool, record-only, whether or not the lane trades it.
 | `fast_poll_interval_seconds` | `2` | Read interval during `fast_seconds`. |
 | `poll_interval_seconds` | `10` | Read interval after that. |
 | `pool_missing_grace_seconds` | `60` | A pool the RPC does not have yet is retried this long after the migration before the observation ends (`missing`); a lagging node answers late (BUG-154's lesson). |
+| `book_retention_seconds` | `3600` | The market book the module offers trading-core's lanes (`market_book`, [FEATURES §5.1](FEATURES.md#51-the-strategy-librarys-records-trading-core-feat-133-and-feat-117)): a graduate with no listing or reading for this long is dropped from it, unless a position holds it. A followed graduate is read at least every `poll_interval_seconds`, so this drops the graduates whose observation ended; a pool-read outage longer than this drops the graduates being followed too, and they do not come back until a restart. |
 
 ## `lane`: the `pumpswap_momentum` lane (FEAT-76)
 

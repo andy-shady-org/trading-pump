@@ -94,6 +94,51 @@ def test_replay_errors_exit_2(tmp_path: Path, output: Console) -> None:
     assert missing == main_cli.EXIT_USAGE
 
 
+def test_lane_rows_writes_the_capture_and_counts_it(
+    tmp_path: Path, output: Console
+) -> None:
+    _capture(tmp_path / "c.jsonl")
+    out = tmp_path / "rows.jsonl.gz"
+    code = main_cli.main(
+        ["lane-rows", "--capture", str(tmp_path / "c.jsonl"), "--out", str(out)]
+    )
+    text = " ".join(output.export_text().split())
+    assert code == main_cli.EXIT_OK and out.exists()
+    assert "listing │ 1" in text and "reading │ 9" in text
+    assert "trade │ 0" in text and "holders │ 0" in text
+    assert "skipped │ 0" in text and "trading-core-lanes sweep --capture pump=" in text
+
+
+def test_lane_rows_lists_what_it_skipped(tmp_path: Path, output: Console) -> None:
+    rows = [
+        make_reading(SAMPLE_MINT, at=1.0).capture_row(source="graduation"),
+        {"event": "migration", "mint": SAMPLE_MINT, "timestamp": 0.0},
+    ]
+    (tmp_path / "c.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+    code = main_cli.main(
+        [
+            "lane-rows",
+            "--capture",
+            str(tmp_path / "c.jsonl"),
+            "--out",
+            str(tmp_path / "rows.jsonl"),
+            "--source",
+            "graduation",
+        ]
+    )
+    text = " ".join(output.export_text().split())
+    assert code == main_cli.EXIT_OK
+    assert "no listing in the capture" in text and "migration │ 1" in text
+
+
+def test_lane_rows_errors_exit_2(tmp_path: Path, output: Console) -> None:
+    code = main_cli.main(
+        ["lane-rows", "--capture", str(tmp_path / "missing.jsonl"), "--out", "x.csv"]
+    )
+    assert code == main_cli.EXIT_USAGE
+    assert "Cannot write lane rows" in output.export_text()
+
+
 def test_env_lists_names_and_states_never_values(
     monkeypatch: pytest.MonkeyPatch, output: Console
 ) -> None:

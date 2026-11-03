@@ -5,6 +5,9 @@
   (the cross-chain ``--market`` recorder moved to trading-scout);
 * ``trading-pump replay --config F --capture C [C ...] --out DIR``: replay
   captures through trading-core's engine with the module (``replay.py``);
+* ``trading-pump lane-rows --capture C [C ...] --out FILE``: a capture as
+  trading-core's strategy library rows, for ``trading-core-lanes sweep``
+  (``lanes.py``, trading-core FEAT-133);
 * ``trading-pump env``: which ``PUMPFUN_*`` variables are set and read
   (names only).
 
@@ -21,10 +24,12 @@ from datetime import UTC, datetime
 
 from rich.table import Table
 from trading_core.config.settings import EngineSettings
+from trading_core.lanes.market import ROW_HOLDERS, ROW_LISTING, ROW_READING, ROW_TRADE
 from trading_core.ops.logging import get_configured_console
 
 from trading_pump.cli.record import build_record_parser, run_record_cli
 from trading_pump.config.env import MODULE_ENV_VARS, unread_env_warnings
+from trading_pump.lanes import SOURCES, LaneRowStats, write_lane_rows
 from trading_pump.replay import (
     DEFAULT_REPLAY_FEE_BPS,
     CaptureMarket,
@@ -57,6 +62,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_REPLAY_FEE_BPS,
         help="swap fee a side in basis points (default: %(default)s)",
+    )
+    lane_rows = sub.add_parser(
+        "lane-rows",
+        description="Write captures as trading-core's strategy library rows",
+    )
+    lane_rows.add_argument(
+        "--capture", nargs="+", required=True, help="capture files (.jsonl, .gz)"
+    )
+    lane_rows.add_argument(
+        "--out", required=True, help="new file for the rows (.jsonl or .jsonl.gz)"
+    )
+    lane_rows.add_argument(
+        "--source",
+        nargs="+",
+        choices=SOURCES,
+        default=list(SOURCES),
+        help="which captured pools to write (default: all)",
     )
     sub.add_parser("env", description="PUMPFUN_* variables: set, read, unread")
     return parser
@@ -100,6 +122,32 @@ def run_replay(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def run_lane_rows(args: argparse.Namespace) -> int:
+    try:
+        stats = write_lane_rows(args.capture, args.out, sources=args.source)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]Cannot write lane rows: {exc}[/red]")
+        return EXIT_USAGE
+    console.print(_lane_rows_table(stats))
+    console.print(f"Next: trading-core-lanes sweep --capture pump={args.out} --out DIR")
+    return EXIT_OK
+
+
+def _lane_rows_table(stats: LaneRowStats) -> Table:
+    table = Table(title="Lane rows")
+    table.add_column("Rows", style="bold cyan")
+    table.add_column("Count", justify="right")
+    for kind in (ROW_LISTING, ROW_READING, ROW_TRADE, ROW_HOLDERS):
+        table.add_row(kind, str(stats.written.get(kind, 0)))
+    table.add_row("skipped", str(sum(stats.skipped.values())))
+    for reason, count in stats.skipped.most_common():
+        table.add_row(f"  {reason}", str(count))
+    table.add_row("not market data", str(sum(stats.ignored.values())))
+    for label, count in stats.ignored.most_common():
+        table.add_row(f"  {label}", str(count))
+    return table
+
+
 def run_env() -> int:
     import os
 
@@ -128,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_replay(args)
     if args.command == "env":
         return run_env()
+    if args.command == "lane-rows":
+        return run_lane_rows(args)
     run_record_cli(args)
     return EXIT_OK
 

@@ -17,6 +17,7 @@ Solana, Pump.fun and PumpSwap. The contract between the two is trading-core's
 | `execute(order, paper=)` | `PaperExecutor` (pool-priced fills, every cost) or `LiveExecutor` (refuses until the live gate) |
 | `exit_value(position, quote)` | The SOL a sell of the position would return after the fee (BUG-136) |
 | `pipeline()` | One pipeline for both lanes (`strategies/pumpswap_momentum.py`): `graduations → standard_pool → [anti_rug] → momentum`. The scout gives each graduate to the lane whose first-reading band it is in (the instant band is checked first); the filter and the analyst apply that lane's band, ratio and slippage; the signal carries the lane as its `strategy`. None when both lanes are off |
+| `market_book()` | The graduates' listings and readings for trading-core's lanes (FEAT-117), translated from the capture rows as they are written (`lanes.py`); made on the first call, trimmed by `graduation.book_retention_seconds` on every call, held graduates kept |
 | `should_exit(position, quote, now)` | The position's lane exits (`lane.exits`, `instant.exits`, FEAT-79) on the pool mark; nothing for a lane without exits, so the engine's `exits` decide |
 | `format_price`, `status_rows`, `strategy_rows` | µSOL prices; feed, new-pool feed, graduates, pool reads, RPC, capture rows; each lane's signal, pool band and exits |
 | `files` | The capture file (when on), listed in the Engine panel with the engine's files |
@@ -76,6 +77,7 @@ trading_pump/
 ├── damm.py              # DammFeed and DammWatcher: new Meteora DAMM v2 pools, record-only (FEAT-107)
 ├── execution.py         # PaperExecutor, LiveExecutor, Holdings
 ├── replay.py            # capture playback through the engine
+├── lanes.py             # captures as trading-core's strategy library records (lane-rows, the market book)
 ├── recorder.py          # ReplayRecorder: the capture file (core RotatedFileSink)
 ├── identifiers.py       # is_solana_pubkey (registered with core redaction)
 ├── config/              # env.py (credentials only), settings.py (PumpSettings)
@@ -85,7 +87,7 @@ trading_pump/
 ├── api/client.py        # Pump.fun public API
 ├── streams/websocket.py # PumpPortal WebSocket host (reconnect, pings, key handling)
 ├── services/            # slow_lane (FEAT-65); the FEAT-74 market recorder moved to trading-scout
-├── cli/                 # trading-pump (main.py), the recorders (record.py)
+├── cli/                 # trading-pump (main.py: replay, lane-rows, env), the recorders (record.py)
 └── tests/               # unit/ (mirrors the source), integration/, property/, support/
 ```
 

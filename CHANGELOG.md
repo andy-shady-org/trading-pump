@@ -13,7 +13,13 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 ## [Unreleased]
 
 ### Added
+- **Captures as the strategy library's records (trading-core FEAT-133, pump side):** `trading-pump lane-rows --capture C [C ...] --out FILE(.jsonl|.jsonl.gz) [--source graduation new_pool damm]` writes a capture as trading-core's venue-neutral rows (its ADR-011), the input of `trading-core-lanes sweep --capture pump=FILE`: a `listing` per graduate (`kind: "graduation"`, at the migration), per new PumpSwap pool (FEAT-80, at its creation, with its creator) and per DAMM v2 pool (FEAT-107, at its activation, with its creator), and a `reading` per pool read at the module's own price (`PoolReading.price`; a new pool's by its recorded decimals; a DAMM v2 pool's as `damm_state` prices it) with the SOL in the pool as `liquidity`. No `trade` or `holders` rows: the captures hold none. It prints the rows written per kind, the rows skipped and why (a reading whose listing is not in the capture or comes before it, unknown decimals, a drained pool, malformed) and the rows that are not market data. On rc.9 the readings match the replay's reader one for one (1,429,111) ([FEATURES §5.1](docs/FEATURES.md#51-the-strategy-librarys-records-trading-core-feat-133-and-feat-117), [CLI.md](docs/CLI.md#trading-pump-lane-rows)).
+- **A live market book (trading-core FEAT-117's `TradingModule.market_book`):** the module keeps the graduates' listings and readings for the core's lanes, translated from its capture rows as they are written by the same code as `lane-rows`; new pools and DAMM v2 pools stay out (record-only). Made on the engine's first call, trimmed on every call by the new **`graduation.book_retention_seconds`** (default 3,600; held graduates are kept).
+- Needs a trading-core with the strategy library (`trading_core.lanes`); `pyproject.toml` still declares `>=0.4.0,<0.5` and must rise to the first core release with it (`>=0.6`) before the next release ([TODO](docs/dev/TODO.md#module-and-tooling)).
 - Shared pages `docs/STRATEGY-LEDGER.md` and `docs/LESSONS.md`, copied unchanged from trading-core (its `docs/dev/DOCUMENTATION.md` §2.4), and an `AGENTS.md` section that sends every agent to them before a lane, run or venue is proposed (2026-11-03).
+
+### Changed
+- The replay reads a `curve_poll` row through `PoolReading.from_capture_row` (the inverse of `capture_row`, shared with `lane-rows`), and the DAMM v2 price maths is split into `raw_price` and `coin_price_sol` so `lane-rows` prices `damm_state` rows as the capture does; no result changes.
 
 ## [0.4.0] - 2026-11-03
 

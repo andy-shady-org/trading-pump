@@ -112,7 +112,7 @@ class DammPool:
     @property
     def price(self) -> float:
         """Token B per token A in raw units: the Q64.64 ``sqrt_price`` squared."""
-        return float(self.sqrt_price / 2**64) ** 2
+        return raw_price(self.sqrt_price)
 
     def sol_side(self) -> tuple[str, bool] | None:
         """``(coin mint, SOL is token A)`` of a pool paired with SOL, else
@@ -178,9 +178,19 @@ def decode_damm_pool(address: str, raw: bytes) -> DammPool:
     )
 
 
+def raw_price(sqrt_price: int) -> float:
+    """Token B per token A in raw units from a Q64.64 ``sqrt_price``."""
+    return float(sqrt_price / 2**64) ** 2
+
+
 def sol_per_coin(pool: DammPool, sol_is_a: bool, coin_decimals: int) -> float | None:
     """The coin's price in SOL, or ``None`` at a zero price."""
-    price = pool.price
+    return coin_price_sol(pool.price, sol_is_a, coin_decimals)
+
+
+def coin_price_sol(price: float, sol_is_a: bool, coin_decimals: int) -> float | None:
+    """The coin's price in SOL from a pool's raw ``price`` (token B per token
+    A), or ``None`` at a zero price; what ``damm_state`` rows record."""
     if price <= 0:
         return None
     if sol_is_a:
@@ -551,7 +561,9 @@ __all__ = [
     "DammWatcher",
     "Followed",
     "activation_age",
+    "coin_price_sol",
     "decode_damm_pool",
     "mint_decimals",
+    "raw_price",
     "sol_per_coin",
 ]
