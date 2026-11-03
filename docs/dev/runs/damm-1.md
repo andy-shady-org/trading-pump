@@ -21,13 +21,14 @@ there is nothing to pre-register and no stage to climb.
   trading-core `v0.4.0` (`cfff635`), installed in `runtimes/pump` with
   `bin/install-release.sh v0.4.0 v0.4.0`.
 - **Config:** `runtimes/pump/configs/damm-1.json`: `graduation.enabled`
-  false, lanes off, `damm_pools.enabled` true (stream on the public RPC,
-  about 6 GB a day; heartbeat reads every 30 s over `PUMPFUN_RPC_URL`),
+  false, lanes off, `damm_pools.enabled` and `damm_pools.use_rpc_ws_url`
+  true (the pool stream on `PUMPFUN_RPC_WS_URL`, about 6 GB a day;
+  heartbeat reads every 30 s over `PUMPFUN_RPC_URL`),
   capture in `data/damm-1/` with up to 200 parts of 50 MB; sha256
-  `2403a4f0ca1c260d3b855e3fdb0f42dea0658cde182feb5fc1d5db073a81dd36`.
+  `7e55273163ab4267b105424756787193b261283b874095920d2120b46f99718b`.
 - **Smoke run first:** `configs/smoke-damm.json` (the same, in
   `data/smoke-damm/`; sha256
-  `002d0885294a1902cc0cc241b5770760b3182521c7a20ed54e2dc653eb17bd73`),
+  `9995bb913226d327c4f5e5a6b046f2ac0d1ad6bfba4efe9bb58a36ae723dd3a0`),
   30 minutes: pools found, `damm_state` rows written, the `DAMM v2` status
   row live, no `damm v2 feed` degraded condition.
 - **Length:** 72 h, given to the engine with `--run-for 72h` (trading-core
