@@ -92,6 +92,9 @@ written is edited back (a correction is a new dated line).
 | 2026-11-03 | same | pumpswap_instant | rc.11 with TP +20% | 405 | −0.335 | 60.7% | not counted; on the 189 coins both runs bought, −0.144 against rc.11's −0.274 (§6.20) |
 | 2026-11-03 | rc.11 capture replayed (`trading-pump replay`, 125 bps) | both | `configs/rc11-paper.json` | 305 | −0.502 | 38.7% | parity: instant matches (245 of 245 coins, 244 same exit); momentum entry prices off by 2.1% at the median (§6.20) |
 | 2026-11-03 | rc.8, rc.9, rc.11, rc.11-tp20 captures, offline exit simulator (61 exit rules × 2 lanes, 105 entry variants) | both | pump-12 design gate: positive on every capture at 125 bps, not negative at 200 bps | — | — | — | **nothing passes** on either lane; every rule loses on the rc.11 capture (§6.20) |
+| 2026-11-03 | continuous capture rc.9 → rc.11-tp20, walk-forward | both | adaptive gate and selector over 6 exit rules (trade only when the best rule's last 10 closed shadow trades are positive) | 393 / 130 | −0.019 / +0.075 | — | **NO-GO by the design gate**: both lanes lose in rc.11's second half (−8.5% / −1.3% a trade); losses cut, not removed (§6.21) |
+| 2026-11-03 | 902 instant graduates of rc.9, rc.11, rc.11-tp20, holders at the migration from the curve's transactions (supply map) | pumpswap_instant | identical-balance wallets, more than 7 holders, top-5 share, creator share, signers, curve time | — | — | — | **crash signal, no lane filter**: identical balances crash more (81% / 72% / 70% against 42% / 60% / 66%), but filtering them leaves the lane negative on rc.11 and rc.11-tp20 (§6.21) |
+| 2026-11-03 | same, section B of the pump-12 plan on each supply-map group | pumpswap_instant | 8 coin groups × 30 exit rules (TP +10–50%, holds 2–30 min, adaptive, tiers) | — | — | — | **nothing passes** (222 combinations; best worst capture −1.2% a trade). The PumpSwap lanes are closed; pump-12 is not run (§6.21) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -679,4 +682,133 @@ pools.
    a dump shows at the signal (D1), which pump-12 can record.
 4. The replay matches the run for the instant lane and not to the reading
    for the momentum lane (BUG-164).
+
+### 6.21 After the deep analysis: no PumpSwap lane can pass; the lanes are closed (2026-11-03)
+
+**Scripts** (for this section and §6.20): `runtimes/pump/analysis-pump12/`
+(the exit simulator, the walk-forward gate, the read-out and parity tools,
+with a README); the supply map in `runtimes/supply-map/`.
+
+**Question.** After §6.20, is there anything left that could make a
+PumpSwap lane a GO: an adaptive rule, the coin's supply structure, or any
+item of section B of [`PUMP-12-PLAN.md`](PUMP-12-PLAN.md)? Only ideas that
+had not already failed on the data were tried. The design gate is §6.20's:
+positive on every capture at 125 bps, not negative at 200 bps.
+
+**When the dumps come** (the offline simulator's captures; a crash step is
+a single reading 30% or more below the one before):
+
+| Capture | Instant: crash step within 40 min | Price before the crash, vs its peak / vs the first price (median) | Standard: crash step within 40 min | Price before the crash, vs its peak |
+|---|---|---|---|---|
+| rc.8 | 56% (n = 16) | 0.59 / 0.88× | 82% | 0.69 |
+| rc.9 | 77% | 1.00 / 1.69× | 84% | 0.69 |
+| rc.11 | 78% | 1.00 / 1.37× | 76% | 0.68 |
+| rc.11-tp20 (after rc.11) | 86% | 1.00 / 1.53× | 78% | 0.70 |
+
+Instant coins are dumped at their running peak, in one step: no trailing
+stop or stall exit sees it coming. On rc.11, of the instant coins not yet
+crashed, 2–4% crash in each of the first three minutes after the migration
+and 11–17% in each later interval (minutes 3–5, 5–7, 7–10, 10–15, 15–20);
+part of the rise after minute 5 is the slower 10 s reads.
+
+**Short holds** (75 rules: TP +6–20%, SL −10/−15/−30%, held 60–180 s). On
+the instant lane all lose on rc.11 (best −1.9% a trade). On the momentum
+lane one rule passes the gate at 125 bps, TP +20% / SL −30% / 3 minutes
+(+1.0% / +4.8% / +1.8% / +5.8% on rc.8, rc.9, rc.11, rc.11-tp20, −0.5% on
+rc.8 at 200 bps), but it is a lone peak: with the stop at −25% or −40%, or
+the hold at 150 or 210 s, the worst capture is −0.2% to −1.8%. Not a rule.
+
+**An adaptive gate and selector.** Every lane signal is traded in shadow
+under six exit rules (TP +15% / 5 min, TP +20% / 30 min, TP +50% / 30 min,
+the adaptive target / 6 and 30 min, TP +20% / SL −30% / 3 min). At each
+signal the lane takes the rule with the best mean over its last 10 closed
+shadow trades, and trades only if that mean is above 0. Walk-forward on the
+continuous capture from rc.9 to rc.11-tp20 (per trade, then the total):
+
+| Lane | Fixed rule (TP +20% / 30 min) | Adaptive | rc.9 | rc.11, first half | rc.11, second half | rc.11-tp20 |
+|---|---|---|---|---|---|---|
+| instant | 622 trades, −0.275 SOL | 393 trades, −0.019 SOL | +15.9% | +0.8% | −8.5% | −3.9% |
+| momentum | 170 trades, −0.004 SOL | 130 trades, +0.075 SOL | +0.9% | +7.8% | −1.3% | +3.8% |
+
+With a memory of 20 or 40 trades the totals move between −0.14 and +0.03
+SOL; on rc.8 the momentum selector loses (−3.6% a trade, 21 trades). The
+gate stands aside in bad hours and keeps the good ones; it does not make a
+bad period pay, and both lanes fail the gate in rc.11's second half. A
+simpler gate (trade only when the lane's own last N or last H hours of
+shadow trades are positive) gives the same picture.
+
+**The supply map.** Who held each coin's supply at the migration, rebuilt
+from the transactions of its bonding curve, for all 902 instant graduates
+of rc.9 (126), rc.11 (662) and rc.11-tp20 after rc.11 (114). Read with
+Helius on 2026-11-03 (5,491 calls, none failed); script and data in
+`runtimes/supply-map/` (`supply_map.py`, `data/features.csv`).
+- **Every instant coin is a bundle.** The whole curve (79.3% of the supply)
+  is bought in the creation slot by 3–5 signers within about a second (the
+  median: 5 curve transactions, 0.8 s); about 7 holders at the migration,
+  the largest with about 14%; the creator keeps under 0.4%. A first check
+  on the number of curve transactions alone flipped between captures
+  (fewer transactions: 41% crashes on rc.9, 70% on rc.11).
+- **It predicts crashes** (below half the 60 s price within 30 minutes):
+
+  | Feature at the migration | rc.9 | rc.11 | rc.11-tp20 |
+  |---|---|---|---|
+  | Wallets with identical balances (with / without) | 81% / 42% (p < 0.001) | 72% / 60% (p = 0.006) | 70% / 66% (p = 0.84) |
+  | More than 7 holders (with / without) | 49% / 75% (p = 0.006) | 47% / 66% (p = 0.001) | 60% / 68% (p = 0.73) |
+  | Top-5 share ≥ 66% (with / without) | 75% / 49% | 66% / 49% | 68% / 60% |
+
+  Same direction on every capture, significant on two (two-sided Fisher
+  exact test).
+- **It does not predict the lane's result** (instant lane, TP +20% /
+  30 min, per trade, with / without the feature):
+
+  | Feature | rc.9 | rc.11 | rc.11-tp20 |
+  |---|---|---|---|
+  | Identical balances | +13.2% / +1.9% | −7.6% / −3.3% | +0.8% / −4.2% |
+  | More than 7 holders | −4.5% / +13.6% | −13.9% / −4.7% | 2 trades |
+
+  The bundled coins pump higher before they are dumped, so they earned the
+  lane more on rc.9; without them the lane still loses on rc.11 and
+  rc.11-tp20, at TP +20% and +50%. Top-1 share, creator share, signers,
+  curve time and transactions in the creation slot do no better.
+
+**Section B on the supply-map groups.** Eight groups of instant coins (all;
+identical balances or not; more or at most 7 holders; creator share above
+or below 0.2%; no identical balances and at most 7 holders) against 30 exit
+rules (TP +10/15/20/30/50% with holds of 2, 3, 4, 6 and 30 minutes, the
+adaptive target with 3, 6 and 30 minutes, and B3's tier shapes a, b, c at
+T = +30%, +50% and adaptive), 222 combinations with at least 10 trades on
+each capture: **none passes**. The best worst capture is −1.2% a trade
+(creator share ≥ 0.2%, thirds at the adaptive target), and every
+combination loses on rc.11.
+
+**Item by item** (the plan's section B):
+
+| Item | Result |
+|---|---|
+| B1 max hold | 2–8 minutes tried; the lane's stops come at about minute 3, so a shorter hold leaves into the same dumps |
+| B2 take-profit, fixed or adaptive | Every level from +10% to +50% and the adaptive target lose on rc.11; a lower target raises the win rate and the break-even win rate together |
+| B3 tiers | Shapes a, b, c lose on rc.11; each partial sell pays the 2.4% round trip again |
+| B4 stall exit | Not supported (A6): the price does not flatten before a dump |
+| B5 faster reads | 160 of rc.11's 171 instant stops came on 2 s reads and still filled at −33%; the dump is one slot |
+| B6 per-lane pause | Limits a bad period; the adaptive gate, which does the same, still fails the gate |
+| B7 budget and size | Changes neither the cost share nor the result a trade |
+| B8 instant lane record-only | What is left; a record-only week would repeat what rc.11, rc.11-tp20, pools-1 and the supply map already hold |
+
+**Reading.**
+1. The PumpSwap graduate lanes cannot pass the design gate with anything
+   seen before the buy or any exit at 1–2 s reads. Their losses are
+   operators' dumps of bundled supply, timed at the peak; the result
+   depends on how high the operators pump first, which changes from day to
+   day.
+2. **pump-12 is not run.** Both lanes stay at Stage 1 with rc.11's NO-GO and
+   are closed: no counted run, no live path (F), no build of FEAT-92 to
+   FEAT-98 for them. The code stays, so every capture can still be
+   replayed.
+3. The supply map is the one coin-level signal found (it predicts crashes,
+   not trade results). It is worth recording if a PumpSwap lane is ever
+   reopened, with a new design judged on new data.
+4. Next: Meteora DAMM v2, where scout-1 saw the same rule positive
+   (trading-scout's `docs/dev/runs/scout-1.md`); `damm-1` (FEAT-107, record-only) on
+   this release, then trading-meteora (FEAT-113), which takes FEAT-107 from
+   here (ADR-011).
 

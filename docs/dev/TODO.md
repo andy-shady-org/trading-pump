@@ -21,10 +21,10 @@ where to find it. The list as it stood is archived unchanged:
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | rc.11 ended NO-GO on both lanes; rc.11-tp20 and pools-1 read out; the deep analysis found no design that passes pump-12's gate. The operator chooses pump-12's shape (record-only, plus an exploratory momentum lane, or a counted momentum lane with the gate set aside) | [RESULTS §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03), [`PUMP-12-PLAN.md` §9](PUMP-12-PLAN.md#9-history) |
-| **Next** | `pump-12`, the next counted run, item by item in [`PUMP-12-PLAN.md`](PUMP-12-PLAN.md): the deep analysis on 3 Nov (A), instant-lane exits against rugs (B: max hold, take-profit, tiers), the momentum take-profit (C), record-only holder, funder and tag data (D), 168 h on trading-core 0.4.0 and trading-pump v0.4.0 (E); pre-registered in `runs/pump-12.md` | [FEAT-76](#feat-76-pumpswap-post-graduation-momentum-lane), [`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) |
+| **Now** | Release `v0.4.0` (the last release of the PumpSwap lanes' work, on trading-core `v0.4.0`), then `damm-1`: Meteora DAMM v2 new pools, record-only (FEAT-107), run with `--run-for`. The PumpSwap lanes are closed: rc.11 NO-GO and nothing passes pump-12's design gate, so **pump-12 is not run** | [RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03), [Meteora DAMM v2](#meteora-damm-v2-new-pools-feat-107) |
+| **Next** | The repository split (trading-core ADR-010, this repository's ADR-011): FEAT-107 moves to trading-meteora (FEAT-113), and `v0.5.0` moves onto trading-solana and trading-core 0.5.0 (FEAT-115) | [ADR-011](ARCHITECTURE-DECISIONS.md) |
 | **Next** | Close the migration: a capture that replays to its run's positions, the runtime data moved, pumpfun-trading archived | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
-| **Then** | Only for a lane whose Stage 1 verdict is GO: the PumpSwap buy builder, `LiveExecutor`, reconcile, one live round trip, then Stage 2 (live canary) | [Live gate](#live-gate-for-the-pumpswap-lane) |
+| **Then** | Only if a PumpSwap lane is reopened with a new design that passes on new data: the PumpSwap buy builder, `LiveExecutor`, reconcile, one live round trip, then Stage 2 (live canary) | [Live gate](#live-gate-for-the-pumpswap-lane) |
 | **Later** | Research read-outs (pools-1's new pools, graduation paths); a second migration source (FEAT-77); a second venue only with evidence (the slow lane was NO-GO, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
 
 ## Migration gate (before pumpfun-trading is deleted)
@@ -49,19 +49,7 @@ pumpfun-trading's planned rc.9 build (BUG-157 fixed) is superseded: the
 capture here is pruned by its own policy only, and "rc.9" now names the first
 run on the new stack (`v0.4.0rc1`).
 
-- [x] **rc.11** (`v0.4.0rc4` on trading-core `v0.2.2`, started 2026-10-30 18:58:56 UTC): a 72 h paper run of both lanes from `runtime-pump/configs/rc11-paper.json`: the standard lane on rc.10's entry (ratio 1.2, 5% slippage) with its own exits +50% / −15% / 30 min (FEAT-79), and the instant lane (FEAT-78) with its defaults and 10% slippage; engine `exits` `{}`; breaker `drawdown_reference_mode` `"baseline"`. Pre-registered per lane (`verdict-rc11-*.json`, `"strategy"` set; hashes in [`runs/rc11.md`](runs/rc11.md)); judge each lane alone and add the read-out there. Replay evidence: [RESULTS §6.18](RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30)
-- [x] **rc.11-tp20** (exploratory, not counted, started 2026-10-31 06:00:15 UTC): read it against rc.11 over the same hours, per lane ([`runs/rc11-tp20.md`](runs/rc11-tp20.md))
-- [ ] **pump-12**, as planned in [`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) (2026-10-31):
-  - [x] Deep analysis, 3 Nov (items A1–A7): rc.11 verdicts and read-outs, replay parity, costs, splits, backfilled tags and creator funders, the pre-dump study, the pools-1 read-out. Both lanes NO-GO; nothing passes the design gate; the operator chooses pump-12's shape ([RESULTS §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03), [`PUMP-12-PLAN.md` §9](PUMP-12-PLAN.md#9-history))
-  - [ ] Fix BUG-164 (a replayed buy fills at the signal's reading) before any challenger replay
-  - [ ] Design agreed with the operator: instant-lane max hold, take-profit (fixed or adaptive, [RESULTS §6.19](RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31)) and tiers (B1–B3); the momentum take-profit (C1); any filter from A5; challengers (E5)
-  - [ ] Build: FEAT-96 (holder snapshot), FEAT-97 (instant-lane exits; needs trading-core FEAT-92), FEAT-98 (operator tags, `tag-capture`), FEAT-63's creator funder ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)); release `v0.4.0` on trading-core 0.4.0
-  - [ ] Replay gate (Stage 0) on rc.9, rc.11 and rc.11-tp20 for every lane's rule; smoke run; `runs/pump-12.md` with every hash committed before the start
-  - [ ] Run 168 h; read-out per lane, challenger replays, the record-only questions (D1–D4)
-- [ ] **pump-13 candidates** ([`PUMP-12-PLAN.md` §6.1](PUMP-12-PLAN.md#61-pump-13-candidates-learning-under-a-frozen-rule), ADR-010): after pump-12's read-out, walk-forward replays of FEAT-105 (exit-policy selector) against the fixed policies, and FEAT-106 (crash model) if D1–D4 find a feature that separates the dumps
-- [ ] Weekly while rc.11 runs: the instant family's share of migrations and its 60 s ratio distribution (the pattern is other people's launch bots and can change), and a sell check of the instant pools (trading-scout)
-- [x] Run the same capture through `trading-pump replay` at 125 and 200 bps, and with `paper_entry_delay_seconds` 0 and 2: the result must hold at the fee the fee config actually charges (done offline on four captures at 125 and 200 bps, [RESULTS §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03); nothing passes at 125 bps, so the delay check is moot)
-- [ ] Optional, if the RPC budget allows: a 1 s fast phase for the first 3 minutes (`fast_poll_interval_seconds`), since the result moved with one reading of delay (§6.13)
+- **pump-12 is not run, and both lanes are closed (2026-11-03).** The deep analysis (A1–A7, [RESULTS §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03)) and everything tried after it (short holds, an adaptive gate and selector, the supply map of 902 instant graduates, section B on each supply-map group, [RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)) found no design that passes the gate on every capture. The plan's build items (FEAT-96 to FEAT-98, FEAT-63's creator funder, trading-core FEAT-92 to FEAT-95) and the pump-13 candidates (FEAT-105, FEAT-106) are not built. A PumpSwap lane comes back only with a new design judged on new data; the supply map's crash signal ([RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)) is the place to start.
 - The cross-chain market recorder's items (sell checks, launchpad coverage, per-chain costs) are trading-scout's: see [Cross-chain market recorder (FEAT-74)](#cross-chain-market-recorder-feat-74)
 
 ## Live gate for the PumpSwap lane
@@ -97,22 +85,19 @@ Done (2026-10-31): (b) measured for 15 minutes on the public RPC: `programSubscr
 ### Meteora DAMM v2 new pools (FEAT-107)
 From trading-scout's scout-1 read-out (2026-11-02): the lead group, re-read without look-ahead ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)).
 - [ ] Smoke run (30 min, `configs/damm.example.json`): pools found per hour, WebSocket bytes, capture size, heartbeat credits (the capture is built for `v0.4.0`: [`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only))
-- [ ] Run `damm-1` (record-only, 72 h or more) beside pump-12, then its read-out: paths at 1 s, the real fee by minute since activation, scout-1's rule replayed on it
-- [ ] **Before pump-13: move FEAT-107 to trading-meteora** (ADR-011; trading-core FEAT-113): the read-out of `damm-1` is done there
+- [ ] Run `damm-1` (record-only, 72 h or more, on `v0.4.0` with `trading-core run --run-for 72h`; pump-12 is not run), then its read-out: paths at 1 s, the real fee by minute since activation, scout-1's rule replayed on it
+- [ ] **Move FEAT-107 to trading-meteora** in `v0.5.0` (ADR-011; trading-core FEAT-113): the read-out of `damm-1` is done there
 
 ### New PumpSwap pools that are not graduations (FEAT-80)
-Built record-only ([FEATURES.md §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
-- [x] **pools-1**, a record-only run of 24–72 h (`v0.4.0rc5`, `runtime-pump/configs/pools-1.json`: lanes off, `new_pools` on, its own data folder; started 2026-10-31 07:29:11 UTC, [`runs/pools-1.md`](runs/pools-1.md)): pools followed per hour, the share that are SOL pairs and were dated exactly, lookup errors, and the RPC credits and WebSocket data used
-- [x] Read-out on its capture ([`runs/pools-1.md`](runs/pools-1.md): no edge at 125 or 30 bps; the new pools are liquidity pulls): the paths from the first reading (1.2× in 15 minutes, 2× in an hour, dead by an hour), by creator and launchpad where the coin creator shows it, against the graduates in the same hours; an executable round trip at 0.02 SOL from the pool's own maths and its fee (the fee config's tiers may not apply to these pools: read what they pay first, as §6.16 did for graduates)
-- Not needed (no edge): a pre-registered lane on them (the module's third), replayed first; replay must then read `new_pool` rows
+Closed 2026-11-03: pools-1 found no edge (DONE.md). Built record-only ([FEATURES.md §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
 
 ### Cross-chain market recorder (FEAT-74)
 Not this repository's: the recorder and every open item it had moved to **trading-scout** on 2026-10-30 (its `docs/dev/TODO.md`; trading-scout's own FEAT-1 is FEAT-74 in the shared series). A chain that passes its read-out there gets a module of its own, not a lane here.
 
 ## Module and tooling
 
-- [ ] **FEAT-115, `0.5.0` during pump-12** (trading-core ADR-010, `docs/dev/REPOSITORIES.md` there): onto trading-solana (FEAT-112) and trading-core 0.5.0 (FEAT-110, FEAT-111); FEAT-107 removed (moved to trading-meteora); FEAT-65's slow lane retired; the release gate replays pump-12's capture to the same positions and net as `v0.4.0`
-- [ ] **Trusted loading (trading-core 0.3.0, FEAT-89 / FEAT-90; this repository is under its Needed by):** the next release (`v0.4.0`) declares `trading-core>=0.4.0,<0.5` in `pyproject.toml` (0.3.1 for TC-8 and TC-9, which FEAT-91 token names need; 0.4.0 for FEAT-92, which FEAT-97's tiers need) and is tagged with `git tag -s`; `runtime-pump` has a `modules.toml` (written 2026-10-31) and needs `allowed_signers` with the signing key (trading-core's `SECURITY.md`, "Signed releases"). Its `bin/install-release.sh` already refuses an unsigned tag (`ALLOW_UNSIGNED=1` for the old ones).
+- [ ] **FEAT-115, `0.5.0`** (trading-core ADR-010, `docs/dev/REPOSITORIES.md` there): onto trading-solana (FEAT-112) and trading-core 0.5.0 (FEAT-110, FEAT-111); FEAT-107 removed (moved to trading-meteora); FEAT-65's slow lane retired; the release gate replays rc.11's capture to the same positions and net as `v0.4.0`
+- [ ] **Trusted loading (trading-core 0.3.0, FEAT-89 / FEAT-90):** `v0.4.0` declares `trading-core>=0.4.0,<0.5` (done in its `pyproject.toml`: 0.3.1 for FEAT-91's names, 0.4.0 for `--run-for`) and is tagged with `git tag -s`; the runtime folder (`runtimes/pump`, from `runtime-pump`) needs `allowed_signers` with the signing key (trading-core's `SECURITY.md`, "Signed releases"). Its `bin/install-release.sh` already refuses an unsigned tag (`ALLOW_UNSIGNED=1` for the old ones).
 - [ ] Status rows: per-endpoint RPC latency and breaker state, Jito bundle status once live (carried from "Terminal dashboard" in the archived roadmap; the dashboard itself is trading-core's)
 - [ ] A `trading-pump capture-summary` (or `trading-core-audit` filter) for graduation captures: graduates, standard share, readings per graduate, observation causes; today the read-out uses scripts and `jq`
 

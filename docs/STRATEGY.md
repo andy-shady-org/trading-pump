@@ -1,5 +1,13 @@
 # Strategy
 
+> [!IMPORTANT]
+> **Both lanes are closed (2026-11-03).** Each was judged NO-GO on rc.11,
+> and nothing tried afterwards passes the design gate on every capture:
+> 166 exit and entry variants, short holds, an adaptive gate and selector,
+> and the holders of all 902 instant graduates at their migration
+> ([dev/RESULTS.md §6.20–§6.21](dev/RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)).
+> The rules below are kept as they ran.
+
 trading-pump has two lanes over the same graduates, both paper only. Each
 graduate goes to at most one of them, by its first pool reading after the
 migration:
@@ -149,6 +157,7 @@ Rules pumpbot learnt that apply to any lane here:
 | rc.9 paper run, 58.4 h (stopped) | momentum | 55 positions, +0.034 SOL; NO-GO on the count | [RESULTS §6.19](dev/RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
 | The instant lane's first night in rc.11 | instant | 17 trades at −25% each; crashes cannot be told apart before the buy; TP +50% is the lane's weak point | [RESULTS §6.19](dev/RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
 | rc.11, 72 h paper (and rc.11-tp20 beside it) | both | **Both lanes NO-GO**: momentum 52 positions −0.018 SOL, instant 245 positions −0.477 SOL; no exit or entry variant passes pump-12's design gate on every capture; stops on the instant lane fill at −33% even on 2 s reads | [RESULTS §6.20](dev/RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03) |
+| Adaptive gate, short holds, the supply map and section B of the pump-12 plan | both | The supply map predicts crashes (identical-balance bundles crash more) but not trade results; nothing passes on every capture; **the lanes are closed** | [RESULTS §6.21](dev/RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
 
 Known risks (from the FEAT-76 proposal): the edge is small next to the
 noise and sensitive to latency; snipers trade the migration block, so live

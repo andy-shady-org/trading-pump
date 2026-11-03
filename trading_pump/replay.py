@@ -11,8 +11,13 @@ rows). :func:`replay_capture` plays it back on a simulated clock:
 * the engine cycles every ``cycle_seconds`` with its real risk gate, exits,
   circuit breaker and net-PnL accounting, writing a normal audit trail;
 * a paper buy waits ``paper_entry_delay_seconds`` of simulated time before
-  it reads the pool, so it fills at a later reading, as a live buy would
-  (AGENTS.md: model the latency you pay).
+  it reads the pool, as a live buy does (AGENTS.md: model the latency you
+  pay). A live paper fill reads the pool afresh at that moment, and that
+  read is not in the capture; :class:`CaptureFillSource` answers the fill
+  with the recorded reading *nearest* that moment, at most
+  ``FILL_LOOK_AHEAD_SECONDS`` after it, rather than the last one before it,
+  which on 2 s reads was often the signal's own reading (BUG-164). The
+  poller still never looks ahead.
 
 Fees in a replay are fixed (``fee_bps``): a capture does not record the fee
 tier at each moment.
@@ -154,6 +159,22 @@ class CaptureMarket:
         last = [series[-1].at for series in self.readings.values() if series]
         return max(last) if last else None
 
+    def reading_near(
+        self, mint: str, now: float, look_ahead: float
+    ) -> PoolReading | None:
+        """The recorded reading nearest ``now``: the latest at or before it,
+        or the first after it when that one is closer and at most
+        ``look_ahead`` seconds later (BUG-164)."""
+        times = self._times.get(mint)
+        if not times:
+            return None
+        index = bisect.bisect_right(times, now)
+        before = index - 1
+        if index < len(times) and times[index] - now <= look_ahead:
+            if before < 0 or times[index] - now < now - times[before]:
+                return self.readings[mint][index]
+        return self.readings[mint][before] if before >= 0 else None
+
     def reading_at(self, mint: str, now: float) -> PoolReading | None:
         """The latest recorded reading at or before ``now``."""
         times = self._times.get(mint)
@@ -191,6 +212,30 @@ class CapturePoolSource:
     async def read_names(self, mints: Sequence[str]) -> dict[str, TokenName]:
         """A capture holds no names: replayed positions show their address."""
         return {}
+
+
+FILL_LOOK_AHEAD_SECONDS = 3.0
+
+
+@dataclass
+class CaptureFillSource(CapturePoolSource):
+    """The paper executor's source in a replay: each fill takes the recorded
+    reading nearest the moment of the order (BUG-164)."""
+
+    look_ahead_seconds: float = FILL_LOOK_AHEAD_SECONDS
+
+    async def read_pools(
+        self, mints: Sequence[str], *, now: float
+    ) -> tuple[dict[str, PoolReading], dict[str, str]]:
+        found: dict[str, PoolReading] = {}
+        rejected: dict[str, str] = {}
+        for mint in mints:
+            reading = self.market.reading_near(mint, now, self.look_ahead_seconds)
+            if reading is None:
+                rejected[mint] = "missing"
+            else:
+                found[mint] = reading
+        return found, rejected
 
 
 class ReplayClock:
@@ -266,6 +311,7 @@ async def replay_capture(
     clock = ReplayClock(start)
     module = PumpModule(
         source=CapturePoolSource(market, fee_bps=fee_bps),
+        fill_source=CaptureFillSource(market, fee_bps=fee_bps),
         credentials=Credentials(),
         clock=clock,
         sleep=clock.sleep,
@@ -313,6 +359,8 @@ async def replay_capture(
 __all__ = [
     "DEFAULT_REPLAY_FEE_BPS",
     "CaptureMarket",
+    "FILL_LOOK_AHEAD_SECONDS",
+    "CaptureFillSource",
     "CapturePoolSource",
     "ReplayClock",
     "ReplayResult",

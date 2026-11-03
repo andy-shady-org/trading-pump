@@ -51,7 +51,9 @@ through a fresh trading-core engine with the module, on a simulated clock:
 * the engine cycles every `cycle_seconds` with its real risk gate, exits,
   circuit breaker and net-PnL accounting;
 * a paper buy waits `paper_entry_delay_seconds` of simulated time before it
-  reads the pool;
+  reads the pool; a fill (buy or sell) takes the recorded reading nearest
+  that moment, up to 3 s after it, because a live fill reads the pool afresh
+  and that read is not in the capture (BUG-164);
 * the swap fee is fixed at `--fee-bps` a side (125 by default), because a
   capture does not record the fee tier at each moment. Run it at 200 as well:
   at 0.02 SOL a trade the result moves with the fee (RESULTS §6.14).

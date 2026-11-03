@@ -1,5 +1,12 @@
 # pump-12 plan
 
+> [!IMPORTANT]
+> **Not run (2026-11-03).** The deep analysis (§5 A) and everything tried
+> after it found no lane design that passes §2's gate, so pump-12 is not
+> run and the PumpSwap lanes are closed
+> ([`RESULTS.md` §6.20–§6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03), §9 History). The plan is kept as it
+> was written.
+
 The plan for `pump-12`, the next counted run of trading-pump's lanes, item by
 item. Written 2026-10-31, while rc.11 and rc.11-tp20 were still running.
 **This is a plan, not the pre-registration.** Every value below marked
@@ -510,4 +517,17 @@ Not done: retraining inside a run, or a model that deploys itself.
      (adaptive target, 30 minutes: −0.6% a trade on rc.11), with §2's gate
      set aside by the operator and written so in the run record.
   Nothing is built until the operator chooses.
+- 2026-11-03: **pump-12 is not run; the PumpSwap lanes are closed.** The
+  operator asked for anything that could still be a GO, and for no more
+  record-only weeks of the same data. Tried after the deep analysis, all on
+  data that already existed ([`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)): short holds
+  (60–180 s), an adaptive gate and rule selector (walk-forward), the
+  holders of all 902 instant graduates at their migration (the supply map,
+  read with the operator's Helius key from `runtimes/supply-map/`), and
+  every item of section B on each supply-map group (222 combinations).
+  Nothing passes §2's gate; the supply map predicts crashes but not trade
+  results. Of the options listed under 2026-11-03 above, none is taken:
+  option 1 (record-only) would repeat existing data, and options 2 and 3
+  trade rules already NO-GO. `damm-1` (FEAT-107, record-only) runs instead,
+  on `v0.4.0`; the effort moves to trading-meteora.
 

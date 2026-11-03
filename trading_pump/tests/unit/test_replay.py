@@ -12,6 +12,8 @@ from trading_core.config.settings import EngineSettings
 
 from trading_pump.market import PoolReading
 from trading_pump.replay import (
+    FILL_LOOK_AHEAD_SECONDS,
+    CaptureFillSource,
     CaptureMarket,
     CapturePoolSource,
     ReplayClock,
@@ -199,6 +201,63 @@ async def test_a_riser_is_bought_after_the_delay_and_sold_at_take_profit(
     assert result.migrations == 2 and result.cycles > 60
     assert result.tracker["stats"]["followed"] == 2
     assert not (tmp_path / "should-be-ignored.jsonl").exists()
+
+
+@pytest.mark.regression("BUG-164")
+def test_a_fill_takes_the_recorded_reading_nearest_the_order() -> None:
+    market = CaptureMarket.from_rows(graduation_rows(MINT, [(2.0, 1.0), (4.0, 1.5)]))
+    # Nearer the later reading, within the look-ahead: the later one.
+    assert market.reading_near(MINT, 3.5, 3.0).at == 4.0  # type: ignore[union-attr]
+    # Nearer the earlier one, or a tie: the earlier one.
+    assert market.reading_near(MINT, 2.5, 3.0).at == 2.0  # type: ignore[union-attr]
+    assert market.reading_near(MINT, 3.0, 3.0).at == 2.0  # type: ignore[union-attr]
+    # Before the first reading: the first, if close enough; else none.
+    assert market.reading_near(MINT, 0.5, 3.0).at == 2.0  # type: ignore[union-attr]
+    assert market.reading_near(MINT, 0.5, 1.0) is None
+    # The later reading is too far ahead: the earlier one.
+    assert market.reading_near(MINT, 3.5, 0.2).at == 2.0  # type: ignore[union-attr]
+    assert market.reading_near(MINT, 99.0, 3.0).at == 4.0  # type: ignore[union-attr]
+    assert market.reading_near("unknown", 1.0, 3.0) is None
+
+
+async def test_the_fill_source_answers_with_the_nearest_reading() -> None:
+    market = CaptureMarket.from_rows(graduation_rows(MINT, [(2.0, 1.0), (4.0, 1.5)]))
+    source = CaptureFillSource(market, fee_bps=90)
+    assert source.look_ahead_seconds == FILL_LOOK_AHEAD_SECONDS
+    found, rejected = await source.read_pools([MINT, SAMPLE_PUMP_MINT], now=3.6)
+    assert found[MINT].at == 4.0 and rejected == {SAMPLE_PUMP_MINT: "missing"}
+
+
+@pytest.mark.regression("BUG-164")
+async def test_a_replayed_buy_fills_at_the_reading_nearest_its_delay(
+    tmp_path: Path,
+) -> None:
+    """A 1.5 s entry delay on 2 s readings: the live fill reads the pool at
+    61.5 s; the nearest recorded reading is 62 s, not the 60 s signal."""
+    path = [(2.0 * i, 1.0 + 0.005 * i) for i in range(1, 30)]
+    path += [(60.0, 1.3), (62.0, 1.32), (64.0, 1.34), (66.0, 1.5), (68.0, 1.6)]
+    path += [(70.0 + 10.0 * i, 1.6) for i in range(1, 5)]
+    market = CaptureMarket.from_rows(graduation_rows(MINT, path))
+    module_settings = {
+        "graduation": {"observation_seconds": 600},
+        "execution": {"paper_entry_delay_seconds": 1.5},
+    }
+    await replay_capture(
+        market, settings(module_settings=module_settings), tmp_path / "run"
+    )
+    buy = next(
+        json.loads(line)["payload"]
+        for line in (tmp_path / "run" / "audit.jsonl").read_text().splitlines()
+        if '"action": "buy"' in line
+    )
+    reading_62 = market.reading_at(MINT, 62.0)
+    assert reading_62 is not None
+    assert buy["fill_metadata"]["market_cap_sol"] == pytest.approx(
+        round(reading_62.market_cap_sol, 6)
+    )
+    assert buy["fill_metadata"]["market_cap_sol"] > (
+        buy["entry_metrics"]["signal_market_cap_sol"]
+    )
 
 
 async def test_replaying_nothing_is_an_error(tmp_path: Path) -> None:

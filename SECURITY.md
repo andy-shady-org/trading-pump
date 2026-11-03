@@ -5,7 +5,7 @@
 | Version | Supported |
 |---------|-----------|
 | The latest `0.4.x` release (trading-pump, the trading-core module); from `v0.4.0` on, plain `vX.Y.Z` | :white_check_mark: |
-| `v0.4.0rc1` to `v0.4.0rc5` (the last pre-releases) | :white_check_mark: until `v0.4.0` is tagged; runs registered on them keep their version |
+| `v0.4.0rc1` to `v0.4.0rc5` (the last pre-releases) | :x: superseded by `v0.4.0`; the runs registered on them (rc.9 to rc.11, pools-1) keep their version in their records |
 | 0.3.x and older (pumpfun-trading, `pumpbot`) | :x: retired |
 
 Fixes go into a new PATCH release (`v0.4.1`), never into a re-tagged
