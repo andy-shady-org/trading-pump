@@ -12,12 +12,26 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-03
+
+The last release of the PumpSwap lanes' work, on trading-core `v0.4.0`. Both lanes were judged NO-GO on rc.11 and are **closed**: nothing tried afterwards (166 exit and entry variants, short holds, an adaptive gate and selector, the supply map of 902 instant graduates, section B of the pump-12 plan on each supply-map group) passes the design gate on every capture, so `pump-12` is not run. The code stays, so every capture can be replayed. New here: the Meteora DAMM v2 capture for `damm-1` (FEAT-107, record-only, until trading-meteora takes it), token names (FEAT-91), and replayed fills at the reading nearest the order (BUG-164). A MINOR release: new settings keys (`damm_pools`, `graduation.enabled`), new capture rows, and trading-core `>=0.4.0,<0.5`.
+
 ### Added
 - **New Meteora DAMM v2 pools, record-only (FEAT-107):** `damm_pools.enabled` subscribes to the DAMM v2 program's pool accounts (on the public RPC by default, `use_rpc_ws_url` for `PUMPFUN_RPC_WS_URL`) and records every SOL pool activated in the last 5 minutes for 4 hours: `damm_pool` (mints, creator, activation, raw fee settings), `damm_decimals`, `damm_state` on every change and every 30 s heartbeat (price, liquidity, amounts), `damm_end`. Pool layout pinned to mainnet accounts read on 2026-11-02. A `DAMM v2` status row and a `damm v2 feed` degraded condition. From trading-scout's scout-1 read-out ([FEATURES §2.2](docs/FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only), `configs/damm.example.json`).
 - **`graduation.enabled`** (default `true`): `false` leaves the PumpPortal feed and the pool poller off, for a run that records only `damm_pools`; a lane or `new_pools` with it off is a settings error.
 - **Token names (FEAT-91):** each graduate's name and symbol are read from its Token-2022 mint (the TokenMetadata extension), in one batched `getMultipleAccounts` after a pool read, and carried in the lane's signal. The dashboard's Name column shows `Name (SYMBOL)` and the audit trail's `instrument_name` has it; events and the trade ledger show the name, and the Instrument column the shortened mint address (`instrument_label`, asked without the name by trading-core 0.3.1). Display only: no decision reads it; a failed read is counted (`name_errors`) and retried at most three times. Needs trading-core ≥ 0.3.1, which escapes module text on the dashboard (TC-8) and shows the id in the Instrument column (TC-9) ([FEATURES §2.0](docs/FEATURES.md#20-token-names-feat-91)).
 
+### Fixed
+- BUG-164: a replayed fill took the latest recorded reading when the entry delay ended, which on 2 s reads was often the signal's own reading, while a paper run fills against a fresh pool read that the capture does not hold; rc.11's momentum entries replayed 2.1% off at the median. In a replay the executor now reads through `CaptureFillSource`: the recorded reading nearest the moment of the order, at most 3 s after it (`FILL_LOOK_AHEAD_SECONDS`); the poller still never looks ahead. Live and paper runs are unchanged (`PumpModule(fill_source=...)` is set only by the replay).
+
+### Research
+- **rc.11, both lanes NO-GO** (2026-10-30 18:58:56 → 11-02 19:49 UTC, `v0.4.0rc4` on trading-core `v0.2.2`): momentum 52 positions, −0.018 SOL; instant 245 positions, −0.477 SOL, every day negative; buying locked 27 of 72 h by the daily and cumulative breakers. rc.11-tp20 (TP +20%, exploratory): momentum +0.009, instant −0.335 SOL; on the coins both runs bought, +20% halves the instant loss and does not remove it ([`runs/rc11.md`](docs/dev/runs/rc11.md), [`runs/rc11-tp20.md`](docs/dev/runs/rc11-tp20.md)).
+- **pools-1** (record-only, FEAT-80): the new non-graduate PumpSwap pools are liquidity pulls (92% lose four fifths of their SOL within an hour); no edge at 125 or 30 bps, no lane ([`runs/pools-1.md`](docs/dev/runs/pools-1.md)).
+- **pump-12's deep analysis** (A1–A7, [RESULTS §6.20](docs/dev/RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03)): replay parity, costs (2.4–2.5% a round trip, 96% swap fee), splits, tags and creator funders (no filter), the pre-dump study (nothing to act on), and the design gate: no exit rule (61 per lane) or entry variant (105) passes on rc.8, rc.9, rc.11 and rc.11-tp20.
+- **After it** ([RESULTS §6.21](docs/dev/RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)): instant coins are dumped at their peak in one step; short holds give one isolated passing rule, not a robust one; an adaptive gate and selector cut losses but both lanes still lose in rc.11's second half; the **supply map** (holders at the migration, from each bonding curve's transactions) finds every instant coin a bundle and predicts crashes (wallets with identical balances: 81% / 72% / 70% crash against 42% / 60% / 66%) but not the lane's result; section B on each supply-map group: 222 combinations, none passes. **The lanes are closed and pump-12 is not run.**
+
 ### Docs
+- `RESULTS.md` §6.20 and §6.21; the read-outs of rc.11, rc.11-tp20 and pools-1; `PUMP-12-PLAN.md` marked not run, with the history of the decision; the lanes' status (README, STRATEGY, `RELEASE-GATE.md` §1, TODO, DONE); RUNBOOK on `runtimes/pump`, `--run-for` and trading-core 0.4.0; AGENTS learnings (a crash predictor is not a trade filter; only test what could be a GO; a cycle count is not a duration).
 - Release steps (2026-10-31): merge in the GitHub UI, sign and push the tag on the Mac (never in the UI: a tag GitHub creates is unsigned), then optionally publish the GitHub Release on the existing tag; a tag ruleset on `v*` blocks moving or deleting a release tag (`CONTRIBUTING.md`). README badges: code style, signed releases, stars, issues, forks, pull requests, contributors, licence (static: the repository is private). `SECURITY.md` gains "Signed releases".
 - Costs split by owner (2026-10-31): the development costs (Claude subscription and invoices, JetBrains licence and AI credits) moved, unedited, to trading-core's `docs/dev/COSTS.md`; `docs/dev/COSTS.md` here keeps this module's (Helius, PumpPortal) and points there. Features that cross repositories carry **Needs** / **Needed by** links.
 - **The documentation follows trading-core's `docs/dev/DOCUMENTATION.md`** (2026-10-31), the standard for trading-core and every module: the same layout, style, words, versioning, capital stages, run names, records and IDs in every repository. Nothing in the code changes.
@@ -27,6 +41,20 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
   - **Release candidates dropped:** versions are plain `vX.Y.Z` from now on; `v0.4.0rc1` to `v0.4.0rc5` were the last pre-releases and the next release is `v0.4.0` ([`RELEASE-GATE.md` §6](docs/dev/RELEASE-GATE.md#6-versioning-policy), CONTRIBUTING, SECURITY).
   - `RELEASE-GATE.md` retitled "Release gate", with §1 as the one place that says what is running; the standard's release-record template (§5) and versioning policy (§6). `docs/dev/README.md` indexes every developer page.
   - Stale statements fixed: two lanes, not one (README, USER-GUIDE, STRATEGY, ARCHITECTURE, AGENTS); seven `PUMPFUN_*` variables are read, not six (USER-GUIDE, CLI; a dated note under ADR-009); the migration feed's idle timeout is 1,800 s (RUNBOOK, BUG-163); the `runtime-pump` layout and run names (RUNBOOK); the FEAT-80 WebSocket's ~3 GB a day (COSTS); the FEAT-74 items point to trading-scout (TODO); FEAT IDs come from trading-core's shared series, next free FEAT-89 (PROPOSED-FEATURES); 859 tests (TESTING).
+
+### Upgrading
+- Install trading-core `v0.4.0` with this release (`bin/install-release.sh v0.4.0 v0.4.0`); a module of this version refuses an older core.
+- Start a run of a fixed length with `trading-core run --run-for 72h` (or `--until`), not `--max-cycles` (trading-core TC-11).
+- A replay of a capture whose lane bought or sold between two readings now fills at the nearer reading; a replay result written before 0.4.0 may differ (BUG-164).
+
+### Release record – v0.4.0 (2026-11-03)
+- Commit: the merge commit on `main` of `release/v0.4.0`; tagged `git tag -s v0.4.0`; on trading-core `v0.4.0`
+- Release gate: run locally; open: CI on the tag, the signed tag
+- Tests: 917 collected, all passed on 3.11–3.14; coverage 100% statement and branch; ruff, black, flake8 (complexity ≤ 7) and mypy clean; no known vulnerabilities; the wheel private and without tests
+- Checked: rc.11's whole capture (2,651 migrations, 72.8 h) replayed with rc.11's config through this code on trading-core `v0.4.0`: 307 positions and −0.5000 SOL against the run's 297 and −0.4958; momentum entries within 0.04% of the run's at the median (2.1% before BUG-164's fix), instant entries the same at the median, both breaker locks at the run's times
+- Modules: needs trading-core `>=0.4.0,<0.5`
+- Run: `damm-1` (FEAT-107, record-only) is the next run on it, with `--run-for`; no lane is counted (both closed)
+- Capital stage: none (both lanes closed at Stage 1, NO-GO)
 
 ## [0.4.0-rc.5] - 2026-10-31
 

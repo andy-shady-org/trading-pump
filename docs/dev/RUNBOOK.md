@@ -12,32 +12,32 @@ the profit sweep, the drills and the systemd templates, is
 
 ## 1. Runtime layout
 
-Runs happen in **`runtime-pump`**, a folder beside the repositories, never
-in a checkout: relative paths resolve from the working directory, and each
+Runs happen in **`runtimes/pump`** (until 2026-11-03 `runtime-pump`; the
+repositories are in `repositories/` beside it), never in a checkout: relative paths resolve from the working directory, and each
 run must keep the code it was registered with while the repositories move
 on. Every run uses a tagged copy of trading-core and trading-pump in its own
 venv.
 
 ```text
-~/projects/git/trading/runtime-pump/
+~/projects/git/trading/runtimes/pump/
 ├── bin/
 │   ├── install-release.sh   # bin/install-release.sh <core tag> <pump tag>: clones both tags, builds venvs/pump-<tag>/
 │   └── run.sh               # bin/run.sh <config> <venv> [run args]: starts one run in this terminal
 ├── configs/
-│   ├── pump-12.json         # one per run, named after it; never edited once it has run
-│   ├── verdict-pump-12-standard.json   # one pre-registered verdict file per lane ("strategy" set)
-│   ├── verdict-pump-12-instant.json
+│   ├── damm-1.json          # one per run, named after it; never edited once it has run
+│   ├── verdict-<run>-<lane>.json   # a counted run: one pre-registered verdict file per lane ("strategy" set)
 │   └── smoke.json           # the 30-minute check before a counted run
 ├── releases/                # trading-core-<tag>/, trading-pump-<tag>/ (never edited)
 ├── venvs/                   # pump-<tag>/, current -> the newest install
 ├── data/
-│   └── pump-12/             # every file one run writes: status, audit, events, log, capture
+│   └── damm-1/              # every file one run writes: status, audit, events, log, capture
 └── .envrc                   # credentials only: PUMPFUN_RPC_URL(S), TRADING_CORE_ALERT_*; chmod 600, never committed
 ```
 
 - **Run names** follow trading-core's `docs/dev/DOCUMENTATION.md` §7:
-  `pump-<n>` for a run of the lanes, counting on from rc.11 (the next
-  counted run is `pump-12`), or what a record-only run is for (`pools-1`).
+  `pump-<n>` for a run of the lanes, counting on from rc.11 (`pump-12` was
+  planned and not run: the lanes are closed), or what a record-only run is
+  for (`pools-1`, `damm-1`).
   A number is never reused, even for a run that was stopped. Older runs
   keep their names (`data/rc9/`, `configs/rc11-paper.json`).
 - **One run, one folder, one config.** Every path in the config
@@ -49,8 +49,8 @@ venv.
   at start). trading-core refuses a status file of another module or mode.
 - **Install a release** once per pair of tags:
   ```bash
-  cd ~/projects/git/trading/runtime-pump
-  bin/install-release.sh v0.2.2 v0.4.0rc5     # trading-core tag, trading-pump tag
+  cd ~/projects/git/trading/runtimes/pump
+  bin/install-release.sh v0.4.0 v0.4.0        # trading-core tag, trading-pump tag
   ```
   Running it again with the same tags changes nothing; a moved tag or an
   edited copy is an error.
@@ -81,9 +81,9 @@ Before every counted run, on the venv the run will use, check that the
 runtime sees the market and that its capture replays:
 
 ```bash
-bin/run.sh configs/smoke.json pump-v0.4.0rc5 --headless --max-cycles 1800
+bin/run.sh configs/smoke.json pump-v0.4.0 --headless --run-for 30m
 grep -c '"curve_poll"' data/smoke/capture.jsonl          # pool readings: must be well above 0
-venvs/pump-v0.4.0rc5/bin/trading-pump replay --config configs/smoke.json \
+venvs/pump-v0.4.0/bin/trading-pump replay --config configs/smoke.json \
     --capture data/smoke/capture.jsonl* --out data/smoke-replay
 ```
 
@@ -108,11 +108,14 @@ smoke run (BUG-159, BUG-160), whatever else it shows.
 3. **Start it in tmux**, so it outlives the terminal window:
    ```bash
    tmux new -s pump-12
-   cd ~/projects/git/trading/runtime-pump      # direnv loads .envrc
+   cd ~/projects/git/trading/runtimes/pump      # direnv loads .envrc
    bin/run.sh configs/pump-12.json pump-v0.4.0 --headless
    ```
-   72 h at 1 s cycles is `--max-cycles 259200`; without it, stop the run with
-   `SIGTERM` at the planned end.
+   Give it its end with `--run-for 72h` (or `--until <time with offset>`) on
+   trading-core 0.4.0: it is written in the `run_started` record as
+   `planned_end` and the run stops there. `--max-cycles` is not a duration:
+   rc.11's `--max-cycles 259200` ran 50 minutes past its 72 h (trading-core
+   TC-11).
 4. **In the first hour:**
    ```bash
    zcat -f data/pump-12/capture.jsonl* | head -1 | jq .timestamp       # oldest row ≈ start time (BUG-157)
@@ -266,7 +269,7 @@ executor, run these by hand on a paper config in a scratch folder:
 | Package check | `nox -s package` |
 | Validate a config | `trading-core check --config configs/<run>.json` |
 | Install a release | `bin/install-release.sh <core tag> <pump tag>` (in `runtime-pump`) |
-| Start a run | `bin/run.sh configs/<run>.json pump-<tag> [--headless] [--max-cycles N]` |
+| Start a run | `bin/run.sh configs/<run>.json pump-<tag> [--headless] [--run-for 72h \| --until <time>]` |
 | Paper run (outside `runtime-pump`) | `trading-core run --config configs/<run>.json [--headless]` |
 | Record only | the same, with every lane off (`configs/capture.example.json`, or `new_pools` on as in pools-1) |
 | Pause / resume entries | `kill -USR1 <pid>` |

@@ -963,7 +963,16 @@ Split in two (decided 2026-10-19). **28a** (branch `sprint-28a-runtime-decomposi
 ### FEAT-65 slow lane, phase 0 data (closed 2026-10-29: NO-GO)
 - [x] Walk-forward test of the §6.12 trend rules on the Binance history, in SOL terms with the measured costs, against a random-entry baseline on unseen periods, pre-registered: **NO-GO**, negative and below random timing in all four counted half-years, −37.8% compounded ([`STRATEGY-PIVOT.md` §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)). The backtester and the lane it would have unlocked are not built
 
-### FEAT-76 PumpSwap Post-Graduation Momentum Lane (partly done)
+### FEAT-76 PumpSwap Post-Graduation Momentum Lane (closed 2026-11-03: NO-GO)
 - [x] **rc.9:** paper run on fresh data, `v0.4.0rc2` with `configs/rc9-paper.json`, pre-registered with `configs/verdict_rules.json`. Stopped by the operator after 58.4 h of the 72 (2026-10-30 18:53 UTC) to start rc.11: 55 positions, +0.034 SOL, 58% won; **NO-GO on the count** (55 of 100), and it fails without the best 3 and on the interval ([`STRATEGY-PIVOT.md` §6.19](RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31)). rc.10 (`v0.4.0rc3`, rc.9's rule) ran 9.9 h beside it: 8 positions, +0.004 SOL, not judged
 - [x] PumpSwap fee checked against real swaps: 94 trades of 11 rc.9 graduates decoded from their events; the module's tier and pool maths match them, once the tier uses the mint's real supply (BUG-162); no `fee_bps_floor` needed ([`STRATEGY-PIVOT.md` §6.16](RESULTS.md#616-pumpswap-fee-check-the-cost-model-holds-on-the-mints-real-supply-2026-10-29))
+- [x] **rc.11** (`v0.4.0rc4` on trading-core `v0.2.2`, 2026-10-30 18:58:56 → 11-02 19:49 UTC): both lanes **NO-GO** by their pre-registered rules ([`runs/rc11.md`](runs/rc11.md))
+- [x] **rc.11-tp20** (exploratory): read against rc.11 on the same coins ([`runs/rc11-tp20.md`](runs/rc11-tp20.md))
+- [x] pump-12's deep analysis, A1–A7 (2026-11-03): verdicts, replay parity (BUG-164), costs, splits, tags and creator funders, the pre-dump study, the pools-1 read-out ([RESULTS §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03))
+- [x] The fee sensitivity (125 and 200 bps) on four captures, offline (§6.20)
+- [x] Short holds, the adaptive gate and selector, the supply map and section B on the supply-map groups: nothing passes; the lanes are closed and pump-12 is not run ([RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03))
+- [x] BUG-164 fixed: a replayed fill takes the recorded reading nearest the order (0.4.0)
+
+### New PumpSwap pools that are not graduations (FEAT-80, closed 2026-11-03)
+- [x] **pools-1** (`v0.4.0rc5`, 2026-10-31 07:29 → 11-03 07:47 UTC, record-only) and its read-out: the new non-graduate pools are liquidity pulls, no edge at 125 or 30 bps, no lane ([`runs/pools-1.md`](runs/pools-1.md))
 

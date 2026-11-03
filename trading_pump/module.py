@@ -131,6 +131,7 @@ class PumpModule(TradingModule):
         self,
         *,
         source: PoolSource | None = None,
+        fill_source: PoolSource | None = None,
         client: Any | None = None,
         credentials: Credentials | None = None,
         clock: Callable[[], float] = time.time,
@@ -182,8 +183,10 @@ class PumpModule(TradingModule):
         )
         self.readings: dict[str, PoolReading] = {}
         self.fees: dict[str, SwapFee] = {}
+        # A replay gives the executor its own source (BUG-164); live and
+        # paper runs read the pool for a fill exactly as the poller does.
         self.paper_executor = PaperExecutor(
-            self.source, execution, clock=clock, sleep=sleep
+            fill_source or self.source, execution, clock=clock, sleep=sleep
         )
         self.live_executor = LiveExecutor()
         self.enricher = enricher

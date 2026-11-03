@@ -34,8 +34,10 @@ The format is trading-core's `docs/dev/DOCUMENTATION.md` §8.2.
   The same numbers go into a new section of
   [`RESULTS.md`](../RESULTS.md) and the record links it.
 - **Names** follow the standard's §7: `pump-<n>` for a run of the lanes,
-  counting on from rc.11 (the next counted run is `pump-12`), or what a
-  record-only run is for (`pools-1`). A number is never reused, even for a
+  counting on from rc.11, or what a record-only run is for (`pools-1`,
+  `damm-1`). `pump-12` was planned and **not run** (2026-11-03: the lanes
+  were closed, [`RESULTS.md` §6.21](../RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)); the name is not
+  reused. A number is never reused, even for a
   run that was stopped. Names given before 2026-10-31 (rc.9, rc.11,
   rc.11-tp20) stay as they were.
 

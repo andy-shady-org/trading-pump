@@ -28,10 +28,45 @@ pre-register and no stage to climb.
   ([`TODO.md`](../TODO.md#new-pumpswap-pools-that-are-not-graduations-feat-80)).
 - **Verdict:** none (record-only).
 
-## Read-out (added at the end)
+## Read-out (added 2026-11-03)
 
-To be added when the run ends: hours recorded and gaps, pools followed per
-hour, the share of SOL pairs and of exact dates, lookup errors, RPC credits
-and WebSocket data used. The read-out of the price paths goes to
-[`RESULTS.md`](../RESULTS.md) as a new section, and a lane on these pools is
-proposed only if it shows an edge after costs.
+Read from the capture up to 2026-11-03 07:17 UTC, 71.7 hours after the
+first observation (07:38 UTC on 31 Oct), while the engine was finishing its
+last cycles (`--max-cycles 259200`, which overruns as on rc.11). The last
+minutes change none of the numbers below.
+
+- **Recording.** No gap longer than 2 minutes between pool readings in the
+  whole capture (33 files, 531 MB). The pool WebSocket connected 18 times
+  in all and PumpPortal's feed 23 times (its failures were 502 responses
+  and two missed pongs, each retried within seconds). The engine reported
+  no pipeline errors, stale data or failures.
+- **Followed:** 3,122 new pools (43.5 an hour) and 2,756 graduates (38.4 an
+  hour).
+- **What the new pools are.** All 3,122 were found by their creation
+  transaction and dated exactly. All are SOL pairs, and 3,095 of them put
+  SOL on the pool's base side, the reverse of a graduate's pool. None has a
+  coin creator (`coin_creator` is the system address), and only 217 are
+  Pump.fun mints. 3,086 start with 50 SOL or more in the pool.
+- **What happens to them.** 92% have less than a fifth of their starting SOL
+  left in the pool within an hour: the liquidity is withdrawn, the price
+  path after that is meaningless, and a holder cannot sell. Before that, 79%
+  rise 1.2× within 15 minutes.
+- **A trade on them** (the offline rule of §6.20: entry at the first reading
+  1.5 s later, TP +20% / SL −15% / 30 minutes, a holding that meets a pool
+  under a fifth of its entry SOL is a total loss):
+
+  | Group | Pools | Entry | Mean per trade, gains capped at +100% (fee 125 / 30 bps a side) | Median | Total losses |
+  |---|---|---|---|---|---|
+  | new pools, ≥ 50 SOL | 3,085 | first reading | −12.5% / −10.9% | +16% | 775 |
+  | new pools, ≥ 50 SOL | 557 | ≥ 1.2× at 60–90 s | −2.3% / −0.4% | +17% | 74 |
+  | graduates, standard band | 672 | first reading | −2.7% / −0.8% | −18% | 1 |
+  | graduates, instant band | 751 | first reading | −0.6% / +1.3% | +16% | 8 |
+
+  The pool's own fee was not recorded; 30 bps a side stands for a low fee
+  (these pools have no coin creator, so no creator fee).
+- **Reading.** The new non-graduate pools are a stream of liquidity pulls:
+  three trades in four win a little and one in four loses everything. No
+  rule tried is positive at either fee. **No third lane (E3)**; pump-12 does
+  not record new pools.
+- **RPC credits and WebSocket data:** not measured from the run's files;
+  the provider's dashboard has them.

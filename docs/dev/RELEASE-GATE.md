@@ -30,17 +30,17 @@ with the Web UI.
 
 ## 1. Current status
 
-As of 2026-10-31.
+As of 2026-11-03.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Latest release | `v0.4.0rc5`, the pools-1 build, on trading-core `v0.2.2`. Release gate partly run: `nox` passes on Linux, 859 tests, 100% statement and branch coverage on 3.11–3.14, the FEAT-80 smoke test on the public RPC. Still to do: CI on the tag, the restart drill | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0-rc.5 |
-| Next release | `v0.4.0`: plain semantic versioning from now on, no more pre-releases (§6) | §6 |
-| Runs | **rc.11**, counted: both lanes in paper, `v0.4.0rc4` on trading-core `v0.2.2`, from 2026-10-30 18:58:56 UTC to 2026-11-02 18:58:56 UTC (72 h). **rc.11-tp20**, exploratory and not counted: rc.11's config with TP +20% on both lanes, from 2026-10-31 06:00:15 UTC. **pools-1**, record-only (FEAT-80), `v0.4.0rc5`, from 2026-10-31 07:29:11 UTC. The next counted run is `pump-12` | [`runs/`](runs/README.md) |
-| `pumpswap_momentum` (FEAT-76) | **Stage 1** (paper), in rc.11 with its own exits (TP +50%). rc.9, its first counted run, was stopped after 58.4 h: 55 positions, +0.034 SOL, **NO-GO on the count** (55 of 100), and it failed without the best 3 and on the interval | [`RESULTS.md` §6.19](RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
-| `pumpswap_instant` (FEAT-78) | **Stage 1** (paper), in rc.11 under its own verdict. In-sample replay on rc.9's capture passed every check but the count; its first night in rc.11 lost (17 trades at −25% each), and its +50% take-profit is under review for `pump-12` | [`RESULTS.md` §6.18](RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30), [§6.19](RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
-| New non-graduate pools (FEAT-80) | Record-only; no lane and no rule yet | [`runs/pools-1.md`](runs/pools-1.md) |
-| Passed Stage 1 | **No lane** yet | |
+| Latest release | `v0.4.0` (2026-11-03, to be tagged), on trading-core `v0.4.0`: the last release of the PumpSwap lanes' work. Release gate: `nox` passes on Linux (see its release record). Still to do: CI on the tag, the signed tag | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0 |
+| Next release | `v0.5.0` (FEAT-115): onto trading-solana and trading-core 0.5.0, FEAT-107 moved to trading-meteora (trading-core's `docs/dev/REPOSITORIES.md`) | [ADR-011](ARCHITECTURE-DECISIONS.md) |
+| Runs | None running. **rc.11** (counted, 2026-10-30 18:58:56 → 11-02 19:49 UTC): both lanes **NO-GO**. rc.11-tp20 (exploratory) and pools-1 (record-only) read out. **pump-12 is not run**: no lane design passes its gate ([`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)). Next run: `damm-1` (FEAT-107, record-only) on `v0.4.0` | [`runs/`](runs/README.md) |
+| `pumpswap_momentum` (FEAT-76) | **Stage 1, NO-GO (rc.11); closed 2026-11-03.** No rule, filter or adaptive gate passes the design gate on every capture | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.20, §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
+| `pumpswap_instant` (FEAT-78) | **Stage 1, NO-GO (rc.11); closed 2026-11-03.** Its losses are operators' dumps of bundled supply at the peak; the supply map predicts crashes but not trade results | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
+| New non-graduate pools (FEAT-80) | Record-only; pools-1 found no edge (liquidity pulls): no lane | [`runs/pools-1.md`](runs/pools-1.md) |
+| Passed Stage 1 | **No lane**. Meteora DAMM v2 new pools (FEAT-107) are record-only, for `damm-1` | [`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only) |
 | Live execution | Not built: `LiveExecutor` refuses every order | [`TODO.md`, Live gate](TODO.md#live-gate-for-the-pumpswap-lane) |
 | Mainnet-verified money paths | Pump.fun curve `buy` / `sell` layout (BUG-34, pumpbot). Not verified on a real trade: the PumpSwap buy (not built), the PumpSwap sell (BUG-123), the fee tier a fresh graduate pays (checked on 94 third-party trades only, RESULTS §6.16) | [`BUGS.md`](BUGS.md) |
 | Reconciliation | Not ported (pumpbot's `reconcile`); needed before Stage 2 | [`TODO.md`, Live gate](TODO.md#live-gate-for-the-pumpswap-lane) |
