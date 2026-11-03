@@ -812,3 +812,44 @@ combination loses on rc.11.
    this release, then trading-meteora (FEAT-113), which takes FEAT-107 from
    here (ADR-011).
 
+
+### 6.22 trading-core's venue sweep calibrated on these captures; the rc.9 momentum gap explained (2026-11-03)
+
+**Question.** Before trading-core's strategy library (its ADR-011) judges a
+new venue, does its sweep (`trading-core-lanes sweep`, fed by `trading-pump
+lane-rows`) reproduce this repository's exit simulator (§6.20) on rc.8,
+rc.9, rc.11 and tp20x? And what is the rc.9 momentum gap of §6.20
+(−0.2% simulated against +5.9% in §6.18's replay)?
+
+**Method.** Both lanes at rc.11's settings (momentum: ratio ≥ 1.2, first
+price 205.44–821.76e-9; instant: 1.0–1.1, first price 1000–2000e-9, first
+pool 130–200 SOL), TP +50% / SL −15% / 30 min, 125 bps a side, 50 bps
+haircut, 3.5e-5 SOL a leg, 1.5 s entry delay, readings to 40 minutes. The
+full rc.11 and tp20 captures are the copies in `runtime-pump/data/` (the
+`runtimes/pump/data/` copies stop at 2 Nov 17:01 UTC). Scripts on the Mac
+VM in `~/calib/`.
+
+**Result.** The trade simulation (fill reading, exit order, costs, price)
+matched this simulator exactly. Two differences were in the library, both
+fixed on trading-core's `feature/strategy-library` the same day:
+
+1. `listing_momentum` retried across its 30 s window; this simulator and
+   the live lanes decide once, on the first reading at or after 60 s. The
+   retries were all the extra trades (momentum +22, +49, +68, +16 on rc.8,
+   rc.9, rc.11, tp20x; instant +3, +3, +57, +4), mostly losers.
+2. A sale waited for the next reading after its trigger (a median 10.4 s
+   on the instant lane after minute 5); a paper sale reads the pool when it
+   sells. Every sign flip came from this.
+
+With both fixes the sweep's shared trades agree in sign on every capture
+and the means agree within 0.01%. Against rc.11's audit trail it agrees
+as this simulator does (242 of 245 instant trades, 47 of 50 momentum, the
+same sign).
+
+**The rc.9 momentum gap.** §6.18's +5.9% (0.4.0-rc.4 replay, 60 positions)
+was reproduced (59 positions, +5.2%). Of it, 7 coins only the replay
+bought averaged +34.7% (about 4 of the 5.4 points): their next reading was
+5.8–19% higher, so this simulator's 5% slippage limit refused them, and
+the replay bought them at the signal reading's stale price. The rest is
+the same stale fill on 29 of the 52 shared trades. This is BUG-164: the
+replay was optimistic; the simulator's −0.2% is the figure to keep.
