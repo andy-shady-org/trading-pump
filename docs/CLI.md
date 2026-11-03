@@ -86,7 +86,8 @@ checks the code, not the rule.
 trading-pump lane-rows \
     --capture data/paper/capture.jsonl.3.gz data/paper/capture.jsonl.2.gz data/paper/capture.jsonl \
     --out data/lanes/rc11.jsonl.gz [--source graduation new_pool damm]
-trading-core-lanes sweep --capture rc11=data/lanes/rc11.jsonl.gz --out data/sweeps/rc11
+trading-core-lanes sweep --capture rc11=data/lanes/rc11.jsonl.gz --fee-bps 125 --stress-fee-bps 200 \
+  --haircut-bps 50 --delay 1.5 --out data/sweeps/rc11
 ```
 
 Writes one or more captures (plain or gzipped parts, in any order) as the
