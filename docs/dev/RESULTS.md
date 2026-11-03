@@ -86,6 +86,12 @@ written is edited back (a correction is a new dated line).
 | 2026-10-30 | rc.9 paper run, stopped by the operator after 58.4 h (2026-10-29 08:27 → 10-30 18:53 UTC), `v0.4.0rc2` on trading-core `v0.2.0` | pumpswap_momentum | `configs/rc9-paper.json` (ratio 1.2, TP +20% / SL −15% / 30 min, 0.02 SOL) | 55 | +0.034 | 58.2% | **NO-GO on the count** (55 of 100); net, halves and days pass; fails without the best 3 and on the interval (§6.19) |
 | 2026-10-30 | rc.10 paper run, stopped by the operator after 9.9 h (2026-10-30 09:01 → 18:53 UTC), `v0.4.0rc3` on trading-core `v0.2.1` | pumpswap_momentum | `configs/rc10-paper.json` (rc.9's rule) | 8 | +0.004 | 50.0% | too short to judge; superseded by rc.11 (§6.19) |
 | 2026-10-31 | instant-lane entries: rc.9 capture (A, 82) and rc.11 live (B, 30 Oct 18:58 → 31 Oct 08:30 UTC, 22), rc.11's rule replayed on each path | pumpswap_instant | TP +50% / SL −15% / 30 min, 2% cost a side | 82 / 22 | — | 72% / 41% | **crashes are not predictable before entry**; the pump height fell from ~2.3× to ~1.3×; +50% is the lane's weak point (§6.19) |
+| 2026-11-03 | rc.11 paper run, 2026-10-30 18:58 → 11-02 19:49 UTC, `v0.4.0rc4` on trading-core `v0.2.2`; buying locked 27 of 72 h (daily 10%, then cumulative 25%) | pumpswap_momentum | `configs/rc11-paper.json` (ratio 1.2, TP +50% / SL −15% / 30 min) | 52 | −0.018 | 34.6% | **NO-GO**: adjusted −0.026, halves −0.010 / −0.016, 2 of 4 days ([`runs/rc11.md`](runs/rc11.md), §6.20) |
+| 2026-11-03 | same | pumpswap_instant | instant band, ratio 1.00–1.10, TP +50% / SL −15% / 30 min | 245 | −0.477 | 40.0% | **NO-GO**: adjusted −0.512, both halves and all 4 days negative; stops filled at −44% median (§6.20) |
+| 2026-11-03 | rc.11-tp20 paper run (exploratory), 2026-10-31 06:00 → 11-03 06:54 UTC; buying locked from 11-02 17:19 | pumpswap_momentum | rc.11 with TP +20% | 71 | +0.009 | 53.5% | not counted; rc.11's rule would say NO-GO (adjusted −0.002, count 71) ([`runs/rc11-tp20.md`](runs/rc11-tp20.md)) |
+| 2026-11-03 | same | pumpswap_instant | rc.11 with TP +20% | 405 | −0.335 | 60.7% | not counted; on the 189 coins both runs bought, −0.144 against rc.11's −0.274 (§6.20) |
+| 2026-11-03 | rc.11 capture replayed (`trading-pump replay`, 125 bps) | both | `configs/rc11-paper.json` | 305 | −0.502 | 38.7% | parity: instant matches (245 of 245 coins, 244 same exit); momentum entry prices off by 2.1% at the median (§6.20) |
+| 2026-11-03 | rc.8, rc.9, rc.11, rc.11-tp20 captures, offline exit simulator (61 exit rules × 2 lanes, 105 entry variants) | both | pump-12 design gate: positive on every capture at 125 bps, not negative at 200 bps | — | — | — | **nothing passes** on either lane; every rule loses on the rc.11 capture (§6.20) |
 
 ### 6.1 How the thresholds were picked (Sprint 24G)
 - Data: `runtime/capture/replay_capture.jsonl` (v0.2.3, 24.4 h, 25,610 create events, 10,718 screening records, 22,487 market trades on 1,229 mints). Replay: `pumpfun-replay --config configs/canary.json` (live exit stack, `ReplayCostModel`, 0.02 SOL, 2 positions, 0.05 SOL exposure), `entries_from: confirmed`.
@@ -448,3 +454,229 @@ Items 2 and 3 of the "top 10 strategies" review: the **pullback entry** (wait fo
   3. TP +50% is the lane's weak point: best in the high-pump period, worst in the low one. Lower fixed targets earn less and hold up better.
   4. The adaptive target is a candidate, not a result: positive in both periods at a 6 h memory, but its sign in B flips with the memory length, which is what noise on 22 trades looks like.
   5. Nothing changes in rc.11 (pre-registered). rc.11-tp20 measures +20% live on the same coins; rc.12 decides between a lower fixed target and the adaptive one on the full rc.11 data, with the per-lane pause on.
+
+### 6.20 rc.11 and rc.11-tp20 read-outs; no exit passes pump-12's design gate (2026-11-03)
+
+The deep analysis of [`PUMP-12-PLAN.md`](PUMP-12-PLAN.md) §5 A, items A1 to
+A7, and the design gate of its §2 for the B (instant) and C (momentum)
+choices.
+
+**A1. Verdicts.** rc.11: **both lanes NO-GO** by their pre-registered
+files. Momentum 52 positions, net −0.018 SOL (adjusted −0.026); instant 245
+positions, net −0.477 SOL (adjusted −0.512), every UTC day negative. Buying
+was locked for 27 of the 72 hours: the daily 10% lock on 1 Nov 13:23 UTC
+(24 h), then the cumulative 25% lock on 2 Nov 15:40 UTC. rc.11-tp20
+(exploratory): momentum 71 positions +0.009, instant 405 positions −0.335;
+its daily lock on 2 Nov 17:19 UTC stopped buying for its last 13.6 h. Full
+tables in [`runs/rc11.md`](runs/rc11.md) and
+[`runs/rc11-tp20.md`](runs/rc11-tp20.md).
+
+**A2. Replay parity.** rc.11's capture (2026-10-30 19:02 → 11-02 19:49 UTC,
+2,651 migrations, 18 files) replayed with `configs/rc11-paper.json`
+through `trading-pump replay`, trading-pump `v0.4.0rc4` on trading-core
+`v0.2.2`, `--fee-bps 125`:
+
+| | Run | Replay |
+|---|---|---|
+| Positions | 297 | 305 |
+| Net SOL | −0.4958 | −0.5015 |
+| Locks | 1 Nov 13:23:21, 2 Nov 15:40:47 | the same |
+| Instant lane | 245 | 247: the same 245 coins plus 2; 244 with the same exit reason; entry price within 0.01% at the median; net on the 245 −0.457 against −0.477 (0.023 of it from 3 positions) |
+| Momentum lane | 52 | 58: 49 shared, 9 only in the replay, 3 only in the run; 46 of 49 with the same exit reason; **entry price off by 2.1% at the median** (up to 22%); net on the 49 −0.034 against −0.020 |
+
+- **Cause.** The paper executor fills against a fresh pool read taken at
+  the moment of the order (`execution.py`, `PaperExecutor._read`), and the
+  capture does not record that read. The replay fills at the last reading
+  the capture holds. On the instant lane the order lands on a recorded
+  reading (the fill equals a capture row in the 5 cases checked); on the
+  momentum lane it lands between two readings 2 s apart, at minute 1, when
+  a standard-band coin moves about 2% a reading. The extra and missing
+  momentum positions follow from the changed fills (budget and stop
+  timing).
+- **Result:** parity holds for the instant lane and the run as a whole
+  (net within 1.2%); it does not hold to the reading for the momentum
+  lane. For pump-12 this matters only for E5's challenger replays; the fix
+  is to write the executor's fill read into the capture as a row of its own
+  (a new row name, so old captures still read) and let the replay fill
+  from it: [BUG-164](BUGS.md#bug-164-a-replayed-buy-fills-at-the-signals-reading-not-at-the-live-buys-fresh-read-open),
+  for v0.4.0.
+
+**A3. Costs.** The cost per position is 2.4–2.5% of the order on both
+lanes and both runs, and 96% of it is the swap fee (125 bps a side, the
+fee tier of these coins' market caps); base and priority fees are 0.00001
+SOL each per position, and the paper runs charge no tip. The verdict adds a
+50 bps exit haircut and a 25,000-lamport tip floor per leg, about 0.75% of
+a 0.02 SOL round trip. A take-profit or tier below about +3.2% cannot pay
+for itself; the plan's floor of +8% stands. The fee sensitivity (125 against
+200 bps a side) is in every row of the design tables below; a 200 bps
+column moves every rule down by 1.4–1.6 points per trade.
+
+**A4. Splits.**
+
+| Run · lane | Win | Break-even win | Stops: median / 10th pct | Lost > half the cost |
+|---|---|---|---|---|
+| rc.11 · momentum (TP +50%) | 35% | 37% | −17% / −92% | 12% |
+| rc.11 · instant (TP +50%) | 40% | 51% | −44% / −80% | 24% |
+| rc.11-tp20 · momentum (TP +20%) | 54% | 52% | −17% / −34% | 4% |
+| rc.11-tp20 · instant (TP +20%) | 61% | 68% | −25% / −63% | 11% |
+
+- **The instant lane loses on its stops.** A −15% stop fills at −25% to
+  −44% at the median, because the dump is one reading. Lowering the target
+  raises the win rate and the break-even together.
+- **Week part and hour (momentum).** In both live runs weekends were
+  positive and weekdays negative (rc.11 +0.056 / −0.074; rc.11-tp20
+  +0.051 / −0.041). The simulator on the other captures does not confirm
+  it: rc.9 (Thursday–Friday only) made money on weekdays, inside the US
+  session (+4.4% per trade at TP +20%) and outside it (+1.1%); rc.8
+  (Tuesday–Wednesday) was flat. The hour of day changes sign between
+  captures (00–12 UTC: rc.9 −2.3%, rc.11 −4.9%, rc.8 +7.7%). No time filter
+  meets C4's condition; it stays out.
+
+**A5, A6, A7.** After the design gate, below.
+
+**The design gate.** Every candidate was run through an offline exit
+simulator on the recorded readings of four captures: rc.8 (graduation rows,
+27 Oct 14:10 → 28 Oct 06:41 UTC), rc.9 (29 Oct 08:30 → 30 Oct 18:52), rc.11
+(30 Oct 19:02 → 2 Nov 19:46) and rc.11-tp20 after rc.11's end (2 Nov 19:50
+→ 3 Nov 06:53, 453 graduates; the rest of its capture is rc.11's hours).
+Signal: the first reading 60–90 s after the migration; entry at the first
+reading at least 1.5 s later, refused above the lane's slippage limit;
+exits checked at every later reading and filled at its price; the pool fee
+a side, the 50 bps haircut and 3.5 × 10⁻⁵ SOL a leg. The simulator ignores
+the breaker, so it trades all of rc.11's hours.
+
+- **Calibration** against rc.11's own trades: instant 242 of 245 trades
+  with the same sign, total −0.489 against −0.477 SOL; momentum 47 of 50
+  with the same sign, slightly optimistic. (On rc.9's momentum lane at TP
+  +50% the simulator gives −0.2% per trade where §6.18's engine replay gave
+  +5.9%; the difference is not explained, and the rc.11 calibration is the
+  stronger check.)
+- **Gate** (§2 of the plan): positive on each capture at 125 bps, not
+  negative at 200 bps; among those, the best worst capture.
+
+Per trade at 125 bps (200 bps in brackets); n is rc.8 / rc.9 / rc.11 /
+rc.11-tp20:
+
+| Lane · rule | rc.8 | rc.9 | rc.11 | rc.11-tp20 |
+|---|---|---|---|---|
+| instant · TP +50%, 30 min (rc.11) | −26.0% | +18.3% | −9.3% | +0.5% |
+| instant · TP +20%, 30 min (rc.11-tp20) | −18.3% | +9.9% | −4.6% | −1.7% |
+| instant · TP +15%, 5 min | −11.8% | +5.8% (+4.2%) | −3.3% (−4.7%) | −0.7% (−2.2%) |
+| instant · adaptive target (§6.19), 6 min | −12.0% | +6.0% (+4.4%) | −3.0% (−4.5%) | −1.4% (−2.9%) |
+| instant · thirds at T/3, 2T/3, T (adaptive T), break-even stop, 6 min | −4.8% | +3.4% (+1.9%) | −3.0% (−4.5%) | −1.6% (−3.1%) |
+| n (instant) | 11 | 85 | 450 | 87 |
+| momentum · TP +50%, 30 min (rc.11) | −3.9% | −0.2% | −5.1% | +5.9% |
+| momentum · TP +20%, 30 min | +0.3% (−1.3%) | +2.7% (+1.1%) | −2.0% (−3.5%) | +3.7% (+2.1%) |
+| momentum · adaptive target, 30 min (best worst case) | −0.1% (−1.6%) | −0.4% (−1.9%) | −0.6% (−2.1%) | +2.6% (+1.0%) |
+| momentum · TP +15%, 5 min | −1.2% | +1.5% (−0.0%) | −1.7% (−3.2%) | +3.6% (+2.0%) |
+| n (momentum) | 33 | 54 | 100 | 17 |
+
+- **61 exit rules per lane** were compared: TP +15/20/30/50% with a max
+  hold of 4, 5, 6, 8 or 30 minutes; the adaptive target with the same
+  holds; and B3's tier shapes (a), (b), (c) at T = +30%, +50% or adaptive,
+  with a 6 or 30 minute hold. **None passes on either lane.** On the
+  instant lane every rule loses 2.7% to 4.5% a trade on rc.11; on the
+  momentum lane every rule loses on rc.11, the best by 0.6%.
+- **105 entry variants** (the momentum ratio from 1.1 to 1.5, with and
+  without a 2.0 cap, at 60, 120 and 180 s; the instant ratio band from 0.9
+  to 1.3 at 30, 60 and 120 s; each with TP +20%, TP +50% and the adaptive
+  target) did not pass either. The best momentum entry, ratio ≥ 1.3 at 60 s
+  with the adaptive target, is +1.1% / +2.8% / −0.4% / +3.3% on the four
+  captures; the best instant entry is negative on rc.8 and rc.11.
+- **What changed.** The instant lane's edge was the pump height of rc.9's
+  two days (§6.19); since rc.11 started the same coins peak lower and the
+  lane loses whatever the exit. The momentum lane sits at about zero after
+  costs on every capture but one. The 2.4% round trip decides both: the
+  momentum lane's best rules make +1% to +4% a trade before it.
+
+**What would have to change.** The instant lane's losses are its stop
+fills. As a bound, the same rules with every stop filled no worse than −20%
+would be positive on rc.9, rc.11 and rc.11-tp20 (TP +50%: +27.1%, +4.9%,
++12.8%; rc.8's 11 instant entries stay negative), and the momentum lane's
+TP +20% would pass narrowly (+1.6%, +4.3%, +0.1%, +3.7%). No reading speed
+gives that floor: of the instant lane's stops on rc.11, 160 of 171 came
+while the pool was read every 2 s (median 3.0 minutes after the
+migration), and they still filled at −33% at the median, from a reading
+that was +7% at the median. The dump is one step of about 2 s at most;
+reading every second would halve the step, not remove it. B5 (faster
+reads) cannot rescue the lane on its own.
+
+**A5. Tags and creator funders, backfilled** (graduates split by mint so
+the sets do not overlap: rc.9 535, rc.11 1,332, rc.11-tp20 after rc.11 219;
+crash: below half the 60 s price within 30 minutes; files and scripts in
+`runtime-pump/xfer/a5a6/`, public RPC only):
+
+| Capture | Instant band: crash | of which in one reading | Standard band: crash | of which in one reading |
+|---|---|---|---|---|
+| rc.9 | 66% | 85% | 77% | 60% |
+| rc.11 | 64% | 82% | 75% | 54% |
+| rc.11-tp20 | 67% | 78% | 75% | 56% |
+
+- **Mayhem mode:** the program address in the CloddsBot review holds no
+  curve for any graduate. Byte 81 of the 166-byte curve account is 1 on 5
+  coins, each with a 2-billion-token supply, which matches Mayhem mode;
+  all 5 are standard band. No instant coin is one. No use as a filter.
+- **A name or symbol seen in the last 24 h:** on the standard band, fewer
+  crashes in all three captures (60% / 81%, 64% / 77%, 65% / 77%; p 0.001,
+  0.006, 0.36); on the instant band the direction flips. Among momentum
+  entries only 8, 14 and 4 coins carry the tag, and the lane result at
+  TP +20% reverses on rc.11-tp20. Too few for a filter.
+- **Creator funders** (all 889 instant-band creators traced): creator
+  wallets are a median 2.6 minutes old at the migration with about 530
+  transactions; 773 distinct funders for 816 coins; the few shared ones
+  look like exchanges, with ordinary crash rates. A shared funder, a funder
+  of an earlier crash and a fresh creator all fail on at least one capture.
+  A busy creator (1,000 transactions or more) crashes a little less on all
+  three (56% / 66%, 54% / 65%, 62% / 68%), every p above 0.1, with mixed
+  lane results.
+- **Result:** no tag separates crashes on all three captures with a lane
+  result to match. **No entry filter for pump-12**; D2 and D3 stay
+  record-only.
+
+**A6. Before the dump** (18 usable of 22 crashed instant-lane coins from
+rc.11 and rc.11-tp20, transactions read around the crash reading):
+- The pools trade about 10 transactions a second before the dump. The dump
+  is a burst of identical sells from many wallets, a median of about 20 in
+  one slot.
+- In the sampled transactions: no tokens moved outside the pool before the
+  burst, no SOL reached the creator, and the burst's sellers do not appear
+  as earlier buyers.
+- In the last 10 seconds, sells outnumbered buys in 8 of 18 coins, mostly
+  where the dump had already begun over several slots; activity halved in
+  the last 2 seconds in 5 of 18.
+- From the captures, on every instant-lane crash (rc.9 53, rc.11 293,
+  rc.11-tp20 55): the reading before the crash had already fallen 5% or more
+  in only 4–8%; the price was already 15% below its peak in 23–47% (a
+  trailing stop, tried in the design table as shape (b), did not pass).
+- **Result:** nothing a 1–2 s reader can act on. FEAT-100 (rug alarm) and
+  FEAT-93 (stall exit, B4) are not supported. The identical-sized sells
+  from about 20 wallets say the supply was split among sibling wallets
+  before the dump; the holder snapshot (D1, FEAT-96) is the way to see that
+  at the signal, and stays record-only in pump-12 under the plan's rule.
+
+**A7. pools-1** ([`runs/pools-1.md`](runs/pools-1.md)): 3,122 new
+non-graduate pools in 71.7 h, all SOL pairs with no coin creator, 3,095 of
+them with SOL on the base side; 92% lose four fifths of their pool SOL
+within an hour (liquidity withdrawn). Bought at the first reading with TP
++20% / SL −15% / 30 minutes, a quarter are total losses and the mean is
+−12.5% a trade at 125 bps (−10.9% at 30 bps); a 60–90 s momentum entry
+gives −2.3% (−0.4%). **No third lane (E3)**; pump-12 does not record new
+pools.
+
+**Reading (A1–A7 together).**
+1. Neither lane goes to the live gate (pre-registered). No live buy
+   builder for pump-12.
+2. No exit rule (61 per lane) and no entry variant (105) passes the gate
+   the plan set before the analysis; no tag or funder gives a filter; the
+   new pools give no third lane. Under the plan the instant lane runs
+   record-only (B8). The momentum lane has no qualifying rule either, and
+   the plan has no fallback written for it: pump-12's shape goes to the
+   operator (plan §9, 2026-11-03).
+3. The instant lane's edge was rc.9's pump height, and its losses are
+   single-step dumps that no exit at 1–2 s reads avoids. The momentum lane
+   is about break-even after a 2.4% round trip on every capture. What is
+   left to learn on pump.fun graduates is whether the supply split before
+   a dump shows at the signal (D1), which pump-12 can record.
+4. The replay matches the run for the instant lane and not to the reading
+   for the momentum lane (BUG-164).
+

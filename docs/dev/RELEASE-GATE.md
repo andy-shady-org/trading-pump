@@ -30,16 +30,16 @@ with the Web UI.
 
 ## 1. Current status
 
-As of 2026-10-31.
+As of 2026-11-03.
 
 | Item | Status | Evidence |
 |---|---|---|
 | Latest release | `v0.4.0rc5`, the pools-1 build, on trading-core `v0.2.2`. Release gate partly run: `nox` passes on Linux, 859 tests, 100% statement and branch coverage on 3.11–3.14, the FEAT-80 smoke test on the public RPC. Still to do: CI on the tag, the restart drill | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0-rc.5 |
 | Next release | `v0.4.0`: plain semantic versioning from now on, no more pre-releases (§6) | §6 |
-| Runs | **rc.11**, counted: both lanes in paper, `v0.4.0rc4` on trading-core `v0.2.2`, from 2026-10-30 18:58:56 UTC to 2026-11-02 18:58:56 UTC (72 h). **rc.11-tp20**, exploratory and not counted: rc.11's config with TP +20% on both lanes, from 2026-10-31 06:00:15 UTC. **pools-1**, record-only (FEAT-80), `v0.4.0rc5`, from 2026-10-31 07:29:11 UTC. The next counted run is `pump-12` | [`runs/`](runs/README.md) |
-| `pumpswap_momentum` (FEAT-76) | **Stage 1** (paper), in rc.11 with its own exits (TP +50%). rc.9, its first counted run, was stopped after 58.4 h: 55 positions, +0.034 SOL, **NO-GO on the count** (55 of 100), and it failed without the best 3 and on the interval | [`RESULTS.md` §6.19](RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
-| `pumpswap_instant` (FEAT-78) | **Stage 1** (paper), in rc.11 under its own verdict. In-sample replay on rc.9's capture passed every check but the count; its first night in rc.11 lost (17 trades at −25% each), and its +50% take-profit is under review for `pump-12` | [`RESULTS.md` §6.18](RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30), [§6.19](RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
-| New non-graduate pools (FEAT-80) | Record-only; no lane and no rule yet | [`runs/pools-1.md`](runs/pools-1.md) |
+| Runs | None running. **rc.11** (counted, 2026-10-30 18:58:56 → 11-02 19:49 UTC): both lanes **NO-GO**. **rc.11-tp20** (exploratory) and **pools-1** (record-only) read out. The next counted run is `pump-12`, its shape to be chosen by the operator | [`runs/`](runs/README.md), [`RESULTS.md` §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03) |
+| `pumpswap_momentum` (FEAT-76) | **Stage 1** (paper). rc.11: **NO-GO** (52 positions, −0.018 SOL; fails the count, net, halves, best 3 and interval). No rule passes pump-12's design gate | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03) |
+| `pumpswap_instant` (FEAT-78) | **Stage 1** (paper). rc.11: **NO-GO** (245 positions, −0.477 SOL, every day negative). No rule passes pump-12's design gate, so it runs record-only in pump-12 (plan B8) | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03) |
+| New non-graduate pools (FEAT-80) | Record-only; pools-1 found no edge (liquidity pulls), so no lane and no recording in pump-12 | [`runs/pools-1.md`](runs/pools-1.md) |
 | Passed Stage 1 | **No lane** yet | |
 | Live execution | Not built: `LiveExecutor` refuses every order | [`TODO.md`, Live gate](TODO.md#live-gate-for-the-pumpswap-lane) |
 | Mainnet-verified money paths | Pump.fun curve `buy` / `sell` layout (BUG-34, pumpbot). Not verified on a real trade: the PumpSwap buy (not built), the PumpSwap sell (BUG-123), the fee tier a fresh graduate pays (checked on 94 third-party trades only, RESULTS §6.16) | [`BUGS.md`](BUGS.md) |

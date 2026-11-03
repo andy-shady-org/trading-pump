@@ -491,3 +491,23 @@ Not done: retraining inside a run, or a model that deploys itself.
   same release; the repository split (trading-core ADR-010, this
   repository's ADR-011 and FEAT-115) is built during pump-12, before
   pump-13.
+- 2026-11-03: deep analysis done, A1–A7
+  ([`RESULTS.md` §6.20](RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03)).
+  rc.11: both lanes NO-GO, so no live path (F). Nothing passes §2's design
+  gate on either lane (61 exit rules, 105 entry variants); A5 finds no
+  filter, A6 supports neither B4 nor FEAT-100, A7 gives no third lane (E3),
+  and A2 found BUG-164 (momentum fills in replay). B8 applies to the
+  instant lane. The momentum lane has no fallback written here, so the
+  shape of pump-12 is the operator's choice, among:
+  1. **Record-only pump-12**: both lanes off, 168 h, D1–D4 recorded
+     (holder snapshots at the signal and at 3 and 6 minutes, funders,
+     tags), `damm-1` beside it. Builds shrink to FEAT-96, FEAT-98, FEAT-63's
+     funder and BUG-164; trading-core FEAT-92 to FEAT-95 wait.
+  2. Option 1 plus an **exploratory momentum lane** in paper, not counted
+     and with no verdict (like rc.11-tp20): TP +20%, −15%, 30 minutes on
+     rc.10's entry.
+  3. A **counted momentum lane** on the rule with the best worst case
+     (adaptive target, 30 minutes: −0.6% a trade on rc.11), with §2's gate
+     set aside by the operator and written so in the run record.
+  Nothing is built until the operator chooses.
+

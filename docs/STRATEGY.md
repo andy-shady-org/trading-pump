@@ -148,6 +148,7 @@ Rules pumpbot learnt that apply to any lane here:
 | rc.9's capture replayed (33 h) | both | Instant lane +17.7% per trade, passes every check but the count (80 of 100); on the standard lane TP +50% beats +20% a little | [RESULTS §6.18](dev/RESULTS.md#618-rc9-and-rc10-replays-a-second-lane-and-wider-take-profits-2026-10-30) |
 | rc.9 paper run, 58.4 h (stopped) | momentum | 55 positions, +0.034 SOL; NO-GO on the count | [RESULTS §6.19](dev/RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
 | The instant lane's first night in rc.11 | instant | 17 trades at −25% each; crashes cannot be told apart before the buy; TP +50% is the lane's weak point | [RESULTS §6.19](dev/RESULTS.md#619-rc9-and-rc10-stopped-early-why-the-instant-lane-crashed-2026-10-31) |
+| rc.11, 72 h paper (and rc.11-tp20 beside it) | both | **Both lanes NO-GO**: momentum 52 positions −0.018 SOL, instant 245 positions −0.477 SOL; no exit or entry variant passes pump-12's design gate on every capture; stops on the instant lane fill at −33% even on 2 s reads | [RESULTS §6.20](dev/RESULTS.md#620-rc11-and-rc11-tp20-read-outs-no-exit-passes-pump-12s-design-gate-2026-11-03) |
 
 Known risks (from the FEAT-76 proposal): the edge is small next to the
 noise and sensitive to latency; snipers trade the migration block, so live
