@@ -35,7 +35,7 @@ of the rc.8 graduation rows through the new stack
 CI green on 3.11–3.14, and the rc.9 tags installed in the runtime folder
 ([DONE.md](DONE.md#migration-onto-trading-core-2026-10-28-changelogmd-unreleased--040)).
 
-- [ ] A paper run of at least 24 h on the new stack with `configs/paper.example.json` (copied to the runtime folder; the 72 h rc.9 run below counts): check after an hour that the capture's oldest row is the start time (BUG-157), `degraded` conditions stay clear, the dashboard rows move, and the capture replays with `trading-pump replay` to the same positions as the run (fills at the same readings, within the fee difference)
+- [ ] A paper run of at least 24 h on the new stack with `configs/paper.example.json` (copied to the runtime folder; the 72 h rc.9 run below counts): check after an hour that the capture's oldest row is the start time (BUG-157), `degraded` conditions stay clear, the dashboard rows move, and the capture replays with `trading-pump replay` to the same positions as the run (fills at the same readings, within the fee difference) — **2026-11-03:** rc.11's capture replays to the run's instant positions (245 of 245, entry the same at the median) and momentum entries within 0.04% at the median after BUG-164; 48 of 52 momentum positions are the same coins and a few stops fill at another reading (`BUGS.md`, BUG-164). The PumpSwap lanes are closed, so this item now matters only for the module's own replays
 - [ ] Move the runtime data that is still wanted (rc.6 to rc.8 captures, analysis scripts, `runtime/archive/`) out of the pumpfun-trading checkout, if it lives there
 - [ ] Then archive the pumpfun-trading GitHub repository (read-only) rather than deleting it; its history is in this repository already
 

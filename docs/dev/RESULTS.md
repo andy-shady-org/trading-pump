@@ -501,7 +501,7 @@ through `trading-pump replay`, trading-pump `v0.4.0rc4` on trading-core
   lane. For pump-12 this matters only for E5's challenger replays; the fix
   is to write the executor's fill read into the capture as a row of its own
   (a new row name, so old captures still read) and let the replay fill
-  from it: [BUG-164](BUGS.md#bug-164-a-replayed-buy-fills-at-the-signals-reading-not-at-the-live-buys-fresh-read-open),
+  from it: [BUG-164](BUGS.md#bug-164-a-replayed-buy-fills-at-the-signals-reading-not-at-the-live-buys-fresh-read-resolved),
   for v0.4.0.
 
 **A3. Costs.** The cost per position is 2.4–2.5% of the order on both

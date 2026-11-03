@@ -48,7 +48,13 @@ The last release of the PumpSwap lanes' work, on trading-core `v0.4.0`. Both lan
 - A replay of a capture whose lane bought or sold between two readings now fills at the nearer reading; a replay result written before 0.4.0 may differ (BUG-164).
 
 ### Release record – v0.4.0 (2026-11-03)
-RELEASE_RECORD_PLACEHOLDER
+- Commit: the merge commit on `main` of `release/v0.4.0`; tagged `git tag -s v0.4.0`; on trading-core `v0.4.0`
+- Release gate: run locally; open: CI on the tag, the signed tag
+- Tests: 917 collected, all passed on 3.11–3.14; coverage 100% statement and branch; ruff, black, flake8 (complexity ≤ 7) and mypy clean; no known vulnerabilities; the wheel private and without tests
+- Checked: rc.11's whole capture (2,651 migrations, 72.8 h) replayed with rc.11's config through this code on trading-core `v0.4.0`: 307 positions and −0.5000 SOL against the run's 297 and −0.4958; momentum entries within 0.04% of the run's at the median (2.1% before BUG-164's fix), instant entries the same at the median, both breaker locks at the run's times
+- Modules: needs trading-core `>=0.4.0,<0.5`
+- Run: `damm-1` (FEAT-107, record-only) is the next run on it, with `--run-for`; no lane is counted (both closed)
+- Capital stage: none (both lanes closed at Stage 1, NO-GO)
 
 ## [0.4.0-rc.5] - 2026-10-31
 
