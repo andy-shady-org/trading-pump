@@ -60,6 +60,7 @@ trading-pump replay --config configs/paper.json \
 |---|---|
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | Start here: concepts, install, a first run, day to day |
 | [docs/STRATEGY.md](docs/STRATEGY.md) | Both lanes: the rule, why, prices and costs, how they are judged |
+| [docs/STRATEGY-LEDGER.md](docs/STRATEGY-LEDGER.md) · [docs/LESSONS.md](docs/LESSONS.md) | Shared with every repository: every strategy tried on every venue and why it failed; every lesson learned |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every `module_settings` key |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | The seven environment variables the module reads |
 | [docs/CLI.md](docs/CLI.md) | `trading-pump replay / record / env` and the trading-core commands |

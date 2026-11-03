@@ -187,6 +187,7 @@ Files:
 | Page | For |
 |---|---|
 | [STRATEGY.md](STRATEGY.md) | Both lanes, their prices and costs, how they are judged |
+| [STRATEGY-LEDGER.md](STRATEGY-LEDGER.md), [LESSONS.md](LESSONS.md) | Shared with every repository: every strategy tried and why it failed, how to test on a new chain, what not to test again; every lesson learned |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every `module_settings` key, and the pumpbot key map |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | The seven variables, and what replaced the rest |
 | [CLI.md](CLI.md) | Every command |

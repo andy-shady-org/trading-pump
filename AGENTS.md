@@ -38,6 +38,30 @@ pumpfun-trading's norms are kept (originals in `docs/archive/pumpfun-trading/AGE
 - **History Is Kept, Not Rewritten:** `docs/archive/pumpfun-trading/` is frozen (only link fixes); `BUGS.md`, `CHANGELOG.md`, `DONE.md`, `RESULTS.md`, `STRATEGY-PIVOT.md` and every run record's pre-registration are appended to, never edited back; what moves leaves a one-line pointer. A port of retired code brings the fixes and tagged tests of every bug `BUGS.md` lists for it.
 - **Small Functions:** flake8 enforces McCabe complexity ≤ 7. Split a function that grows past it into named helpers with the same behaviour (nested functions count toward the one that holds them); never raise `max-complexity` or add `# noqa: C901`.
 - **Docs Follow trading-core's `docs/dev/DOCUMENTATION.md`:** one standard for every repository: the layout (`RESULTS.md` for results, `runs/<run>.md` for each counted run, written before it starts), sentence-case headings, the words (lane, position, run, verdict GO / NO-GO / INCONCLUSIVE), capital Stages 0–3 (0 evidence, 1 paper, 2 live canary, 3 scale-up), run names (`pump-<n>`; `pump-12` was planned and not run), plain semver with no pre-releases (`v0.4.0`, then `v0.5.0`), FEAT IDs from trading-core's `PROPOSED-FEATURES.md`. Status lives only in `RELEASE-GATE.md` §1, `TODO.md` and `RESULTS.md`. When this repository and the standard disagree, fix this repository.
+- **Shared Pages Are Copies:** `docs/STRATEGY-LEDGER.md` and `docs/LESSONS.md` are trading-core's master pages, copied here unchanged (trading-core's `docs/dev/DOCUMENTATION.md` §2.4). Read them before any lane, run or venue is proposed; never edit them here.
+
+## Shared Lessons And The Strategy Ledger
+
+Every repository built on trading-core carries two shared pages, identical
+in each (the master copies are trading-core's; its
+`docs/dev/DOCUMENTATION.md` §2.4):
+
+* [**`docs/STRATEGY-LEDGER.md`**](docs/STRATEGY-LEDGER.md): every strategy tried on every venue since 2026-10-09, with its evidence, its verdict and why; what the markets taught us; how to test a strategy on a new chain or venue; what not to test again; the leads not yet judged.
+* [**`docs/LESSONS.md`**](docs/LESSONS.md): every lesson from every repository's learnings log, without duplicates, by theme, with where it was learned.
+
+**Read both before you propose, design or judge a lane, a run, a filter or a new venue.** No lane has passed a pre-registered verdict yet; four weeks of Pump.fun and PumpSwap work and the first Polymarket and cross-chain studies are in the ledger so that nothing is tried twice. The rules that cost the most to learn:
+
+1. **Only test what could be a GO.** Before proposing a run, show a design that passes the design gate on data already held: positive on every design capture on its own at the base cost, not negative at a stress cost, chosen for its best worst capture. A gate that only cuts losses is not a design.
+2. **Pre-register, then never tune on the run that judges.** Rules, config and code are fixed and hashed before a counted run starts.
+3. **Beat a random cut** with every filter, per half, on at least two captures.
+4. **Judge per position, net of every cost, on what was known at entry.** A rug or trap while held is a total loss.
+5. **A price list is not a cost; only a sale is.** Measure the round trip from real swaps and simulate a sale before trusting any price on a new venue (before every exit where a token's owner can change it).
+6. **Record the population, not the selection,** on chain, at the speed the lane would trade, with the fill's own read, and the deployer, funder and holders at the signal.
+7. **Model the latency you pay and check replay parity** before trusting a sweep.
+8. **A crash predictor is not a trade filter.** Judge a filter on the lane's result per trade on every capture.
+9. **Check the ledger's "Do not test again" table** (§6) before proposing an idea; reopen one only with the new evidence it names.
+
+**Keeping them current.** When a run or study here ends, its result goes in this repository's `docs/dev/RESULTS.md` first, then into trading-core's master ledger; when a learning in the log below applies beyond this repository, it goes into trading-core's master `docs/LESSONS.md` too. Both pages are then copied from trading-core, unchanged, to every repository (in a session that has them all, or by the operator). Never edit the copies here.
 
 ## Learnings Log & Avoided Mistakes
 
@@ -178,6 +202,8 @@ trading-pump/
 
 ### 1. User & Operator Manuals (`docs/`)
 * [**`docs/USER-GUIDE.md`**](docs/USER-GUIDE.md): Start here: concepts, install, run, judge, replay, from pumpbot.
+* [**`docs/STRATEGY-LEDGER.md`**](docs/STRATEGY-LEDGER.md): Shared: every strategy tried on every venue, its verdict and why; how to test on a new chain; what not to test again.
+* [**`docs/LESSONS.md`**](docs/LESSONS.md): Shared: every lesson from every repository's learnings log, by theme.
 * [**`docs/STRATEGY.md`**](docs/STRATEGY.md): Both lanes (FEAT-76, FEAT-78), their evidence, prices and costs, and how they are judged.
 * [**`docs/CONFIGURATION.md`**](docs/CONFIGURATION.md): Every `module_settings` key, and the pumpbot key map.
 * [**`docs/ENVIRONMENT.md`**](docs/ENVIRONMENT.md): The seven variables read, and what replaced the rest (checked by a test).
