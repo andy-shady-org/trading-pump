@@ -30,7 +30,6 @@ RPC_URLS_ENV = "PUMPFUN_RPC_URLS"
 RPC_WS_URL_ENV = "PUMPFUN_RPC_WS_URL"
 STREAM_URL_ENV = "PUMPFUN_STREAM_URL"
 STREAM_API_KEY_ENV = "PUMPFUN_STREAM_API_KEY"
-JUPITER_API_KEY_ENV = "PUMPFUN_JUPITER_API_KEY"
 
 # name -> (legacy aliases, what it is). Read in this order: the name, then
 # each alias.
@@ -51,7 +50,6 @@ MODULE_ENV_VARS: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     STREAM_URL_ENV: (("PUMPFUN_WS_URL",), "PumpPortal WebSocket URL"),
     STREAM_API_KEY_ENV: ((), "PumpPortal API key, appended to the stream URL"),
-    JUPITER_API_KEY_ENV: ((), "Jupiter API key for the quote recorder"),
 }
 
 PUMPPORTAL_URL = "wss://pumpportal.fun/api/data"
@@ -217,6 +215,10 @@ REPLACED_ENV_VARS: dict[str, str] = {
         ),
         "a pumpbot feature that was not ported (docs/dev/TODO.md, Not ported)",
     ),
+    "PUMPFUN_JUPITER_API_KEY": (
+        "the FEAT-65 slow-lane recorders (trading-pump record) were retired in "
+        "0.5.0 (CHANGELOG)"
+    ),
 }
 
 
@@ -362,7 +364,6 @@ def load_credentials(env: Mapping[str, str] | None = None) -> Credentials:
 
 __all__ = [
     "Credentials",
-    "JUPITER_API_KEY_ENV",
     "MODULE_ENV_VARS",
     "PRIVATE_KEY_ENV",
     "PUBLIC_RPC_URL",

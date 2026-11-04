@@ -13,9 +13,6 @@ token (6 decimals), shown in µSOL. The module:
   pool for 4 hours (FEAT-73), writing each reading to the capture;
 * optionally finds new PumpSwap pools that are not graduations on-chain and
   records them the same way, never trading them (``new_pools``, FEAT-80);
-* optionally records new Meteora DAMM v2 pools from the chain, never trading
-  them (``damm_pools``, FEAT-107); ``graduation.enabled`` false runs that
-  capture alone;
 * quotes from those pool readings (a fresh read when the last one is older
   than ``execution.quote_max_age_seconds``; never a default price);
 * fills paper orders against a fresh pool read with the pool's fee and the
@@ -58,7 +55,6 @@ from trading_core.strategy.pipeline import StrategyPipeline
 from trading_pump import __version__
 from trading_pump.config.env import Credentials, load_credentials, unread_env_warnings
 from trading_pump.config.settings import PumpSettings
-from trading_pump.damm import CONDITION_DAMM_FEED, DammFeed, DammWatcher
 from trading_pump.execution import LiveExecutor, PaperExecutor
 from trading_pump.feed import (
     CONDITION_FEED,
@@ -235,27 +231,6 @@ class PumpModule(TradingModule):
             on_state=self._pool_feed_state,
             clock=clock,
         )
-        damm = self.settings.damm_pools
-        self.damm_watcher = DammWatcher(
-            damm,
-            self._record,
-            read_accounts=self._read_accounts if client is not None else None,
-            clock=clock,
-        )
-        self.damm_feed = DammFeed(
-            on_account=self.damm_watcher.on_account,
-            connect_url=self._damm_url,
-            stream_url=(
-                self.credentials.rpc_ws_display_url
-                if damm.use_rpc_ws_url
-                else str(damm.ws_url)
-            ),
-            reconnect_delay_seconds=float(stream.reconnect_delay_seconds),
-            stream_heartbeat_seconds=float(stream.heartbeat_seconds) or None,
-            stream_idle_timeout_seconds=float(damm.idle_timeout_seconds),
-            on_state=self._damm_feed_state,
-            on_message=self._market_data,
-        )
         self._pipeline: StrategyPipeline | None = None
         self._tasks: list[asyncio.Task[Any]] = []
         self._stopping = False
@@ -287,25 +262,6 @@ class PumpModule(TradingModule):
             for record in self.book_rows.translate(row):
                 self.book.add(record)
 
-    def _damm_url(self) -> str:
-        damm = self.settings.damm_pools
-        if damm.use_rpc_ws_url:
-            return self.credentials.rpc_ws_connect_url()
-        return str(damm.ws_url)
-
-    async def _read_accounts(self, addresses: list[str]) -> list[Any]:
-        assert self.client is not None
-        return list(
-            await self.client._get_accounts(
-                addresses,
-                timeout_seconds=float(self.settings.execution.rpc_timeout_seconds),
-            )
-        )
-
-    def _market_data(self) -> None:
-        if self.host is not None:
-            self.host.notify_market_data()
-
     def _store(self, reading: PoolReading) -> None:
         self.readings[reading.mint] = reading
 
@@ -325,10 +281,6 @@ class PumpModule(TradingModule):
     def _pool_feed_state(self, connected: bool, detail: str) -> None:
         if self.host is not None:
             self.host.set_degraded(CONDITION_POOL_FEED, not connected, detail)
-
-    def _damm_feed_state(self, connected: bool, detail: str) -> None:
-        if self.host is not None:
-            self.host.set_degraded(CONDITION_DAMM_FEED, not connected, detail)
 
     def on_migration(self, mint: str) -> None:
         """A coin left its curve for PumpSwap: start following its pool."""
@@ -357,26 +309,14 @@ class PumpModule(TradingModule):
 
     def _start_feeds(self) -> None:
         """The migration feed and the pool poller (unless graduation tracking
-        is off), and, when on, the new-pool feed (FEAT-80) and the DAMM v2
-        capture (FEAT-107), each in its own task."""
+        is off), and, when on, the new-pool feed (FEAT-80), each in its own
+        task."""
         if self.settings.graduation.enabled:
             self._tasks.append(asyncio.create_task(self.feed.run(), name="pump_feed"))
             self._tasks.append(
                 asyncio.create_task(
                     self.poller.run(self.poll_tick, lambda: self._stopping, self.sleep),
                     name="pump_poller",
-                )
-            )
-        if self.settings.damm_pools.enabled:
-            self._tasks.append(
-                asyncio.create_task(self.damm_feed.run(), name="pump_damm_feed")
-            )
-            self._tasks.append(
-                asyncio.create_task(
-                    self.damm_watcher.run_heartbeats(
-                        lambda: self._stopping, self.sleep or asyncio.sleep
-                    ),
-                    name="pump_damm_heartbeat",
                 )
             )
         if self.settings.new_pools.enabled:
@@ -440,8 +380,6 @@ class PumpModule(TradingModule):
         self.feed.stop()
         self.pool_feed.stop()
         await self.pool_watcher.stop()
-        self.damm_feed.stop()
-        await self.damm_watcher.stop()
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
@@ -594,8 +532,6 @@ class PumpModule(TradingModule):
             )
         if self.settings.new_pools.enabled:
             rows.append(("New pools", self.pool_watcher.status_text(self.pool_feed)))
-        if self.settings.damm_pools.enabled:
-            rows.append(("DAMM v2", self.damm_watcher.status_text(self.damm_feed)))
         if self.recorder is not None:
             rows.append(("Capture", f"{self.recorder.records_written} rows"))
         return rows
@@ -660,7 +596,6 @@ class PumpModule(TradingModule):
             "instant": asdict(self.settings.instant),
             "graduation": asdict(self.settings.graduation),
             "new_pools": asdict(self.settings.new_pools),
-            "damm_pools": asdict(self.settings.damm_pools),
             "execution": asdict(self.settings.execution),
             "capture_path": self.settings.capture.path,
             "rpc_endpoints": len(self.credentials.rpc_urls),

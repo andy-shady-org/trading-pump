@@ -15,9 +15,6 @@ export PUMPFUN_RPC_URL="https://mainnet.helius-rpc.com/?api-key=<your-rpc-api-ke
 # export PUMPFUN_STREAM_URL="wss://pumpportal.fun/api/data"
 # export PUMPFUN_STREAM_API_KEY="<pumpportal-api-key>"
 
-# Only for `trading-pump record --jupiter-quotes` on the keyed host.
-# export PUMPFUN_JUPITER_API_KEY="<jupiter-api-key>"
-
 # Alerts are trading-core's (its docs/ENVIRONMENT.md): one provider.
 # export TRADING_CORE_ALERT_PROVIDER="discord"
 # export TRADING_CORE_ALERT_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."

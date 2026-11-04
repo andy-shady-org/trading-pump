@@ -190,6 +190,7 @@ The guard reads the two lines below (one line each, IDs in any order):
 * **trading-core, tagged there**: BUG-10, BUG-12, BUG-47, BUG-64, BUG-89, BUG-94, BUG-97, BUG-98, BUG-99, BUG-105, BUG-106, BUG-111, BUG-114, BUG-115, BUG-127, BUG-128, BUG-141, BUG-144
 * **trading-core, rebuilt in the core design**: BUG-04, BUG-05, BUG-08, BUG-11, BUG-14, BUG-15, BUG-17, BUG-18, BUG-19, BUG-21, BUG-22, BUG-23, BUG-26, BUG-27, BUG-28, BUG-29, BUG-30, BUG-41, BUG-45, BUG-46, BUG-70, BUG-71, BUG-72, BUG-88, BUG-91, BUG-110, BUG-130, BUG-140, BUG-143, BUG-148, BUG-153, BUG-155
 * **Retired with code that was not ported (tag v0.3.0rc8)**: BUG-06, BUG-07, BUG-16, BUG-20, BUG-24, BUG-25, BUG-32, BUG-36, BUG-38, BUG-39, BUG-40, BUG-42, BUG-43, BUG-44, BUG-48, BUG-49, BUG-50, BUG-51, BUG-52, BUG-60, BUG-61, BUG-62, BUG-63, BUG-65, BUG-73, BUG-75, BUG-76, BUG-78, BUG-80, BUG-81, BUG-82, BUG-83, BUG-84, BUG-85, BUG-86, BUG-87, BUG-100, BUG-109, BUG-112, BUG-116, BUG-119, BUG-120, BUG-121, BUG-122, BUG-126, BUG-129, BUG-131, BUG-132, BUG-133, BUG-134, BUG-135, BUG-146, BUG-154, BUG-156
+* **Retired in 0.5.0 with the FEAT-65 slow lane (tag v0.4.0)**: BUG-139
 
 Untagged on purpose (`KNOWN_UNTAGGED` in the guard, as in pumpfun-trading): **BUG-09** (a packaging fix, not runtime behaviour) and **BUG-31** (zero-reserve quoting, superseded by BUG-101, which is tagged here).
 

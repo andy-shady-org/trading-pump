@@ -1,8 +1,5 @@
 """``trading-pump``: the module's own tools (the engine is ``trading-core``).
 
-* ``trading-pump record ...``: the record-only research recorders
-  (``--jupiter-quotes``, ``--backfill-bars``), as ``trading-pump-recorder``
-  (the cross-chain ``--market`` recorder moved to trading-scout);
 * ``trading-pump replay --config F --capture C [C ...] --out DIR``: replay
   captures through trading-core's engine with the module (``replay.py``);
 * ``trading-pump lane-rows --capture C [C ...] --out FILE``: a capture as
@@ -27,7 +24,6 @@ from trading_core.config.settings import EngineSettings
 from trading_core.lanes.market import ROW_HOLDERS, ROW_LISTING, ROW_READING, ROW_TRADE
 from trading_core.ops.logging import get_configured_console
 
-from trading_pump.cli.record import build_record_parser, run_record_cli
 from trading_pump.config.env import MODULE_ENV_VARS, unread_env_warnings
 from trading_pump.lanes import SOURCES, LaneRowStats, write_lane_rows
 from trading_pump.replay import (
@@ -48,7 +44,6 @@ def build_parser() -> argparse.ArgumentParser:
         prog="trading-pump", description="Pump.fun / PumpSwap module tools"
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    build_record_parser(sub)
     replay = sub.add_parser(
         "replay", description="Replay captures through the engine with the module"
     )
@@ -176,10 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_replay(args)
     if args.command == "env":
         return run_env()
-    if args.command == "lane-rows":
-        return run_lane_rows(args)
-    run_record_cli(args)
-    return EXIT_OK
+    return run_lane_rows(args)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -72,8 +72,8 @@ class GraduationSettings:
     ``observation_seconds`` after the migration. At most ``max_mints`` pools
     are followed at once (a full list never evicts, so every observation runs
     its course). The lane reads the same rows. ``enabled`` false follows no
-    graduate and leaves the migration feed off: a record-only run of another
-    capture (``damm_pools``) needs none of it; a lane needs it on.
+    graduate and leaves the migration feed off (a run that records nothing
+    of graduates); a lane and ``new_pools`` need it on.
     """
 
     enabled: bool = True
@@ -327,53 +327,6 @@ class NewPoolSettings:
             raise ValueError("NewPoolSettings.signature_limit must be within 1..1000")
 
 
-@dataclass(frozen=True)
-class DammSettings:
-    """Record-only capture of new Meteora DAMM v2 pools (FEAT-107), off by
-    default.
-
-    One ``programSubscribe`` on the DAMM v2 program's pool accounts on
-    ``ws_url`` (the public RPC by default: the stream is about 6 GB a day,
-    free there; ``use_rpc_ws_url`` takes ``PUMPFUN_RPC_WS_URL`` instead). A
-    pool paired with SOL whose activation point is at most
-    ``max_age_seconds`` old (or at most ``max_future_seconds`` ahead) is
-    followed for ``follow_seconds``, at most ``max_followed`` at once; every
-    change of a followed pool is a capture row, and every
-    ``heartbeat_seconds`` the followed pools are also read over RPC.
-    """
-
-    enabled: bool = False
-    ws_url: str = "wss://api.mainnet-beta.solana.com"
-    use_rpc_ws_url: bool = False
-    max_age_seconds: float = 300.0
-    max_future_seconds: float = 3_600.0
-    follow_seconds: float = 14_400.0
-    max_followed: int = 2_000
-    heartbeat_seconds: float = 30.0
-    # The stream is busy (tens of messages a second): silence means trouble.
-    idle_timeout_seconds: float = 60.0
-
-    def __post_init__(self) -> None:
-        _positive(
-            self,
-            "max_age_seconds",
-            "follow_seconds",
-            "max_followed",
-            "heartbeat_seconds",
-            "idle_timeout_seconds",
-        )
-        _not_negative(self, "max_future_seconds")
-        url = str(self.ws_url)
-        if not url.startswith(("wss://", "ws://")):
-            raise ValueError("DammSettings.ws_url must be a ws:// or wss:// URL")
-        if "?" in url or "@" in url:
-            # Settings are hashed into the run's provenance: no keys here.
-            raise ValueError(
-                "DammSettings.ws_url must carry no key: set use_rpc_ws_url and "
-                "PUMPFUN_RPC_WS_URL for a keyed endpoint"
-            )
-
-
 _NESTED: dict[str, type] = {
     "graduation": GraduationSettings,
     "lane": LaneSettings,
@@ -382,7 +335,6 @@ _NESTED: dict[str, type] = {
     "capture": CaptureSettings,
     "stream": StreamSettings,
     "new_pools": NewPoolSettings,
-    "damm_pools": DammSettings,
 }
 
 
@@ -397,7 +349,6 @@ class PumpSettings:
     capture: CaptureSettings = field(default_factory=CaptureSettings)
     stream: StreamSettings = field(default_factory=StreamSettings)
     new_pools: NewPoolSettings = field(default_factory=NewPoolSettings)
-    damm_pools: DammSettings = field(default_factory=DammSettings)
     screening: ScreeningSettings = field(default_factory=ScreeningSettings)
 
     @classmethod
@@ -463,7 +414,6 @@ class PumpSettings:
 __all__ = [
     "GRADUATION_MARKET_CAP_SOL",
     "CaptureSettings",
-    "DammSettings",
     "ExecutionSettings",
     "GraduationSettings",
     "InstantLaneSettings",

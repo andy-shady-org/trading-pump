@@ -44,7 +44,6 @@ dependencies = [
 
 [project.scripts]
 trading-pump = "trading_pump.cli.main:main"
-trading-pump-recorder = "trading_pump.cli.record:main"
 
 # The module, for trading-core (`"module": "pumpfun"`, trading-core
 # docs/MODULE-GUIDE.md §6).
