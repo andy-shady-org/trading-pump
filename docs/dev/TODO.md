@@ -21,8 +21,7 @@ where to find it. The list as it stood is archived unchanged:
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | Release `v0.4.0` (the last release of the PumpSwap lanes' work, on trading-core `v0.4.0`), then `damm-1`: Meteora DAMM v2 new pools, record-only (FEAT-107), run with `--run-for`. The PumpSwap lanes are closed: rc.11 NO-GO and nothing passes pump-12's design gate, so **pump-12 is not run** | [RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03), [Meteora DAMM v2](#meteora-damm-v2-new-pools-feat-107) |
-| **Next** | The repository split (trading-core ADR-010, this repository's ADR-011): FEAT-107 moves to trading-meteora (FEAT-113), and `v0.5.0` moves onto trading-solana and trading-core 0.5.0 (FEAT-115) | [ADR-011](ARCHITECTURE-DECISIONS.md) |
+| **Now** | `v0.5.0` (FEAT-115, trading-core ADR-010, this repository's ADR-011): onto trading-solana `0.3.0` and trading-core `v0.7.0`, FEAT-107 removed (trading-meteora records DAMM v2 pools), the FEAT-65 slow lane retired. `damm-1` (FEAT-107, record-only, on `v0.4.0`) runs until 2026-11-06 11:20 UTC; its read-out is trading-meteora's. The PumpSwap lanes are closed (rc.11 NO-GO; nothing passes pump-12's design gate, so **pump-12 is not run**) | [Module and tooling](#module-and-tooling), [RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
 | **Next** | Close the migration: a capture that replays to its run's positions, the runtime data moved, pumpfun-trading archived | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
 | **Then** | Only if a PumpSwap lane is reopened with a new design that passes on new data: the PumpSwap buy builder, `LiveExecutor`, reconcile, one live round trip, then Stage 2 (live canary) | [Live gate](#live-gate-for-the-pumpswap-lane) |
 | **Later** | Research read-outs (pools-1's new pools, graduation paths); a second migration source (FEAT-77); a second venue only with evidence (the slow lane was NO-GO, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
@@ -84,8 +83,7 @@ Done (2026-10-31): (b) measured for 15 minutes on the public RPC: `programSubscr
 
 ### Meteora DAMM v2 new pools (FEAT-107)
 From trading-scout's scout-1 read-out (2026-11-02): the lead group, re-read without look-ahead ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)).
-- [ ] Smoke run (30 min, `configs/damm.example.json`): pools found per hour, WebSocket bytes, capture size, heartbeat credits (the capture is built for `v0.4.0`: [`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only))
-- [ ] Run `damm-1` (record-only, 72 h, on `v0.4.0` with `--run-for 72h`; record and config hashes in [`runs/damm-1.md`](runs/damm-1.md)), then its read-out: paths at 1 s, the real fee by minute since activation, scout-1's rule replayed on it
+- `damm-1` runs on `v0.4.0` since 2026-11-03 11:20 UTC, 72 h ([`runs/damm-1.md`](runs/damm-1.md)); trading-meteora `v0.1.0` (FEAT-113) records the same pools and does its read-out
 - [ ] **Move FEAT-107 to trading-meteora** in `v0.5.0` (ADR-011; trading-core FEAT-113): the read-out of `damm-1` is done there
 
 ### New PumpSwap pools that are not graduations (FEAT-80)
@@ -96,11 +94,7 @@ Not this repository's: the recorder and every open item it had moved to **tradin
 
 ## Module and tooling
 
-- [ ] **FEAT-115, `0.5.0`** (trading-core ADR-010, `docs/dev/REPOSITORIES.md` there): onto trading-solana (FEAT-112) and trading-core 0.5.0 (FEAT-110, FEAT-111); FEAT-107 removed (moved to trading-meteora); FEAT-65's slow lane retired; the release gate replays rc.11's capture to the same positions and net as `v0.4.0`
-- [ ] **Trusted loading (trading-core 0.3.0, FEAT-89 / FEAT-90):** `v0.4.0` declares `trading-core>=0.4.0,<0.5` (done in its `pyproject.toml`: 0.3.1 for FEAT-91's names, 0.4.0 for `--run-for`) and is tagged with `git tag -s`; the runtime folder (`runtimes/pump`, from `runtime-pump`) needs `allowed_signers` with the signing key (trading-core's `SECURITY.md`, "Signed releases"). Its `bin/install-release.sh` already refuses an unsigned tag (`ALLOW_UNSIGNED=1` for the old ones).
-- [ ] **trading-core requirement for the strategy library:** `lanes.py`, `trading-pump lane-rows` and `PumpModule.market_book` import `trading_core.lanes` (trading-core ADR-011, FEAT-117, FEAT-133), which no released core has yet. Before the next release, raise `pyproject.toml`'s `trading-core>=0.4.0,<0.5` to the first core release with the strategy library (`>=0.6`), and install that core in the runtime folder; until then this code runs only against a core checkout.
-- [ ] **trading-core FEAT-133 calibration, on these rows:** write rc.8, rc.9, rc.11 and rc.11-tp20 with `trading-pump lane-rows` (one file each, graduates only) for the core's calibration run, and record the result in [`RESULTS.md`](RESULTS.md#6-results-log).
-- [ ] **Raised with trading-core (the module cannot express these):** a drained pool has no row (`parse_row` refuses a price of 0, so a rug while held cannot be written; none of rc.9's 1.4 M or rc.11's 3.7 M readings was drained, but the next capture may hold one); `MarketBook.forget_before` drops only whole instruments and does not say which (the module rebuilds the set to trim its listing index), so a book of followed graduates keeps every reading of a 4 h observation.
+- [ ] **FEAT-115, `0.5.0`** (trading-core ADR-010, `docs/dev/REPOSITORIES.md` there): onto trading-solana `0.3.0` (FEAT-112) and trading-core `v0.7.0` (FEAT-110, FEAT-111, the strategy library: `trading-core>=0.7.0,<0.8`, which `lanes.py`, `lane-rows` and `market_book` need since the strategy library); FEAT-107 removed (moved to trading-meteora); FEAT-65's slow lane retired; the release gate replays rc.11's capture to the same positions and net as `v0.4.0`
 - [ ] Status rows: per-endpoint RPC latency and breaker state, Jito bundle status once live (carried from "Terminal dashboard" in the archived roadmap; the dashboard itself is trading-core's)
 - [ ] A `trading-pump capture-summary` (or `trading-core-audit` filter) for graduation captures: graduates, standard share, readings per graduate, observation causes; today the read-out uses scripts and `jq`
 
