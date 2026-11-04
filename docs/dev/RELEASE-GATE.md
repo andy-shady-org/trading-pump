@@ -30,13 +30,13 @@ with the Web UI.
 
 ## 1. Current status
 
-As of 2026-11-03.
+As of 2026-11-04.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Latest release | `v0.4.0` (2026-11-03, to be tagged), on trading-core `v0.4.0`: the last release of the PumpSwap lanes' work. Release gate: `nox` passes on Linux (see its release record). Still to do: CI on the tag, the signed tag | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0 |
-| Next release | `v0.5.0` (FEAT-115): onto trading-solana and trading-core 0.5.0, FEAT-107 moved to trading-meteora (trading-core's `docs/dev/REPOSITORIES.md`) | [ADR-011](ARCHITECTURE-DECISIONS.md) |
-| Runs | None running. **rc.11** (counted, 2026-10-30 18:58:56 → 11-02 19:49 UTC): both lanes **NO-GO**. rc.11-tp20 (exploratory) and pools-1 (record-only) read out. **pump-12 is not run**: no lane design passes its gate ([`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)). Next run: `damm-1` (FEAT-107, record-only) on `v0.4.0` | [`runs/`](runs/README.md) |
+| Latest release | `v0.4.0` (2026-11-03, signed, CI green), on trading-core `v0.4.0`: the last release of the PumpSwap lanes' work; it runs `damm-1` | [`CHANGELOG.md`](../../CHANGELOG.md) 0.4.0 |
+| Next release | `v0.5.0` (FEAT-115): onto trading-solana `0.3.0` and trading-core `v0.7.0`, FEAT-107 removed (trading-meteora `v0.1.0` records DAMM v2 pools), the FEAT-65 slow lane retired; the gate replays rc.11's capture to the same positions and net as `v0.4.0` | [ADR-011](ARCHITECTURE-DECISIONS.md), [`TODO.md`](TODO.md#module-and-tooling) |
+| Runs | None running. **rc.11** (counted, 2026-10-30 18:58:56 → 11-02 19:49 UTC): both lanes **NO-GO**. rc.11-tp20 (exploratory) and pools-1 (record-only) read out. **pump-12 is not run**: no lane design passes its gate ([`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)). Running: `damm-1` (FEAT-107, record-only, on `v0.4.0` / trading-core `v0.4.0`) since 2026-11-03 11:20 UTC, until 2026-11-06 11:20 UTC; its read-out is trading-meteora's ([`runs/damm-1.md`](runs/damm-1.md)) | [`runs/`](runs/README.md) |
 | `pumpswap_momentum` (FEAT-76) | **Stage 1, NO-GO (rc.11); closed 2026-11-03.** No rule, filter or adaptive gate passes the design gate on every capture | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.20, §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
 | `pumpswap_instant` (FEAT-78) | **Stage 1, NO-GO (rc.11); closed 2026-11-03.** Its losses are operators' dumps of bundled supply at the peak; the supply map predicts crashes but not trade results | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
 | New non-graduate pools (FEAT-80) | Record-only; pools-1 found no edge (liquidity pulls): no lane | [`runs/pools-1.md`](runs/pools-1.md) |
