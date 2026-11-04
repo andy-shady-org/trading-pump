@@ -25,15 +25,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from trading_core.ops.redact import redact_text
+from trading_core.ops.stream import run_websocket_stream, send_ws_message
 
 from trading_pump.graduates import GraduateTracker
 from trading_pump.market import PoolReading, PoolSource
-from trading_pump.streams.websocket import (
-    MIGRATION_SUBSCRIPTION,
-    MIGRATION_TX_TYPES,
-    run_websocket_stream,
-    send_ws_message,
-)
+from trading_pump.streams.websocket import MIGRATION_SUBSCRIPTION, MIGRATION_TX_TYPES
 
 logger = logging.getLogger("trading_pump.feed")
 

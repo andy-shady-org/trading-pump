@@ -47,6 +47,7 @@ from trading_core.module.base import (
     TradingModule,
 )
 from trading_core.money import QuoteAsset
+from trading_core.ops.capture import CaptureWriter
 from trading_core.ops.retention import RetentionPolicy
 from trading_core.positions import Position
 from trading_core.strategy.exits import ExitDecision, evaluate_exit
@@ -77,7 +78,6 @@ from trading_pump.market import (
     sell_lamports_out,
 )
 from trading_pump.pools import CONDITION_POOL_FEED, NewPoolFeed, NewPoolWatcher
-from trading_pump.recorder import ReplayRecorder
 from trading_pump.strategies.enrichment import TokenEnricher
 from trading_pump.strategies.observation import GRADUATION_SOURCE
 from trading_pump.strategies.pumpswap_momentum import (
@@ -160,8 +160,8 @@ class PumpModule(TradingModule):
         self.client: Any | None = client
         self.source: PoolSource = source
         capture = self.settings.capture
-        self.recorder: ReplayRecorder | None = (
-            ReplayRecorder(
+        self.recorder: CaptureWriter | None = (
+            CaptureWriter(
                 output_path=capture.path,
                 flush_interval_seconds=float(capture.flush_interval_seconds),
                 policy=RetentionPolicy(
@@ -256,7 +256,7 @@ class PumpModule(TradingModule):
 
     def _record(self, row: dict[str, Any]) -> None:
         if self.recorder is not None:
-            self.recorder.record_snapshot(row)
+            self.recorder.record(row)
         if self.book is not None:
             self.book_rows.learn(row)
             for record in self.book_rows.translate(row):

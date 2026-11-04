@@ -23,13 +23,13 @@ from rich.table import Table
 from trading_core.config.settings import EngineSettings
 from trading_core.lanes.market import ROW_HOLDERS, ROW_LISTING, ROW_READING, ROW_TRADE
 from trading_core.ops.logging import get_configured_console
+from trading_core.replay import read_rows
 
 from trading_pump.config.env import MODULE_ENV_VARS, unread_env_warnings
 from trading_pump.lanes import SOURCES, LaneRowStats, write_lane_rows
 from trading_pump.replay import (
     DEFAULT_REPLAY_FEE_BPS,
     CaptureMarket,
-    read_rows,
     replay_capture,
 )
 

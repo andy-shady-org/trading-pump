@@ -9,18 +9,15 @@ from typing import Any
 
 import pytest
 from trading_core.config.settings import EngineSettings
+from trading_core.replay import read_rows
 
 from trading_pump.market import PoolReading
 from trading_pump.replay import (
-    FILL_LOOK_AHEAD_SECONDS,
     CaptureFillSource,
     CaptureMarket,
     CapturePoolSource,
-    ReplayClock,
     is_graduation_row,
-    read_rows,
     replay_capture,
-    replay_settings,
 )
 from trading_pump.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
 from trading_pump.tests.support.factories import make_reading
@@ -76,7 +73,9 @@ def settings(**overrides: Any) -> EngineSettings:
     return EngineSettings.from_mapping(values)
 
 
-def test_rows_are_read_from_plain_and_gzip_parts(tmp_path: Path) -> None:
+def test_a_capture_in_plain_and_gzip_parts_reads_as_one(tmp_path: Path) -> None:
+    # trading-pump replay reads the files with trading-core's reader, in the
+    # order given (bad lines skipped), as its own reader did before 0.5.0.
     rows = graduation_rows(MINT, [(2.0, 1.0)])
     plain = tmp_path / "a.jsonl"
     plain.write_text(json.dumps(rows[0]) + "\nnot json\n[1]\n")
@@ -85,6 +84,9 @@ def test_rows_are_read_from_plain_and_gzip_parts(tmp_path: Path) -> None:
         handle.write("\n".join(json.dumps(r) for r in rows[1:]))
 
     assert list(read_rows([plain, packed])) == rows
+    market = CaptureMarket.from_rows(read_rows([plain, packed]))
+    assert market.migrations == CaptureMarket.from_rows(rows).migrations
+    assert market.end == CaptureMarket.from_rows(rows).end
 
 
 @pytest.mark.parametrize(
@@ -141,24 +143,6 @@ async def test_the_capture_source_answers_like_rpc_with_a_fixed_fee() -> None:
     assert set(found) == {MINT} and rejected == {SAMPLE_PUMP_MINT: "missing"}
     fee = await source.swap_fee(found[MINT])
     assert (fee.bps, fee.source) == (90, "replay")
-
-
-async def test_the_replay_clock_moves_only_when_told() -> None:
-    clock = ReplayClock(10.0)
-    await clock.sleep(2.5)
-    await clock.sleep(-1)
-    assert clock() == 12.5
-
-
-def test_replay_settings_force_paper_and_new_files(tmp_path: Path) -> None:
-    run = replay_settings(settings(mode="paper"), tmp_path / "out")
-    assert run.mode == "paper"
-    assert run.status_path == str(tmp_path / "out" / "status.json")
-    assert run.event_log_path is None and run.log_file is None
-    assert run.module_settings["capture"]["path"] is None
-    (tmp_path / "out" / "audit.jsonl").write_text("")
-    with pytest.raises(ValueError, match="already holds a replay"):
-        replay_settings(settings(), tmp_path / "out")
 
 
 async def test_a_riser_is_bought_after_the_delay_and_sold_at_take_profit(
@@ -223,7 +207,8 @@ def test_a_fill_takes_the_recorded_reading_nearest_the_order() -> None:
 async def test_the_fill_source_answers_with_the_nearest_reading() -> None:
     market = CaptureMarket.from_rows(graduation_rows(MINT, [(2.0, 1.0), (4.0, 1.5)]))
     source = CaptureFillSource(market, fee_bps=90)
-    assert source.look_ahead_seconds == FILL_LOOK_AHEAD_SECONDS
+    # trading-core's look-ahead (its FILL_LOOK_AHEAD_SECONDS), as before 0.5.0.
+    assert source.look_ahead_seconds == 3.0
     found, rejected = await source.read_pools([MINT, SAMPLE_PUMP_MINT], now=3.6)
     assert found[MINT].at == 4.0 and rejected == {SAMPLE_PUMP_MINT: "missing"}
 

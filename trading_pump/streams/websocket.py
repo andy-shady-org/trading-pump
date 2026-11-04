@@ -1,27 +1,23 @@
-"""PumpPortal WebSocket transport: connect, read, back off and reconnect.
+"""PumpPortal's WebSocket: its subscriptions and how its API key is attached.
 
 The module's feed (``trading_pump/feed.py``) owns what a connection *means*
-(health state, subscriptions, message routing); this module owns the
-transport loop, the subscription wire format and how the PumpPortal API key
-is attached to the URL, so stream ingestion stays inside ``streams/``.
+(health state, subscriptions, message routing); this module owns
+PumpPortal's subscription wire format and how its API key is attached to
+the URL (BUG-117, BUG-118). The transport loop (connect, read, back off,
+reconnect, pings and the idle reconnect of BUG-150) is trading-core's
+``trading_core.ops.stream`` since 0.5.0 (FEAT-110): ``run_websocket_stream``,
+``WebSocketStreamHost`` and ``send_ws_message`` moved there unchanged.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import logging
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
-import aiohttp
 
 NEW_TOKEN_SUBSCRIPTION: dict[str, Any] = {"method": "subscribeNewToken"}
 # Free like the create feed (not metered): curve-to-PumpSwap migrations.
 MIGRATION_SUBSCRIPTION: dict[str, Any] = {"method": "subscribeMigration"}
 MIGRATION_TX_TYPES = frozenset({"migrate", "migration"})
-MAX_RECONNECT_BACKOFF_SECONDS = 30.0
 
 
 def _is_api_key_param(name: str) -> bool:
@@ -87,200 +83,3 @@ def stream_connect_url(url: str | None, api_key: str | None) -> str:
 def token_trade_message(method: str, mint: str) -> dict[str, Any]:
     """`subscribeTokenTrade` / `unsubscribeTokenTrade` payload for one mint."""
     return {"method": method, "keys": [mint]}
-
-
-async def send_ws_message(
-    ws: Any, message: dict[str, Any], *, prefer_raw_send: bool = False
-) -> None:
-    """Send a JSON message on an aiohttp socket or a `websockets`-style client.
-
-    `prefer_raw_send` tries a plain `send(str)` first for clients that are not
-    aiohttp sockets (the order the per-mint trade subscriptions have always
-    used); otherwise `send_json`, then `send_str`, then `send`.
-    """
-    if (
-        prefer_raw_send
-        and hasattr(ws, "send")
-        and not isinstance(ws, aiohttp.ClientWebSocketResponse)
-    ):
-        await ws.send(json.dumps(message))
-    elif hasattr(ws, "send_json"):
-        await ws.send_json(message)
-    elif hasattr(ws, "send_str"):
-        await ws.send_str(json.dumps(message))
-    elif hasattr(ws, "send"):
-        await ws.send(json.dumps(message))
-
-
-class WebSocketStreamHost(Protocol):
-    """What the transport loop needs from the runtime.
-
-    Optional attributes (read with ``getattr``): ``stream_heartbeat_seconds``
-    (ping interval; aiohttp closes the socket when a pong does not come back
-    within half of it; ``None`` = no pings) and ``stream_idle_timeout_seconds``
-    (reconnect when no message arrives for that long, ``None`` = wait for
-    ever), both BUG-150.
-    """
-
-    stream_url: str
-    reconnect_delay_seconds: float
-
-    def stream_stop_requested(self) -> bool: ...
-
-    def stream_connect_url(self) -> str: ...
-
-    def stream_log(self, message: str, level: int = logging.INFO) -> None: ...
-
-    async def on_stream_connected(self, ws: Any) -> None: ...
-
-    async def on_stream_message(self, data: Any, ws: Any) -> None: ...
-
-    def on_stream_error(self, message: str) -> None: ...
-
-    def on_stream_exception(self, exc: Exception, backoff: float) -> None: ...
-
-    def on_stream_ended(self) -> None: ...
-
-    def on_stream_closed(self) -> None: ...
-
-
-async def _next_message(messages: Any, idle_timeout: float | None) -> Any:
-    """The socket's next message; ``TimeoutError`` after ``idle_timeout`` seconds."""
-    if idle_timeout is None or idle_timeout <= 0:
-        return await messages.__anext__()
-    return await asyncio.wait_for(messages.__anext__(), timeout=idle_timeout)
-
-
-async def run_websocket_stream(host: WebSocketStreamHost) -> None:
-    """Connect to `host.stream_url` and feed decoded messages until stopped.
-
-    Reconnects with exponential backoff (doubling, capped at 30 s) after an
-    error or a remote close; the backoff resets once a connection is up.
-    The socket is pinged every ``stream_heartbeat_seconds``, and a socket
-    that delivers nothing for ``stream_idle_timeout_seconds`` is dropped and
-    reconnected: a half-open connection used to wait for ever (BUG-150).
-    """
-    backoff = _Backoff(host.reconnect_delay_seconds)
-    heartbeat = getattr(host, "stream_heartbeat_seconds", None)
-    idle_timeout = getattr(host, "stream_idle_timeout_seconds", None)
-    connect_kwargs: dict[str, Any] = {"heartbeat": heartbeat} if heartbeat else {}
-    while not host.stream_stop_requested():
-        if not await _connection(host, connect_kwargs, idle_timeout, backoff):
-            break
-
-
-@dataclass
-class _Backoff:
-    """The wait before the next reconnect, shared across connections."""
-
-    seconds: float
-
-    def grow(self) -> None:
-        self.seconds = min(self.seconds * 2.0, MAX_RECONNECT_BACKOFF_SECONDS)
-
-
-async def _connection(
-    host: WebSocketStreamHost,
-    connect_kwargs: dict[str, Any],
-    idle_timeout: float | None,
-    backoff: _Backoff,
-) -> bool:
-    """One connection, start to close, and the wait after it; False to stop."""
-    try:
-        await _connect_and_read(host, connect_kwargs, idle_timeout, backoff)
-    except asyncio.CancelledError:
-        return False
-    except ConnectionResetError as exc:
-        # "Cannot write to closing transport": the server closed the
-        # socket while a subscription was being sent. A disconnect, not a
-        # fault; reconnect like a remote close (BUG-150).
-        host.stream_log(
-            f"WebSocket closed while sending ({exc}); reconnecting.",
-            level=logging.INFO,
-        )
-        return await _after_disconnect(host, backoff)
-    except Exception as exc:
-        host.on_stream_exception(exc, backoff.seconds)
-        return await _pause(backoff)
-    else:
-        return await _after_disconnect(host, backoff)
-    finally:
-        host.on_stream_closed()
-
-
-async def _after_disconnect(host: WebSocketStreamHost, backoff: _Backoff) -> bool:
-    """Report the end and wait, unless a stop was asked for; False to stop."""
-    if host.stream_stop_requested():
-        return True
-    host.on_stream_ended()
-    return await _pause(backoff)
-
-
-async def _pause(backoff: _Backoff) -> bool:
-    """Wait out the backoff and grow it; False when cancelled."""
-    try:
-        await asyncio.sleep(backoff.seconds)
-    except asyncio.CancelledError:
-        return False
-    backoff.grow()
-    return True
-
-
-async def _connect_and_read(
-    host: WebSocketStreamHost,
-    connect_kwargs: dict[str, Any],
-    idle_timeout: float | None,
-    backoff: _Backoff,
-) -> None:
-    host.stream_log(f"Connecting to WebSocket stream at {host.stream_url}...")
-    timeout = aiohttp.ClientTimeout(total=None, sock_read=60.0)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.ws_connect(
-            host.stream_connect_url(), **connect_kwargs
-        ) as ws:
-            await host.on_stream_connected(ws)
-            backoff.seconds = host.reconnect_delay_seconds
-            await _read_messages(host, ws, idle_timeout)
-
-
-async def _read_messages(
-    host: WebSocketStreamHost, ws: Any, idle_timeout: float | None
-) -> None:
-    """Feed the socket's messages to the host until it ends, stalls or errs."""
-    messages = ws.__aiter__()
-    while True:
-        try:
-            msg = await _next_message(messages, idle_timeout)
-        except StopAsyncIteration:
-            return
-        except TimeoutError:
-            host.on_stream_error(
-                f"No WebSocket message for {idle_timeout:g}s: the "
-                "connection is stale; reconnecting"
-            )
-            return
-        if host.stream_stop_requested():
-            return
-        if not await _handle_message(host, ws, msg):
-            return
-
-
-async def _handle_message(host: WebSocketStreamHost, ws: Any, msg: Any) -> bool:
-    """One socket message; False when it ends the connection."""
-    if msg.type == aiohttp.WSMsgType.TEXT:
-        try:
-            data = json.loads(msg.data)
-        except json.JSONDecodeError:
-            return True
-        await host.on_stream_message(data, ws)
-        return True
-    if msg.type == aiohttp.WSMsgType.ERROR:
-        host.on_stream_error(f"WebSocket connection error: {ws.exception()}")
-        return False
-    if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
-        host.stream_log(
-            "WebSocket connection closed by remote server.",
-            level=logging.INFO,
-        )
-        return False
-    return True
