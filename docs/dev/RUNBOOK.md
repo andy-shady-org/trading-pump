@@ -54,6 +54,15 @@ venv.
   ```
   Running it again with the same tags changes nothing; a moved tag or an
   edited copy is an error.
+- **From `v0.5.0`, trading-solana too.** trading-pump `0.5.0` needs
+  trading-core `>=0.7.0,<0.8` and the trading-solana library
+  `>=0.3.0,<0.4` (FEAT-115): the venv holds a tagged trading-solana
+  (`v0.3.0`) beside the other two, and the runtime's `modules.toml` lists it
+  under `[libraries.solana]` (`distribution = "trading-solana"`), or
+  trading-core refuses the run (its `docs/OPERATIONS.md` §8, FEAT-111).
+  `bin/install-release.sh` takes two tags today; it must install the
+  trading-solana tag as well before a `v0.5.0` run. `damm-1` stays on its
+  `v0.4.0` install.
 
 ## 2. Preflight
 
@@ -65,7 +74,8 @@ venv.
 - The RPC endpoints are on **mainnet-beta**: the module checks this at start
   (BUG-160) and `bin/run.sh` refuses to start without an RPC endpoint.
 - `trading-core modules` lists `pumpfun`, and the venv holds the tags you
-  mean to run (`venvs/pump-<tag>/bin/pip show trading-core trading-pump`).
+  mean to run (`venvs/pump-<tag>/bin/pip show trading-core trading-solana
+  trading-pump`; trading-solana from `v0.5.0`).
 - Alerts: one `TRADING_CORE_ALERT_*` provider set and a test alert received.
 - Disk: a graduation capture is about 1.2 M rows, about 320 MB, a day before
   compression (rc.8); `capture.max_files` × `max_bytes` must hold the whole
@@ -165,86 +175,25 @@ read Health, events, money). Module specifics:
 
 ## 5. Research recorders
 
-Each recorder is a separate process: no wallet, no transactions, nothing
-shared with the engine, so it cannot change a paper run. Run them in their
-own folder and window, next to the runs.
+None since 0.5.0: `trading-pump record` and `trading-pump-recorder` are gone.
 
 ### 5.1 Slow-lane data (FEAT-65 phase 0)
 
-Record-only data for the slow lane
-([`PROPOSED-FEATURES.md` FEAT-65](PROPOSED-FEATURES.md#feat-65-slow-lane-daily-bar-trend-on-liquid-solana-tokens-via-jupiter)).
-Both APIs are used keyless (no Jupiter key needed).
-
-1. Start the quote recorder and leave it running (weeks of samples are worth
-   more than 48 h):
-   ```bash
-   cd runtime && mkdir -p slow_lane
-   trading-pump record --jupiter-quotes --tokens configs/slow_lane_tokens.json \
-     -o slow_lane/jupiter_quotes.jsonl          # every 300 s; Ctrl-C / SIGTERM stops it cleanly
-   ```
-   With `PUMPFUN_RPC_URL` (or `PUMPFUN_RPC_URLS`) in the environment it also
-   samples priority fees (about 13 RPC calls per 5 min); add
-   `--no-fee-samples` to skip them.
-2. Download the bar history once (about 15 min for the default list):
-   ```bash
-   trading-pump record --backfill-bars --tokens configs/slow_lane_tokens.json -o slow_lane/bars.jsonl
-   ```
-   The public API serves about 6 months; re-run it monthly into a new file
-   to extend the series and de-duplicate on `mint`, `timeframe`, `timestamp`
-   when reading.
-
-   For a multi-year history use Binance's public spot klines (keyless; each
-   `<SYMBOL>USDT` pair from its listing; for the default list about 3 min,
-   315,000 bars, one ~100 MB file):
-   ```bash
-   trading-pump record --backfill-bars --bar-source binance --tokens configs/slow_lane_tokens.json \
-     -o slow_lane/binance_bars.jsonl
-   ```
-   Expect SOL from August 2020, RAY from August 2021, JTO and BONK from late
-   2023, JUP, PYTH and WIF from early 2024, ORCA from December 2024. mSOL and
-   jitoSOL have no Binance pair (`"binance": null` in the token list); a token
-   without a pair shows as `Pairs missing` and is skipped. Binance prices are
-   the centralised-exchange market in USDT, not the Solana pool a swap would
-   fill in: use them for the trend signal and keep the Jupiter quotes for
-   costs. Keep the two venues in separate files (`bars_in_sol` only divides
-   bars of the same `venue`). If the run stops with `Binance refused this
-   host` (HTTP 451 = restricted region, 403 = firewall, 418 = IP ban after
-   rate limiting), try another network or `--bar-base-url
-   https://api.binance.com` (which itself answers 451 in some regions, e.g.
-   the US); after a 418, wait before retrying. A few missing hours (SOL 10,
-   RAY 3 since listing) are Binance's own trading outages, not download
-   errors. Top up later with `--bar-since YYYY-MM-DD` into a new file. A
-   backfill always writes one file: unlike the quote recorder, it does not
-   rotate at 50 MB.
-3. Health checks while it runs: rows keep arriving, and errors stay rare.
-   ```bash
-   tail -n 1 slow_lane/jupiter_quotes.jsonl | jq '{timestamp, event, symbol}'
-   jq -c 'select(.event=="quote_error") | {symbol, side, size_sol, status}' slow_lane/jupiter_quotes.jsonl | tail
-   jq -c 'select(.event=="quote" and .side=="sell") | {symbol, size_sol, round_trip_cost_bps}' \
-     slow_lane/jupiter_quotes.jsonl | tail -n 30            # round-trip cost per token and size
-   ```
-   Many `status: 429` rows mean the keyless limit changed: raise
-   `--request-gap` or `--quote-interval`. Edit the token list only between
-   runs, and keep the edited file with the data.
-4. Reading the data (BUG-139). The sell leg is quoted a pacing gap after the
-   buy leg, so each `round_trip_cost_bps` also holds the price move in
-   between; sell rows carry `buy_gap_seconds` and `buy_gap_slots`. Judge
-   costs on the distribution,
-   `trading_pump.services.slow_lane.round_trip_cost_summary(rows)` (median
-   and quartiles per token and size), never on one row. Bars are USD
-   (`currency: "usd"`): GeckoTerminal's from each token's top pool as chosen
-   when the backfill ran, Binance's from the `<SYMBOL>USDT` pair
-   (`quote_asset: "USDT"`, closed bars only); `bars_in_sol(rows)` re-prices
-   them against SOL's own bar from the same venue, the baseline a SOL wallet
-   has to beat.
+**Retired in 0.5.0.** The slow lane was judged NO-GO on 2026-10-29
+([RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)),
+and its recorders (`--jupiter-quotes`, `--backfill-bars`,
+`services/slow_lane.py`, `configs/slow_lane_tokens.json`) were removed with
+it. The data already recorded (`slow_lane/*.jsonl`) is plain JSON lines;
+the procedure that wrote and read it, BUG-139's notes included, is this
+page's history at tag `v0.4.0`. Re-run it from a `v0.4.0` install if it is
+ever needed again.
 
 ### 5.2 Cross-chain market recorder (FEAT-74)
 
 Moved to trading-scout on 2026-10-30: it runs as that repository's `scout`
 module under `trading-core run`, with a sell check of every followed pool and
-a per-launchpad read-out (its `docs/dev/RUNBOOK.md`). `trading-pump record
---market` now only says so. The rc.8 data it wrote (`market/market.jsonl`)
-reads the same way with `trading-scout readout`.
+a per-launchpad read-out (its `docs/dev/RUNBOOK.md`). The rc.8 data it wrote
+(`market/market.jsonl`) reads the same way with `trading-scout readout`.
 
 ## 6. Drills
 
@@ -278,5 +227,5 @@ executor, run these by hand on a paper config in a scratch folder:
 | Diagnostic events | `trading-core-events --path data/<run>/events.jsonl --tail` |
 | Replay a capture | `trading-pump replay --config F --capture C... --out DIR` |
 | Variables in use | `trading-pump env` |
-| Slow-lane quotes / bars | `trading-pump record --jupiter-quotes`, `--backfill-bars` (§5.1) |
+| Slow-lane quotes / bars | retired in 0.5.0 (§5.1) |
 | Cross-chain market data | trading-scout (moved 2026-10-30, §5.2) |

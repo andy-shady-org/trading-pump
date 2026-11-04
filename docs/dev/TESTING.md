@@ -3,27 +3,34 @@
 ## The gate
 
 ```bash
-nox -s lint mypy tests          # trading-core comes from ../trading-core by default
+nox -s lint mypy tests          # trading-core and trading-solana from ../ by default
 ```
 
 | Session | Runs | Must |
 |---|---|---|
 | `lint` (3.14) | `ruff check .`, `black --check .`, `flake8 .` (McCabe complexity ≤ 7) | pass |
-| `mypy` (3.14, checks as 3.11) | `mypy` on the package and tests, against trading-core's types (`py.typed`) | no issues |
+| `mypy` (3.14, checks as 3.11) | `mypy` on the package and tests, against trading-core's and trading-solana's types (`py.typed`) | no issues |
 | `tests-3.11` … `tests-3.14` | `pytest --cov=trading_pump --cov-fail-under=100` | pass with 100% **statement and branch** coverage on every version |
 | `tests-fast` | unit and property tests, no coverage | quick loop |
 | `format` | `ruff --select I --fix`, `black` | — |
 | `audit` | `pip-audit` | no known vulnerability |
 | `package` | build; the wheel ships no tests and is `Private :: Do Not Upload` | — |
 
-Every session first installs trading-core from `TRADING_CORE_SOURCE`: a
-checkout path (default `../trading-core`) or any pip requirement, e.g.
-`TRADING_CORE_SOURCE=git+ssh://git@github.com/andy-shady-org/trading-core.git@main nox -s tests`.
-Outside nox, with trading-core installed editable, mypy needs
-`MYPYPATH=../trading-core`.
+Every session first installs trading-core from `TRADING_CORE_SOURCE` and,
+since 0.5.0, the trading-solana library from `TRADING_SOLANA_SOURCE`: each a
+checkout path (default `../trading-core`, `../trading-solana`) or any pip
+requirement, e.g.
+`TRADING_CORE_SOURCE=git+ssh://git@github.com/andy-shady-org/trading-core.git@v0.7.0 nox -s tests`.
+Outside nox, with both installed editable, mypy needs
+`MYPYPATH=../trading-core:../trading-solana`.
 
-The suite (917 tests at `v0.4.0`) runs in about 10 seconds and **never touches the
-network**. pumpbot's suite had 2,208 tests at v0.3.0rc8; the difference is
+The suite (917 tests at `v0.4.0`, 647 at `0.5.0`) runs in about 10
+seconds and **never touches the network**. 0.5.0's is smaller because the
+code it tested moved: the RPC pool, transport, Jito, costs, client core,
+identifiers, names and mint decoders to trading-solana, the capture
+writer, the stream loop and the replay harness to trading-core, each with
+its tests and regression tags (`BUGS.md`, Where each fix lives); the
+DAMM v2 capture to trading-meteora; the slow-lane recorders retired. pumpbot's suite had 2,208 tests at v0.3.0rc8; the difference is
 the retired runtime and lanes (their tests are in the history at that tag,
 and the bugs they guarded are accounted for in
 [`BUGS.md`](BUGS.md#where-each-fix-lives-after-the-move-to-trading-core)).
@@ -31,13 +38,16 @@ and the bugs they guarded are accounted for in
 ## CI
 
 `.github/workflows/tests.yml` checks out this repository **and** the private
-`andy-shady-org/trading-core` side by side and runs nox with
-`TRADING_CORE_SOURCE` pointing at the checkout. It needs one repository
-secret, **`TRADING_CORE_TOKEN`**: a fine-grained personal access token with
-*Contents: read* on `andy-shady-org/trading-core`, stored under this
-repository's Settings → Secrets and variables → Actions.
-`TRADING_CORE_REF` (workflow env, default `main`) picks the trading-core
-branch or tag; pin it to a tag for releases.
+`andy-shady-org/trading-core` and `andy-shady-org/trading-solana` side by
+side and runs nox with `TRADING_CORE_SOURCE` and `TRADING_SOLANA_SOURCE`
+pointing at the checkouts. It needs one repository secret,
+**`TRADING_CORE_TOKEN`**: a fine-grained personal access token with
+*Contents: read* on both repositories, stored under this repository's
+Settings → Secrets and variables → Actions (a separate
+**`TRADING_SOLANA_TOKEN`**, when set, is used for trading-solana instead).
+`TRADING_CORE_REF` and `TRADING_SOLANA_REF` (workflow env) pick the tags:
+`v0.7.0` and `v0.3.0` for `0.5.0`, the tags `pyproject.toml`'s ranges are
+built on.
 
 ## Layout
 
@@ -69,7 +79,7 @@ trading_pump/tests/
   package, no coverage-named files (`test_coverage_*`, `*_boost*`, `*_full`);
 * every **RESOLVED** bug in `BUGS.md` has a test tagged
   `@pytest.mark.regression("BUG-xx")`, unless `BUGS.md` lists it under
-  "Where each fix lives" (trading-core or retired) or it is in
+  "Where each fix lives" (trading-core, trading-solana or retired) or it is in
   `KNOWN_UNTAGGED` (shrink-only: BUG-09, BUG-31);
 * a tag names a real bug, and a bug tested here is not also listed as
   elsewhere;

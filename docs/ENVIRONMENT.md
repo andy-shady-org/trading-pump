@@ -24,7 +24,6 @@ never values) and warns about every other `PUMPFUN_*` variable that is set
 | `PUMPFUN_RPC_WS_URL` | none | The Solana RPC WebSocket the new-pool feed (`new_pools`, FEAT-80) subscribes on. Only read when `new_pools.enabled` is on. It may carry the provider's key, so it is never logged: the dashboard shows its host only. | `PUMPFUN_RPC_URL` (or the first RPC endpoint) with `wss://` for `https://` |
 | `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | The PumpPortal WebSocket the migration feed connects to. Keep it free of keys. | `wss://pumpportal.fun/api/data` |
 | `PUMPFUN_STREAM_API_KEY` | none | A PumpPortal API key, added as `api-key` at connect time and only to a `pumpportal.fun` URL. Not needed: the module subscribes to migrations only, which PumpPortal serves without a key. | unset |
-| `PUMPFUN_JUPITER_API_KEY` | none | A Jupiter Portal key for `trading-pump record --jupiter-quotes` only: moves the quotes to `api.jup.ag` and sends the key as an `x-api-key` header. | unset (keyless `lite-api.jup.ag`) |
 
 The engine's variables (`TRADING_CORE_ALERT_*`, `TRADING_CORE_*_PATH`,
 `TRADING_CORE_GIT_COMMIT`) are trading-core's: see its `docs/ENVIRONMENT.md`.
@@ -33,7 +32,7 @@ The engine's variables (`TRADING_CORE_ALERT_*`, `TRADING_CORE_*_PATH`,
 
 pumpbot read about a hundred `PUMPFUN_*` variables (the archived
 [manual](archive/pumpfun-trading/ENVIRONMENTAL-VARIABLES.md)). trading-pump
-reads the seven above. When any other `PUMPFUN_*` variable is set, the module
+reads the six above. When any other `PUMPFUN_*` variable is set, the module
 records a warning at start (and `trading-pump env` prints it), naming the
 variable and what replaces it, never its value, because some of them held
 webhook URLs:
@@ -46,6 +45,7 @@ webhook URLs:
 | `PUMPFUN_GIT_COMMIT`, `PUMPFUN_HEADLESS` | `TRADING_CORE_GIT_COMMIT`; `trading-core run --headless` |
 | The replay capture (`PUMPFUN_RECORD_REPLAY`, `PUMPFUN_REPLAY_*`), costs (`PUMPFUN_JITO_*TIP*`, `PUMPFUN_PRIORITY_FEE_MODE`, `PUMPFUN_USE_JITO`, `PUMPFUN_COMPUTE_UNIT_LIMIT`, slippage), screening (`PUMPFUN_ANTI_RUG_*`, `PUMPFUN_MAX_GINI_*`, cluster analysis), presets and buy size | `module_settings` (`capture`, `execution`, `screening`) or the engine's `order_size` |
 | Geyser, arbitrage, capital rotation, pre-graduation, copy trading, momentum, Raydium, tiered take-profit, live Jito tuning, `PUMPFUN_RECONCILE_STATUS_PATH`, stream retry limits | Features that were not ported ([dev/TODO.md, Not ported](dev/TODO.md#not-ported)) |
+| `PUMPFUN_JUPITER_API_KEY` | Read by the FEAT-65 slow-lane quote recorder (`trading-pump record --jupiter-quotes`) until 0.4.0; the recorders were retired in 0.5.0 (`CHANGELOG.md`) |
 
 The full list with each hint is `REPLACED_ENV_VARS` in
 `trading_pump/config/env.py`; a test checks that every variable the archived

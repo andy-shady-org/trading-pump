@@ -217,8 +217,9 @@ def test_a_new_pool_of_a_followed_mint_or_a_full_list_is_not_followed() -> None:
 
 
 def test_token_names_are_asked_for_graduates_only_and_three_times_at_most() -> None:
+    from trading_solana.mints import TokenName
+
     from trading_pump.graduates import MAX_NAME_READS
-    from trading_pump.names import TokenName
 
     tracker = GraduateTracker(GraduationSettings())
     tracker.add(SAMPLE_MINT, now=0.0)

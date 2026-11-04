@@ -19,8 +19,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-import base58
 from solders.keypair import Keypair
+from trading_solana.wallet import decode_keypair
 
 from trading_pump.streams.websocket import split_stream_api_key, stream_connect_url
 
@@ -30,7 +30,6 @@ RPC_URLS_ENV = "PUMPFUN_RPC_URLS"
 RPC_WS_URL_ENV = "PUMPFUN_RPC_WS_URL"
 STREAM_URL_ENV = "PUMPFUN_STREAM_URL"
 STREAM_API_KEY_ENV = "PUMPFUN_STREAM_API_KEY"
-JUPITER_API_KEY_ENV = "PUMPFUN_JUPITER_API_KEY"
 
 # name -> (legacy aliases, what it is). Read in this order: the name, then
 # each alias.
@@ -51,7 +50,6 @@ MODULE_ENV_VARS: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     STREAM_URL_ENV: (("PUMPFUN_WS_URL",), "PumpPortal WebSocket URL"),
     STREAM_API_KEY_ENV: ((), "PumpPortal API key, appended to the stream URL"),
-    JUPITER_API_KEY_ENV: ((), "Jupiter API key for the quote recorder"),
 }
 
 PUMPPORTAL_URL = "wss://pumpportal.fun/api/data"
@@ -217,6 +215,10 @@ REPLACED_ENV_VARS: dict[str, str] = {
         ),
         "a pumpbot feature that was not ported (docs/dev/TODO.md, Not ported)",
     ),
+    "PUMPFUN_JUPITER_API_KEY": (
+        "the FEAT-65 slow-lane recorders (trading-pump record) were retired in "
+        "0.5.0 (CHANGELOG)"
+    ),
 }
 
 
@@ -253,25 +255,6 @@ def unread_env_warnings(env: Mapping[str, str] | None = None) -> list[str]:
         hint = REPLACED_ENV_VARS.get(name, "not read by trading-pump")
         warnings.append(f"{name} is set but not read: {hint}")
     return warnings
-
-
-def decode_keypair(private_key_b58: str) -> Keypair:
-    """Decode a base58-encoded string into a solders Keypair."""
-    decoded = base58.b58decode(private_key_b58.strip())
-    if len(decoded) == 32:
-        return Keypair.from_seed(decoded)
-    if len(decoded) == 64:
-        try:
-            return Keypair.from_bytes(decoded)
-        except Exception:
-            return Keypair.from_seed(decoded[:32])
-    if len(decoded) >= 32:
-        return Keypair.from_seed(decoded[:32])
-    raise ValueError(
-        "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret "
-        "key; "
-        f"got {len(decoded)} bytes after decoding."
-    )
 
 
 @dataclass(frozen=True)
@@ -362,7 +345,6 @@ def load_credentials(env: Mapping[str, str] | None = None) -> Credentials:
 
 __all__ = [
     "Credentials",
-    "JUPITER_API_KEY_ENV",
     "MODULE_ENV_VARS",
     "PRIVATE_KEY_ENV",
     "PUBLIC_RPC_URL",
@@ -373,7 +355,6 @@ __all__ = [
     "RPC_WS_URL_ENV",
     "STREAM_API_KEY_ENV",
     "STREAM_URL_ENV",
-    "decode_keypair",
     "known_env_names",
     "load_credentials",
     "unread_env_warnings",

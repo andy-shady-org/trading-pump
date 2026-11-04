@@ -18,7 +18,10 @@ It follows every coin that graduates from its Pump.fun bonding curve to a
 PumpSwap pool, reads the pools on chain, trades two pre-registered lanes in
 paper with every fee priced in, and records everything for replay. The
 engine (sizing, risk, circuit breaker, exits, accounting, audit, alerts,
-dashboard) is trading-core's.
+dashboard, and the capture writer, stream loop and replay harness) is
+trading-core's (`>=0.7.0,<0.8`); the Solana plumbing (RPC pool, transport,
+Jito, costs, mint decoding, program-subscribe feeds) is the trading-solana
+library's (`>=0.3.0,<0.4`).
 
 | Lane or capture | What it does | Default | Stage |
 |---|---|---|---|
@@ -26,7 +29,7 @@ dashboard) is trading-core's.
 | **`pumpswap_instant`** (FEAT-78) | Buys an instant graduate (first reading 1,000–2,000 SOL market cap, 130–200 SOL in the pool) still at 1.00–1.10× its first price after 60 s; its own exits +50% / −15% / 30 minutes | off (`"instant": {"enabled": true}`) | Stage 1, **NO-GO, closed** |
 | Graduation capture (FEAT-73) | Records every graduate's pool for 4 h | always on | record-only |
 | New pools (FEAT-80) | Records new PumpSwap pools that are not graduations (`new_pools`) | off | record-only |
-| Meteora DAMM v2 pools (FEAT-107) | Records new DAMM v2 pools (`damm_pools`); moves to trading-meteora before 0.5.0 (ADR-011) | off | record-only |
+| Meteora DAMM v2 pools (FEAT-107) | Moved to trading-meteora in 0.5.0 (ADR-011); `v0.4.0` was the last release with it | — | — |
 | Strategy library records (trading-core FEAT-133, FEAT-117) | `trading-pump lane-rows` writes a capture as the core library's rows for `trading-core-lanes sweep`; `market_book` offers the graduates to the core's lanes | on demand | tooling |
 
 Stages are the capital gate's (0 Evidence, 1 Paper, 2 Live canary, 3
@@ -41,7 +44,7 @@ what each run showed are in
 ## Install and run
 
 ```bash
-pip install -e ../trading-core && pip install -e ".[dev]"
+pip install -e ../trading-core && pip install -e ../trading-solana && pip install -e ".[dev]"
 export PUMPFUN_RPC_URL="https://<your-rpc>/?api-key=<redacted>"
 cp configs/paper.example.json configs/paper.json
 ```
@@ -63,8 +66,8 @@ trading-pump replay --config configs/paper.json \
 | [docs/STRATEGY.md](docs/STRATEGY.md) | Both lanes: the rule, why, prices and costs, how they are judged |
 | [docs/STRATEGY-LEDGER.md](docs/STRATEGY-LEDGER.md) · [docs/LESSONS.md](docs/LESSONS.md) | Shared with every repository: every strategy tried on every venue and why it failed; every lesson learned |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every `module_settings` key |
-| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | The seven environment variables the module reads |
-| [docs/CLI.md](docs/CLI.md) | `trading-pump replay / record / env` and the trading-core commands |
+| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | The six environment variables the module reads |
+| [docs/CLI.md](docs/CLI.md) | `trading-pump replay / lane-rows / env` and the trading-core commands |
 | [docs/FEATURES.md](docs/FEATURES.md) | What is built, by FEAT ID |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the module meets trading-core's contract |
 | [docs/dev/README.md](docs/dev/README.md) | For developers: release gate, runbook, results, runs, TODO, bugs, tests |

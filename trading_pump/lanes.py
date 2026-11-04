@@ -17,12 +17,10 @@ is left in what it writes:
 * ``curve_poll`` of either: a :class:`~trading_core.lanes.market.Reading`,
   priced as the module prices a pool (:attr:`PoolReading.price`, SOL per
   whole token; a new pool's by its mint's recorded decimals), its
-  ``liquidity`` the SOL in the pool;
-* ``damm_pool`` (FEAT-107): a ``listing`` of the pool at its activation,
-  its creator the pool's; ``damm_state``: a reading, priced from the pool's
-  ``sqrt_price`` and the coin's decimals (``damm_decimals``) as the capture
-  prices it, its liquidity the SOL amount when the pool tracks it (0 when the
-  pool's liquidity is 0, a drained pool).
+  ``liquidity`` the SOL in the pool.
+
+Meteora DAMM v2 rows (FEAT-107's ``damm_*``) are trading-meteora's since
+0.5.0: its own ``lane-rows`` translates them.
 
 The captures hold no swaps by wallet and no holder snapshots, so no trade
 prints or holders are written. A row that holds market data but cannot be
@@ -30,11 +28,10 @@ translated is *skipped* and counted by reason (a reading of a coin whose
 listing is not in the capture, which the library would take for a new one;
 a reading before its listing; a coin whose decimals were not read; a price
 of 0, which the row format cannot carry); the other rows (``migration``,
-``observation_end``, ``damm_decimals``, ``damm_end``, other runs' rows) are
-*ignored*, counted by event.
+``observation_end``, other runs' rows) are *ignored*, counted by event.
 
-A capture is read twice: first for the listings and decimals (its parts may
-come in any order), then for the rows. The module's live market book uses
+A capture is read twice: first for the listings (its parts may come in any
+order), then for the rows. The module's live market book uses
 the same translator on its capture rows as they are written
 (``PumpModule.market_book``), so a lane sees the same records live as the
 sweep does on the capture.
@@ -60,23 +57,17 @@ from trading_core.lanes.market import (
 )
 from trading_core.replay import read_rows
 
-from trading_pump.damm import coin_price_sol, raw_price
-from trading_pump.market import LAMPORTS_PER_SOL, PoolReading
+from trading_pump.market import PoolReading
 from trading_pump.strategies.observation import (
     GRADUATION_SOURCE,
     NEW_POOL_SOURCE,
     OBSERVATION_START_EVENT,
 )
 
-DAMM_SOURCE = "damm"
-SOURCES = (GRADUATION_SOURCE, NEW_POOL_SOURCE, DAMM_SOURCE)
+SOURCES = (GRADUATION_SOURCE, NEW_POOL_SOURCE)
 KIND_GRADUATION = "graduation"
 KIND_LISTING = "listing"
 CURVE_POLL_EVENT = "curve_poll"
-DAMM_PREFIX = "damm_"
-DAMM_POOL_EVENT = "damm_pool"
-DAMM_DECIMALS_EVENT = "damm_decimals"
-DAMM_STATE_EVENT = "damm_state"
 # Pump.fun mints have 6 decimals; PoolReading prices every pool with them.
 PUMP_DECIMALS = 6
 # The default public key (all zero bytes): no coin creator set.
@@ -108,16 +99,12 @@ def _text(value: Any) -> str | None:
 
 
 def _source(row: Mapping[str, Any]) -> Any:
-    """``damm`` for a DAMM v2 row, else the row's own ``source``."""
-    if str(row.get("event") or "").startswith(DAMM_PREFIX):
-        return DAMM_SOURCE
     return row.get("source")
 
 
 def _instrument(row: Mapping[str, Any]) -> str | None:
-    """A DAMM v2 pool is its own instrument; a PumpSwap coin is its mint."""
-    key = "pool" if _source(row) == DAMM_SOURCE else "mint"
-    return _text(row.get(key))
+    """A PumpSwap coin's instrument is its mint."""
+    return _text(row.get("mint"))
 
 
 def _label(row: Mapping[str, Any]) -> str:
@@ -134,15 +121,6 @@ def _first_number(row: Mapping[str, Any], *keys: str) -> float | None:
     return None
 
 
-def _damm_liquidity(row: Mapping[str, Any], sol_is_a: bool) -> float | None:
-    """SOL in a DAMM v2 pool: 0 when its liquidity is 0, else its SOL
-    amount, ``None`` on a layout that does not track the amounts (0)."""
-    if _whole(row.get("liquidity")) == 0:
-        return 0.0
-    amount = _number(row.get("a_amount" if sol_is_a else "b_amount"))
-    return amount / LAMPORTS_PER_SOL if amount else None
-
-
 @dataclass
 class LaneRowStats:
     """Records written by kind, rows skipped by reason, rows ignored by event."""
@@ -154,12 +132,10 @@ class LaneRowStats:
 
 @dataclass
 class _Listed:
-    """An instrument's listing, its coin's decimals (``None``: unknown, or
-    read from ``damm_decimals``) and, for a DAMM v2 pool, its SOL side."""
+    """An instrument's listing and its coin's decimals (``None``: unknown)."""
 
     listing: Listing
     decimals: int | None = PUMP_DECIMALS
-    sol_is_a: bool = False
     written: bool = False
 
 
@@ -170,7 +146,6 @@ class _Context:
     instrument: str
     at: float
     decimals: int
-    sol_is_a: bool
 
 
 class LaneRows:
@@ -187,27 +162,17 @@ class LaneRows:
             )
         self.sources = chosen
         self.listed: dict[str, _Listed] = {}
-        self.decimals: dict[str, int] = {}
         self.stats = LaneRowStats()
         self._handlers: dict[str, Callable[[Mapping[str, Any]], list[Record]]] = {
             OBSERVATION_START_EVENT: self._listing,
-            DAMM_POOL_EVENT: self._listing,
             CURVE_POLL_EVENT: self._curve_reading,
-            DAMM_STATE_EVENT: self._damm_reading,
         }
 
-    # -- listings and decimals ---------------------------------------------------
+    # -- listings ----------------------------------------------------------------
     def learn(self, row: Mapping[str, Any]) -> None:
-        """Note an instrument's listing or decimals, if the row has them."""
-        if _source(row) not in self.sources:
-            return
-        event = row.get("event")
-        if event == OBSERVATION_START_EVENT:
+        """Note an instrument's listing, if the row has it."""
+        if _source(row) in self.sources and row.get("event") == OBSERVATION_START_EVENT:
             self._learn_start(row)
-        elif event == DAMM_POOL_EVENT:
-            self._learn_damm(row)
-        elif event == DAMM_DECIMALS_EVENT:
-            self._learn_decimals(row)
 
     def _learn_start(self, row: Mapping[str, Any]) -> None:
         mint = _text(row.get("mint"))
@@ -219,23 +184,6 @@ class LaneRows:
             listed = None if mint is None or at is None else _new_pool(row, mint, at)
         self._keep(listed)
 
-    def _learn_damm(self, row: Mapping[str, Any]) -> None:
-        pool = _text(row.get("pool"))
-        stamp = _number(row.get("timestamp"))
-        if pool is None or stamp is None:
-            return
-        at = stamp - (_number(row.get("age_seconds")) or 0.0)
-        listing = Listing(
-            pool, at, kind=KIND_LISTING, creator=_creator(row.get("creator"))
-        )
-        self._keep(_Listed(listing, None, sol_is_a=bool(row.get("sol_is_a"))))
-
-    def _learn_decimals(self, row: Mapping[str, Any]) -> None:
-        pool = _text(row.get("pool"))
-        decimals = _whole(row.get("decimals"))
-        if pool is not None and decimals is not None:
-            self.decimals[pool] = decimals
-
     def _keep(self, listed: _Listed | None) -> None:
         """Keep an instrument's earliest listing."""
         if listed is None:
@@ -245,16 +193,10 @@ class LaneRows:
         if known is None or listed.listing.at < known.listing.at:
             self.listed[key] = listed
 
-    def _decimals(self, key: str, listed: _Listed) -> int | None:
-        return (
-            listed.decimals if listed.decimals is not None else self.decimals.get(key)
-        )
-
     def forget(self, keep: Iterable[str]) -> None:
         """Drop what is known of every instrument not in ``keep``."""
         kept = set(keep)
         self.listed = {k: v for k, v in self.listed.items() if k in kept}
-        self.decimals = {k: v for k, v in self.decimals.items() if k in kept}
 
     # -- rows --------------------------------------------------------------------
     def translate(self, row: Mapping[str, Any]) -> list[Record]:
@@ -282,7 +224,7 @@ class LaneRows:
         if listed.written:
             self.stats.ignored[f"{_label(row)} (listed already)"] += 1
             return []
-        if self._decimals(key, listed) is None:
+        if listed.decimals is None:
             return self._skip(SKIP_NO_DECIMALS)
         listed.written = True
         return self._wrote(listed.listing)
@@ -296,12 +238,11 @@ class LaneRows:
         listed = self.listed.get(key)
         if listed is None:
             return SKIP_NO_LISTING
-        decimals = self._decimals(key, listed)
-        if decimals is None:
+        if listed.decimals is None:
             return SKIP_NO_DECIMALS
         if at < listed.listing.at:
             return SKIP_BEFORE_LISTING
-        return _Context(key, at, decimals, listed.sol_is_a)
+        return _Context(key, at, listed.decimals)
 
     def _reading(
         self, context: _Context, price: float | None, liquidity: float | None
@@ -324,18 +265,6 @@ class LaneRows:
         # PoolReading assumes Pump.fun's 6 decimals (FEAT-80 pools may differ).
         price = reading.price * 10 ** (context.decimals - PUMP_DECIMALS)
         return self._reading(context, price, reading.pool_sol)
-
-    def _damm_reading(self, row: Mapping[str, Any]) -> list[Record]:
-        context = self._context(row)
-        if isinstance(context, str):
-            return self._skip(context)
-        sqrt_price = _whole(row.get("sqrt_price"))
-        if sqrt_price is None:
-            return self._skip(SKIP_MALFORMED)
-        price = coin_price_sol(
-            raw_price(sqrt_price), context.sol_is_a, context.decimals
-        )
-        return self._reading(context, price, _damm_liquidity(row, context.sol_is_a))
 
 
 def _creator(value: Any) -> str | None:
@@ -398,7 +327,6 @@ def write_lane_rows(
 
 
 __all__ = [
-    "DAMM_SOURCE",
     "SOURCES",
     "LaneRowStats",
     "LaneRows",

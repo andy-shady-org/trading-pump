@@ -14,8 +14,9 @@ from spl.token.instructions import (
     get_associated_token_address,
 )
 from spl.token.models import CloseAccountParams
+from trading_solana.constants import GET_MULTIPLE_ACCOUNTS_LIMIT, WSOL_MINT_STR
+from trading_solana.transport import TransactionTransportMixin
 
-from .execution_types import GET_MULTIPLE_ACCOUNTS_LIMIT, WSOL_MINT_STR
 from .pumpswap import (
     PUMP_AMM_PROGRAM_ID,
     PumpSwapGlobalConfig,
@@ -30,7 +31,6 @@ from .pumpswap import (
     pumpswap_sell_quote,
     token_account_amount,
 )
-from .transport import TransactionTransportMixin
 
 # Accounts read per observed pool on a batched poll: the pool and its two vaults.
 POOL_ACCOUNTS_PER_MINT = 3

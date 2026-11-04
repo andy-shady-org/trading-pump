@@ -1,3 +1,16 @@
+"""Pump.fun curve maths and the execution client; Jito is trading-solana's."""
+
+from trading_solana.jito import (
+    DEFAULT_TIP_FLOOR_URL,
+    JITO_BLOCK_ENGINE_ENDPOINTS,
+    JITO_TIP_ACCOUNTS,
+    JitoBundle,
+    JitoBundleStatus,
+    JitoClient,
+    JitoTipConfig,
+    JitoTipFloor,
+)
+
 from .curve import (
     INITIAL_VIRTUAL_SOL_LAMPORTS,
     INITIAL_VIRTUAL_TOKEN_RAW,
@@ -12,17 +25,8 @@ from .curve import (
     calculate_spot_price,
 )
 from .execution import PumpFunExecutionClient
-from .jito import (
-    DEFAULT_TIP_FLOOR_URL,
-    JITO_BLOCK_ENGINE_ENDPOINTS,
-    JITO_TIP_ACCOUNTS,
-    JitoBundle,
-    JitoBundleStatus,
-    JitoClient,
-    JitoTipConfig,
-    JitoTipFloor,
-)
 
+# The Jito names are trading-solana's since 0.5.0, re-exported here as before.
 __all__ = [
     "DEFAULT_TIP_FLOOR_URL",
     "INITIAL_VIRTUAL_SOL_LAMPORTS",

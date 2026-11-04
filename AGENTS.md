@@ -22,9 +22,9 @@ You must automatically append a new rule to the **"Local Norms"** or **"Learning
 
 ## Local Norms
 pumpfun-trading's norms are kept (originals in `docs/archive/pumpfun-trading/AGENTS.md`), reworded where the code they named moved or was retired, and new ones added for the module.
-- **The Module Owns The Venue, The Core Owns The Run:** Solana, Pump.fun and PumpSwap knowledge lives here; sizing, risk, the breaker, exits, accounting, persistence, alerts and the dashboard are trading-core's. Never re-implement an engine concern in this package; if the contract cannot express something, change trading-core (with its own test and `TC-<n>` bug) and pin the version here.
+- **The Module Owns The Venue, The Core Owns The Run:** Pump.fun and PumpSwap knowledge lives here; the shared Solana plumbing (RPC pool, transport, Jito, costs, mint decoding, program feeds) is trading-solana's since 0.5.0; sizing, risk, the breaker, exits, accounting, persistence, alerts, the dashboard, the capture writer, the stream loop and the replay harness are trading-core's. Never re-implement an engine concern in this package; if the contract cannot express something, change trading-core (with its own test and `TC-<n>` bug) and pin the version here.
 - **Fail Closed, Never Guess:** a failed pool read makes the quote stale and the fill refused (`ExecutionRefused`); a missing balance raises (BUG-158); a drained pool is a result, not a gap. No fallback number (a default price, a placeholder market cap, a simulated balance) may reach a decision or a fill.
-- **Credentials In The Environment, Everything Else In Settings:** only the seven `MODULE_ENV_VARS` (`docs/ENVIRONMENT.md`) are read from the environment; every other choice is a validated `module_settings` key (`PumpSettings`, unknown keys are errors). Never read a new `PUMPFUN_*` variable without adding it to `MODULE_ENV_VARS` and the manual (the test checks both).
+- **Credentials In The Environment, Everything Else In Settings:** only the six `MODULE_ENV_VARS` (`docs/ENVIRONMENT.md`; seven until `PUMPFUN_JUPITER_API_KEY` was retired in 0.5.0) are read from the environment; every other choice is a validated `module_settings` key (`PumpSettings`, unknown keys are errors). Never read a new `PUMPFUN_*` variable without adding it to `MODULE_ENV_VARS` and the manual (the test checks both).
 - **Asynchronous Jito Bundle Polling:** Never block the event loop when waiting for Jito bundle statuses; always use non-blocking `asyncio` polling or websocket event confirmation.
 - **Micro-Lamport Compute Budget Management:** Every transaction builder must explicitly append a `SetComputeUnitPrice` and a tight, simulated `SetComputeUnitLimit` instruction to prevent transaction drops or wasted fee capital.
 - **Zero-Copy Alignment Checks:** Any structural or byte change to a decoder (`sdk/`, `streams/`) must match the program's real account layout; pin it to real mainnet account bytes in `tests/support/payloads.py`.
@@ -156,10 +156,11 @@ Every learning from pumpfun-trading is kept below, in its original words (so ent
 - **[OPS] A Cycle Count Is Not A Duration:** rc.11 and rc.11-tp20 ran `--max-cycles 259200` as "72 h" and stopped 50 and 54 minutes late, because each cycle took its period plus its work (trading-core TC-11). A run of a fixed length uses `trading-core run --run-for 72h` (or `--until`) on trading-core 0.4.0, and its record gives the planned end. *[Applies: here (runs).]*
 - **[DATA] File Order Is Not Time Order:** rotated capture parts sort as `capture.jsonl`, `.1.gz`, `.10.gz`, `.2.gz`, and PumpPortal re-reports some migrations hours later, so a reader that takes the first `observation_start` it meets listed 9 of rc.9's 1,131 coins at a later follow (2026-11-03, `lane-rows`). Read a capture's listings in a first pass and keep each coin's earliest; never let the order of the files decide a time. *[Applies: here.]*
 - **[CONTRACT] A Row Format Must Carry A Rug:** trading-core's library rows refuse a price of 0, so a drained pool cannot be written and a rug while held would vanish from a sweep instead of counting as a total loss (2026-11-03, FEAT-133). Count such rows as skipped, say so in the output, and raise it with trading-core rather than inventing a price. *[Applies: here and trading-core.]*
+- **[REPLAY] Move The Loop, Keep The Ticks:** FEAT-115 moved the replay loop to trading-core, whose `RowFeed` starts at the first row and ends one tick after the last; the pump replay started at the first migration (`migrated_at`) and ended at the last reading, so a `RowFeed` would have played other ticks and cycles and could move exits (2026-11-04). When a loop moves to a shared harness, keep the old start, end and tick (implement the harness's protocol if its helper differs) and diff the audit trail of a replay on both versions before calling it a pure move. *[Applies: here.]*
 
 ## Project Overview
 
-`trading-pump` (package `trading_pump`) is the Pump.fun / PumpSwap module for trading-core, registered as `pumpfun`. It continues pumpfun-trading: same git history and tags (to `v0.3.0rc8`), same bug and feature numbering. It follows every coin that graduates to PumpSwap, reads the pools on chain, runs two lanes in paper with every fee priced in (FEAT-76 `pumpswap_momentum` for standard graduations, FEAT-78 `pumpswap_instant` for instant ones, each with its own exits, FEAT-79), records a capture (and, with `new_pools` on, new non-graduate PumpSwap pools, FEAT-80), and replays captures through the real engine. Both lanes were judged NO-GO on rc.11 and closed on 2026-11-03 (`docs/dev/RESULTS.md` §6.21); live execution is refused (`docs/dev/RELEASE-GATE.md` §1). FEAT-107 (Meteora DAMM v2 capture) lives here until trading-meteora takes it (ADR-011).
+`trading-pump` (package `trading_pump`) is the Pump.fun / PumpSwap module for trading-core, registered as `pumpfun`. It continues pumpfun-trading: same git history and tags (to `v0.3.0rc8`), same bug and feature numbering. It follows every coin that graduates to PumpSwap, reads the pools on chain, runs two lanes in paper with every fee priced in (FEAT-76 `pumpswap_momentum` for standard graduations, FEAT-78 `pumpswap_instant` for instant ones, each with its own exits, FEAT-79), records a capture (and, with `new_pools` on, new non-graduate PumpSwap pools, FEAT-80), and replays captures through the real engine. Both lanes were judged NO-GO on rc.11 and closed on 2026-11-03 (`docs/dev/RESULTS.md` §6.21); live execution is refused (`docs/dev/RELEASE-GATE.md` §1). Since 0.5.0 (FEAT-115) it stands on trading-core `>=0.7.0,<0.8` and the trading-solana library `>=0.3.0,<0.4`; FEAT-107 (Meteora DAMM v2 capture) moved to trading-meteora (ADR-011) and the FEAT-65 slow-lane recorders were retired.
 
 ---
 
@@ -172,28 +173,23 @@ trading-pump/
 │   ├── market.py         # PoolReading, SwapFee, PumpSwap pool maths, RpcPoolSource
 │   ├── graduates.py      # GraduateTracker (FEAT-73): who is followed, readings, capture rows
 │   ├── feed.py           # MigrationFeed (PumpPortal subscribeMigration), PoolPoller
-│   ├── pools.py          # NewPoolFeed (RPC programSubscribe), NewPoolWatcher: new non-graduate pools (FEAT-80)
-│   ├── damm.py           # DammFeed (RPC programSubscribe on DAMM v2), DammWatcher: new Meteora DAMM v2 pools, record-only (FEAT-107)
+│   ├── pools.py          # NewPoolFeed (trading-solana's ProgramSubscribeFeed), NewPoolWatcher: new non-graduate pools (FEAT-80)
 │   ├── execution.py      # PaperExecutor (pool-priced fills, every cost), LiveExecutor (refuses)
-│   ├── replay.py         # capture playback through the engine (trading-pump replay)
+│   ├── replay.py         # what a capture's rows mean (GraduationFeed, capture pool sources) for trading-core's replay harness
 │   ├── lanes.py          # captures as trading-core's strategy library records (lane-rows, market_book)
-│   ├── recorder.py       # the capture file (core RotatedFileSink)
-│   ├── identifiers.py    # Solana public keys are public (core redaction)
 │   ├── api/              # Public Pump.fun REST API client
-│   ├── cli/              # trading-pump (record, replay, lane-rows, env) and trading-pump-recorder
+│   ├── cli/              # trading-pump (replay, lane-rows, env)
 │   ├── config/           # env.py (credentials only), settings.py (PumpSettings)
-│   ├── infra/            # Multi-provider RPC connection pool, latency routing, breaker, failover
-│   ├── sdk/              # Curve and PumpSwap maths, fee config, transaction builders, costs, Jito
-│   ├── services/         # Record-only research recorder (slow lane); the market recorder moved to trading-scout
+│   ├── sdk/              # Curve and PumpSwap maths, fee config, Pump.fun / PumpSwap transaction builders (on trading-solana's transport)
 │   ├── strategies/       # pumpswap_momentum (both lanes' pipeline), anti-rug screening, observations
-│   ├── streams/          # PumpPortal WebSocket host (reconnect, pings, key handling)
+│   ├── streams/          # PumpPortal's subscriptions and API-key handling (the loop is trading-core's)
 │   └── tests/            # 100% coverage; see docs/dev/TESTING.md
 │       ├── conftest.py   # environment isolation only
 │       ├── support/      # shared factories, fakes, payloads, constants
 │       ├── unit/         # 1:1 mirror of the source: unit/<pkg>/test_<module>.py
 │       ├── integration/  # the module on the real engine, end to end
 │       └── property/     # Hypothesis property tests (curve maths)
-├── configs/              # paper / capture examples, verdict rules, slow-lane token list
+├── configs/              # paper / capture examples, verdict rules
 └── docs/                 # user and developer docs; archive/pumpfun-trading/ is pumpbot's, frozen
 ```
 
@@ -209,8 +205,8 @@ trading-pump/
 * [**`docs/LESSONS.md`**](docs/LESSONS.md): Shared: every lesson from every repository's learnings log, by theme.
 * [**`docs/STRATEGY.md`**](docs/STRATEGY.md): Both lanes (FEAT-76, FEAT-78), their evidence, prices and costs, and how they are judged.
 * [**`docs/CONFIGURATION.md`**](docs/CONFIGURATION.md): Every `module_settings` key, and the pumpbot key map.
-* [**`docs/ENVIRONMENT.md`**](docs/ENVIRONMENT.md): The seven variables read, and what replaced the rest (checked by a test).
-* [**`docs/CLI.md`**](docs/CLI.md): `trading-pump record / replay / lane-rows / env` and the trading-core commands used with them.
+* [**`docs/ENVIRONMENT.md`**](docs/ENVIRONMENT.md): The six variables read, and what replaced the rest (checked by a test).
+* [**`docs/CLI.md`**](docs/CLI.md): `trading-pump replay / lane-rows / env` (`record` retired in 0.5.0) and the trading-core commands used with them.
 * [**`docs/FEATURES.md`**](docs/FEATURES.md): Shipped features, and what became of each pumpfun-trading feature.
 * [**`docs/ARCHITECTURE.md`**](docs/ARCHITECTURE.md): How the module meets trading-core's contract; data flow; layout.
 * [**`docs/archive/pumpfun-trading/`**](docs/archive/pumpfun-trading/INDEX.md): pumpfun-trading's documents as of v0.3.0rc8, unchanged.
@@ -238,7 +234,7 @@ Laid out as trading-core's `docs/dev/DOCUMENTATION.md` §2.3 asks.
 
 1. **Modular Boundaries**:
    - One Python package (`trading_pump`), no `src/` layout.
-   - Streaming and decoding stay in `streams/`; on-chain maths, transactions and Jito in `sdk/`; strategy decisions and screening in `strategies/`; CLI handlers in `cli/` delegate to library functions.
+   - PumpPortal's stream stays in `streams/`; Pump.fun / PumpSwap maths and transactions in `sdk/`; the shared Solana plumbing is trading-solana's (change it there, with its own test, and pin the version here); strategy decisions and screening in `strategies/`; CLI handlers in `cli/` delegate to library functions.
    - The module renders nothing and owns no risk: it answers trading-core through `PumpModule`.
 
 2. **Security & Key Management**:
@@ -264,7 +260,6 @@ Laid out as trading-core's `docs/dev/DOCUMENTATION.md` §2.3 asks.
 * `trading-core-audit pnl / cuts / verdict`, `trading-core-events`: read a run.
 * `trading-pump replay --config F --capture C... --out DIR`: replay captures through the engine.
 * `trading-pump lane-rows --capture C... --out FILE`: a capture as trading-core's strategy library rows, for `trading-core-lanes sweep`.
-* `trading-pump record --jupiter-quotes | --backfill-bars` (also `trading-pump-recorder`): research recorders (`--market` moved to trading-scout).
 * `trading-pump env`: which variables are set (names only).
 
 ---
@@ -283,6 +278,7 @@ Laid out as trading-core's `docs/dev/DOCUMENTATION.md` §2.3 asks.
 
 ```bash
 pip install -e ../trading-core
+pip install -e ../trading-solana
 pip install -e ".[dev]"
 
 nox -s lint

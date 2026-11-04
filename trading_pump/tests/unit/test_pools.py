@@ -23,12 +23,12 @@ from trading_pump.pools import (
     NewPoolFeed,
     NewPoolWatcher,
     is_canonical,
-    pool_notice,
     sol_side,
 )
 from trading_pump.sdk.pumpswap import (
     POOL_BASE_MINT_OFFSET,
     POOL_QUOTE_MINT_OFFSET,
+    PUMP_AMM_PROGRAM_ID,
     decode_pool,
 )
 from trading_pump.tests.support.constants import SAMPLE_MINT, WSOL_MINT
@@ -63,20 +63,6 @@ def _notice(address: str, raw: bytes = POOL_BYTES, slot: int = 7) -> dict[str, A
             "subscription": 1,
         },
     }
-
-
-@pytest.mark.parametrize(
-    ("data", "expected"),
-    [
-        (_notice(OTHER_POOL), (OTHER_POOL, POOL_BYTES, 7)),
-        ({"jsonrpc": "2.0", "result": 123, "id": 1}, None),
-        ({"method": "programNotification", "params": {}}, None),
-        ({"method": "programNotification", "params": {"result": "x"}}, None),
-        ("text", None),
-    ],
-)
-def test_pool_notice(data: Any, expected: Any) -> None:
-    assert pool_notice(data) == expected
 
 
 def test_canonical_pools_are_told_apart() -> None:
@@ -124,9 +110,22 @@ async def test_the_feed_remembers_warm_up_pools_and_passes_on_later_new_ones() -
     await feed.on_stream_message({"result": 1, "id": 1}, ws)  # confirmation
 
     assert ws.sent == list(POOL_SUBSCRIPTIONS)
-    assert [m["params"][1]["filters"] for m in ws.sent] == [
-        [{"dataSize": 301}],
-        [{"dataSize": 287}],
+    # v0.4.0's two programSubscribe requests, unchanged on trading-solana.
+    assert ws.sent == [
+        {
+            "jsonrpc": "2.0",
+            "id": index,
+            "method": "programSubscribe",
+            "params": [
+                PUMP_AMM_PROGRAM_ID,
+                {
+                    "encoding": "base64",
+                    "commitment": "confirmed",
+                    "filters": [{"dataSize": size}],
+                },
+            ],
+        }
+        for index, size in ((1, 301), (2, 287))
     ]
     assert pools == [(OTHER_POOL, 10)]
     assert feed.connected and states == [(True, "")]
@@ -186,7 +185,7 @@ async def test_the_feed_runs_the_shared_websocket_loop(
     async def fake_run(host: Any) -> None:
         ran.append(host)
 
-    monkeypatch.setattr("trading_pump.pools.run_websocket_stream", fake_run)
+    monkeypatch.setattr("trading_solana.program_feed.run_websocket_stream", fake_run)
     await feed.run()
     assert ran == [feed]
 

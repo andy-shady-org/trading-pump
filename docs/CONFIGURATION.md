@@ -44,7 +44,7 @@ PumpSwap pool, record-only, whether or not the lane trades it.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | `false` follows no graduate and leaves the PumpPortal feed and the pool poller off: for a run that records only `damm_pools` (every lane and `new_pools` must then be off). |
+| `enabled` | `true` | `false` follows no graduate and leaves the PumpPortal feed and the pool poller off (every lane and `new_pools` must then be off). It was added for the `damm_pools` capture (FEAT-107), which left in 0.5.0. |
 | `observation_seconds` | `14400` | How long each pool is followed after its migration (4 h). |
 | `max_mints` | `500` | Pools followed at once. A full list never evicts: a new graduate is skipped (`list_full` in the stats) so every observation runs its course. |
 | `fast_seconds` | `300` | The first part of each observation, read faster. |
@@ -130,25 +130,14 @@ provider's WebSocket pricing before a long run. Lookups are about one
 `getSignaturesForAddress` and one `getMultipleAccounts` per pool seen for
 the first time after the warm-up.
 
-## `damm_pools`: new Meteora DAMM v2 pools (FEAT-107)
+## `damm_pools`: removed in 0.5.0 (FEAT-107)
 
-Record-only and off by default ([FEATURES.md §2.2](FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only)).
-
-| Key | Default | Meaning |
-|---|---|---|
-| `enabled` | `false` | Subscribe to the DAMM v2 program's pool accounts and record the new SOL pools. |
-| `ws_url` | `wss://api.mainnet-beta.solana.com` | The WebSocket to subscribe on. It must carry no key (settings are hashed into the run's provenance): for a keyed endpoint use `use_rpc_ws_url`. |
-| `use_rpc_ws_url` | `false` | Subscribe on `PUMPFUN_RPC_WS_URL` (or the RPC URL with `wss://`) instead of `ws_url`. |
-| `max_age_seconds` | `300` | A pool is new when its activation point is at most this old ... |
-| `max_future_seconds` | `3600` | ... or at most this far ahead (a scheduled launch). |
-| `follow_seconds` | `14400` | How long each pool is followed (4 h). |
-| `max_followed` | `2000` | Pools followed at once; a pool found while the list is full is counted (`list_full`) and looked at again on its next write. |
-| `heartbeat_seconds` | `30` | Every followed pool is also read over RPC this often (`getMultipleAccounts`, 100 a call), so a quiet pool has a time grid and a closed one is seen. |
-| `idle_timeout_seconds` | `60` | Reconnect when the stream is silent this long (it carries every DAMM v2 swap). |
-
-The stream carries about 69 kB a second (about 6 GB a day), free on the
-public RPC; on a provider, check its WebSocket pricing first (Helius bills
-streamed data, [`docs/dev/COSTS.md`](dev/COSTS.md)).
+The Meteora DAMM v2 capture moved to trading-meteora
+([FEATURES.md §2.2](FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only)).
+A settings file that still has `damm_pools` is refused (`Unknown
+module_settings keys: damm_pools`): remove the section, or run the capture
+with trading-meteora. Its keys as of `v0.4.0` are in this page's history at
+that tag.
 
 ## `execution`: paper fills and modelled costs
 

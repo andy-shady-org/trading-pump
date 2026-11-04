@@ -1,6 +1,10 @@
 """Pump.fun execution client composed from the Pump.fun, PumpSwap and transport mixins.
 
-Every name historically importable from this module is re-exported here.
+The transport and the client core (wallet, RPC pool, account reads, Jito,
+costs) are trading-solana's since 0.5.0 (``trading_solana.transport``,
+``trading_solana.client``); the Pump.fun and PumpSwap mixins are this
+package's. Every name historically importable from this module is
+re-exported here, the shared ones from trading-solana.
 """
 
 import asyncio
@@ -24,16 +28,33 @@ from spl.token.instructions import (
     sync_native,
 )
 from spl.token.models import CloseAccountParams, SyncNativeParams
-
-from trading_pump.infra.rpc_pool import (
-    RpcConnectionPool,
+from trading_solana.constants import (
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+    COMPUTE_BUDGET_PROGRAM_ID,
+    GET_MULTIPLE_ACCOUNTS_LIMIT,
+    RENT_PROGRAM_ID,
+    SYSTEM_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID_STR,
+    TOKEN_PROGRAM_ID_STR,
+    WSOL_MINT_STR,
+    TokenBalanceUnavailableError,
+    TokenProgramUnavailableError,
 )
-
-from .costs import (
+from trading_solana.costs import (
     TransactionCosts,
     model_transaction_costs,
     parse_transaction_costs,
 )
+from trading_solana.jito import (
+    JITO_BLOCK_ENGINE_ENDPOINTS,
+    JITO_TIP_ACCOUNTS,
+    JitoClient,
+    JitoTipConfig,
+)
+from trading_solana.rpc_pool import (
+    RpcConnectionPool,
+)
+
 from .curve import (
     calculate_buy_execution_slippage,
     calculate_buy_price_impact,
@@ -46,41 +67,25 @@ from .curve import (
     curve_reserve_anomaly,
 )
 from .execution_types import (
-    ASSOCIATED_TOKEN_PROGRAM_ID,
     BUY_DISCRIMINATOR,
     BUY_V2_DISCRIMINATOR,
     BUYBACK_FEE_RECIPIENT,
-    COMPUTE_BUDGET_PROGRAM_ID,
     EVENT_AUTHORITY,
     FEE_CONFIG_KEY,
     FEE_RECIPIENT,
-    GET_MULTIPLE_ACCOUNTS_LIMIT,
     GLOBAL_STATE,
     MAYHEM_FEE_RECIPIENT,
     PUMP_DEFAULT_FEE_BPS,
     PUMP_FEE_PROGRAM_ID,
     PUMP_PROGRAM_ID,
-    RENT_PROGRAM_ID,
     SELL_DISCRIMINATOR,
     SELL_V2_DISCRIMINATOR,
-    SYSTEM_PROGRAM_ID,
-    TOKEN_2022_PROGRAM_ID_STR,
-    TOKEN_PROGRAM_ID_STR,
-    WSOL_MINT_STR,
     CurveAccountMissingError,
     CurveCompleteError,
     CurveStateUnavailableError,
     MayhemModeCurveError,
     NonStandardCurveError,
     NotPumpFunCurveError,
-    TokenBalanceUnavailableError,
-    TokenProgramUnavailableError,
-)
-from .jito import (
-    JITO_BLOCK_ENGINE_ENDPOINTS,
-    JITO_TIP_ACCOUNTS,
-    JitoClient,
-    JitoTipConfig,
 )
 from .pumpfun_execution import PumpFunCurveMixin
 from .pumpswap import PumpSwapPoolUnavailableError
@@ -164,3 +169,5 @@ class PumpFunExecutionClient(PumpFunCurveMixin, PumpSwapExecutionMixin):
     """Build and broadcast real Pump.fun transactions using the program instruction
     pattern.
     """
+
+    pump_fee_bps: int = PUMP_DEFAULT_FEE_BPS

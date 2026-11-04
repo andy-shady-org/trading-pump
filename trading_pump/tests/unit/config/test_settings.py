@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 from trading_core.strategy.exits import ExitRules
 
 from trading_pump.config.settings import (
     GRADUATION_MARKET_CAP_SOL,
     CaptureSettings,
-    DammSettings,
     ExecutionSettings,
     GraduationSettings,
     InstantLaneSettings,
@@ -136,12 +132,6 @@ def test_module_settings_must_be_an_object() -> None:
         (NewPoolSettings, {"warmup_seconds": -1}, "warmup_seconds must not be"),
         (NewPoolSettings, {"max_lookups": 0}, "max_lookups must be positive"),
         (NewPoolSettings, {"signature_limit": 1001}, "within 1..1000"),
-        (DammSettings, {"max_age_seconds": 0}, "max_age_seconds must be positive"),
-        (DammSettings, {"max_followed": 0}, "max_followed must be positive"),
-        (DammSettings, {"max_future_seconds": -1}, "must not be negative"),
-        (DammSettings, {"ws_url": "https://rpc.example"}, "ws:// or wss:// URL"),
-        (DammSettings, {"ws_url": "wss://rpc.example/?api-key=x"}, "must carry no key"),
-        (DammSettings, {"ws_url": "wss://user:pw@rpc.example"}, "must carry no key"),
     ],
 )
 def test_each_section_validates_its_values(
@@ -223,20 +213,14 @@ def test_the_new_pool_capture_is_off_by_default_and_read_from_its_section() -> N
         PumpSettings.from_mapping({"new_pools": {"speed": 1}})
 
 
-def test_the_damm_capture_is_off_by_default_and_read_from_its_section() -> None:
-    assert PumpSettings().damm_pools == DammSettings()
-    assert not DammSettings().enabled
-    assert DammSettings().ws_url == "wss://api.mainnet-beta.solana.com"
+def test_the_damm_capture_left_with_feat_107_so_its_key_is_unknown() -> None:
+    # FEAT-107 is trading-meteora's since 0.5.0 (CHANGELOG, Upgrading).
+    with pytest.raises(ValueError, match="Unknown module_settings keys: damm_pools"):
+        PumpSettings.from_mapping({"damm_pools": {"enabled": False}})
     settings = PumpSettings.from_mapping(
-        {
-            "graduation": {"enabled": False},
-            "lane": {"enabled": False},
-            "damm_pools": {"enabled": True, "ws_url": "ws://localhost:8900"},
-        }
+        {"graduation": {"enabled": False}, "lane": {"enabled": False}}
     )
-    assert settings.damm_pools.enabled and not settings.graduation.enabled
-    with pytest.raises(ValueError, match="Unknown damm_pools keys: speed"):
-        PumpSettings.from_mapping({"damm_pools": {"speed": 1}})
+    assert not settings.graduation.enabled and settings.enabled_lanes() == []
 
 
 def test_graduation_off_needs_every_lane_and_the_new_pools_off() -> None:
@@ -250,12 +234,3 @@ def test_graduation_off_needs_every_lane_and_the_new_pools_off() -> None:
                 "new_pools": {"enabled": True},
             }
         )
-
-
-def test_the_damm_example_config_is_a_valid_record_only_run() -> None:
-    config = Path(__file__).parents[4] / "configs" / "damm.example.json"
-    settings = PumpSettings.from_mapping(
-        json.loads(config.read_text())["module_settings"]
-    )
-    assert settings.damm_pools.enabled and not settings.graduation.enabled
-    assert settings.enabled_lanes() == []

@@ -155,11 +155,13 @@ def test_env_lists_names_and_states_never_values(
     assert "unset" in text
 
 
-def test_record_is_delegated(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[Any] = []
-    monkeypatch.setattr(main_cli, "run_record_cli", seen.append)
-    assert main_cli.main(["record", "--market"]) == main_cli.EXIT_OK
-    assert seen[0].market is True
+def test_the_retired_record_command_is_gone(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The FEAT-65 slow-lane recorders were retired in 0.5.0 (CHANGELOG).
+    with pytest.raises(SystemExit):
+        main_cli.main(["record", "--jupiter-quotes"])
+    assert "invalid choice: 'record'" in capsys.readouterr().err
 
 
 def test_a_command_is_required(capsys: pytest.CaptureFixture[str]) -> None:

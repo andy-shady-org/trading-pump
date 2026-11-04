@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from trading_core.module.base import ExecutionRefused, OrderRequest, Side
+from trading_solana.costs import TOKEN_ACCOUNT_RENT_LAMPORTS
 
 from trading_pump.config.settings import ExecutionSettings
 from trading_pump.execution import (
@@ -15,7 +16,6 @@ from trading_pump.execution import (
     LiveExecutor,
     PaperExecutor,
 )
-from trading_pump.sdk.costs import TOKEN_ACCOUNT_RENT_LAMPORTS
 from trading_pump.tests.support.constants import SAMPLE_MINT
 from trading_pump.tests.support.factories import (
     GRADUATION_BASE_RESERVE,

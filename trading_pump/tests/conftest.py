@@ -139,8 +139,9 @@ def instant_retry_backoff(
     if getattr(request.module, "USES_REAL_RETRY_BACKOFF", False):
         return
 
+    from trading_solana import rpc_pool
+
     from trading_pump.api import client as api_client
-    from trading_pump.infra import rpc_pool
 
     # Both backoffs are awaited inline in ``request``; other sleeps in these
     # modules (the pool's health-loop interval) keep their real value.

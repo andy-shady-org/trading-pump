@@ -21,7 +21,7 @@ where to find it. The list as it stood is archived unchanged:
 
 | When | Work | Where |
 |---|---|---|
-| **Now** | `v0.5.0` (FEAT-115, trading-core ADR-010, this repository's ADR-011): onto trading-solana `0.3.0` and trading-core `v0.7.0`, FEAT-107 removed (trading-meteora records DAMM v2 pools), the FEAT-65 slow lane retired. `damm-1` (FEAT-107, record-only, on `v0.4.0`) runs until 2026-11-06 11:20 UTC; its read-out is trading-meteora's. The PumpSwap lanes are closed (rc.11 NO-GO; nothing passes pump-12's design gate, so **pump-12 is not run**) | [Module and tooling](#module-and-tooling), [RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
+| **Now** | Tag `v0.5.0` (FEAT-115, built on `release/v0.5.0`, [DONE.md](DONE.md#release-v050-onto-trading-solana-and-trading-core-070-feat-115)): its release gate, with the replay of rc.11's capture on `v0.4.0` and `0.5.0` to the same positions and net ([`RELEASE-GATE.md` §1](RELEASE-GATE.md#1-current-status)). `damm-1` (FEAT-107, record-only, on `v0.4.0`) runs until 2026-11-06 11:20 UTC; its read-out is trading-meteora's. The PumpSwap lanes are closed (rc.11 NO-GO; nothing passes pump-12's design gate, so **pump-12 is not run**) | [Module and tooling](#module-and-tooling), [RESULTS §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
 | **Next** | Close the migration: a capture that replays to its run's positions, the runtime data moved, pumpfun-trading archived | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
 | **Then** | Only if a PumpSwap lane is reopened with a new design that passes on new data: the PumpSwap buy builder, `LiveExecutor`, reconcile, one live round trip, then Stage 2 (live canary) | [Live gate](#live-gate-for-the-pumpswap-lane) |
 | **Later** | Research read-outs (pools-1's new pools, graduation paths); a second migration source (FEAT-77); a second venue only with evidence (the slow lane was NO-GO, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |
@@ -58,7 +58,7 @@ Only after a lane's Stage 1 (paper) verdict is GO. The staged gate is
 §4.2.
 
 - [ ] PumpSwap buy builder (`sdk/pumpswap_execution.py`) checked against real mainnet transactions, as the sell was (BUG-123): account order, the fee recipients, the creator vault, Token-2022; pinned to real account bytes in tests
-- [ ] `LiveExecutor` (with FEAT-99, Jito bundles): build, send (Jito or RPC), confirm, and return the `Fill` with costs from the transaction meta (`sdk/costs.py`); refuse wherever the paper fill refuses; never a fallback price
+- [ ] `LiveExecutor` (with FEAT-99, Jito bundles): build, send (Jito or RPC), confirm, and return the `Fill` with costs from the transaction meta (trading-solana's `costs`, `sdk/costs.py` until 0.5.0); refuse wherever the paper fill refuses; never a fallback price
 - [ ] One live PumpSwap sell at the smallest size before any lane relies on it with real capital (carried from Sprint 24H: the sell instruction is pinned to mainnet accounts, but no transaction from this code has landed)
 - [ ] Port `reconcile` (pumpbot's `bot/reconcile.py`, `pumpfun-audit reconcile`) as the module's implementation of trading-core's reconciliation contract (trading-core TODO): on-chain Δ SOL against the audit trail's realized PnL, every full exit showing a negative rent cost (carried from Sprint 24B, *partly done read-only*: the cost parser reads rent refund, fee and priority fee correctly on third-party sells)
 - [ ] One live round trip at the smallest size, reconciled
@@ -82,9 +82,7 @@ Done (2026-10-31): (b) measured for 15 minutes on the public RPC: `programSubscr
 - [ ] If one is cheap enough: a second migration source in `feed.py` behind the same tracker (de-duplicated by mint), with its own degraded condition, so a PumpPortal outage stops neither the follow list nor the capture. Geyser / Yellowstone (paid, lower latency) stays out unless live fills show latency costs entries (FEAT-39)
 
 ### Meteora DAMM v2 new pools (FEAT-107)
-From trading-scout's scout-1 read-out (2026-11-02): the lead group, re-read without look-ahead ([`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md)).
-- `damm-1` runs on `v0.4.0` since 2026-11-03 11:20 UTC, 72 h ([`runs/damm-1.md`](runs/damm-1.md)); trading-meteora `v0.1.0` (FEAT-113) records the same pools and does its read-out
-- [ ] **Move FEAT-107 to trading-meteora** in `v0.5.0` (ADR-011; trading-core FEAT-113): the read-out of `damm-1` is done there
+Moved to trading-meteora in `0.5.0` ([DONE.md](DONE.md#release-v050-onto-trading-solana-and-trading-core-070-feat-115)); `damm-1` runs on `v0.4.0` until 2026-11-06 and its read-out is trading-meteora's.
 
 ### New PumpSwap pools that are not graduations (FEAT-80)
 Closed 2026-11-03: pools-1 found no edge (DONE.md). Built record-only ([FEATURES.md §2.1](../FEATURES.md#21-new-pumpswap-pools-that-are-not-graduations-feat-80-record-only)).
@@ -94,7 +92,7 @@ Not this repository's: the recorder and every open item it had moved to **tradin
 
 ## Module and tooling
 
-- [ ] **FEAT-115, `0.5.0`** (trading-core ADR-010, `docs/dev/REPOSITORIES.md` there): onto trading-solana `0.3.0` (FEAT-112) and trading-core `v0.7.0` (FEAT-110, FEAT-111, the strategy library: `trading-core>=0.7.0,<0.8`, which `lanes.py`, `lane-rows` and `market_book` need since the strategy library); FEAT-107 removed (moved to trading-meteora); FEAT-65's slow lane retired; the release gate replays rc.11's capture to the same positions and net as `v0.4.0`
+Done: FEAT-115, `0.5.0` ([DONE.md](DONE.md#release-v050-onto-trading-solana-and-trading-core-070-feat-115)); its release gate is the Now row above.
 - [ ] Status rows: per-endpoint RPC latency and breaker state, Jito bundle status once live (carried from "Terminal dashboard" in the archived roadmap; the dashboard itself is trading-core's)
 - [ ] A `trading-pump capture-summary` (or `trading-core-audit` filter) for graduation captures: graduates, standard share, readings per graduate, observation causes; today the read-out uses scripts and `jq`
 

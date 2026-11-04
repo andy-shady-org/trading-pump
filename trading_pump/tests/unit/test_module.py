@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,8 @@ from trading_core.module.base import (
 )
 from trading_core.positions import Position
 
+import trading_pump
 from trading_pump.config.env import Credentials, load_credentials
-from trading_pump.damm import CONDITION_DAMM_FEED
 from trading_pump.feed import CONDITION_FEED, CONDITION_RPC
 from trading_pump.lanes import SKIP_NO_LISTING
 from trading_pump.module import PUMP_QUOTE, PumpModule, QuoteUnavailable
@@ -71,6 +72,12 @@ def test_identity_and_quote_asset() -> None:
     assert module.format_price(None) == "-" and module.format_price(0) == "-"
     assert module.is_public_identifier(SAMPLE_PUMP_MINT)
     assert not module.is_public_identifier("deadbeef" * 5)
+
+
+def test_the_version_is_pyprojects() -> None:
+    pyproject = Path(__file__).parents[3] / "pyproject.toml"
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+    assert PumpModule.version == trading_pump.__version__ == declared["version"]
 
 
 def test_events_show_the_name_and_the_instrument_column_the_mint() -> None:
@@ -421,7 +428,7 @@ class _GenesisPool:
     """An RPC pool whose endpoints report the given genesis hashes."""
 
     def __init__(self, hashes: dict[str, str | None]) -> None:
-        from trading_pump.infra.rpc_pool import RpcEndpoint
+        from trading_solana.rpc_pool import RpcEndpoint
 
         self.hashes = hashes
         self.endpoints = [RpcEndpoint(url) for url in hashes]
@@ -440,7 +447,7 @@ DEVNET = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 
 @pytest.mark.regression("BUG-160")
 async def test_an_endpoint_on_devnet_is_dropped_while_a_mainnet_one_is_left() -> None:
-    from trading_pump.infra.rpc_pool import MAINNET_GENESIS_HASH
+    from trading_solana.rpc_pool import MAINNET_GENESIS_HASH
 
     module, _, _, host = _module()
     pool = _GenesisPool(
@@ -473,7 +480,7 @@ async def test_only_wrong_networks_keep_the_endpoints_and_report_degraded() -> N
 
 
 async def test_an_unconfirmed_endpoint_is_kept_and_mainnet_alone_is_quiet() -> None:
-    from trading_pump.infra.rpc_pool import MAINNET_GENESIS_HASH
+    from trading_solana.rpc_pool import MAINNET_GENESIS_HASH
 
     module, _, _, host = _module()
     module.client = type(
@@ -635,14 +642,13 @@ def test_new_pool_rows_status_and_provenance(tmp_path: Path) -> None:
     assert "New pools" not in dict(off.status_rows())
 
 
-async def test_the_damm_capture_runs_alone_when_graduation_is_off() -> None:
+async def test_graduation_off_starts_no_feed_and_says_so() -> None:
     module = PumpModule(
         source=FakePoolSource(),
         credentials=Credentials(),
         capture={"path": None},
         graduation={"enabled": False},
         lane={"enabled": False},
-        damm_pools={"enabled": True},
     )
     started: list[str] = []
 
@@ -651,60 +657,10 @@ async def test_the_damm_capture_runs_alone_when_graduation_is_off() -> None:
         await asyncio.sleep(3600)
 
     module.feed.run = lambda: run_forever("feed")
-    module.damm_feed.run = lambda: run_forever("damm")
     await module.start()
     await asyncio.sleep(0)
-    assert started == ["damm"] and len(module._tasks) == 2
-    assert module.damm_feed.stream_url == "wss://api.mainnet-beta.solana.com"
-    assert module.damm_feed.stream_connect_url() == module.damm_feed.stream_url
-    assert module.damm_watcher.read_accounts is None  # no client: no reads
-    await module.stop()
-    assert module._tasks == [] and module.damm_feed.stream_stop_requested()
-
-
-def test_damm_rows_status_provenance_and_market_data() -> None:
-    module, _, _, host = _module(
-        graduation={"enabled": False},
-        lane={"enabled": False},
-        damm_pools={"enabled": True},
-    )
+    assert started == [] and module._tasks == []
     rows = dict(module.status_rows())
     assert rows["Graduates"] == "off (graduation.enabled is false)"
     assert "PumpPortal" not in rows
-    assert rows["DAMM v2"] == "disconnected · 0 followed · 0 found · 0 writes"
-    assert module.provenance()["damm_pools"]["enabled"] is True
-    module._damm_feed_state(False, "connection closed")
-    assert host.degraded[CONDITION_DAMM_FEED] == "connection closed"
-    module._market_data()
-    assert host.market_data == 1
-    module.bind(None)  # type: ignore[arg-type]
-    module._damm_feed_state(True, "")
-    module._market_data()
-    off, *_ = _module()
-    assert "DAMM v2" not in dict(off.status_rows())
-
-
-async def test_damm_on_the_provider_websocket_reads_through_the_client() -> None:
-    class Client:
-        def __init__(self) -> None:
-            self.calls: list[tuple[list[str], float]] = []
-
-        async def _get_accounts(
-            self, addresses: list[str], *, timeout_seconds: float
-        ) -> list[Any]:
-            self.calls.append((addresses, timeout_seconds))
-            return [None for _ in addresses]
-
-    client = Client()
-    module = PumpModule(
-        source=FakePoolSource(),
-        client=client,
-        credentials=Credentials(rpc_urls=("https://rpc.example/?api-key=SECRET",)),
-        capture={"path": None},
-        damm_pools={"enabled": True, "use_rpc_ws_url": True},
-    )
-    assert module.damm_feed.stream_url == "wss://rpc.example"
-    assert module.damm_feed.stream_connect_url().endswith("api-key=SECRET")
-    assert module.damm_watcher.read_accounts is not None
-    assert await module.damm_watcher.read_accounts(["a", "b"]) == [None, None]
-    assert client.calls == [(["a", "b"], 10.0)]
+    await module.stop()

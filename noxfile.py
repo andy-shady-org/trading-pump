@@ -1,10 +1,11 @@
 """Quality gates for trading-pump (docs/dev/TESTING.md).
 
 Tests run on every supported interpreter (``requires-python = ">=3.11"``);
-tooling sessions run once, on the newest. trading-core is private, so every
-session installs it first from ``TRADING_CORE_SOURCE``: a local checkout path
-(default ``../trading-core``) or any pip requirement such as
-``git+ssh://git@github.com/andy-shady-org/trading-core.git@main``.
+tooling sessions run once, on the newest. trading-core and trading-solana are
+private, so every session installs them first, from ``TRADING_CORE_SOURCE``
+and ``TRADING_SOLANA_SOURCE``: a local checkout path (default
+``../trading-core`` and ``../trading-solana``) or any pip requirement such as
+``git+ssh://git@github.com/andy-shady-org/trading-core.git@v0.7.0``.
 """
 
 import os
@@ -18,12 +19,17 @@ TOOLING_PYTHON = "3.14"
 nox.options.sessions = ["lint", "mypy", "tests"]
 
 
-def _install(session):
-    source = os.environ.get("TRADING_CORE_SOURCE", "../trading-core")
+def _install_private(session, variable, default):
+    source = os.environ.get(variable, default)
     if Path(source).is_dir():
         session.install(str(Path(source).resolve()))
     else:
         session.install(source)
+
+
+def _install(session):
+    _install_private(session, "TRADING_CORE_SOURCE", "../trading-core")
+    _install_private(session, "TRADING_SOLANA_SOURCE", "../trading-solana")
     session.install("-e", ".[dev]")
 
 

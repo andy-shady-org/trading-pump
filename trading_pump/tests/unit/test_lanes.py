@@ -1,13 +1,11 @@
 """Unit tests for ``lanes.py``: captures as the strategy library's records.
 
-The capture rows come from the module's own writers (``GraduateTracker``
-for graduates and new pools, ``DammWatcher`` on a mainnet DAMM v2 pool
-account), so the tests read exactly what a run writes.
+The capture rows come from the module's own writer (``GraduateTracker``
+for graduates and new pools), so the tests read exactly what a run writes.
 """
 
 from __future__ import annotations
 
-import base64
 import gzip
 import json
 from pathlib import Path
@@ -17,11 +15,9 @@ import pytest
 from trading_core.lanes.market import Listing, Reading, parse_row
 from trading_core.lanes.sweep import load_capture
 
-from trading_pump.config.settings import DammSettings, GraduationSettings
-from trading_pump.damm import DammWatcher, decode_damm_pool, sol_per_coin
+from trading_pump.config.settings import GraduationSettings
 from trading_pump.graduates import GraduateTracker
 from trading_pump.lanes import (
-    DAMM_SOURCE,
     NO_CREATOR,
     SKIP_BEFORE_LISTING,
     SKIP_MALFORMED,
@@ -34,10 +30,7 @@ from trading_pump.lanes import (
 )
 from trading_pump.tests.support.constants import SAMPLE_MINT, SAMPLE_PUMP_MINT
 from trading_pump.tests.support.factories import make_reading
-from trading_pump.tests.support.payloads import DAMM_POOL, DAMM_POOL_B64
 
-DAMM_RAW = base64.b64decode(DAMM_POOL_B64)
-DAMM = decode_damm_pool(DAMM_POOL, DAMM_RAW)
 NEW_POOL = "NewPoo1111111111111111111111111111111111111"
 CREATOR = "Creator111111111111111111111111111111111111"
 
@@ -59,28 +52,6 @@ def _new_pool_rows(**details: Any) -> list[dict[str, Any]]:
     found = {"created_at": 90.0, "decimals": 9, "coin_creator": CREATOR, **details}
     tracker.add_new_pool(SAMPLE_MINT, NEW_POOL, now=100.0, details=found)
     tracker.update(make_reading(SAMPLE_MINT, at=102.0))
-    return rows
-
-
-def _damm_rows(decimals: int | None = 6) -> list[dict[str, Any]]:
-    """A DAMM v2 pool followed 50 s after its activation, then its decimals."""
-    rows: list[dict[str, Any]] = []
-    watcher = DammWatcher(
-        DammSettings(enabled=True),
-        rows.append,
-        clock=lambda: float(DAMM.activation_point) + 50.0,
-    )
-    watcher.on_account(DAMM_POOL, DAMM_RAW, 1)
-    if decimals is not None:
-        rows.append(
-            {
-                "event": "damm_decimals",
-                "timestamp": float(DAMM.activation_point) + 51.0,
-                "pool": DAMM_POOL,
-                "decimals": decimals,
-            }
-        )
-    watcher.end(DAMM_POOL, "follow_time")
     return rows
 
 
@@ -166,6 +137,8 @@ def test_rows_of_other_sources_and_events_are_counted_not_translated() -> None:
         {"event": "observation_start", "source": "launch_sample", "mint": SAMPLE_MINT},
         {"timestamp": 1.0, "mint": SAMPLE_MINT, "signal": "buy"},
         {"event": "screening", "mint": SAMPLE_MINT},
+        # A Meteora DAMM v2 row of a v0.4.0 capture: trading-meteora's now.
+        {"event": "damm_state", "timestamp": 1.0, "pool": SAMPLE_MINT},
     ]
     records, lanes = _convert(rows)
 
@@ -175,6 +148,7 @@ def test_rows_of_other_sources_and_events_are_counted_not_translated() -> None:
         "observation_start/launch_sample": 1,
         "no event": 1,
         "screening": 1,
+        "damm_state": 1,
     }
 
 
@@ -215,84 +189,13 @@ def test_sources_choose_what_is_written() -> None:
     assert lanes.stats.ignored["curve_poll/graduation"] == 3
 
 
-# -- Meteora DAMM v2 pools (FEAT-107) ------------------------------------------------
-
-
-def test_a_damm_pool_is_listed_at_its_activation_and_priced_as_captured() -> None:
-    records, lanes = _convert(_damm_rows())
-
-    listing, reading = records
-    assert listing == Listing(
-        DAMM_POOL, float(DAMM.activation_point), kind="listing", creator=DAMM.creator
-    )
-    assert reading.at == float(DAMM.activation_point) + 50.0
-    assert reading.price == pytest.approx(sol_per_coin(DAMM, False, 6))
-    assert reading.liquidity == pytest.approx(45003818 / 1e9)
-    assert lanes.stats.ignored == {"damm_decimals": 1, "damm_end": 1}
-
-
-def test_damm_states_learn_decimals_written_after_them() -> None:
-    rows = _damm_rows()
-    decimals = next(r for r in rows if r["event"] == "damm_decimals")
-    records, _ = _convert([decimals, *rows])
-    assert [type(r) for r in records] == [Listing, Reading]
-
-
-def test_damm_pools_without_decimals_bad_states_and_drained_pools() -> None:
-    rows = _damm_rows(decimals=None)
-    pool_row, state = rows[0], rows[1]
-    _, lanes = _convert(rows)
-    assert lanes.stats.skipped == {SKIP_NO_DECIMALS: 2}
-
-    known = [*_damm_rows()[:3]]
-    bad = [
-        dict(state, sqrt_price=None),
-        dict(state, timestamp=float(DAMM.activation_point) - 1.0),
-        dict(state, liquidity="0"),
-        dict(state, sqrt_price="0"),
-        dict(state, b_amount=0),
-        {k: v for k, v in pool_row.items() if k != "timestamp"},
-    ]
-    records, lanes = _convert(known + bad)
-    readings = [r for r in records if isinstance(r, Reading)]
-    assert [r.liquidity for r in readings] == [pytest.approx(0.045003818), 0.0, None]
-    assert lanes.stats.skipped == {
-        SKIP_MALFORMED: 1,
-        SKIP_BEFORE_LISTING: 1,
-        SKIP_NO_PRICE: 1,
-    }
-    assert lanes.stats.ignored["damm_pool (listed already)"] == 1
-
-
-def test_a_damm_pool_with_sol_as_token_a_and_no_age() -> None:
-    rows = _damm_rows()
-    pool_row = {k: v for k, v in rows[0].items() if k != "age_seconds"}
-    pool_row["sol_is_a"] = True
-    state = dict(rows[1], a_amount=2_000_000_000)
-    records, lanes = _convert([pool_row, rows[2], state])
-
-    listing, reading = records
-    assert listing.at == pool_row["timestamp"]
-    assert reading.liquidity == 2.0
-    assert lanes.listed[DAMM_POOL].sol_is_a
-    assert DAMM_SOURCE in lanes.sources
-
-
-def test_damm_decimals_rows_need_a_pool_and_a_number() -> None:
-    lanes = LaneRows()
-    lanes.learn({"event": "damm_decimals", "pool": DAMM_POOL, "decimals": "six"})
-    lanes.learn({"event": "damm_decimals", "decimals": 6})
-    lanes.learn({"event": "damm_end", "pool": DAMM_POOL})
-    assert lanes.decimals == {}
-
-
 # -- forgetting ----------------------------------------------------------------------
 
 
 def test_forget_keeps_only_what_is_asked() -> None:
-    _, lanes = _convert(_graduate_rows() + _damm_rows())
-    lanes.forget([DAMM_POOL])
-    assert set(lanes.listed) == {DAMM_POOL} and set(lanes.decimals) == {DAMM_POOL}
+    _, lanes = _convert(_graduate_rows() + _new_pool_rows())
+    lanes.forget([SAMPLE_MINT])
+    assert set(lanes.listed) == {SAMPLE_MINT}
 
 
 # -- files ---------------------------------------------------------------------------
@@ -313,7 +216,7 @@ def test_parts_in_any_order_are_read_twice(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("name", ["rows.jsonl", "rows.jsonl.gz"])
 def test_rows_are_written_for_the_sweep(tmp_path: Path, name: str) -> None:
-    capture = _write(tmp_path / "capture.jsonl", _graduate_rows() + _damm_rows())
+    capture = _write(tmp_path / "capture.jsonl", _graduate_rows() + _new_pool_rows())
     out = tmp_path / name
 
     stats = write_lane_rows([capture], out)

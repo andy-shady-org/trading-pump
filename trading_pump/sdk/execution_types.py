@@ -1,22 +1,20 @@
-"""Pump.fun program constants and execution errors shared by the SDK client."""
+"""Pump.fun program constants and the curve errors of the SDK client.
+
+The Solana constants and errors every venue shares (the token, system,
+rent, compute-budget and associated-token programs, wrapped SOL,
+``GET_MULTIPLE_ACCOUNTS_LIMIT``, ``TokenBalanceUnavailableError`` and
+``TokenProgramUnavailableError``) are trading-solana's
+(``trading_solana.constants``) since 0.5.0; the Pump.fun ones stay here.
+"""
 
 PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-# Solana caps getMultipleAccounts at 100 accounts per call.
-GET_MULTIPLE_ACCOUNTS_LIMIT = 100
 GLOBAL_STATE = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 FEE_RECIPIENT = "FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz"
 # Global.reserved_fee_recipient: mandatory fee recipient for mayhem-mode curves
 MAYHEM_FEE_RECIPIENT = "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS"
 BUYBACK_FEE_RECIPIENT = "5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"
 PUMP_FEE_PROGRAM_ID = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
-WSOL_MINT_STR = "So11111111111111111111111111111111111111112"
-ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
-RENT_PROGRAM_ID = "SysvarRent111111111111111111111111111111111"
 EVENT_AUTHORITY = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
-TOKEN_PROGRAM_ID_STR = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-TOKEN_2022_PROGRAM_ID_STR = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
 
 BUY_DISCRIMINATOR = bytes([102, 6, 61, 18, 1, 218, 235, 234])
 SELL_DISCRIMINATOR = bytes([51, 230, 133, 164, 1, 127, 131, 173])
@@ -63,14 +61,6 @@ FEE_CONFIG_KEY = bytes(
 
 # Pump.fun bonding-curve fees (protocol 0.95% + creator 0.30%) applied to quotes.
 PUMP_DEFAULT_FEE_BPS = 125
-
-
-class TokenBalanceUnavailableError(RuntimeError):
-    """The token balance could not be read; distinct from a real zero (BUG-35)."""
-
-
-class TokenProgramUnavailableError(RuntimeError):
-    """The mint's token program (SPL Token vs Token-2022) could not be resolved."""
 
 
 class CurveStateUnavailableError(RuntimeError):
