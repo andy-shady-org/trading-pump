@@ -47,10 +47,10 @@ FEAT-115: the module stands on trading-core `v0.7.0` and the new trading-solana 
 
 ### Release record – v0.5.0 (2026-11-04)
 - Commit: the merge commit on `main` of `release/v0.5.0`; tagged `git tag -s v0.5.0`; on trading-core `v0.7.0` and trading-solana `v0.3.0`
-- Release gate: tests, coverage, lint and types run locally; open: the reference replay below, `nox -s audit package`, CI on the tag, the signed tag, an install in `runtimes/pump` with trading-solana, a smoke run and the restart drill on it
+- Release gate: tests, coverage, lint and types run locally; open: `nox -s audit package`, CI on the tag, the signed tag, an install in `runtimes/pump` with trading-solana, a smoke run and the restart drill on it
 - Tests: 647 collected, all passed on each of 3.11–3.14; coverage 100% statement and branch; ruff, black, flake8 (complexity ≤ 7) and mypy clean. 270 fewer than `v0.4.0`'s 917 (298 fewer than the 945 before this release): the tests of the code that moved went with it, and every regression tag they carried is accounted for in `BUGS.md`
 - Checked: three synthetic captures (60 graduates each: standard, instant and small pools, some drained; both lanes on, with their own exits) replayed through `v0.4.0` and through this code, both on trading-core `v0.7.0`: the same trades, times, prices, fees and costs, line for line; the audit trails differ only in the `run_started` provenance (the version, `module_git`, `damm_pools`)
-- Reference replay: REPLAY_PARITY
+- Reference replay: rc.11's capture (17 parts, 2026-10-30 19:02 → 11-02 17:01 UTC, 2,494 migrations) with `configs/rc11-paper.json`, through `v0.4.0` on trading-core `v0.4.0` and through this release on trading-core `v0.7.0` and trading-solana `release/v0.3.0`: 251,458 engine cycles each; 614 trade records each, identical in action, position, size, price, notional, cost, proceeds, costs, net, cash flow, reason, detail, strategy and time, and in every other field; 307 closed positions, win rate 38.8%, net −0.499965 SOL, costs 0.153413 SOL on both. The lanes keep their stage (both closed, NO-GO)
 - Modules: needs trading-core `>=0.7.0,<0.8` and trading-solana `>=0.3.0,<0.4`
 - Runs: none started; `damm-1` stays on `v0.4.0`
 - Capital stage: none (both lanes closed at Stage 1, NO-GO)
