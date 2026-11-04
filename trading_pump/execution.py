@@ -35,6 +35,10 @@ from trading_core.module.base import (
     Side,
     TradeCosts,
 )
+from trading_solana.costs import (
+    BASE_FEE_LAMPORTS_PER_SIGNATURE,
+    TOKEN_ACCOUNT_RENT_LAMPORTS,
+)
 
 from trading_pump.config.settings import ExecutionSettings
 from trading_pump.market import (
@@ -47,10 +51,6 @@ from trading_pump.market import (
     buy_tokens_out,
     sell_lamports_gross,
     sell_lamports_out,
-)
-from trading_pump.sdk.costs import (
-    BASE_FEE_LAMPORTS_PER_SIGNATURE,
-    TOKEN_ACCOUNT_RENT_LAMPORTS,
 )
 
 # OrderRequest.metadata key trading-core sets on a sell that closes the

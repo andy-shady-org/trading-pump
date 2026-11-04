@@ -420,7 +420,7 @@ class _GenesisPool:
     """An RPC pool whose endpoints report the given genesis hashes."""
 
     def __init__(self, hashes: dict[str, str | None]) -> None:
-        from trading_pump.infra.rpc_pool import RpcEndpoint
+        from trading_solana.rpc_pool import RpcEndpoint
 
         self.hashes = hashes
         self.endpoints = [RpcEndpoint(url) for url in hashes]
@@ -439,7 +439,7 @@ DEVNET = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 
 @pytest.mark.regression("BUG-160")
 async def test_an_endpoint_on_devnet_is_dropped_while_a_mainnet_one_is_left() -> None:
-    from trading_pump.infra.rpc_pool import MAINNET_GENESIS_HASH
+    from trading_solana.rpc_pool import MAINNET_GENESIS_HASH
 
     module, _, _, host = _module()
     pool = _GenesisPool(
@@ -472,7 +472,7 @@ async def test_only_wrong_networks_keep_the_endpoints_and_report_degraded() -> N
 
 
 async def test_an_unconfirmed_endpoint_is_kept_and_mainnet_alone_is_quiet() -> None:
-    from trading_pump.infra.rpc_pool import MAINNET_GENESIS_HASH
+    from trading_solana.rpc_pool import MAINNET_GENESIS_HASH
 
     module, _, _, host = _module()
     module.client = type(

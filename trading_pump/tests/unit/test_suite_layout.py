@@ -23,9 +23,11 @@ KNOWN_UNTAGGED: dict[str, str] = {
     "BUG-31": "zero-reserve quoting superseded by BUG-101 (tagged)",
 }
 # BUGS.md "Where each fix lives" lists the resolved bugs whose fix (and test)
-# is in trading-core or left with code that was not ported; they need no tag
-# here.
-ELSEWHERE_LINE = re.compile(r"^\* \*\*(trading-core|Retired)[^*]*\*\*:(.*)$", re.M)
+# is in trading-core or trading-solana, or left with code that was not ported
+# or was retired; they need no tag here.
+ELSEWHERE_LINE = re.compile(
+    r"^\* \*\*(trading-core|trading-solana|Retired)[^*]*\*\*:(.*)$", re.M
+)
 
 COVERAGE_NAMED = re.compile(r"^test_(coverage_.*|.*boost.*|.*_full)\.py$")
 STATUS_ROW = re.compile(

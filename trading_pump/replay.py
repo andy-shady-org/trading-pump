@@ -39,6 +39,7 @@ from typing import Any
 from trading_core.config.settings import EngineSettings
 from trading_core.engine.engine import TradingEngine
 from trading_core.ops.alerts import AlertDispatcher
+from trading_solana.mints import TokenName
 
 from trading_pump.config.env import Credentials
 from trading_pump.graduates import MIGRATION_EVENT
@@ -48,7 +49,6 @@ from trading_pump.market import (
     SwapFee,
 )
 from trading_pump.module import PumpModule
-from trading_pump.names import TokenName
 from trading_pump.strategies.observation import (
     GRADUATION_SOURCE,
     OBSERVATION_END_EVENT,

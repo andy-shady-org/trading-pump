@@ -6,11 +6,15 @@ on:
   pull_request:
     branches: [main, master]
 
-# trading-core is a private repository. Create a fine-grained personal access
-# token with read-only "Contents" access to andy-shady-org/trading-core and
-# store it as the TRADING_CORE_TOKEN secret of this repository.
+# trading-core and trading-solana are private repositories. Create a
+# fine-grained personal access token with read-only "Contents" access to
+# andy-shady-org/trading-core and andy-shady-org/trading-solana and store it
+# as the TRADING_CORE_TOKEN secret of this repository (or give trading-solana
+# its own token as TRADING_SOLANA_TOKEN). Both are checked out at the signed
+# tags this release is built on (pyproject.toml's ranges).
 env:
-  TRADING_CORE_REF: main
+  TRADING_CORE_REF: v0.7.0
+  TRADING_SOLANA_REF: v0.3.0
 
 jobs:
   test:
@@ -36,6 +40,14 @@ jobs:
           token: ${{ secrets.TRADING_CORE_TOKEN }}
           path: trading-core
 
+      - name: Checkout trading-solana (private)
+        uses: actions/checkout@v4
+        with:
+          repository: andy-shady-org/trading-solana
+          ref: ${{ env.TRADING_SOLANA_REF }}
+          token: ${{ secrets.TRADING_SOLANA_TOKEN || secrets.TRADING_CORE_TOKEN }}
+          path: trading-solana
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -50,6 +62,7 @@ jobs:
         working-directory: trading-pump
         env:
           TRADING_CORE_SOURCE: ${{ github.workspace }}/trading-core
+          TRADING_SOLANA_SOURCE: ${{ github.workspace }}/trading-solana
         run: nox -s "tests-${{ matrix.python-version }}"
 
       - name: Upload coverage report
@@ -78,6 +91,14 @@ jobs:
           token: ${{ secrets.TRADING_CORE_TOKEN }}
           path: trading-core
 
+      - name: Checkout trading-solana (private)
+        uses: actions/checkout@v4
+        with:
+          repository: andy-shady-org/trading-solana
+          ref: ${{ env.TRADING_SOLANA_REF }}
+          token: ${{ secrets.TRADING_SOLANA_TOKEN || secrets.TRADING_CORE_TOKEN }}
+          path: trading-solana
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -92,4 +113,5 @@ jobs:
         working-directory: trading-pump
         env:
           TRADING_CORE_SOURCE: ${{ github.workspace }}/trading-core
+          TRADING_SOLANA_SOURCE: ${{ github.workspace }}/trading-solana
         run: nox -s lint mypy audit package

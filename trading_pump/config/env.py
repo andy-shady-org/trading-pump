@@ -19,8 +19,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-import base58
 from solders.keypair import Keypair
+from trading_solana.wallet import decode_keypair
 
 from trading_pump.streams.websocket import split_stream_api_key, stream_connect_url
 
@@ -257,25 +257,6 @@ def unread_env_warnings(env: Mapping[str, str] | None = None) -> list[str]:
     return warnings
 
 
-def decode_keypair(private_key_b58: str) -> Keypair:
-    """Decode a base58-encoded string into a solders Keypair."""
-    decoded = base58.b58decode(private_key_b58.strip())
-    if len(decoded) == 32:
-        return Keypair.from_seed(decoded)
-    if len(decoded) == 64:
-        try:
-            return Keypair.from_bytes(decoded)
-        except Exception:
-            return Keypair.from_seed(decoded[:32])
-    if len(decoded) >= 32:
-        return Keypair.from_seed(decoded[:32])
-    raise ValueError(
-        "Private key must be a base58-encoded Solana 32-byte seed or 64-byte secret "
-        "key; "
-        f"got {len(decoded)} bytes after decoding."
-    )
-
-
 @dataclass(frozen=True)
 class Credentials:
     """What the module reads from its environment. ``repr`` hides every value."""
@@ -374,7 +355,6 @@ __all__ = [
     "RPC_WS_URL_ENV",
     "STREAM_API_KEY_ENV",
     "STREAM_URL_ENV",
-    "decode_keypair",
     "known_env_names",
     "load_credentials",
     "unread_env_warnings",

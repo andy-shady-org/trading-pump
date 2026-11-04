@@ -20,9 +20,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from trading_solana.mints import TokenName
+
 from trading_pump.config.settings import GraduationSettings
 from trading_pump.market import PoolReading
-from trading_pump.names import TokenName
 from trading_pump.sdk.pumpswap import canonical_pool_address
 from trading_pump.strategies.observation import (
     GRADUATION_SOURCE,

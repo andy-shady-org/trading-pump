@@ -15,6 +15,13 @@ from spl.token.instructions import (
     get_associated_token_address,
 )
 from spl.token.models import CloseAccountParams
+from trading_solana.constants import (
+    GET_MULTIPLE_ACCOUNTS_LIMIT,
+    SYSTEM_PROGRAM_ID,
+    TOKEN_PROGRAM_ID_STR,
+    WSOL_MINT_STR,
+)
+from trading_solana.transport import TransactionTransportMixin
 
 from .curve import (
     calculate_buy_execution_slippage,
@@ -33,22 +40,17 @@ from .execution_types import (
     EVENT_AUTHORITY,
     FEE_CONFIG_KEY,
     FEE_RECIPIENT,
-    GET_MULTIPLE_ACCOUNTS_LIMIT,
     GLOBAL_STATE,
     MAYHEM_FEE_RECIPIENT,
     PUMP_FEE_PROGRAM_ID,
     PUMP_PROGRAM_ID,
     SELL_DISCRIMINATOR,
-    SYSTEM_PROGRAM_ID,
-    TOKEN_PROGRAM_ID_STR,
-    WSOL_MINT_STR,
     CurveAccountMissingError,
     CurveStateUnavailableError,
     NonStandardCurveError,
     NotPumpFunCurveError,
 )
 from .fee_config import FeeConfig, bonding_curve_fee_bps, decode_fee_config
-from .transport import TransactionTransportMixin
 
 # BondingCurve.quote_mint (BUG-124): zeroed or WSOL means the curve trades for SOL.
 CURVE_QUOTE_MINT_START = 83
@@ -66,6 +68,9 @@ class PumpFunCurveMixin(TransactionTransportMixin):
     builders."""
 
     _fee_config_cache: tuple[float, FeeConfig] | None = None
+    # Pump.fun's curve fee when the fee tiers cannot be read; set by
+    # PumpFunExecutionClient (trading-solana's client has no venue fee).
+    pump_fee_bps: int
 
     @staticmethod
     def fee_config_address() -> str:

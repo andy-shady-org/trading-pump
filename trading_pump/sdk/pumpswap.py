@@ -16,14 +16,13 @@ from dataclasses import dataclass
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
-
-from .execution_types import (
+from trading_solana.constants import (
     ASSOCIATED_TOKEN_PROGRAM_ID,
-    PUMP_FEE_PROGRAM_ID,
-    PUMP_PROGRAM_ID,
     SYSTEM_PROGRAM_ID,
     WSOL_MINT_STR,
 )
+
+from .execution_types import PUMP_FEE_PROGRAM_ID, PUMP_PROGRAM_ID
 
 PUMP_AMM_PROGRAM_ID = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
 # Anchor "global:sell": base_amount_in u64, min_quote_amount_out u64.
@@ -58,8 +57,6 @@ CONFIG_MIN_LENGTH = CONFIG_RESERVED_RECIPIENT_OFFSET + 32
 
 # SPL token account: mint (32), owner (32), amount (u64).
 TOKEN_ACCOUNT_AMOUNT_OFFSET = 64
-# SPL / Token-2022 mint: mint_authority COption<Pubkey> (36 bytes), then supply u64.
-MINT_SUPPLY_OFFSET = 36
 # Pump.fun mints 1e9 whole tokens with 6 decimals.
 PUMP_TOTAL_SUPPLY_TOKENS = 1_000_000_000.0
 _DEFAULT_PUBKEY = str(Pubkey.default())
@@ -224,17 +221,6 @@ def token_account_amount(data: bytes) -> int:
     if len(data) < TOKEN_ACCOUNT_AMOUNT_OFFSET + 8:
         raise PumpSwapPoolUnavailableError("PumpSwap vault account too short")
     return int(struct.unpack_from("<Q", data, TOKEN_ACCOUNT_AMOUNT_OFFSET)[0])
-
-
-def mint_supply(data: bytes) -> int:
-    """The ``supply`` of an SPL / Token-2022 mint account (raw units).
-
-    PumpSwap picks a pool's fee tier from the market cap on this supply, which
-    burns lower below the 1B tokens a Pump.fun coin starts with (BUG-162).
-    """
-    if len(data) < MINT_SUPPLY_OFFSET + 8:
-        raise PumpSwapPoolUnavailableError("mint account too short")
-    return int(struct.unpack_from("<Q", data, MINT_SUPPLY_OFFSET)[0])
 
 
 def pumpswap_sell_quote(

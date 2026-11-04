@@ -1,4 +1,8 @@
-"""Unit tests for ``config/env.py``: credentials, keypairs, unread variables."""
+"""Unit tests for ``config/env.py``: credentials, unread variables.
+
+The key decoding is trading-solana's (``trading_solana.wallet``) since 0.5.0
+and tested there; here only that the credentials use it.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +19,6 @@ from trading_pump.config.env import (
     PUMPPORTAL_URL,
     REPLACED_ENV_VARS,
     Credentials,
-    decode_keypair,
     known_env_names,
     load_credentials,
     unread_env_warnings,
@@ -87,26 +90,19 @@ def test_repr_hides_every_value() -> None:
     assert "private_key=set" in text and "rpc_urls=1" in text
 
 
-def test_decode_keypair_seed_secret_and_bad_lengths() -> None:
+def test_the_credentials_decode_the_key_with_trading_solana() -> None:
     seed = b"12345678901234567890123456789012"
     kp = Keypair.from_seed(seed)
     b58_seed = base58.b58encode(seed).decode("ascii")
     b58_full = base58.b58encode(kp.to_bytes()).decode("ascii")
 
-    assert decode_keypair(b58_seed).pubkey() == kp.pubkey()
-    assert decode_keypair(b58_full).pubkey() == kp.pubkey()
-    # 64 bytes that are not a valid secret key: the first 32 are the seed.
-    bogus = base58.b58encode(seed + b"\x00" * 32).decode("ascii")
-    assert decode_keypair(bogus).pubkey() == kp.pubkey()
-    # Longer than 32 (and not 64): the first 32 are the seed.
-    longer = base58.b58encode(seed + b"\x01" * 8).decode("ascii")
-    assert decode_keypair(longer).pubkey() == kp.pubkey()
-    assert (
-        load_credentials({"PUMPFUN_PRIVATE_KEY": b58_seed}).keypair().pubkey()
-        == kp.pubkey()
-    )
+    for key in (b58_seed, b58_full):
+        assert (
+            load_credentials({"PUMPFUN_PRIVATE_KEY": key}).keypair().pubkey()
+            == kp.pubkey()
+        )
     with pytest.raises(ValueError, match="Private key must be a base58-encoded"):
-        decode_keypair(base58.b58encode(b"short").decode("ascii"))
+        Credentials(private_key=base58.b58encode(b"short").decode("ascii")).keypair()
 
 
 # --- Documented variables must be read (BUG-142) -----------------------------

@@ -9,7 +9,9 @@ no lane ever trades them.
 
 * :class:`NewPoolFeed` holds ``programSubscribe`` subscriptions on the
   PumpSwap program, filtered to pool accounts (301 bytes, and 287 for a
-  layout many new pools still have). PumpSwap writes the pool account on
+  layout many new pools still have), on trading-solana's program-subscribe
+  feed (``trading_solana.program_feed``, which runs trading-core's stream
+  loop). PumpSwap writes the pool account on
   every swap, so the stream carries every pool that trades (about 47-73
   messages and 36 kB a second, measured 2026-10-31), not only new ones.
   The pools seen during ``warmup_seconds`` are the busy existing ones and
@@ -27,26 +29,29 @@ no lane ever trades them.
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from trading_core.ops.redact import redact_text
+from trading_solana.constants import WSOL_MINT_STR
+from trading_solana.program_feed import (
+    ProgramNotice,
+    ProgramSubscribeFeed,
+    program_subscriptions,
+)
 
 from trading_pump.config.settings import NewPoolSettings
 from trading_pump.graduates import GraduateTracker
 from trading_pump.market import NewPoolInfo
-from trading_pump.sdk.execution_types import WSOL_MINT_STR
 from trading_pump.sdk.pumpswap import (
     PUMP_AMM_PROGRAM_ID,
     PumpSwapPool,
     canonical_pool_address,
     decode_pool,
 )
-from trading_pump.streams.websocket import run_websocket_stream, send_ws_message
 
 logger = logging.getLogger("trading_pump.pools")
 
@@ -54,21 +59,8 @@ CONDITION_POOL_FEED = "pumpswap pool feed"
 # Pool account sizes: the current program version's, and an older layout
 # (no trailing padding) that many new non-graduate pools still have.
 POOL_ACCOUNT_SIZES = (301, 287)
-POOL_SUBSCRIPTIONS: tuple[dict[str, Any], ...] = tuple(
-    {
-        "jsonrpc": "2.0",
-        "id": index,
-        "method": "programSubscribe",
-        "params": [
-            PUMP_AMM_PROGRAM_ID,
-            {
-                "encoding": "base64",
-                "commitment": "confirmed",
-                "filters": [{"dataSize": size}],
-            },
-        ],
-    }
-    for index, size in enumerate(POOL_ACCOUNT_SIZES, start=1)
+POOL_SUBSCRIPTIONS: tuple[dict[str, Any], ...] = program_subscriptions(
+    PUMP_AMM_PROGRAM_ID, *([{"dataSize": size}] for size in POOL_ACCOUNT_SIZES)
 )
 POOL_CREATED_EVENT = "pool_created"
 
@@ -76,111 +68,22 @@ PoolHandler = Callable[[str, bytes, int], None]
 Recorder = Callable[[dict[str, Any]], None]
 
 
-def pool_notice(data: Any) -> tuple[str, bytes, int] | None:
-    """``(pool address, account bytes, slot)`` of a ``programNotification``,
-    else ``None`` (the subscription's confirmation, malformed messages)."""
-    if not isinstance(data, dict) or data.get("method") != "programNotification":
-        return None
-    try:
-        result = data["params"]["result"]
-        value = result["value"]
-        raw = base64.b64decode(value["account"]["data"][0])
-        return str(value["pubkey"]), raw, int(result["context"]["slot"])
-    except (KeyError, IndexError, TypeError, ValueError):
-        return None
-
-
-@dataclass
-class NewPoolFeed:
-    """A ``WebSocketStreamHost`` on the Solana RPC WebSocket; see the module
-    docstring. ``on_pool`` gets each pool seen for the first time after the
-    warm-up, with its account bytes and slot."""
+@dataclass(kw_only=True)
+class NewPoolFeed(ProgramSubscribeFeed):
+    """trading-solana's program-subscribe feed on the PumpSwap pool accounts
+    (``POOL_SUBSCRIPTIONS``); see the module docstring. ``on_pool`` gets each
+    pool seen for the first time after the warm-up, with its account bytes
+    and slot."""
 
     on_pool: PoolHandler
-    connect_url: Callable[[], str]
-    stream_url: str
+    subscriptions: Sequence[dict[str, Any]] = POOL_SUBSCRIPTIONS
+    first_seen_only: bool = True
     warmup_seconds: float = 1800.0
-    reconnect_delay_seconds: float = 1.0
-    stream_heartbeat_seconds: float | None = 20.0
-    stream_idle_timeout_seconds: float | None = 60.0
-    on_state: Callable[[bool, str], None] | None = None
-    clock: Callable[[], float] = time.time
-    connected: bool = False
-    stats: dict[str, int] = field(default_factory=dict)
-    seen: set[str] = field(default_factory=set)
-    started_at: float | None = None
-    _stop: bool = False
+    label: str = "pool"
+    log: logging.Logger = logger
 
-    def _count(self, key: str) -> None:
-        self.stats[key] = self.stats.get(key, 0) + 1
-
-    def _state(self, connected: bool, detail: str = "") -> None:
-        self.connected = connected
-        if self.on_state is not None:
-            self.on_state(connected, detail)
-
-    def warming_up(self, now: float) -> bool:
-        return self.started_at is None or now - self.started_at < self.warmup_seconds
-
-    def stop(self) -> None:
-        self._stop = True
-
-    # -- WebSocketStreamHost --------------------------------------------------
-    def stream_stop_requested(self) -> bool:
-        return self._stop
-
-    def stream_connect_url(self) -> str:
-        return self.connect_url()
-
-    def stream_log(self, message: str, level: int = logging.INFO) -> None:
-        logger.log(level, "%s", redact_text(message))
-
-    async def on_stream_connected(self, ws: Any) -> None:
-        self._count("connects")
-        if self.started_at is None:
-            # The warm-up runs once: a reconnect keeps what was seen.
-            self.started_at = self.clock()
-        for subscription in POOL_SUBSCRIPTIONS:
-            await send_ws_message(ws, subscription)
-        self._state(True)
-
-    async def on_stream_message(self, data: Any, ws: Any) -> None:
-        notice = pool_notice(data)
-        if notice is None:
-            return
-        address, raw, slot = notice
-        self._count("messages")
-        if address in self.seen:
-            return
-        self.seen.add(address)
-        if self.warming_up(self.clock()):
-            self._count("warmup_pools")
-            return
-        self._count("first_seen")
-        self.on_pool(address, raw, slot)
-
-    def on_stream_error(self, message: str) -> None:
-        self._count("errors")
-        self.stream_log(message, logging.WARNING)
-        self._state(False, message)
-
-    def on_stream_exception(self, exc: Exception, backoff: float) -> None:
-        self._count("errors")
-        self.stream_log(
-            f"pool stream failed: {exc}; retry in {backoff:.0f}s", logging.WARNING
-        )
-        self._state(False, redact_text(str(exc)))
-
-    def on_stream_ended(self) -> None:
-        self._count("disconnects")
-        self._state(False, "connection closed")
-
-    def on_stream_closed(self) -> None:
-        if self.connected:
-            self._state(False, "connection closed")
-
-    async def run(self) -> None:
-        await run_websocket_stream(self)
+    def on_notice(self, notice: ProgramNotice) -> None:
+        self.on_pool(*notice)
 
 
 def is_canonical(pool: PumpSwapPool) -> bool:
@@ -318,6 +221,5 @@ __all__ = [
     "NewPoolFeed",
     "NewPoolWatcher",
     "is_canonical",
-    "pool_notice",
     "sol_side",
 ]

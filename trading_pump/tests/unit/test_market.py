@@ -7,6 +7,7 @@ import struct
 from typing import Any
 
 import pytest
+from trading_solana.constants import TOKEN_2022_PROGRAM_ID_STR, TOKEN_PROGRAM_ID_STR
 
 from trading_pump.market import (
     FEE_SOURCE_FLOOR,
@@ -20,11 +21,7 @@ from trading_pump.market import (
     sell_lamports_gross,
     sell_lamports_out,
 )
-from trading_pump.sdk.execution_types import (
-    PUMP_FEE_PROGRAM_ID,
-    TOKEN_2022_PROGRAM_ID_STR,
-    TOKEN_PROGRAM_ID_STR,
-)
+from trading_pump.sdk.execution_types import PUMP_FEE_PROGRAM_ID
 from trading_pump.sdk.fee_config import FEE_CONFIG_DISCRIMINATOR
 from trading_pump.sdk.pumpswap import (
     PUMP_AMM_PROGRAM_ID,
@@ -409,7 +406,7 @@ async def test_unreadable_decimals_are_none(
 
 
 async def test_rpc_source_reads_token_names_from_the_mints() -> None:
-    from trading_pump.names import TokenName
+    from trading_solana.mints import TokenName
 
     client = FakeClient()
     client.mints[GRADUATE_MINT] = _account(

@@ -206,7 +206,7 @@ async def test_the_loop_polls_until_stopped_and_survives_a_bug(
 async def test_new_graduates_are_named_after_the_read_and_a_failure_is_forgotten(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from trading_pump.names import TokenName
+    from trading_solana.mints import TokenName
 
     source = FakePoolSource()
     source.set(SAMPLE_MINT, GRADUATION_BASE_RESERVE, GRADUATION_QUOTE_RESERVE)

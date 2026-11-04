@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from trading_solana.jito import JITO_TIP_ACCOUNTS, JitoBundleStatus, JitoTipFloor
 
 from trading_pump.sdk.curve import (
     INITIAL_REAL_TOKEN_RAW,
@@ -24,7 +25,6 @@ from trading_pump.sdk.curve import (
     INITIAL_VIRTUAL_TOKEN_RAW,
     TOTAL_TOKEN_SUPPLY_RAW,
 )
-from trading_pump.sdk.jito import JITO_TIP_ACCOUNTS, JitoBundleStatus, JitoTipFloor
 
 _REAL_ASYNC_SLEEP = asyncio.sleep
 

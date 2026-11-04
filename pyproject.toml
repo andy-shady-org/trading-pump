@@ -31,10 +31,17 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-# trading-core is private: install it first (noxfile.py, docs/dev/TESTING.md),
-# then this package resolves the requirement against the installed copy.
+# trading-core and trading-solana are private: install them first
+# (noxfile.py, docs/dev/TESTING.md), then this package resolves the
+# requirements against the installed copies. trading-core 0.7.0 brings the
+# capture writer, stream loop and replay harness (FEAT-110) and the strategy
+# library that lanes.py and market_book use; trading-solana is a library
+# (trading-core FEAT-111: a runtime lists it under [libraries.solana]) with
+# the Solana plumbing (FEAT-112). base58 is the tests' (trading-solana needs
+# it too).
 dependencies = [
-  "trading-core>=0.4.0,<0.5",
+  "trading-core>=0.7.0,<0.8",
+  "trading-solana>=0.3.0,<0.4",
   "aiohttp>=3.9.0",
   "base58>=2.1.0",
   "rich>=13.7.0",

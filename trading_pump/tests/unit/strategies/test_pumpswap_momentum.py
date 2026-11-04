@@ -350,7 +350,7 @@ def test_screening_applies_when_either_lane_asks_for_it() -> None:
 
 
 async def test_the_token_name_travels_from_the_graduate_to_the_signal() -> None:
-    from trading_pump.names import TokenName
+    from trading_solana.mints import TokenName
 
     tracker = _tracker()
     clock = Clock(62.0)

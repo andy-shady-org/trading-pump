@@ -22,13 +22,15 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from solders.pubkey import Pubkey
-
-from trading_pump.names import TokenName, decode_token_name
-from trading_pump.sdk.execution_types import (
-    PUMP_FEE_PROGRAM_ID,
-    TOKEN_2022_PROGRAM_ID_STR,
-    TOKEN_PROGRAM_ID_STR,
+from trading_solana.mints import (
+    MINT_DECIMALS_OFFSET,
+    TokenName,
+    decode_mint_decimals,
+    decode_mint_supply,
+    decode_token_name,
 )
+
+from trading_pump.sdk.execution_types import PUMP_FEE_PROGRAM_ID
 from trading_pump.sdk.fee_config import decode_fee_config, select_fee_tier
 from trading_pump.sdk.pumpswap import (
     PUMP_AMM_PROGRAM_ID,
@@ -36,7 +38,6 @@ from trading_pump.sdk.pumpswap import (
     decode_global_config,
     fee_config_address,
     global_config_address,
-    mint_supply,
     pumpswap_sell_quote,
 )
 
@@ -51,7 +52,6 @@ FEE_SOURCE_REPLAY = "replay"
 # The fee accounts change rarely, and a mint's supply only falls (burns);
 # read them again after this long.
 FEE_TTL_SECONDS = 300.0
-TOKEN_PROGRAMS = frozenset({TOKEN_PROGRAM_ID_STR, TOKEN_2022_PROGRAM_ID_STR})
 
 
 @dataclass(frozen=True)
@@ -227,10 +227,6 @@ class PoolStateClient(Protocol):
     ) -> None: ...
 
 
-# SPL / Token-2022 mint: mint_authority COption (36), supply u64, decimals u8.
-MINT_DECIMALS_OFFSET = 44
-
-
 @dataclass(frozen=True)
 class NewPoolInfo:
     """What one lookup says about a pool found by the new-pool feed (FEAT-80).
@@ -318,7 +314,7 @@ class RpcPoolSource:
             created_at=min(times) if times else None,
             exact=len(signatures) < int(limit),
             signatures=len(signatures),
-            decimals=_decode_mint_decimals(mint_value),
+            decimals=decode_mint_decimals(mint_value),
         )
 
     async def _fee_inputs(self, mint: str) -> tuple[Any, Any, int | None]:
@@ -354,7 +350,7 @@ class RpcPoolSource:
         self._count("fee_reads")
 
     def _store_supply(self, mint: str, moment: float, value: Any) -> None:
-        supply = _decode_mint_supply(value)
+        supply = decode_mint_supply(value)
         if supply is not None:
             self._supplies[mint] = (moment, supply)
 
@@ -398,28 +394,6 @@ def _fee_for(
     if config is not None:
         return SwapFee(int(config.total_fee_bps), FEE_SOURCE_GLOBAL)
     raise RuntimeError("PumpSwap fee accounts could not be read")
-
-
-def _decode_mint_supply(value: Mapping[str, Any] | None) -> int | None:
-    """A mint account's supply, or ``None`` when absent, foreign or malformed."""
-    if not value or str(value.get("owner") or "") not in TOKEN_PROGRAMS:
-        return None
-    try:
-        supply = mint_supply(base64.b64decode((value.get("data") or [""])[0]))
-    except Exception:
-        return None
-    return supply if supply > 0 else None
-
-
-def _decode_mint_decimals(value: Mapping[str, Any] | None) -> int | None:
-    """A mint account's decimals, or ``None`` when absent, foreign or short."""
-    if not value or str(value.get("owner") or "") not in TOKEN_PROGRAMS:
-        return None
-    try:
-        raw = base64.b64decode((value.get("data") or [""])[0])
-    except Exception:
-        return None
-    return raw[MINT_DECIMALS_OFFSET] if len(raw) > MINT_DECIMALS_OFFSET else None
 
 
 def _decode(value: Mapping[str, Any] | None, owner: str, decoder: Any) -> Any:
