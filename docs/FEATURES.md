@@ -14,8 +14,8 @@ and is registered in the `trading_core.modules` entry-point group as
 `pumpfun`, so `trading-core run --config F` with `"module": "pumpfun"` runs
 it. The engine owns the loop, sizing, the risk gate, the circuit breaker,
 exits, accounting, the audit trail, the status file, alerts and the
-dashboard; the module owns everything that knows Solana, Pump.fun and
-PumpSwap.
+dashboard; the module owns everything that knows Pump.fun and PumpSwap,
+on trading-solana's Solana plumbing (since 0.5.0, §8).
 
 * **Quote currency** SOL (9 decimals), prices shown in µSOL.
 * **Quotes** from the latest pool reading; re-read when older than
@@ -40,7 +40,8 @@ PumpSwap.
   path, the number of RPC endpoints and the fees seen are added to the
   engine's run provenance.
 * **Public identifiers**: Solana public keys are registered with the core's
-  redaction as public, so mints and pools are never masked as secrets.
+  redaction as public, so mints and pools are never masked as secrets
+  (trading-solana's `is_solana_pubkey`, registered when it is imported).
 * **Balance** (live only) from `getBalance`; a missing balance is an error,
   not 0 SOL (BUG-158).
 
@@ -124,60 +125,14 @@ follows them like graduates, so a later lane can be judged on a capture:
 
 ### 2.2 New Meteora DAMM v2 pools (FEAT-107, record-only)
 
-> [!NOTE]
-> **Temporary home** (ADR-011): this capture moves to trading-meteora
-> in `v0.5.0` (trading-core ADR-010). It is here so that `damm-1` can run
-> on `v0.4.0`; pump-12 is not run (the PumpSwap lanes are closed).
-
-Off by default (`damm_pools.enabled`). trading-scout's scout-1 run
-(2026-11-02) ranked new Meteora DAMM v2 pools on Solana first among the
-groups it recorded (FEAT-76's rule, re-read without look-ahead: +16% a
-trade, both halves and every day positive, on 30-second snapshots). This
-records them at the chain's own resolution; nothing trades them.
-
-* **Feed:** one `programSubscribe` on the DAMM v2 program
-  (`cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`), filtered to pool accounts
-  (1,112 bytes). The program writes the pool on every swap, so the stream
-  carries every active pool's state: 37.5 messages and 69 kB a second
-  (about 6 GB a day, measured on 2026-11-02). By default it is the public
-  RPC (`damm_pools.ws_url`), where it costs nothing; `use_rpc_ws_url` takes
-  `PUMPFUN_RPC_WS_URL` instead. Its idle timeout is 60 s and it reports
-  `damm v2 feed` degraded while disconnected. Every message marks market
-  data fresh, so a run with graduation tracking off stays healthy.
-* **What is new:** a pool paired with SOL whose `activation_point` is at
-  most `max_age_seconds` (5 min) old, or at most `max_future_seconds` (1 h)
-  ahead, is followed for `follow_seconds` (4 h), at most `max_followed` at
-  once. Everything else is remembered and not decoded again.
-* **Rows** (the capture file, beside any other rows):
-  - `damm_pool` when following starts: pool, slot, `coin_mint`,
-    `sol_is_a`, creator, activation point and type (1 = Unix time, 0 =
-    slot), `age_seconds`, pool type, collect-fee mode, fee version, the
-    price range (`sqrt_min_price`, `sqrt_max_price`) and the raw fee
-    settings (`pool_fees_hex`, 160 bytes: base-fee mode and schedule,
-    dynamic fee, initial price);
-  - `damm_decimals` once the coin's mint has been read;
-  - `damm_state` on every change of a followed pool (`via: "stream"`) and on
-    each heartbeat read (`via: "heartbeat"`, every 30 s): `sqrt_price`
-    (Q64.64) and `liquidity` as strings, both token amounts, status, and
-    `price_sol` (SOL a coin) once the decimals are known;
-  - `damm_end` with its cause (`follow_time`, or `closed` when the account
-    is gone).
-* **Fees** are recorded, not applied: five base-fee modes (time and
-  market-cap schedulers, linear or exponential, and a deprecated rate
-  limiter) and a dynamic fee, against a 10⁹ denominator. Launch fees start
-  near 100% and decay (scout-1's smoke run measured round trips losing up to
-  99.9%); a read-out works the fee out from `pool_fees_hex` and the
-  activation time.
-* **Without graduation tracking:** `graduation.enabled` false leaves the
-  PumpPortal feed and the pool poller off, for a run that records only DAMM
-  v2 pools (every lane must then be off).
-* **Dashboard:** a `DAMM v2` status row (state, pools followed now, pools
-  found, writes received).
-* **Checked live** (2026-11-02, the feed and watcher alone on the public
-  RPC for 150 s): 5,439 pool writes, 15 new SOL pools followed (115 too
-  old, 172 not SOL pairs), 1,807 state rows, prices from 1.4e-6 SOL a coin,
-  every decimals read answered, about 0.6 MB of rows. The 30-minute smoke
-  run under `trading-core run` is still to do ([`docs/dev/TODO.md`](dev/TODO.md)).
+**Moved to trading-meteora in 0.5.0** (ADR-011, trading-core ADR-010 and
+FEAT-113): trading-meteora records new DAMM v2 pools, replays them and
+writes their lane rows. This repository's `v0.4.0` is the last with the
+capture (`damm.py`, `damm_pools`, `configs/damm.example.json`); `damm-1`
+runs on that release's own copy ([`runs/damm-1.md`](dev/runs/damm-1.md)),
+and its rows are read by trading-meteora unchanged. What it recorded is in
+[`CHANGELOG.md`](../CHANGELOG.md) 0.4.0 and the history at tag `v0.4.0`. A
+settings file that still has `damm_pools` is refused as an unknown key.
 
 ## 3. The `pumpswap_momentum` lane (FEAT-76, paper)
 
@@ -265,12 +220,16 @@ take-profit at +20% would otherwise close a position before the lane's +50%.
 ## 5. Capture and replay
 
 * **Capture** (`capture` settings): rotated, gzipped, pruned by its own policy
-  only (BUG-157), written off the event loop.
+  only (BUG-157), written off the event loop by trading-core's capture
+  writer (`trading_core.ops.capture.CaptureWriter`, FEAT-110; this
+  module's own `recorder.py` until 0.5.0, unchanged in what it writes).
 * **`trading-pump replay`** drives the real trading-core engine and the real
-  module from one or more captures (plain or gzipped, in time order): a
-  capture-backed pool source that never looks ahead, a fixed swap fee
-  (`--fee-bps`, 125 by default), a replay clock, and the run's own status
-  file, audit trail and events in a new directory. The summary gives the
+  module from one or more captures (plain or gzipped, in time order) on
+  trading-core's replay harness (`trading_core.replay`, FEAT-110: the replay
+  clock, the replay's settings, the engine and its loop): a capture-backed
+  pool source that never looks ahead, fills at the recorded reading nearest
+  the order (BUG-164), a fixed swap fee (`--fee-bps`, 125 by default), and
+  the run's own status file, audit trail and events in a new directory. The summary gives the
   span, migrations, engine cycles, closed positions, win rate, net PnL and
   costs; `trading-core-audit` reads the trail
   ([CLI.md](CLI.md#trading-pump-replay)).
@@ -280,13 +239,13 @@ take-profit at +20% would otherwise close a position before the lane's +50%.
 trading-core's strategy library (its ADR-011) runs venue-neutral entry
 rules, gates and exits on four records: a listing, a reading, a trade print
 and a holders snapshot (`trading_core.lanes.market`). This module turns its
-captures into them (`lanes.py`), offline and live; needs a trading-core with
-the library.
+captures into them (`lanes.py`), offline and live, on trading-core
+`>=0.7.0`. Meteora DAMM v2 rows are trading-meteora's since 0.5.0 (§2.2).
 
 * **`trading-pump lane-rows`** writes a capture as the library's rows for
   `trading-core-lanes sweep` ([CLI.md](CLI.md#trading-pump-lane-rows)). The
-  capture is read twice, first for the listings and decimals, so its parts
-  may come in any order. Generic rows only; nothing of the venue is left in
+  capture is read twice, first for the listings, so its parts may come in
+  any order. Generic rows only; nothing of the venue is left in
   them:
 
   | Capture row | Library row |
@@ -294,13 +253,11 @@ the library.
   | `observation_start`, `source: "graduation"` | `listing`: `instrument` = `mint`, `at` = `migrated_at`, `kind: "graduation"` (no name or creator: the capture has none) |
   | `observation_start`, `source: "new_pool"` (FEAT-80) | `listing`: `instrument` = `mint`, `at` = `created_at` (else `migrated_at`), `kind: "listing"`, `creator` = `coin_creator` (none when it is the default key) |
   | `curve_poll` of either | `reading`: `instrument` = `mint`, `at` = `timestamp`, `price` = `PoolReading.price` from `pool_sol` / `pool_tokens` (SOL per whole token, as the module and its replay price; a new pool's by its recorded `decimals`), `liquidity` = `pool_sol` |
-  | `damm_pool` (FEAT-107) | `listing`: `instrument` = `pool`, `at` = `timestamp − age_seconds` (the activation), `kind: "listing"`, `creator` = `creator` |
-  | `damm_state` | `reading`: `instrument` = `pool`, `at` = `timestamp`, `price` from `sqrt_price`, `sol_is_a` and the coin's `damm_decimals` (what `price_sol` records), `liquidity` = the SOL amount (`a_amount` or `b_amount`), 0 when the pool's `liquidity` is 0, none on a layout without amounts |
 
   **Skipped and counted:** a reading of a coin whose listing is not in the
   capture (followed before its oldest part; the library would take it for
-  a new coin), a reading before its listing, a new pool or DAMM v2 pool
-  whose decimals were not read, a drained pool (price 0: the row format
+  a new coin), a reading before its listing, a new pool whose decimals
+  were not read, a drained pool (price 0: the row format
   carries no price 0), a malformed row. **Not written:** `trade` and
   `holders` rows (the captures record no swaps by wallet and no holder
   snapshots; the supply map's holder features are a study's CSV, not a
@@ -311,8 +268,7 @@ the library.
   of trading-core FEAT-117): the graduates' listings and readings for the
   lanes the engine's settings compose. It is fed by the same translator on
   the capture rows as they are written, so a lane sees live what the sweep
-  sees in the capture; new pools and DAMM v2 pools never enter it (they are
-  record-only). It starts on the engine's first call (a graduate followed
+  sees in the capture; new pools never enter it (they are record-only). It starts on the engine's first call (a graduate followed
   before that is left out: its listing is not known) and is trimmed on
   every call: a graduate with nothing new for
   `graduation.book_retention_seconds` (1 h) is dropped unless held
@@ -335,18 +291,25 @@ FEAT-76 rule was pre-registered without it.
 
 ## 7. Research recorders
 
-`trading-pump record` (also `trading-pump-recorder`), each in its own
-process, record-only, no wallet:
+None since 0.5.0: `trading-pump record` and `trading-pump-recorder` are gone.
 
 * **Cross-chain market recorder (FEAT-74)**: moved to trading-scout on
-  2026-10-30 (its FEAT-1, with a sell check and per-launchpad read-outs);
-  `--market` now only says so.
+  2026-10-30 (its FEAT-1, with a sell check and per-launchpad read-outs).
 * **Slow-lane data (FEAT-65 phase 0)**, `--jupiter-quotes` and
-  `--backfill-bars`: Jupiter round-trip quotes and prices for liquid Solana
-  tokens (`configs/slow_lane_tokens.json`), priority-fee samples, and daily /
-  hourly bars from GeckoTerminal or Binance.
+  `--backfill-bars` (`services/slow_lane.py`): **retired in 0.5.0**. The
+  slow lane was judged NO-GO on 2026-10-29
+  ([RESULTS §6.15](dev/RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29));
+  the recorders, `configs/slow_lane_tokens.json` and
+  `PUMPFUN_JUPITER_API_KEY` are in the history at tag `v0.4.0`.
 
 ## 8. Solana and Pump.fun SDK
+
+The Solana plumbing every Solana module shares is **trading-solana's** since
+0.5.0 (FEAT-115; its `docs/API.md` lists each name and the file here it came
+from): the RPC pool, the client core (wallet, account reads, balances), the
+transaction transport and Jito, the cost parser, mint decoding (supply,
+decimals, token names), wallet decoding and the program-subscribe feed base.
+The Pump.fun and PumpSwap parts stay here:
 
 * **Curve and pool maths** (`sdk/curve.py`, `sdk/pumpswap.py`): exact
   integer bonding-curve quotes with Pump.fun fees (BUG-01, BUG-13, BUG-66),
@@ -355,23 +318,28 @@ process, record-only, no wallet:
 * **Fee config** (`sdk/fee_config.py`): Pump.fun and PumpSwap fee tiers by
   market cap, checked against the modelled fee (BUG-138).
 * **Transactions** (`sdk/pumpfun_execution.py`, `sdk/pumpswap_execution.py`,
-  `sdk/transport.py`): Pump.fun `BuyV2` / `SellV2` with Token-2022
+  on trading-solana's `TransactionTransportMixin`): Pump.fun `BuyV2` / `SellV2` with Token-2022
   detection (BUG-69), creator vault (BUG-68), fee and volume accumulators,
   idempotent ATA creation (BUG-54), the account close on a full exit
   (BUG-96); the PumpSwap sell (BUG-123), refusing non-SOL quote mints
   (BUG-124); compute budget and priority fee; Jito bundles with on-chain
-  error checks (BUG-53). Kept for the live gate; nothing in the module sends
-  a transaction yet.
-* **Costs from transactions** (`sdk/costs.py`): fee, priority fee, tip and
-  rent read from a transaction's meta (BUG-96, BUG-137).
-* **RPC pool** (`infra/rpc_pool.py`, FEAT-08): latency routing, failover,
-  JSON-RPC errors counted as failures (BUG-67), a breaker that sends nothing
-  while open, a doubling cooldown and a single half-open probe (BUG-151),
-  provider keys redacted (BUG-102).
+  error checks (BUG-53, trading-solana's). `PumpFunExecutionClient` keeps
+  Pump.fun's `pump_fee_bps`. Kept for the live gate; nothing in the module
+  sends a transaction yet.
+* **Costs from transactions** (trading-solana's `costs`): fee, priority fee,
+  tip and rent read from a transaction's meta (BUG-96, BUG-137).
+* **RPC pool** (trading-solana's `rpc_pool`, FEAT-08): latency routing,
+  failover, JSON-RPC errors counted as failures (BUG-67), a breaker that
+  sends nothing while open, a doubling cooldown and a single half-open probe
+  (BUG-151), provider keys redacted (BUG-102).
 * **Pump.fun API client** (`api/client.py`, FEAT-13) with bounded retries.
-* **PumpPortal WebSocket host** (`streams/websocket.py`): reconnect with
-  doubling backoff, pings and an idle reconnect (BUG-150), the API key kept
-  out of every shown URL (BUG-117, BUG-118).
+* **PumpPortal WebSocket** (`streams/websocket.py`): the migration
+  subscription and the API key kept out of every shown URL (BUG-117,
+  BUG-118), on trading-core's stream loop (`trading_core.ops.stream`,
+  FEAT-110): reconnect with doubling backoff, pings and an idle reconnect
+  (BUG-150).
+* **New-pool feed** (`pools.py`, FEAT-80): trading-solana's
+  `ProgramSubscribeFeed` with PumpSwap's pool subscriptions.
 
 ## 9. Quality
 
@@ -391,14 +359,14 @@ reason is in [dev/TODO.md, Not ported](dev/TODO.md#not-ported).
 | § | Feature | Status |
 |---|---|---|
 | 1 | Yellowstone Geyser gRPC streaming (FEAT-01) | Not ported (the transport was never production-ready, BUG-55; FEAT-39) |
-| 2 | Jito bundling and anti-sandwich (FEAT-02) | Here: `sdk/jito.py` and tip costs; used once live execution is built |
+| 2 | Jito bundling and anti-sandwich (FEAT-02) | trading-solana's `jito` since 0.5.0 (here, `sdk/jito.py`, until then); used once live execution is built |
 | 3 | Execution and Solana SDK (FEAT-12) | Here (§8), without Raydium |
 | 4 | Anti-rug screening (FEAT-04) | Here (§6), off by default |
 | 5 | Pump.fun API client (FEAT-13) | Here (§8) |
 | 6 | Trading bot runtime (FEAT-14) | Core: the engine replaces `pumpbot` |
 | 7 | Risk controls (FEAT-15) | Core (`risk/`) |
 | 8 | Strategy presets and dynamic exits (FEAT-03, FEAT-16) | Screening presets here; exits in the core (`ExitRules`); tiered take profit, stagnation and pre-graduation exits not ported |
-| 9 | CLI entry points (FEAT-17) | `trading-core` (run, check, audit, events) and `trading-pump` (record, replay, env) |
+| 9 | CLI entry points (FEAT-17) | `trading-core` (run, check, audit, events) and `trading-pump` (replay, lane-rows, env; `record` retired in 0.5.0) |
 | 10 | Replay engine and backtesting (FEAT-18) | Rebuilt as `trading-pump replay` (§5); `pumpfun-replay` and its sweeps not ported |
 | 11 | Terminal UI, alerting, telemetry (FEAT-19) | Core |
 | 12 | Testing standards (FEAT-20) | Here and in the core (§9) |
@@ -407,7 +375,7 @@ reason is in [dev/TODO.md, Not ported](dev/TODO.md#not-ported).
 | 15 | Order-flow momentum signals (FEAT-07) | Not ported (needs the trade feed) |
 | 16 | Raydium migration sniping (FEAT-05) | Not ported (Pump.fun migrates to PumpSwap, BUG-123) |
 | 17 | Smart money and copy trading (FEAT-06) | Not ported |
-| 18 | Multi-RPC load balancing (FEAT-08) | Here (§8) |
+| 18 | Multi-RPC load balancing (FEAT-08) | trading-solana's since 0.5.0 (§8) |
 | 19 | Runtime decomposition (FEAT-12) | Done by the split: `bot/run.py` is gone |
 | 20 | Stream recorder and replay datasets (FEAT-21) | The capture (§5); the PumpPortal trade-stream recorder not ported |
 | 21 | Adaptive ratchet drawdown (FEAT-29) | Core |
@@ -426,7 +394,7 @@ reason is in [dev/TODO.md, Not ported](dev/TODO.md#not-ported).
 | 34 | Confirmed momentum entry (FEAT-52) | Not ported (NO-GO, §6.11) |
 | 35 | Pre-graduation lane and PumpSwap exit (FEAT-53, BUG-123) | The PumpSwap sell builder is here; the lane not ported |
 | 36 | Shadow variants and read-out tooling (FEAT-58) | Not ported |
-| 37 | Recorded research inputs (FEAT-54 … FEAT-65) | The slow-lane recorder is here (§7); the order-flow inputs not ported |
+| 37 | Recorded research inputs (FEAT-54 … FEAT-65) | The slow-lane recorder was here until 0.4.0 and is retired (§7); the order-flow inputs not ported |
 | 38 | Circuit breaker in replay (FEAT-66) | `trading-pump replay` runs the core's breaker as a live run does |
 | 39 | Pre-registered paper verdict (FEAT-67) | Core (`trading-core-audit verdict`); rules in `configs/verdict_rules.json` |
 | 40 | Run provenance (FEAT-68) | Core, with the module's additions (§1) |

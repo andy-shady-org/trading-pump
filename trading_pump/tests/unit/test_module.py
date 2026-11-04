@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from trading_core.module.base import (
 )
 from trading_core.positions import Position
 
+import trading_pump
 from trading_pump.config.env import Credentials, load_credentials
 from trading_pump.feed import CONDITION_FEED, CONDITION_RPC
 from trading_pump.lanes import SKIP_NO_LISTING
@@ -70,6 +72,12 @@ def test_identity_and_quote_asset() -> None:
     assert module.format_price(None) == "-" and module.format_price(0) == "-"
     assert module.is_public_identifier(SAMPLE_PUMP_MINT)
     assert not module.is_public_identifier("deadbeef" * 5)
+
+
+def test_the_version_is_pyprojects() -> None:
+    pyproject = Path(__file__).parents[3] / "pyproject.toml"
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+    assert PumpModule.version == trading_pump.__version__ == declared["version"]
 
 
 def test_events_show_the_name_and_the_instrument_column_the_mint() -> None:

@@ -23,16 +23,17 @@ what actually happened (with the full traceback), and what you expected.
   100% statement and branch coverage on Python 3.11–3.14.
 * Reference the issue in the description (`fixes #23`).
 * If `main` moved on, **rebase**, don't merge.
-* An engine change belongs in trading-core, not here.
+* An engine change belongs in trading-core, not here; a change to the shared Solana plumbing (RPC pool, transport, Jito, costs, mint decoding, program feeds) belongs in trading-solana.
 
 ## Setup
 
 ```bash
 git clone https://github.com/andy-shady-org/trading-core.git
+git clone https://github.com/andy-shady-org/trading-solana.git
 git clone https://github.com/andy-shady-org/trading-pump.git
 python -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e trading-core -e 'trading-pump[dev]'
+python -m pip install -e trading-core -e trading-solana -e 'trading-pump[dev]'
 ```
 
 ## Commands

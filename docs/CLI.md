@@ -9,7 +9,6 @@ Running the module is trading-core's job; trading-pump adds its own tools.
 | `trading-core modules` | trading-core | List installed modules (`pumpfun` must be there) |
 | `trading-core-audit pnl / cuts / verdict` | trading-core | Read an audit trail: net PnL by reason or strategy, random-cut check, pre-registered verdict |
 | `trading-core-events` | trading-core | Query and tail diagnostic events |
-| `trading-pump record ...` | here | Research recorders (also `trading-pump-recorder`) |
 | `trading-pump replay ...` | here | Replay captures through the engine with the module |
 | `trading-pump lane-rows ...` | here | Write captures as trading-core's strategy library rows, for `trading-core-lanes sweep` |
 | `trading-pump env` | here | Which `PUMPFUN_*` variables are set (names only) |
@@ -44,7 +43,9 @@ trading-pump replay --config configs/paper.json \
 ```
 
 Plays one or more captures (plain or gzipped; rows are put in time order)
-through a fresh trading-core engine with the module, on a simulated clock:
+through a fresh trading-core engine with the module, on a simulated clock
+(trading-core's replay harness, `trading_core.replay`, since 0.5.0; the
+options, the output and the fills are as before):
 
 * migrations reach the tracker at their recorded time;
 * due pools are answered with the latest recorded reading at or before the
@@ -85,7 +86,7 @@ checks the code, not the rule.
 ```bash
 trading-pump lane-rows \
     --capture data/paper/capture.jsonl.3.gz data/paper/capture.jsonl.2.gz data/paper/capture.jsonl \
-    --out data/lanes/rc11.jsonl.gz [--source graduation new_pool damm]
+    --out data/lanes/rc11.jsonl.gz [--source graduation new_pool]
 trading-core-lanes sweep --capture rc11=data/lanes/rc11.jsonl.gz --fee-bps 125 --stress-fee-bps 200 \
   --haircut-bps 50 --delay 1.5 --out data/sweeps/rc11
 ```
@@ -95,55 +96,35 @@ venue-neutral rows of trading-core's strategy library (its ADR-011,
 FEAT-133), the rows `trading-core-lanes sweep --capture NAME=FILE` reads
 ([FEATURES §5.1](FEATURES.md#51-the-strategy-librarys-records-trading-core-feat-133-and-feat-117)):
 
-* a `listing` per graduate (`kind: "graduation"`, at the migration), per
-  new PumpSwap pool (at its creation, with its creator) and per DAMM v2 pool
-  (at its activation, with its creator);
+* a `listing` per graduate (`kind: "graduation"`, at the migration) and per
+  new PumpSwap pool (at its creation, with its creator);
 * a `reading` per pool read: the price the module prices with (SOL per
   whole token), the SOL in the pool as `liquidity`;
 * no `trade` or `holders` rows: the captures hold no swaps by wallet and no
   holder snapshots.
 
-`--source` picks which pools are written (default: all three); a sweep judges
-one venue at a time, so write graduates and DAMM v2 pools to separate files.
+`--source` picks which pools are written (default: both). Meteora DAMM v2
+pools (FEAT-107) are trading-meteora's since 0.5.0: its own `lane-rows`
+writes them, and a `damm_*` row here is counted as not market data.
 `--out` must be a new `.jsonl` or `.jsonl.gz` file; it is written whole or
 not at all. Rows come in capture order, not time order (the sweep sorts
 them). The command prints how many rows of each kind it wrote, the rows it
 skipped and why (a reading of a coin whose listing is not in the capture, a
 reading before its listing, a coin whose decimals were not read, a drained
 pool), and the rows that are not market data (`migration`,
-`observation_end`, `damm_decimals`, `damm_end`, other runs' rows). It needs
-a trading-core with the strategy library (`trading_core.lanes`).
+`observation_end`, other runs' rows). It needs trading-core `>=0.7.0`
+(the strategy library, `trading_core.lanes`).
 
 ## `trading-pump record`
 
-Record-only research recorders, each in its own process next to the engine
-(never inside it). No wallet, no transactions. One mode per run:
-
-| Mode | What | Default output |
-|---|---|---|
-| `--jupiter-quotes` | FEAT-65 phase 0: Jupiter round-trip quotes (0.02 / 0.1 / 0.5 SOL), prices and priority-fee samples for a token list, every 5 minutes | `slow_lane/jupiter_quotes.jsonl` |
-| `--backfill-bars` | FEAT-65 phase 0: daily / hourly OHLCV bars from GeckoTerminal (about 6 months) or Binance (`--bar-source binance`, since listing), then exit | `slow_lane/bars.jsonl` (`binance_bars.jsonl`) |
-
-Without a mode it prints an error and exits 2.
-
-Common options: `-o/--output` (path), `-d/--duration` (seconds),
-`--batch-size` (rows per write, 50), `--flush-interval` (2 s).
-
-`--market` (FEAT-74, the cross-chain market recorder) moved to trading-scout
-on 2026-10-30; the flag now prints where it went and exits 2.
-
-`--jupiter-quotes` / `--backfill-bars`: `--tokens` (token list JSON, default
-`configs/slow_lane_tokens.json`'s list), `--quote-interval` (300 s),
-`--quote-sizes` (`0.02,0.1,0.5`), `--request-gap` (2 s quotes, 6 s
-GeckoTerminal, 0.5 s Binance), `--no-fee-samples` (skip
-`getRecentPrioritizationFees`, otherwise taken when an RPC variable is set),
-`--bar-timeframes` (`day,hour`), `--bar-source` (`geckoterminal` or
-`binance`), `--bar-base-url`, `--bar-max-pages`, `--bar-since YYYY-MM-DD`
-(Binance).
-
-`PUMPFUN_JUPITER_API_KEY` moves the quotes to Jupiter's keyed host
-([ENVIRONMENT.md](ENVIRONMENT.md)). Operating notes (pacing, rate limits,
-disk use) are in [dev/RUNBOOK.md §5](dev/RUNBOOK.md#5-research-recorders).
+**Retired in 0.5.0**, with `trading-pump-recorder`. Its last two modes,
+`--jupiter-quotes` and `--backfill-bars`, recorded the FEAT-65 slow lane's
+data, and the slow lane was judged NO-GO on 2026-10-29
+([RESULTS §6.15](dev/RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29));
+`--market` (FEAT-74) had moved to trading-scout on 2026-10-30. The command
+is in the history at tag `v0.4.0`; `trading-pump record` now fails as an
+unknown command (exit 2). The operating notes it had are in
+[dev/RUNBOOK.md §5](dev/RUNBOOK.md#5-research-recorders).
 
 ## `trading-pump env`
 
@@ -151,6 +132,6 @@ disk use) are in [dev/RUNBOOK.md §5](dev/RUNBOOK.md#5-research-recorders).
 trading-pump env
 ```
 
-A table of the seven variables the module reads, each `set`, `set as <alias>`
+A table of the six variables the module reads, each `set`, `set as <alias>`
 or `unset`, with what it is for; then one warning per other `PUMPFUN_*`
 variable that is set, naming what replaces it. Values are never printed.

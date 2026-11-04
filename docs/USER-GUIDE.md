@@ -12,7 +12,11 @@ This repository continues **pumpfun-trading**: its history, bug record,
 results log and documents are kept here (the old guides are in
 [archive/pumpfun-trading](archive/pumpfun-trading/INDEX.md)). Everything
 that was not specific to Solana (risk, the circuit breaker, accounting, the
-audit tools, alerts, the dashboard) is now trading-core's.
+audit tools, alerts, the dashboard) is now trading-core's, and since 0.5.0
+the Solana plumbing every Solana module shares (the RPC pool, the
+transaction transport, Jito, costs, mint decoding) is the trading-solana
+library's, the capture writer, stream loop and replay harness
+trading-core's (FEAT-115).
 
 ## 1. Concepts in one minute
 
@@ -45,12 +49,15 @@ audit tools, alerts, the dashboard) is now trading-core's.
 
 ## 2. Install
 
-trading-core is private and installed first, next to this repository:
+trading-core and trading-solana are private and installed first, next to
+this repository (trading-core `>=0.7.0,<0.8`, trading-solana
+`>=0.3.0,<0.4`):
 
 ```bash
 cd ~/projects/git/trading
 python3 -m venv .venv && source .venv/bin/activate      # Python 3.11–3.14
 pip install -e trading-core
+pip install -e trading-solana
 pip install -e "trading-pump[dev]"
 trading-core modules          # → pumpfun, simulated (and polymarket if installed)
 ```
@@ -137,10 +144,11 @@ rule on the data it came from.
 
 ### 4.5 Research recorders
 
-`trading-pump record --jupiter-quotes` / `--backfill-bars` (slow-lane data)
-run in their own process ([CLI.md](CLI.md#trading-pump-record)). The
-cross-chain market recorder (`--market`) moved to trading-scout on
-2026-10-30.
+None since 0.5.0: the slow-lane recorders (`trading-pump record
+--jupiter-quotes` / `--backfill-bars`, FEAT-65, NO-GO) were retired
+([CLI.md](CLI.md#trading-pump-record)), and the cross-chain market recorder
+(`--market`) moved to trading-scout on 2026-10-30. New Meteora DAMM v2
+pools (FEAT-107) are recorded by trading-meteora since 0.5.0.
 
 ## 5. From pumpbot
 
@@ -154,11 +162,11 @@ cross-chain market recorder (`--market`) moved to trading-scout on
 | `pumpfun-audit reconcile` | not ported yet (needed before live, [dev/TODO.md](dev/TODO.md)) |
 | `pumpfun-events` | `trading-core-events` |
 | `pumpfun-recorder --market` | trading-scout (the `scout` module, since 2026-10-30) |
-| `pumpfun-recorder --jupiter-quotes / --backfill-bars` | `trading-pump record ...` (same flags) |
+| `pumpfun-recorder --jupiter-quotes / --backfill-bars` | `trading-pump record ...` until 0.4.0; retired in 0.5.0 (FEAT-65, NO-GO) |
 | `pumpfun-recorder --ws-url ...` (stream capture) | not ported; the module's capture records the graduation rows |
 | `pumpfun-replay` | `trading-pump replay` for graduation captures; the launch / momentum replay, sweeps and `--compare-audit` are not ported |
 | `pumpfun-optimize`, `pumpfun-arb`, `pumpfun-drill` | not ported |
-| `PUMPFUN_*` variables | seven are read ([ENVIRONMENT.md](ENVIRONMENT.md)); the rest warn with their replacement |
+| `PUMPFUN_*` variables | six are read ([ENVIRONMENT.md](ENVIRONMENT.md)); the rest warn with their replacement |
 | the bot config file | engine keys + `module_settings` ([CONFIGURATION.md](CONFIGURATION.md#from-a-pumpbot-config)) |
 
 Files:
@@ -189,7 +197,7 @@ Files:
 | [STRATEGY.md](STRATEGY.md) | Both lanes, their prices and costs, how they are judged |
 | [STRATEGY-LEDGER.md](STRATEGY-LEDGER.md), [LESSONS.md](LESSONS.md) | Shared with every repository: every strategy tried and why it failed, how to test on a new chain, what not to test again; every lesson learned |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every `module_settings` key, and the pumpbot key map |
-| [ENVIRONMENT.md](ENVIRONMENT.md) | The seven variables, and what replaced the rest |
+| [ENVIRONMENT.md](ENVIRONMENT.md) | The six variables, and what replaced the rest |
 | [CLI.md](CLI.md) | Every command |
 | [FEATURES.md](FEATURES.md) | What ships, and what became of every pumpbot feature |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the module implements trading-core's contract |
