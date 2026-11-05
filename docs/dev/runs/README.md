@@ -61,6 +61,7 @@ The format is trading-core's `docs/dev/DOCUMENTATION.md` §8.2.
 | pools-1 | Record-only | `v0.4.0rc5` on trading-core `v0.2.2` | 2026-10-31 07:29:11 | [`pools-1.md`](pools-1.md) |
 | damm-1 | Record-only (Meteora DAMM v2, FEAT-107) | `v0.4.0` on trading-core `v0.4.0` | 2026-11-03 (planned) | [`damm-1.md`](damm-1.md) |
 | ee-1 | Record-only, judged offline by a pre-registered replay (FEAT-160: momentum entries, out at +4% or 60 s) | `v0.4.0` on trading-core `v0.4.0` | after damm-1 (planned 2026-11-06) | [`ee-1.md`](ee-1.md) |
+| ee-1-linked | Pre-registered replay on ee-1's capture (FEAT-161: momentum entries only on coins linked to an earlier rug) | ee-1's | with ee-1 | [`ee-1-linked.md`](ee-1-linked.md) |
 
 The two pumpbot pilot logs moved here from `releases/` on 2026-10-31,
 unedited. They were written as running checkpoint logs, not in this format,
