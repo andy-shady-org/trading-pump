@@ -1,4 +1,4 @@
-# Run ee-1-tiered (arms 3 and 4 of ee-1)
+# Run ee-1-tiered (arms 3, 4 and 5 of ee-1)
 
 **Two pre-registered replays on ee-1's capture (FEAT-162).**
 - No run of its own: they read `data/ee-1/` (see [`ee-1.md`](ee-1.md)).
@@ -69,6 +69,49 @@ On the design captures the scorer reproduces the numbers above.
 
 ```sh
 python3 -I ee1_arms.py ee1.pkl <start epoch> <end epoch - 14400>
+```
+
+## Arm 5 (pre-registered 2026-11-06 07:50 UTC, before ee-1 starts; FEAT-163)
+
+**Question:** does arm 4 do better without coins whose bonding curve was created and sold out in the same moment?
+- These are the "instant curve" graduates another trader described: bought whole in the creation transaction, then distributed and dumped.
+- Some of them reach the momentum band.
+
+**Where it came from (in-sample, 2026-11-06):**
+- A coin's creation time is the block time of its mint's oldest transaction.
+- The gap from creation to the capture's recorded migration bunches between 0.37 and 1.60 s, then jumps to 2.10 s. So the cut is set at that gap, **2.0 s**, not at the best result.
+- With the tiered exit, the same-second coins made:
+
+  | Capture | Same-second coins |
+  |---|---|
+  | rc.8 | +13.2% a trade (1 coin) |
+  | rc.9 | −1.3% (9) |
+  | rc.11 | −11.8% (17) |
+
+- Arm 4 without curves under 2.0 s makes +2.8% / +4.1% / +4.1% a trade (24, 25, 62). The removed coins make −0.7% / +3.1% / −4.7%.
+- With a 3 s fill it makes −3.2% / −1.4% / +0.5%.
+- rc.8 holds only 2 such entries, so the evidence is mainly two captures.
+
+**The rule:**
+- Arm 4's trades;
+- dropping a coin whose capture-recorded migration time is less than 2.0 s after its creation time;
+- creation time looked up through Helius at the read-out, cached; the key from a file, never printed.
+
+**Files:**
+
+| File | sha256 |
+|---|---|
+| `runtimes/pump/analysis-pump12/ee1_arm5.py` | `bf25a856a6761758a26b9a140e664776f02a9378c34b24b119214c87386a18d9` |
+
+It imports `ee1_arms.py` (hash above) and `sim.py`.
+
+**Verdict:** as arms 3 and 4, with the removed coins as the comparison.
+- **Expected:** about 140 trades in 7 days, so probably EXTEND to the pooled 14 days.
+
+**Multiple arms:** ee-1 now has five pre-registered arms. A GO on any one of them could be luck, so a GO leads only to a paper lane (fill delay first), never to live money directly.
+
+```sh
+python3 -I ee1_arm5.py ee1.pkl <start epoch> <end epoch - 14400> ee1-arm5-cache.json <key file>
 ```
 
 ## Read-out (added at the end)
