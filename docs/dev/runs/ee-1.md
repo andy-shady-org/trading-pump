@@ -42,7 +42,17 @@
   - 3.5e-5 SOL per leg for network, priority and the verdict's tip floor.
 
 **Code and files:**
-- **Capture:** trading-pump `v0.4.0` (`c369f09`) on trading-core `v0.4.0` (`cfff635`), the release damm-1 runs, installed in `runtimes/pump`. No install change is needed.
+- **Capture:** trading-pump `v0.5.0` (`9ef9690`) on trading-core `v0.7.0` (`cceeed4`) and trading-solana `v0.3.0` (`06c68ac`), installed in `runtimes/pump` as venv `pump-v0.5.0`.
+  - Changed by the operator on 2026-11-06, before the start. The record first named `v0.4.0` on trading-core `v0.4.0`.
+  - The install needs:
+    - `bin/install-release.sh v0.7.0 v0.5.0 v0.3.0`, the script with the new optional trading-solana tag;
+    - `[libraries.solana]` (`distribution = "trading-solana"`) in `runtimes/pump/modules.toml`.
+    - Both change after damm-1 ends.
+  - **Why the design data still apply:** `v0.5.0` is a dependency move.
+    - Its release record replayed rc.11's capture through `v0.4.0` and through `v0.5.0` with identical trades.
+    - Its capture rows and settings keys are unchanged, except `damm_pools`, which `ee-1.json` doesn't have.
+  - Both configs validate on this stack (`trading-core check`, 2026-11-06).
+  - This install, the smoke run and a restart drill also close the open items of `v0.5.0`'s release gate.
 - **Config:** `runtimes/pump/configs/ee-1.json`, sha256 `06bb53280c4d0c1330525e3fff967c67cb0c30a0c2c5efdf73a51be6a7876a27`.
   - It is rc.11's `rc11-paper.json` with `lane.enabled` and `instant.enabled` false.
   - The capture is in `data/ee-1/`, up to 200 parts.
