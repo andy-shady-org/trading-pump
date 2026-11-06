@@ -70,6 +70,15 @@
 
   On the design captures it reproduces the table above.
 
+**Started:** 2026-11-06 12:06:42 UTC (`data/ee-1/RUN.txt`).
+- Venv `pump-v0.5.0`; config sha256 as above.
+- Planned end 2026-11-13 12:06 UTC.
+- **The scored window:** migrations from 2026-11-06 12:06:42 to 2026-11-13 08:06:42 UTC, epoch 1793966802 to 1794557202.
+- Smoke run and restart drill passed the same day: 17 of 17 graduates followed, readings every 2.06 s at the median in their first 300 s.
+  - **Noted at the drill:** a graduate followed when the run stopped was not followed again after the resume.
+  - A restart therefore loses the readings of coins migrating in the minutes before it.
+  - The scorers skip such coins (no 60–90 s reading). Any restart is to be noted here with its time.
+
 **Length and window:**
 - **Start:** after damm-1 ends (planned end 2026-11-06 11:20 UTC) and the smoke run passes.
 - **Length:** 168 h (`--run-for 168h`).
