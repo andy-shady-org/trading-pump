@@ -64,7 +64,6 @@ These are the highest-value changes to make the bot safer, more operationally sa
 
 These improvements are about making the bot behave more like a real trading system rather than a launch monitor.
 
-
 #### 6. Better execution quality
 - [x] Add slippage tolerance handling in `pumpfun_trading/sdk/execution.py`
 - [x] Add partial fill handling and re-evaluation logic
@@ -74,7 +73,6 @@ These improvements are about making the bot behave more like a real trading syst
 - [x] Implement modern Pump.fun `BuyV2` (27 accounts) and `SellV2` (26 accounts) on-chain instruction architecture
 - [x] Add dynamic Token-2022 vs SPL Token program resolution (`get_token_program_for_mint`)
 - [x] Derive on-chain volume accumulators, fee program `fee_config` PDAs, and creator vaults from bonding curve state (`data[49:81]`)
-
 
 #### 7. Backtesting and replay foundation
 - [x] Create a replay / simulation module under `pumpfun_trading/` for historical token data
@@ -111,7 +109,6 @@ These improvements are about making the bot behave more like a real trading syst
 ### Phase 2: Medium-term roadmap (1-2 months)
 
 These changes turn the bot into a more serious production trading system.
-
 
 #### 10. Add strategy modularity
 - [x] Split strategy logic into:
@@ -990,3 +987,63 @@ Built on `release/v0.5.0` (2026-11-04), [`CHANGELOG.md`](../../CHANGELOG.md) 0.5
 - [x] **FEAT-115, `0.5.0`** (trading-core ADR-010, `docs/dev/REPOSITORIES.md` there): onto trading-solana `0.3.0` (FEAT-112) and trading-core `v0.7.0` (FEAT-110, FEAT-111, the strategy library: `trading-core>=0.7.0,<0.8`, which `lanes.py`, `lane-rows` and `market_book` need since the strategy library); FEAT-107 removed (moved to trading-meteora); FEAT-65's slow lane retired; the release gate replays rc.11's capture to the same positions and net as `v0.4.0` (done: the code, tests and docs, and the replay of rc.11: identical trades, positions and net, CHANGELOG 0.5.0's release record)
 - [x] **Move FEAT-107 to trading-meteora** in `v0.5.0` (ADR-011; trading-core FEAT-113): the read-out of `damm-1` is done there (done: `damm.py`, `damm_pools`, `configs/damm.example.json` and lane-rows' `damm` source removed; `damm-1` runs on its `v0.4.0` install until 2026-11-06 11:20 UTC, [`runs/damm-1.md`](runs/damm-1.md))
 - [x] **The FEAT-65 slow lane retired** (NO-GO since 2026-10-29, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)): `services/slow_lane.py`, `trading-pump record` and `trading-pump-recorder` (`cli/record.py`), `configs/slow_lane_tokens.json` and `PUMPFUN_JUPITER_API_KEY` removed; the history keeps them at tag `v0.4.0`, BUG-139's fix with them ([`BUGS.md`](BUGS.md#where-each-fix-lives-after-the-move-to-trading-core))
+
+### Built proposals moved from PROPOSED-FEATURES.md (2026-11-07)
+
+Proposals whose work is done, moved whole and unedited from [`PROPOSED-FEATURES.md`](PROPOSED-FEATURES.md) on 2026-11-07 (headings one level down): FEAT-107 (built in `v0.4.0`, moved to trading-meteora in `v0.5.0`), FEAT-115 (built in `v0.5.0`), FEAT-65 (NO-GO on 2026-10-29; its recorder retired in `v0.5.0`). What ships is in [`../FEATURES.md`](../FEATURES.md).
+
+#### FEAT-107: Meteora DAMM v2 New Pools, Record-Only Capture
+* **Status (2026-11-04):** **moved to trading-meteora** in this repository's `0.5.0` (FEAT-115, ADR-011): `damm.py`, `damm_pools` and `configs/damm.example.json` are removed here, `damm-1` runs on its `v0.4.0` install, and the read-out, the fee maths, the replay and any lane are trading-meteora's. The entry below is kept as written.
+* **Status (2026-11-02):** the record-only capture is **built** (`trading_pump/damm.py`, settings `damm_pools`, `graduation.enabled`) and listed in [`FEATURES.md` §2.2](../FEATURES.md#22-new-meteora-damm-v2-pools-feat-107-record-only). Not built: replay of its rows, the fee maths, a lane. The proposal below is as written.
+* **Temporary home (ADR-011):** it ships here in `v0.4.0` for `damm-1` and moves to trading-meteora before pump-13 (trading-core FEAT-113, ADR-010); the fee maths, replay and any lane are built there, not here.
+* **Class / Priority:** Income · P1 (proposed 2026-11-02 from trading-scout's scout-1 read-out; a record-only run, `damm-1`, beside pump-12)
+* **Why:** scout-1 (72 h, trading-scout `docs/dev/runs/scout-1.md`) saw 4,338 new Meteora DAMM v2 pools on Solana. Read with only what is known about 2 minutes after a pool appears (first sell check clean, $5,000 of liquidity at entry, a pool drained before the exit counted as a total loss), the FEAT-76 rule counted from the scout's first snapshot made 156 trades at +16% a trade (gains capped at +100%), 81% won, both halves and every UTC day positive. Exploratory: DexScreener snapshots 30 s apart, eight groups tried. It needs second-resolution data with the pool's own fees before any lane.
+* **What the pools are (checked 2026-11-02 on mainnet against the program's source, MeteoraAg/damm-v2 `5398b5c`):** program `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`; pool accounts 1,112 bytes (8-byte discriminator, then `Pool`, 1,104). Offsets into `Pool`: `pool_fees` 0–160 (base fee 32 bytes at 0, mode byte at 8; dynamic fee; `init_sqrt_price`), token A and B mints at 160 and 192, vaults at 224 and 256, `liquidity` u128 at 352, `sqrt_price` u128 (Q64.64) at 448, `activation_point` u64 at 464, `activation_type` at 472 (1 = timestamp), `pool_status` 473, `collect_fee_mode` 476, `pool_type` 477, `fee_version` 478, `creator` at 640, `token_a_amount` / `token_b_amount` u64 at 672 / 680 (when `layout_version` at 688 is 1). Three scout-1 pools decoded to SOL as token A and the coin as B, as expected; all three were already drained.
+* **Fees:** five base-fee modes (time schedulers linear and exponential, a rate limiter, market-cap schedulers linear and exponential) plus a dynamic fee, against a 10⁹ denominator; scout-1's smoke run measured launch fees near 100% that decay. The capture records the fee fields raw; the maths is ported and tested against the program's own when a replay needs it, not at capture time.
+* **Discovery, measured 2026-11-02 (140 s on the public RPC):** a `programSubscribe` on the program with `dataSize` 1,112 carries every pool write: 37.5 messages and 69 kB a second (about 6 GB a day) across 224 active pools. A pool seen for the first time with `activation_point` within the last few minutes is new, found within a second. The same stream carries every followed pool's state after each swap, so the price path needs no polling.
+* **Design (record-only, reusing FEAT-80's feed shape):**
+  - `damm_pools` settings: `enabled` (false), `ws_url_env` (the WebSocket, default the public RPC, so the 6 GB a day costs no credits; a provider URL from an environment variable if the public one drops), `max_age_seconds` for "new" (300), `follow_seconds` (14,400), `max_followed`, `quote_mints` (SOL only at first), `heartbeat_seconds` (30: a batched `getMultipleAccounts` through `rpc_pool` for followed pools, so a quiet pool still has a time grid and a closed one is seen).
+  - Capture rows: `damm_pool` on discovery (pool, mints and their decimals, vaults, creator, activation point and type, collect-fee mode, pool type, fee version, the raw `pool_fees` bytes, the first price), `damm_state` on every write of a followed pool (time, slot, `sqrt_price`, `liquidity`, token amounts, status; price in SOL per coin from the mints' decimals) and `damm_end` (cause: follow time over, drained below a liquidity floor, closed).
+  - Nothing trades; replay does not read these rows yet (a lane would need it, pre-registered after a read-out).
+* **Run `damm-1`:** its own data folder and config in `runtime-pump`, 72 h or more, started with pump-12 on the same release. Read-out: pools per hour, the paths from the first reading, the fee at each minute after activation, and scout-1's rule replayed on second-resolution data with the real fee; whether the edge survives what 30-second snapshots could not show.
+* **Cost:** WebSocket from the public RPC (free; a provider's at about 3.6 M credits per 30 days if needed, `COSTS.md`); heartbeat reads about 0.1 M per 30 days; disk about 1–2 GB a day before gzip (to be measured in its smoke run).
+* **Dependencies:** FEAT-80's WebSocket host and capture writer. **Impact:** the first second-resolution data on the venue scout-1 ranked first.
+
+---
+
+#### FEAT-115: Onto trading-solana And trading-core 0.5.0 (cross-component)
+* **Status (2026-11-04): built** on `release/v0.5.0` ([`CHANGELOG.md`](../../CHANGELOG.md) 0.5.0, [`FEATURES.md` §8](../FEATURES.md#8-solana-and-pumpfun-sdk)), on trading-core `v0.7.0` and trading-solana `v0.3.0`: this release declares `trading-core>=0.7.0,<0.8` and `trading-solana>=0.3.0,<0.4` (the **Needs** line below names the first releases that had the parts; the strategy library raised the core to 0.7). Done as designed, except: `replay.py` hands trading-core's `run_replay` a `ReplayFeed` of its own (`GraduationFeed`) rather than a `RowFeed`, so a replay keeps `v0.4.0`'s start, end and ticks; `sdk/pumpswap.mint_supply` went to trading-solana too (`mints.mint_supply`). Open: the release gate's replay of rc.11's capture (not pump-12's, which was not run) on `v0.4.0` and `0.5.0`. The entry below is kept as written.
+* **Class / Priority:** Suggested · P1 (built during pump-12, released as `0.5.0` before pump-13)
+* **Needs:** trading-core FEAT-110 (shared capture writer, stream loop, replay harness) and FEAT-111 (trusted libraries), both in trading-core `0.5.0`; trading-solana FEAT-112 (`0.1.0`). This release declares `trading-core>=0.5.0,<0.6` and `trading-solana>=0.1.0,<0.2`.
+* **Goal:** this repository keeps Pump.fun on PumpSwap only (trading-core ADR-010, `REPOSITORIES.md`): the Solana plumbing comes from trading-solana, the capture writer, stream loop and replay harness from trading-core, and FEAT-107 leaves for trading-meteora (ADR-011).
+* **Design:** the file map is trading-core's `docs/dev/REPOSITORIES.md` §5. `recorder.py`, the generic part of `streams/websocket.py` and the engine-driving part of `replay.py` are replaced by trading-core's; `infra/rpc_pool.py`, `sdk/transport.py`, `sdk/jito.py`, `sdk/costs.py`, `sdk/execution_base.py`, `identifiers.py`, `names.py` and the mint decoders by trading-solana's; `damm.py`, `damm_pools` and `configs/damm.example.json` are removed; `services/slow_lane.py` (FEAT-65, NO-GO) is retired. Behaviour, settings keys (other than `damm_pools`) and capture rows are unchanged.
+* **Proof:** the release gate replays a real capture (pump-12's) through `0.5.0` to the same positions and net as `v0.4.0`. A lane keeps its stage only if the replay matches exactly (RELEASE-GATE §3).
+* **Impact:** a smaller module with one venue; a change to Meteora or to Solana plumbing no longer means a trading-pump release.
+
+---
+
+#### FEAT-65: Slow Lane, Daily-Bar Trend On Liquid Solana Tokens Via Jupiter
+* **Retired (2026-11-04, `0.5.0`):** the phase 0 recorders (`trading-pump record --jupiter-quotes` / `--backfill-bars`, `services/slow_lane.py`, `configs/slow_lane_tokens.json`, `PUMPFUN_JUPITER_API_KEY`) are removed (FEAT-115); the history keeps them at tag `v0.4.0`.
+* **Class / Priority:** Income · P3 (proposed 2026-10-21; a deliberate change of direction, considered only if the rc.3 Pump.fun lanes are also NO-GO). Phase 0 data recorder shipped in rc.3 ([`FEATURES.md` §37](../archive/pumpfun-trading/FEATURES.md)); design steps 2–5 below are not built
+* **Status (2026-10-29): NO-GO, closed.** The gate in Design 5 was tested as a pre-registered walk-forward on the Binance history and failed every condition ([`RESULTS.md` §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)). Steps 2–5 will not be built for this rule; a different rule would need its own pre-registered test first.
+* **Goal:** A strategy where the edge is analysis and discipline rather than speed: hours-to-days holds on liquid Solana tokens (SOL, JUP and similar), where our 1.5 s latency and per-trade fixed costs barely matter.
+* **Why it is separate:** everything in the bot today is built for minutes-old bonding curves (curve math, order flow, watch TTL, 1 s refresh, exits in seconds). This lane needs its own data, backtester and position logic.
+* **Phase 0, data (shipped in rc.3, record-only):** `pumpfun-recorder --jupiter-quotes` samples Jupiter round-trip quotes (buy SOL → token, then sell those tokens back) at 0.02 / 0.1 / 0.5 SOL every 5 min for `configs/slow_lane_tokens.json`, with route, pools, price impact, round-trip cost, Jupiter price / liquidity and priority-fee samples for the quoted pools; `--backfill-bars` downloads GeckoTerminal daily / hourly bars, or Binance public klines with `--bar-source binance`. Both keyless (`lite-api.jup.ag`, GeckoTerminal public API), in their own process and files (RUNBOOK §6.4). A quote is valid only when taken, so these series cannot be fetched later; bar history can. Limits found on 2026-10-21: the keyless Jupiter API allowed 5 requests per ~10 s, and GeckoTerminal's public history ends after about 6 months (a multi-year backtest needs another bar source). CoinGecko's free Demo plan was checked and is no fix: its OHLC history is limited to the past 365 days (full history needs a paid plan). `--bar-source binance` (Binance public spot klines, keyless) gives each `<SYMBOL>USDT` pair since its listing: about 2.5 years for most of the list, 6 for SOL; mSOL and jitoSOL have no pair.
+* **Design:**
+  1. **Data.** OHLCV history and live bars for a fixed, reviewed token list (Jupiter or Birdeye price APIs, keys in their own env variable and never in URLs; `ops/redact.py` for anything persisted). Phase 0 above covers the quote / cost side and 6 months of bars.
+  2. **Backtester.** A bar-based engine (not `engines/replay.py`, which replays stream events) with fees, swap price impact and slippage from Jupiter quotes, walk-forward splits and a random-entry baseline.
+  3. **Strategy.** A simple trend / regime rule (e.g. moving-average or breakout with a volatility-scaled stop and size), long-only, one position per token, in a new `strategies/` module behind the existing risk pipeline (daily breaker, exposure caps).
+  4. **Execution.** A Jupiter swap client in `sdk/` (quote → swap transaction, priority fee, no Jito needed at these holds), position records with `strategy: "slow"`, reconciliation and net PnL as for the other lanes.
+  5. **Gate.** Walk-forward backtest net positive on at least two unseen periods and better than the random-entry baseline, then a paper run of several weeks (trade count is low), then the normal Stage 0 / Stage 1 gates.
+* **What carries over:** wallet and keys, `infra/rpc_pool`, the cost model, audit trail, `pumpfun-audit pnl` and reconciliation, risk breakers, alerts and the terminal dashboard.
+* **Risks:** edges in liquid assets are small and regime-dependent (expect low single-digit returns, not doubling); few trades make evidence slow to collect; overfitting a backtest is easy (same rule as the AGENTS learning "Beat a random cut"). Roughly Phase 5-sized work.
+* **Dependencies:** the rc.3 verdict (`RESULTS.md` §6); a Jupiter swap client; ideally Sprint 28 (`bot/run.py` decomposition) so the lane does not grow `run.py`. **Impact:** a lane that does not depend on winning latency races against searchers.
+
+---
+
+### Now / Next / Later: tag v0.5.0 (2026-11-04, `v0.5.0`)
+
+- [x] Tag `v0.5.0` (FEAT-115): tagged and signed on 2026-11-04; installed in `runtimes/pump` as `pump-v0.5.0` with `[libraries.solana]` in `modules.toml`, smoke run and restart drill passed on 2026-11-06 (`runs/ee-1.md`). The row as it was:
+
+  Tag `v0.5.0` (FEAT-115, built on `release/v0.5.0`, [DONE.md](DONE.md#release-v050-onto-trading-solana-and-trading-core-070-feat-115)): its release gate, with the replay of rc.11's capture on `v0.4.0` and `0.5.0` to the same positions and net ([`RELEASE-GATE.md` §1](RELEASE-GATE.md#1-current-status)). `damm-1` (FEAT-107, record-only, on `v0.4.0`) runs until 2026-11-06 11:20 UTC; its read-out is trading-meteora's. The PumpSwap lanes are closed (rc.11 NO-GO; nothing passes pump-12's design gate, so **pump-12 is not run**)
+

@@ -181,6 +181,12 @@ any lane.
     finds lucky wallets, many top scorers are snipers, insiders or wash
     bots, and a wallet known to be copied can sell into its copiers.
     *(pumpfun-trading FEAT-54.)*
+33. **Replay a winning wallet's pattern on every market, not its picks.**
+    Its record is the rule plus its selection and its luck; only the rule
+    on the whole population says whether there is an edge to take.
+    *(trading-polymarket FEAT-146: `@vega7` made +$33.7K buying Up/Down
+    sides under 5 c late in the window; the same rule on all 8,615 markets
+    of 30 days lost 16.9%.)*
 
 ## 2. Know the market before building
 
@@ -266,6 +272,13 @@ any lane.
 21. **Empty is not collected.** Store only records that hold the data the
     replay needs, and check coverage per period. *(trading-polymarket TP-4:
     1,190 events stored with empty price series.)*
+22. **A NO-GO holds only at the resolution it was measured at.** An edge
+    that lasts seconds is invisible in minute data; before putting an idea
+    on "do not test again", say what resolution judged it, and judge speed
+    edges on ticks. *(trading-polymarket FEAT-147: Up/Down "latency trades"
+    were closed on minute data; second-level prints showed cheap asks lifted
+    within a second of a spot move, +163% a trade where spot and fill
+    coincide.)*
 
 ## 3. Paper, replay and parity
 
@@ -321,6 +334,18 @@ any lane.
     signal; costs come from quotes on the venue that fills. *(FEAT-65.)*
 16. **Paper is never cheaper than live.** An unknown fee is charged at the
     highest rate, never zero. *(trading-polymarket norm.)*
+17. **A replay uses only prints the rule could have traded in time.** A
+    market can keep trading after its outcome is all but known: crypto
+    Up/Down markets print for a minute or so after the window closes, with
+    the losing side near zero. Cut a replay at the close (and at a rule's
+    own deadline). *(trading-polymarket FEAT-146: about 1,200 prints a day
+    after the close, 110 of them cheap buys.)*
+18. **Know what a timestamp measures before you lag anything by it.** A
+    venue's trade time can be its settlement, not its fill: measure the
+    offset against the fill's own feed before timing a reaction from it.
+    *(trading-polymarket FEAT-147: the data API's times run 2.2 s after the
+    fill; a "2 s" reaction was really instant, and the rule built on it lost
+    once corrected.)*
 
 ## 4. Costs and execution
 
@@ -340,7 +365,11 @@ any lane.
 4. **Faster reads do not fix a one-slot dump.** *(trading-pump §6.20: 160
    of 171 instant stops came on 2 s reads and still filled at −33%.)*
 5. **A larger order changes nothing but risk** when the fee is a share of
-   the order. *(PUMP-12-PLAN, "Not in pump-12".)*
+   the order. *(PUMP-12-PLAN, "Not in pump-12".)* Measure it by size, though:
+   on PumpSwap's momentum lane the fixed part was 0.35% of a 0.02 SOL round
+   trip; 0.05–0.1 SOL recovered 0.15 points, and above 0.3 SOL the pools'
+   depth (about 100 SOL) cost more than that. *(2026-11-04 size re-check,
+   ADR-012.)*
 6. **Close what you open.** Every buy that opens an account pays rent; a
    full exit closes it, and every trade record carries its fees, tip and
    rent. *(BUG-96.)*
@@ -528,6 +557,18 @@ any lane.
 3. **Completion claims track code.** Verify before ticking. *(pumpfun-trading
    TODO item 25.)*
 4. **Rewrite links by path, not by anchor.**
+5. **A feature's docs change in the commit that builds it, and its status
+   changes when it ships.** The commit that builds a proposal moves it whole
+   to `DONE.md` (a one-line pointer stays), lists it in `FEATURES.md`, sets
+   its registry row in trading-core's `PROPOSED-FEATURES.md` and an ADR it
+   carries out to Accepted; the tag and the install update `RELEASE-GATE.md`
+   §1 and `TODO.md`; a shared page changed in trading-core is copied to every
+   repository in the same change. Docs left for a later sweep drift.
+   *(2026-11-07 sweep: trading-core ADR-011 still "Proposed" after 0.6.0
+   built it; 52 built proposals across five repositories still listed as
+   proposed; `RELEASE-GATE.md` pages calling tagged releases "to be
+   tagged"; this page and `STRATEGY-LEDGER.md` three days behind trading-core
+   in every copy.)*
 
 ## 12. History of this page
 
@@ -540,3 +581,12 @@ any lane.
   then.
 - 2026-11-03: §5 lesson 5: an empty pool's check is an error, not a
   verdict on the token (trading-scout SC-7, from scout-2).
+- 2026-11-04: §1 lesson 33 and §3 lesson 17, from trading-polymarket
+  FEAT-146.
+- 2026-11-04: §2 lesson 22, from trading-polymarket FEAT-147.
+- 2026-11-04: §3 lesson 18, and §2 lesson 22's evidence corrected, from
+  FEAT-147's first recording (the data API's 2.2 s lag).
+- 2026-11-04: §4 lesson 5, the fixed cost measured by size on PumpSwap's
+  momentum lane (ADR-012); this line added on 2026-11-07.
+- 2026-11-07: §11 lesson 5, from the documentation sweep of every
+  repository; the copies brought level with this page.
