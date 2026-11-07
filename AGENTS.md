@@ -216,7 +216,7 @@ trading-pump/
 Laid out as trading-core's `docs/dev/DOCUMENTATION.md` §2.3 asks.
 * [**`docs/dev/README.md`**](docs/dev/README.md): Index of every developer page, the workflow, the standard.
 * [**`docs/dev/RELEASE-GATE.md`**](docs/dev/RELEASE-GATE.md): §1 current status (the only place), release gate, capital gate and Stages 0–3, release-record template, versioning.
-* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): The `runtime-pump` folder, preflight, smoke run, counted run, incidents, recorders, drills.
+* [**`docs/dev/RUNBOOK.md`**](docs/dev/RUNBOOK.md): The `runtimes/pump` folder, preflight, smoke run, counted run, incidents, recorders, drills.
 * [**`docs/dev/RESULTS.md`**](docs/dev/RESULTS.md): The results log: every run, replay and study since v0.2.3, with its verdict (continues STRATEGY-PIVOT §6).
 * [**`docs/dev/runs/`**](docs/dev/runs/README.md): One record per run: pre-registration before the start, read-out at the end.
 * [**`docs/dev/TODO.md`**](docs/dev/TODO.md): Open work only: Now / Next / Later, FEAT-76, live gate, research, Not ported.
