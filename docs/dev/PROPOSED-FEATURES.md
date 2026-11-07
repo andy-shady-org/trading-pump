@@ -350,3 +350,36 @@ Moved to trading-core (2026-10-28): FEAT-10, FEAT-31, FEAT-32, FEAT-33, FEAT-34,
 2. The research read-outs that could feed a proposal: graduation paths (FEAT-73 data, FEAT-64), cross-chain (FEAT-74 data), the slow lane walk-forward (FEAT-65).
 3. Everything that needs the trade feed or a curve lane (FEAT-54 to FEAT-61) only with new evidence that a curve-side rule beats costs; launch mode is NO-GO.
 4. FEAT-39 only if live fills show latency costs entries; FEAT-40 only with a lane that needs it; FEAT-62 as a separate trading-core module, capture first; FEAT-47 when a capture is too big for JSONL tools.
+
+---
+
+## FEAT-169: Bonding-curve recorder, record-only (proposed 2026-11-07)
+
+**Why.** Every pump lane so far was designed on graduates; the curve paths
+the launch lanes were judged on went with the archive runtime on
+2026-11-02. A curve-phase rule (fast exits before graduation, the
+launch-and-dump features in trading-core's roadmap backlog) cannot be tested
+on data we hold. Outside work (arXiv 2602.14860, 655,770 coins of
+September 2025) finds the strongest predictor of graduation is how few
+trades a coin needs to reach a SOL level, with a higher non-bot share next,
+and that 92% of coins with 30 or more swaps have a dump, mostly mid-curve
+(the project note `claude/rug-strategies-2026-11-07.md`, item 5).
+
+**Spec.**
+- One `logsSubscribe` stream on the pump.fun program: every trade on every
+  coin, read from the trade event (prefix `bddb7fd34ee661ee`, 390–391
+  bytes: the curve's virtual SOL and token reserves after the trade), the
+  side from the instruction name in the logs (Buy, BuyV3,
+  BuyExactQuoteInV3, Sell, SellV3), and creates (`CreateV2`, Token-2022).
+- Per coin: the creator's buy in the launch transaction (SOL and share of
+  supply), the metadata URI's host, the router program of the creator's
+  sales, and per-coin flow features at fixed moments (trades to reach 10,
+  30 and 60 SOL; the share of trades from wallets seen on more than N coins
+  that day).
+- Record-only, one file per UTC day, under the data rule.
+
+**Before building:** check the event layout against `getTransaction` on a
+few hundred events (two outside sources disagree on it).
+
+**Cost:** one WebSocket stream (Helius credits: measure for a day first).
+**Status:** proposed; after `ee-1`.
