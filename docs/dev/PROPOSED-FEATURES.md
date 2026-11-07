@@ -381,5 +381,22 @@ and that 92% of coins with 30 or more swaps have a dump, mostly mid-curve
 **Before building:** check the event layout against `getTransaction` on a
 few hundred events (two outside sources disagree on it).
 
+**To verify then** (added 2026-11-07 from `zostaff/firstkiller`, read that
+evening; the same author as `zostaff/pumpfunbots-reverse`, so not an
+independent source):
+- the trade event's offsets: mint 8–40, SOL amount 40–48, token amount
+  48–56, a flag byte at 56 (possibly buy or sell, which the backlog said the
+  event no longer carries), the trading wallet 57–89, virtual SOL reserves
+  97–105, virtual token reserves 105–113, then about 278 bytes of fees,
+  holder data and padding;
+- a second create instruction, `BondingCurveJupiter` (a coin created through
+  Jupiter), beside `BondingCurveV3`; both run the creator's first buy, whose
+  trade event carries the dev buy and the reserves after it;
+- `BuyExactSolIn` among the buy instructions (with Buy, BuyV2, BuyV3,
+  BuyExactQuoteInV3), and Sell, SellV2, SellV3 for sales;
+- for any later live builder only: BuyV3 `07051dc4f5176550` (min tokens out,
+  max SOL in), SellV3 `1c92de7726c469d5` (token amount, min SOL out), 13
+  accounts ending with the fee config `62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV`.
+
 **Cost:** one WebSocket stream (Helius credits: measure for a day first).
 **Status:** proposed; after `ee-1`.
