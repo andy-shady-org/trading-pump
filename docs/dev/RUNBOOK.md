@@ -18,6 +18,15 @@ run must keep the code it was registered with while the repositories move
 on. Every run uses a tagged copy of trading-core and trading-pump in its own
 venv.
 
+The old `runtime-pump` folder was removed on 2026-11-07. Its captures had
+been copied to `runtimes/pump/data/` at 2026-11-02 17:01 UTC, while rc.11,
+rc.11-tp20 and pools-1 were still recording, so those three copies stop
+there. The complete captures, which the runs' pre-registered read-outs
+used, are `runtimes/pump/data/rc11-complete/`, `rc11-tp20-complete/` and
+`pools-1-complete/` (each run's record says how much the cut copy lacks).
+The old folder's README, scripts and configs are in
+`runtimes/pump/legacy-runtime-pump-20261107.tgz`.
+
 ```text
 ~/projects/git/trading/runtimes/pump/
 ├── bin/
@@ -162,7 +171,7 @@ read Health, events, money). Module specifics:
 | What you see | What it means | What to do |
 |---|---|---|
 | Health: `pumpportal feed` degraded; PumpPortal `disconnected` | The migration socket is down. It reconnects on its own with a doubling wait (to 30 s), pings every 20 s, and drops a socket silent for `stream.idle_timeout_seconds` (1,800 s by default: the migration feed is quiet between graduations, BUG-150, BUG-163) | Nothing, unless it lasts: check PumpPortal's status. No migrations means no new graduates, so no entries; held positions are still priced from their pools |
-| Health: `rpc network` degraded, or an event `RPC endpoint on the wrong network` | An endpoint serves devnet, testnet or an unknown network (BUG-160). With a mainnet endpoint left it was dropped from the pool; with none, every pool reads as missing and nothing is captured | Fix `PUMPFUN_RPC_URL(S)` (a provider gives each key a mainnet and a devnet URL), check with `runtime-pump/diag-rpc.py`, restart |
+| Health: `rpc network` degraded, or an event `RPC endpoint on the wrong network` | An endpoint serves devnet, testnet or an unknown network (BUG-160). With a mainnet endpoint left it was dropped from the pool; with none, every pool reads as missing and nothing is captured | Fix `PUMPFUN_RPC_URL(S)` (a provider gives each key a mainnet and a devnet URL), check with `runtimes/pump/diag-rpc.py`, restart |
 | Every observation ends `missing`, no `curve_poll` rows, "market data stale" | The pools could not be read: a wrong-network endpoint (above) or an endpoint failing every read (`solana rpc`, BUG-159) | As above; `trading-pump replay` on such a capture says it holds no pool readings |
 | Health: `solana rpc` degraded; pool reads failing | Pool reads fail. The RPC pool stops sending to an endpoint that rate limits or fails three times (doubling cooldown, one probe at a time, BUG-151); entries stop while reads fail (BUG-149); held quotes go stale, so exits are refused and retried with the engine's backoff | Check the key's plan and usage. A 429 saying the credits are used up will not recover by waiting: switch to another key and restart. Data recorded with no healthy endpoint is not a valid paper sample: note the window |
 | Health: `pumpswap pool feed` degraded (only with `new_pools` on) | The RPC WebSocket for new pools is down or silent for 60 s (`new_pools.idle_timeout_seconds`); it reconnects on its own | Nothing, unless it lasts: check `PUMPFUN_RPC_WS_URL` (or the RPC URL it is built from) and the provider's WebSocket limits. Graduates and the lanes are not affected |
@@ -217,9 +226,9 @@ executor, run these by hand on a paper config in a scratch folder:
 | Lint / format / types / tests | `nox -s lint`, `nox -s format`, `nox -s mypy`, `nox -s tests` (3.11–3.14) |
 | Package check | `nox -s package` |
 | Validate a config | `trading-core check --config configs/<run>.json` |
-| Install a release | `bin/install-release.sh <core tag> <pump tag>` (in `runtime-pump`) |
+| Install a release | `bin/install-release.sh <core tag> <pump tag>` (in `runtimes/pump`) |
 | Start a run | `bin/run.sh configs/<run>.json pump-<tag> [--headless] [--run-for 72h \| --until <time>]` |
-| Paper run (outside `runtime-pump`) | `trading-core run --config configs/<run>.json [--headless]` |
+| Paper run (outside `runtimes/pump`) | `trading-core run --config configs/<run>.json [--headless]` |
 | Record only | the same, with every lane off (`configs/capture.example.json`, or `new_pools` on as in pools-1) |
 | Pause / resume entries | `kill -USR1 <pid>` |
 | A lane's verdict | `trading-core-audit verdict --path <trail> --rules configs/verdict-<run>-<lane>.json` |

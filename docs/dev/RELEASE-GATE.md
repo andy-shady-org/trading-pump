@@ -337,7 +337,7 @@ written before this standard keep their headings (§10).
 - **The version** is in `pyproject.toml` and `trading_pump/__init__.py`
   (`__version__`); `pyproject.toml` also names the lowest trading-core the
   module needs (`trading-core>=…` under `dependencies`).
-- **The runtime** is `runtime-pump`: `bin/install-release.sh <core tag>
+- **The runtime** is `runtimes/pump`: `bin/install-release.sh <core tag>
   <pump tag>` builds one venv per pair of tags, and every counted run uses
   one ([`RUNBOOK.md` §1](RUNBOOK.md#1-runtime-layout)).
 - **`1.0.0`** is the release that trading-pump's first Stage 3 lane runs on.

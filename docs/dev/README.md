@@ -14,7 +14,7 @@ is fixed. Below is only what is particular to trading-pump.
 | Page | What it holds |
 |---|---|
 | [`RELEASE-GATE.md`](RELEASE-GATE.md) | §1 what is true today (releases, runs, each lane's stage), §2 the release gate, §3 the capital gate and its four stages, §4 gates particular to this module, §5 the release-record template, §6 versioning |
-| [`RUNBOOK.md`](RUNBOOK.md) | Operating a run: the `runtime-pump` folder, preflight, a smoke run, a counted run, incidents, the research recorders, drills |
+| [`RUNBOOK.md`](RUNBOOK.md) | Operating a run: the `runtimes/pump` folder, preflight, a smoke run, a counted run, incidents, the research recorders, drills |
 | [`RESULTS.md`](RESULTS.md) | The results log: every run, replay and study since v0.2.3, with its verdict (continues `STRATEGY-PIVOT.md` §6) |
 | [`runs/`](runs/README.md) | One record per run: pre-registration before the start, read-out at the end (rc.11, rc.11-tp20, pools-1, and pumpbot's two pilot logs) |
 | [`TODO.md`](TODO.md) | Open work only: Now / Next / Later, then by subject, and what was not ported |

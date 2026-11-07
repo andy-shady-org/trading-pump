@@ -70,3 +70,9 @@ minutes change none of the numbers below.
   not record new pools.
 - **RPC credits and WebSocket data:** not measured from the run's files;
   the provider's dashboard has them.
+
+- **2026-11-07, where the data is:** the complete capture (to 2026-11-03 07:47 UTC),
+  which this read-out used, is `runtimes/pump/data/pools-1-complete/`, moved
+  there from `runtime-pump/data/pools-1/` when `runtime-pump` was removed.
+  `runtimes/pump/data/pools-1/` is a copy cut at 2026-11-02 17:01 UTC, about 15 h
+  short; studies after 2026-11-03 that name that path read the cut copy.
