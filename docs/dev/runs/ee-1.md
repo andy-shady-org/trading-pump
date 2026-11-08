@@ -113,7 +113,7 @@ python3 -I load.py ee1.pkl ../data/ee-1/capture.jsonl*
 python3 -I ee1.py ee1.pkl <start epoch> <end epoch - 14400>
 ```
 
-A second arm on this capture, pre-registered the same evening before the start: [`ee-1-linked.md`](ee-1-linked.md) (FEAT-161). Arms 3 and 4, pre-registered on 2026-11-06 before the start: [`ee-1-tiered.md`](ee-1-tiered.md) (FEAT-162).
+A second arm on this capture, pre-registered the same evening before the start: [`ee-1-linked.md`](ee-1-linked.md) (FEAT-161). Arms 3 and 4, pre-registered on 2026-11-06 before the start: [`ee-1-tiered.md`](ee-1-tiered.md) (FEAT-162). Arms 6a, 6b and 7, and an exploratory grid of every entry, exit and filter combination, pre-registered on 2026-11-08 while the run was under way and before any of its data was read: [`ee-1-grid.md`](ee-1-grid.md).
 
 ## Read-out (added at the end)
 

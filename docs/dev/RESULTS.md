@@ -903,3 +903,20 @@ the next capture (FEAT-171), as they cannot be backfilled.
 Scripts (sha256): `trades.py` (the trades), `fetch.py`
 `db17ab29…eb4cd3b`, `judge.py` `f1e3ad5e…23ad8134`; data `features.json`,
 `trades.json`.
+
+**Addendum (2026-11-08, exploratory, after the operator's review).**
+
+- **The filters scored against losing trades.** The test above labelled coins by whether they crashed, which mostly happens after the exit. Each filter was scored again against the trades that lost money:
+  - losers are few: 6 / 9 / 15 trades on the flat exit, and 8 / 14 / 24 on the tiered;
+  - each loser costs about 20–27%;
+  - no filter cuts a clearly larger share of losers than of winners on all three captures. The best two on the tiered exit lead by about 4 points on their worst capture: the creator selling within 30 s, and the creator's launch buy of 5% or more;
+  - script `launch-dump-2026-11-08/rescore_losers.py`, output `rescore_losers.txt`.
+- **Every combination.** At the operator's request, a grid of 3,052,220 cells: 20 entry variants (signal window and ratio), 101 flat and tiered exits, and 1,511 filters (none, one, or a pair from different feature families, each as remove or keep-only).
+  - The features were first fetched for all 629 coins that any variant enters (21,067 calls).
+  - 32,940 cells are positive on all three captures with 10 or more trades each; 60 of the 2,020 unfiltered cells are.
+  - **With the features shuffled among trades** (200 draws), more filtered cells pass than with the real ones (median 43,180 against 32,880, p = 0.965). The best real cell scores +5.86% (the worst capture's mean less one standard error), against a shuffled median of +4.91% (p = 0.249).
+  - So on the design captures these features carry no information beyond chance.
+- **Pre-registered on ee-1 before its read-out:** `docs/dev/runs/ee-1-grid.md`:
+  - arms 6a and 6b, the 30% creation-slot filter;
+  - arm 7, the grid's top design cell;
+  - the whole grid on ee-1 as exploratory, with the same permutation null.
