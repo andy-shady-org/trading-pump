@@ -853,3 +853,53 @@ bought averaged +34.7% (about 4 of the 5.4 points): their next reading was
 the replay bought them at the signal reading's stale price. The rest is
 the same stale fill on 29 of the 52 shared trades. This is BUG-164: the
 replay was optimistic; the simulator's −0.2% is the figure to keep.
+
+### 6.23 Launch-and-dump features as entry filters, on the design captures: no lead (2026-11-08)
+
+**Exploratory.** Roadmap §8 planned these on ee-1's capture after its
+read-out; they were run first on the finished design captures, with the
+rules written and saved before any feature was fetched
+(`runtimes/pump/analysis-pump12/launch-dump-2026-11-08/PLAN.md`). Nothing
+touched ee-1.
+
+**Trades.** `sim.py` unchanged: the momentum lane's entries on rc.8, rc.9
+and rc.11 (the complete capture, so 100 trades rather than §6.21's 95),
+under ee-1's exit (+4% gross or out at 60 s) and arm 3's tiered exit; crash
+is below half the 60 s price within 30 minutes. All trades: +0.96 / +1.90 /
++0.21% (flat) and +1.86 / +3.53 / +1.11% (tiered) a trade on 33 / 54 / 100
+trades; 82 / 87 / 71% crashed.
+
+**Features**, from Helius for all 187 coins (8,250 calls, none failed):
+the supply bought in the creation slot and in the first 5 s, and by how
+many wallets; the time from creation to migration; the metadata URI's host;
+the creator wallet's own buys and sales before the migration, their
+programs, and its launch buy. For 36 coins the creator's history was too
+long to reach the launch; their creator features count as unknown (kept).
+
+**What the coins look like.** 36 of 187 (19%) have their metadata on
+`metadata.j7tracker.io`, and 30 more on other non-IPFS hosts (rapidlaunch,
+uxento, throwaway `.uk` domains). The median coin had 44% of its supply
+bought in the creation slot (by a median 5 wallets) and migrated 98 s after
+creation; a tenth migrated within a second. Creators' sales went through
+FlashX (11 coins), J7's router (7) and others.
+
+**Result: no filter holds.** None of 25 filters (each feature, and the
+share-of-supply and timing thresholds at four to six values) gives kept
+trades better than all trades on all three captures under both exits with
+the removed trades worse (`judge.py`; output `judge.txt`). The bar of
+cutting about 75% of rugs while keeping about 70% of good coins is never
+met: three or more buyers in the creation slot cuts 82–96% of rugs but
+keeps 29–38% of the good coins. The launch-and-dump coins are not the bad
+trades: on rc.9 and rc.11 the coins on bot metadata hosts, on j7tracker, or
+whose creator sold before the migration did *better* under these quick
+exits than the coins kept (j7tracker removed: +11.1% and +1.7% flat against
++0.5% and −0.2% kept). They rug, but after the entry has made its gain;
+the 5 Nov deep-links study found the same of coins tied to known operators.
+
+**Closed:** these features as momentum-lane filters (roadmap §8's
+launch-and-dump item). RugCheck and SolanaTracker labels stay planned for
+the next capture (FEAT-171), as they cannot be backfilled.
+
+Scripts (sha256): `trades.py` (the trades), `fetch.py`
+`db17ab29…eb4cd3b`, `judge.py` `f1e3ad5e…23ad8134`; data `features.json`,
+`trades.json`.
