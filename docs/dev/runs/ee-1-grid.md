@@ -116,13 +116,15 @@ Kept in `runtimes/pump/analysis-pump12/`, beside `sim.py`, `ee1_arms.py` and `pd
 
 | File | sha256 | Role |
 |---|---|---|
-| `grid.py` | `fdc69f1f27129b0f175d07360ae5611f3baf0a78e2c6e17a422be57e3625b6f2` | The grid, the leads and the null |
+| `grid.py` | `78514cb5ab145e7a8b1f29e7474a60e5db3593a9d9140467849efc48eec26477` | The grid, the leads and the null |
 | `grid_entries.py` | `4e8e452a63f80f5a8f2bd393c5e3d36f45e759cf2cbd0e1bd3dfe4cdfb02d460` | Entry variants. Its base variant reproduces `sim.signals` on all three design captures |
 | `grid_coins.py` | `a7d2b709f2951e28ebefc0ad24b934cf3b3de7baeb07e70d259c215a263de9dd` | Every coin any variant enters |
 | `grid_features.py` | `efe967bb5a035edef7f4bfb56929569a065c0a061bada00fbb7160ad0895b4d4` | Helius features: the lookups of `launch-dump-2026-11-08/fetch.py`, with files as arguments. The key is read from a file and never printed |
 | `arms67.py` | `97528dba3d9cd8667375b209681e08916989c9d2c44eb58246f4ef6bc9e1b890` | Arms 6a, 6b and 7. It reproduces the design numbers above |
 | `ee1-grid/design.txt` | `10d5476e9e29bebd9b4c22d2b49f1fe650f3bebe866786508885636283d8f9bb` | The design run and arm 7's choice |
 | `ee1-grid/features-design.json` | `49bd5ff5c0f81d4191bf615f0e731975459540230ba2b11b14666bda02b4f55d` | Features of the 629 design coins (21,067 calls, none failed) |
+
+Checked on the Mac's Python 3.10: the five scripts compile, `arms67.py` reproduces the design numbers, and `grid.py design` writes a `design.txt` identical to the one above.
 
 ## Commands at the end
 
