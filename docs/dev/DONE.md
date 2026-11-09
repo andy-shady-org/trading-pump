@@ -1049,7 +1049,7 @@ Proposals whose work is done, moved whole and unedited from [`PROPOSED-FEATURES.
 
 ---
 
-## FEAT-174 and FEAT-175's command (2026-11-09, Unreleased)
+## FEAT-174 and FEAT-175's command (2026-11-09, 0.6.0)
 
 - [x] **FEAT-174, the push feed:** `trading_pump/push.py` (`VaultPushFeed`),
       the `push` settings section, the module's wiring (from a pool's first
@@ -1097,7 +1097,7 @@ The FEAT-174 proposal as it stood:
 
 ---
 
-## FEAT-179, the Float capture (2026-11-09, Unreleased)
+## FEAT-179, the Float capture (2026-11-09, 0.6.0)
 
 - [x] `trading_pump/float_events.py` (decoders), `trading_pump/float_capture.py`
       (`FloatFeed`, `FloatWatcher`, `RpcFloatSource`), the `float_capture`

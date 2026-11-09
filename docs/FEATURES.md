@@ -373,7 +373,7 @@ FEAT-76 rule was pre-registered without it.
 
 `trading-pump record` and `trading-pump-recorder` are gone since 0.5.0.
 
-* **Landing probe (FEAT-175, Unreleased):** `trading-pump land-probe` times
+* **Landing probe (FEAT-175, 0.6.0):** `trading-pump land-probe` times
   transactions that trade nothing from a dedicated probe wallet, per send
   mode (`rpc`, `priority`, `jito`, `fast`), under a spending cap, and writes
   the delay sample trading-core's FEAT-176 replays draw from

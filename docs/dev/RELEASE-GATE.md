@@ -30,12 +30,12 @@ with the Web UI.
 
 ## 1. Current status
 
-As of 2026-11-04.
+As of 2026-11-09.
 
 | Item | Status | Evidence |
 |---|---|---|
 | Latest release | `v0.5.0` (2026-11-04, signed): onto trading-core `>=0.7.0,<0.8` and trading-solana `>=0.3.0,<0.4` (FEAT-115), FEAT-107 handed to trading-meteora, the FEAT-65 slow lane retired; installed in `runtimes/pump` as `pump-v0.5.0` with `[libraries.solana]` (2026-11-06). Before it `v0.4.0` (2026-11-03), which ran `damm-1` | [`CHANGELOG.md`](../../CHANGELOG.md) 0.5.0 |
-| Next release | None planned | [`TODO.md`](TODO.md#now--next--later) |
+| Next release | `v0.6.0` on `release/v0.6.0` (2026-11-09): FEAT-174 (push feed), FEAT-175's `land-probe`, FEAT-179 (Float capture), on trading-core `>=0.7.0,<0.8` and trading-solana `>=0.4.0,<0.5`. Gate items run here passed, with rc.11's replay identical to `v0.5.0`'s; open: CI on the tag, the signed tag, the install in its own runtime, a smoke run and the restart drill on it | [`CHANGELOG.md`](../../CHANGELOG.md#060---2026-11-09) 0.6.0 |
 | Runs | Running: **`ee-1`** (FEAT-160 to FEAT-163, record-only graduation capture on `v0.5.0`) since 2026-11-06 12:06:42 UTC, planned end 2026-11-13 12:06 UTC, judged offline by its pre-registered replays ([`runs/ee-1.md`](runs/ee-1.md)). Ended: **rc.11** (counted, 2026-10-30 → 11-02): both lanes **NO-GO**; rc.11-tp20 (exploratory) and pools-1 (record-only) read out; `damm-1` (FEAT-107, on `v0.4.0`) ended 2026-11-06 11:20 UTC, read out by trading-meteora ([`runs/damm-1.md`](runs/damm-1.md)). **pump-12 is not run**: no lane design passes its gate ([`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03)) | [`runs/`](runs/README.md) |
 | `pumpswap_momentum` (FEAT-76) | **Stage 1, NO-GO (rc.11); closed 2026-11-03.** No rule, filter or adaptive gate passes the design gate on every capture | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.20, §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
 | `pumpswap_instant` (FEAT-78) | **Stage 1, NO-GO (rc.11); closed 2026-11-03.** Its losses are operators' dumps of bundled supply at the peak; the supply map predicts crashes but not trade results | [`runs/rc11.md`](runs/rc11.md), [`RESULTS.md` §6.21](RESULTS.md#621-after-the-deep-analysis-no-pumpswap-lane-can-pass-the-lanes-are-closed-2026-11-03) |
