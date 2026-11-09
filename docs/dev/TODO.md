@@ -22,6 +22,7 @@ where to find it. The list as it stood is archived unchanged:
 | When | Work | Where |
 |---|---|---|
 | **Now** | `ee-1` (FEAT-160 to FEAT-163, record-only on `v0.5.0`) runs to 2026-11-13 12:06 UTC; then its pre-registered replays and read-out, and the exploratory launch-and-dump features on its capture (the November roadmap) | [`runs/ee-1.md`](runs/ee-1.md) |
+| **Next** | A release with FEAT-174 (push feed), FEAT-175's `land-probe` and FEAT-179 (Float capture), installed in its own runtime beside `v0.5.0`, never over it, when the operator asks: then `float-1` (14 days), FEAT-174's 24 h run after `ee-1`, and FEAT-175's two 1 h probes (home and the UK server) once the probe wallet is funded (at most 0.05 SOL) | [`DONE.md`](DONE.md#feat-174-and-feat-175s-command-2026-11-09-unreleased) |
 | **Next** | Close the migration: a capture that replays to its run's positions, the runtime data moved, pumpfun-trading archived | [Migration gate](#migration-gate-before-pumpfun-trading-is-deleted) |
 | **Then** | Only if a PumpSwap lane is reopened with a new design that passes on new data: the PumpSwap buy builder, `LiveExecutor`, reconcile, one live round trip, then Stage 2 (live canary) | [Live gate](#live-gate-for-the-pumpswap-lane) |
 | **Later** | Research read-outs (pools-1's new pools, graduation paths); a second migration source (FEAT-77); a second venue only with evidence (the slow lane was NO-GO, [RESULTS §6.15](RESULTS.md#615-feat-65-walk-forward-on-the-binance-history-no-go-2026-10-29)) | [Research](#research-record-only) |

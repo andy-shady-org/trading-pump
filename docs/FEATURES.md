@@ -134,6 +134,33 @@ and its rows are read by trading-meteora unchanged. What it recorded is in
 [`CHANGELOG.md`](../CHANGELOG.md) 0.4.0 and the history at tag `v0.4.0`. A
 settings file that still has `damm_pools` is refused as an unknown key.
 
+### 2.3 A push feed beside the poller (FEAT-174, record-only)
+
+Off by default (`push.enabled`, [CONFIGURATION.md](CONFIGURATION.md#push-a-push-feed-of-the-followed-pools-vaults-feat-174)).
+The poller reads each followed pool every 2 s for its first 5 minutes, so a
+move is about a second old when seen and a peak between reads is missed;
+every pump arm is positive with a 1.5 s fill and negative with 3 s. This
+feed has the RPC push each change instead, for the read-out to compare:
+
+* **Feed:** one RPC WebSocket (`PUMPFUN_RPC_WS_URL`) with one
+  `accountSubscribe` per vault of each followed pool (graduates and, when
+  on, FEAT-80's new pools), at `processed` commitment, from the pool's first
+  reading (when its vaults are known) until `push.seconds` (300) after its
+  migration; then `accountUnsubscribe`. Not a stream over the whole
+  PumpSwap program (FEAT-77 measured 47 messages a second there). A
+  reconnect subscribes every live vault again; a send that fails is sent
+  again on the next flush.
+* **Rows:** `vault_push` beside the poller's `curve_poll` rows in the same
+  capture: `timestamp` (receive time), `mint`, `source`, `side` (the pool's
+  `base` or `quote`), `vault`, `amount` (raw token units, `null` for an
+  unreadable account) and `slot`. A graduation pool's quote amount is the
+  SOL in the vault; the poller's `pool_sol` adds the pool's virtual quote
+  reserve.
+* **Never traded on:** the lanes, the market book, `lane-rows` and replay
+  read the poller's rows only.
+* **Dashboard:** a `Push feed` status row (state, pools pushed, pushes) and
+  `push feed` degraded while disconnected.
+
 ## 3. The `pumpswap_momentum` lane (FEAT-76, paper)
 
 The pre-registered rule from the rc.8 read-out, as a trading-core pipeline
@@ -291,7 +318,14 @@ FEAT-76 rule was pre-registered without it.
 
 ## 7. Research recorders
 
-None since 0.5.0: `trading-pump record` and `trading-pump-recorder` are gone.
+`trading-pump record` and `trading-pump-recorder` are gone since 0.5.0.
+
+* **Landing probe (FEAT-175, Unreleased):** `trading-pump land-probe` times
+  transactions that trade nothing from a dedicated probe wallet, per send
+  mode (`rpc`, `priority`, `jito`, `fast`), under a spending cap, and writes
+  the delay sample trading-core's FEAT-176 replays draw from
+  ([CLI.md](CLI.md#trading-pump-land-probe)). The probe is trading-solana's
+  `land_probe`.
 
 * **Cross-chain market recorder (FEAT-74)**: moved to trading-scout on
   2026-10-30 (its FEAT-1, with a sell check and per-launchpad read-outs).

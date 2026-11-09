@@ -25,6 +25,7 @@ from trading_solana.wallet import decode_keypair
 from trading_pump.streams.websocket import split_stream_api_key, stream_connect_url
 
 PRIVATE_KEY_ENV = "PUMPFUN_PRIVATE_KEY"
+PROBE_PRIVATE_KEY_ENV = "PUMPFUN_PROBE_PRIVATE_KEY"
 RPC_URL_ENV = "PUMPFUN_RPC_URL"
 RPC_URLS_ENV = "PUMPFUN_RPC_URLS"
 RPC_WS_URL_ENV = "PUMPFUN_RPC_WS_URL"
@@ -38,6 +39,11 @@ MODULE_ENV_VARS: dict[str, tuple[tuple[str, ...], str]] = {
         ("SOLANA_PRIVATE_KEY",),
         "wallet key (base58 seed or secret key); live mode only",
     ),
+    PROBE_PRIVATE_KEY_ENV: (
+        (),
+        "the landing probe's own wallet key (FEAT-175, trading-pump land-probe); "
+        "never a trading wallet's",
+    ),
     RPC_URL_ENV: (("HELIUS_RPC_URL",), "primary Solana RPC endpoint"),
     RPC_URLS_ENV: (
         ("SOLANA_RPC_URLS",),
@@ -45,8 +51,8 @@ MODULE_ENV_VARS: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     RPC_WS_URL_ENV: (
         (),
-        "Solana RPC WebSocket for the new-pool feed (default: the primary "
-        "RPC endpoint with wss://)",
+        "Solana RPC WebSocket for the new-pool, push and Float feeds and the "
+        "landing probe (default: the primary RPC endpoint with wss://)",
     ),
     STREAM_URL_ENV: (("PUMPFUN_WS_URL",), "PumpPortal WebSocket URL"),
     STREAM_API_KEY_ENV: ((), "PumpPortal API key, appended to the stream URL"),
@@ -266,10 +272,12 @@ class Credentials:
     stream_url: str = PUMPPORTAL_URL
     stream_api_key: str | None = None
     rpc_ws_url: str | None = None
+    probe_private_key: str | None = None
 
     def __repr__(self) -> str:
         return (
             f"Credentials(private_key={'set' if self.private_key else 'unset'}, "
+            f"probe_private_key={'set' if self.probe_private_key else 'unset'}, "
             f"rpc_urls={len(self.rpc_urls)}, "
             f"stream_api_key={'set' if self.stream_api_key else 'unset'})"
         )
@@ -317,6 +325,21 @@ class Credentials:
             raise ValueError(f"{PRIVATE_KEY_ENV} is not set")
         return decode_keypair(self.private_key)
 
+    def probe_keypair(self) -> Keypair:
+        """The landing probe's wallet (FEAT-175); raises when its key is not
+        set or is the trading wallet's."""
+        if not self.probe_private_key:
+            raise ValueError(f"{PROBE_PRIVATE_KEY_ENV} is not set")
+        probe = decode_keypair(self.probe_private_key)
+        if self.private_key and decode_keypair(self.private_key).pubkey() == (
+            probe.pubkey()
+        ):
+            raise ValueError(
+                f"{PROBE_PRIVATE_KEY_ENV} is the trading wallet's key: the probe "
+                "needs a wallet of its own"
+            )
+        return probe
+
 
 def load_credentials(env: Mapping[str, str] | None = None) -> Credentials:
     """Credentials from the environment (``PUMPFUN_*`` beats its alias).
@@ -340,6 +363,7 @@ def load_credentials(env: Mapping[str, str] | None = None) -> Credentials:
         stream_url=_first(source, STREAM_URL_ENV) or PUMPPORTAL_URL,
         stream_api_key=_first(source, STREAM_API_KEY_ENV),
         rpc_ws_url=_first(source, RPC_WS_URL_ENV),
+        probe_private_key=_first(source, PROBE_PRIVATE_KEY_ENV),
     )
 
 
@@ -347,6 +371,7 @@ __all__ = [
     "Credentials",
     "MODULE_ENV_VARS",
     "PRIVATE_KEY_ENV",
+    "PROBE_PRIVATE_KEY_ENV",
     "PUBLIC_RPC_URL",
     "PUMPPORTAL_URL",
     "REPLACED_ENV_VARS",

@@ -226,6 +226,8 @@ class PoolStateClient(Protocol):
         sol_is_base: bool = False,
     ) -> None: ...
 
+    def pumpswap_pool_vaults(self, mint: str) -> tuple[str, str] | None: ...
+
 
 @dataclass(frozen=True)
 class NewPoolInfo:
@@ -293,6 +295,11 @@ class RpcPoolSource:
         self.client.remember_pumpswap_pool(
             mint, address, base_vault, quote_vault, sol_is_base=sol_is_base
         )
+
+    def pool_vaults(self, mint: str) -> tuple[str, str] | None:
+        """The base and quote vaults of ``mint``'s pool, once a read has
+        found it (FEAT-174), else ``None``."""
+        return self.client.pumpswap_pool_vaults(mint)
 
     async def inspect_new_pool(
         self, address: str, mint: str, *, limit: int

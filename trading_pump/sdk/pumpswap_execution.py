@@ -111,6 +111,13 @@ class PumpSwapExecutionMixin(TransactionTransportMixin):
             "base_token_program": str(vaults["base"].get("owner") or ""),
         }
 
+    def pumpswap_pool_vaults(self, mint: str) -> tuple[str, str] | None:
+        """The base and quote vaults of ``mint``'s pool once a read has found
+        it (FEAT-174's push feed subscribes to them), else ``None``."""
+        cache = getattr(self, "_pumpswap_vaults", None) or {}
+        entry = cache.get(str(mint))
+        return None if entry is None else (entry[1], entry[2])
+
     def remember_pumpswap_pool(
         self,
         mint: str,

@@ -151,6 +151,10 @@ class FakeClient:
     ) -> None:
         self.remembered[mint] = (address, base_vault, quote_vault, sol_is_base)
 
+    def pumpswap_pool_vaults(self, mint: str) -> tuple[str, str] | None:
+        entry = self.remembered.get(mint)
+        return None if entry is None else (entry[1], entry[2])
+
 
 def _fee_config_bytes(tiers: list[tuple[int, int, int, int]]) -> bytes:
     data = FEE_CONFIG_DISCRIMINATOR + bytes([255]) + bytes(32)
@@ -422,3 +426,11 @@ async def test_rpc_source_reads_token_names_from_the_mints() -> None:
     assert source.stats == {"name_reads": 1}
     assert await source.read_names([]) == {}
     assert len(client.reads) == 1
+
+
+def test_pool_vaults_come_from_the_clients_pool_memory() -> None:
+    client = FakeClient()
+    source = RpcPoolSource(client, timeout_seconds=7.0)
+    assert source.pool_vaults(SAMPLE_MINT) is None
+    source.register_pool(SAMPLE_MINT, "Pool", "BaseVault", "QuoteVault")
+    assert source.pool_vaults(SAMPLE_MINT) == ("BaseVault", "QuoteVault")

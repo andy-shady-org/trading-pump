@@ -13,6 +13,8 @@ token (6 decimals), shown in µSOL. The module:
   pool for 4 hours (FEAT-73), writing each reading to the capture;
 * optionally finds new PumpSwap pools that are not graduations on-chain and
   records them the same way, never trading them (``new_pools``, FEAT-80);
+* optionally records a push feed of each followed pool's vaults beside the
+  poller's readings, for the read-out only (``push``, FEAT-174);
 * quotes from those pool readings (a fresh read when the last one is older
   than ``execution.quote_max_age_seconds``; never a default price);
 * fills paper orders against a fresh pool read with the pool's fee and the
@@ -78,6 +80,7 @@ from trading_pump.market import (
     sell_lamports_out,
 )
 from trading_pump.pools import CONDITION_POOL_FEED, NewPoolFeed, NewPoolWatcher
+from trading_pump.push import CONDITION_PUSH_FEED, VaultPushFeed
 from trading_pump.strategies.enrichment import TokenEnricher
 from trading_pump.strategies.observation import GRADUATION_SOURCE
 from trading_pump.strategies.pumpswap_momentum import (
@@ -231,6 +234,18 @@ class PumpModule(TradingModule):
             on_state=self._pool_feed_state,
             clock=clock,
         )
+        push = self.settings.push
+        self.push_feed = VaultPushFeed(
+            connect_url=self.credentials.rpc_ws_connect_url,
+            stream_url=self.credentials.rpc_ws_display_url,
+            settings=push,
+            record=self._record,
+            clock=clock,
+            on_state=self._push_feed_state,
+            reconnect_delay_seconds=float(stream.reconnect_delay_seconds),
+            stream_heartbeat_seconds=float(stream.heartbeat_seconds) or None,
+            stream_idle_timeout_seconds=float(push.idle_timeout_seconds) or None,
+        )
         self._pipeline: StrategyPipeline | None = None
         self._tasks: list[asyncio.Task[Any]] = []
         self._stopping = False
@@ -264,6 +279,20 @@ class PumpModule(TradingModule):
 
     def _store(self, reading: PoolReading) -> None:
         self.readings[reading.mint] = reading
+        if self.settings.push.enabled and reading.mint not in self.push_feed.mints:
+            self._push_watch(reading.mint)
+
+    def _push_watch(self, mint: str) -> None:
+        """Push a followed pool's vaults from its first reading (FEAT-174)."""
+        graduate = self.tracker.get(mint)
+        pool_vaults = getattr(self.source, "pool_vaults", None)
+        if graduate is None or pool_vaults is None:
+            return
+        vaults = pool_vaults(mint)
+        if vaults is not None:
+            self.push_feed.watch(
+                mint, vaults, migrated_at=graduate.migrated_at, source=graduate.source
+            )
 
     def _rpc_ok(self) -> None:
         if self.host is not None:
@@ -281,6 +310,10 @@ class PumpModule(TradingModule):
     def _pool_feed_state(self, connected: bool, detail: str) -> None:
         if self.host is not None:
             self.host.set_degraded(CONDITION_POOL_FEED, not connected, detail)
+
+    def _push_feed_state(self, connected: bool, detail: str) -> None:
+        if self.host is not None:
+            self.host.set_degraded(CONDITION_PUSH_FEED, not connected, detail)
 
     def on_migration(self, mint: str) -> None:
         """A coin left its curve for PumpSwap: start following its pool."""
@@ -322,6 +355,16 @@ class PumpModule(TradingModule):
         if self.settings.new_pools.enabled:
             self._tasks.append(
                 asyncio.create_task(self.pool_feed.run(), name="pump_pool_feed")
+            )
+        if self.settings.push.enabled:
+            self._tasks.append(
+                asyncio.create_task(self.push_feed.run(), name="pump_push_feed")
+            )
+            self._tasks.append(
+                asyncio.create_task(
+                    self.push_feed.maintain(lambda: self._stopping, self.sleep),
+                    name="pump_push_flush",
+                )
             )
 
     async def check_rpc_network(self) -> list[str]:
@@ -379,6 +422,7 @@ class PumpModule(TradingModule):
         self._stopping = True
         self.feed.stop()
         self.pool_feed.stop()
+        self.push_feed.stop()
         await self.pool_watcher.stop()
         for task in self._tasks:
             task.cancel()
@@ -532,6 +576,8 @@ class PumpModule(TradingModule):
             )
         if self.settings.new_pools.enabled:
             rows.append(("New pools", self.pool_watcher.status_text(self.pool_feed)))
+        if self.settings.push.enabled:
+            rows.append(("Push feed", self.push_feed.status_text()))
         if self.recorder is not None:
             rows.append(("Capture", f"{self.recorder.records_written} rows"))
         return rows
@@ -596,6 +642,7 @@ class PumpModule(TradingModule):
             "instant": asdict(self.settings.instant),
             "graduation": asdict(self.settings.graduation),
             "new_pools": asdict(self.settings.new_pools),
+            "push": asdict(self.settings.push),
             "execution": asdict(self.settings.execution),
             "capture_path": self.settings.capture.path,
             "rpc_endpoints": len(self.credentials.rpc_urls),

@@ -130,6 +130,26 @@ provider's WebSocket pricing before a long run. Lookups are about one
 `getSignaturesForAddress` and one `getMultipleAccounts` per pool seen for
 the first time after the warm-up.
 
+## `push`: a push feed of the followed pools' vaults (FEAT-174)
+
+Record-only and off by default ([FEATURES.md §2.3](FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only)).
+One `accountSubscribe` per vault of each followed pool, on the RPC
+WebSocket (`PUMPFUN_RPC_WS_URL`, or the RPC URL with `wss://`), from the
+pool's first reading until `seconds` after its migration. Needs
+`graduation` on.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Subscribe to each followed pool's two vaults and write every push as a `vault_push` row. |
+| `seconds` | `300` | How long after a migration its vaults are pushed (the poller's fast window). |
+| `commitment` | `"processed"` | `processed`, `confirmed` or `finalized`. |
+| `max_vaults` | `200` | Vaults followed at once (two a pool); a pool beyond it is counted, not followed. |
+| `flush_interval_seconds` | `0.5` | How often new subscriptions are sent and ended ones closed. |
+| `idle_timeout_seconds` | `1800` | Reconnect when nothing arrives this long (quiet between graduations, as the migration feed is). |
+
+Cost: two subscriptions a graduate for five minutes, a few dozen at once.
+Measure the provider's credits for the first day before a longer run.
+
 ## `damm_pools`: removed in 0.5.0 (FEAT-107)
 
 The Meteora DAMM v2 capture moved to trading-meteora

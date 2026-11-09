@@ -327,6 +327,37 @@ class NewPoolSettings:
             raise ValueError("NewPoolSettings.signature_limit must be within 1..1000")
 
 
+@dataclass(frozen=True)
+class PushSettings:
+    """The push feed beside the poller (FEAT-174), record-only, off by default.
+
+    One ``accountSubscribe`` per vault of each followed pool on the RPC
+    WebSocket (``PUMPFUN_RPC_WS_URL``), at ``commitment``, from the pool's
+    first reading until ``seconds`` after its migration (the poller's fast
+    window); every push is a ``vault_push`` row. At most ``max_vaults``
+    vaults at once (two a pool). Subscriptions are sent every
+    ``flush_interval_seconds``. The subscriptions are quiet between
+    graduations, so the idle reconnect waits as long as the migration feed's.
+    """
+
+    enabled: bool = False
+    seconds: float = 300.0
+    commitment: str = "processed"
+    max_vaults: int = 200
+    flush_interval_seconds: float = 0.5
+    idle_timeout_seconds: float = 1800.0
+
+    def __post_init__(self) -> None:
+        _positive(self, "seconds", "max_vaults", "flush_interval_seconds")
+        _not_negative(self, "idle_timeout_seconds")
+        if self.commitment not in ("processed", "confirmed", "finalized"):
+            raise ValueError(
+                "PushSettings.commitment must be processed, confirmed or finalized"
+            )
+        if int(self.max_vaults) < 2:
+            raise ValueError("PushSettings.max_vaults must be at least 2 (one pool)")
+
+
 _NESTED: dict[str, type] = {
     "graduation": GraduationSettings,
     "lane": LaneSettings,
@@ -335,6 +366,7 @@ _NESTED: dict[str, type] = {
     "capture": CaptureSettings,
     "stream": StreamSettings,
     "new_pools": NewPoolSettings,
+    "push": PushSettings,
 }
 
 
@@ -349,6 +381,7 @@ class PumpSettings:
     capture: CaptureSettings = field(default_factory=CaptureSettings)
     stream: StreamSettings = field(default_factory=StreamSettings)
     new_pools: NewPoolSettings = field(default_factory=NewPoolSettings)
+    push: PushSettings = field(default_factory=PushSettings)
     screening: ScreeningSettings = field(default_factory=ScreeningSettings)
 
     @classmethod
@@ -376,6 +409,11 @@ class PumpSettings:
             raise ValueError(
                 "new_pools follows its pools through graduation tracking: "
                 "turn graduation on, or new_pools off"
+            )
+        if self.push.enabled and not self.graduation.enabled:
+            raise ValueError(
+                "push follows the pools graduation tracking reads: turn "
+                "graduation on, or push off"
             )
         if len(lanes) < 2:
             return
@@ -420,5 +458,6 @@ __all__ = [
     "LaneSettings",
     "NewPoolSettings",
     "PumpSettings",
+    "PushSettings",
     "StreamSettings",
 ]

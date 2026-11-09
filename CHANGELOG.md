@@ -12,6 +12,13 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 
 ## [Unreleased]
 
+### Added
+- **FEAT-174: a push feed beside the poller (record-only, off by default).** `push.enabled` subscribes to each followed pool's two vaults (`accountSubscribe`, `processed`, on `PUMPFUN_RPC_WS_URL`) from its first reading until `push.seconds` (300) after its migration, and writes every push as a `vault_push` row (receive time, slot, side, amount) beside the poller's readings, for the read-out to measure how much sooner a move is seen ([FEATURES §2.3](docs/FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only), [CONFIGURATION](docs/CONFIGURATION.md#push-a-push-feed-of-the-followed-pools-vaults-feat-174)). New `push` settings section, `Push feed` status row and `push feed` condition; `RpcPoolSource.pool_vaults` and `PumpFunExecutionClient.pumpswap_pool_vaults` give a read pool's vaults. Nothing trades on it.
+- **FEAT-175's command: `trading-pump land-probe`.** Runs trading-solana's landing probe from the probe wallet (`PUMPFUN_PROBE_PRIVATE_KEY`, new; never the trading key, and a wallet holding more than `--max-balance`, 0.05 SOL, is refused) with `--max-spend` (0.01 SOL) and `--max-tip` (10,000 lamports) caps; writes a row a probe, a report per host and mode, and with `--delays` trading-core FEAT-176's delay sample ([CLI.md](docs/CLI.md#trading-pump-land-probe)). The proposal named `trading-solana land-probe`; the library reads no credentials and has no commands, so the command is here.
+
+### Upgrading
+- Needs trading-solana's next release (with `land_probe`, FEAT-175): the requirement moves from `>=0.3.0,<0.4` when this release is prepared.
+
 ## [0.5.0] - 2026-11-04
 
 FEAT-115: the module stands on trading-core `v0.7.0` and the new trading-solana library `v0.3.0` (trading-core ADR-010, its `docs/dev/REPOSITORIES.md` §5), and keeps only Pump.fun on PumpSwap. The Solana plumbing it shared with other Solana modules is trading-solana's, the capture writer, the stream loop and the replay harness are trading-core's (FEAT-110), the Meteora DAMM v2 capture (FEAT-107) is trading-meteora's (ADR-011), and the FEAT-65 slow-lane recorders are retired. A dependency move, not a redesign: what the module trades, quotes, fills and records, its settings keys (but `damm_pools`) and its capture rows are unchanged, and `trading-pump replay` takes the same options and prints the same summary. Also the strategy library's records (`lane-rows`, the market book), written after `v0.4.0`. A MINOR release: a settings section, a command and a variable are removed, and the requirements change.

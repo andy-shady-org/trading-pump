@@ -126,12 +126,54 @@ is in the history at tag `v0.4.0`; `trading-pump record` now fails as an
 unknown command (exit 2). The operating notes it had are in
 [dev/RUNBOOK.md §5](dev/RUNBOOK.md#5-research-recorders).
 
+## `trading-pump land-probe`
+
+```bash
+trading-pump land-probe --modes rpc,priority,jito,fast --count 60 --interval 15 \
+    --out data/probe/home-20261110.jsonl --host home --delays data/probe/home.delays
+```
+
+The landing probe (FEAT-175; the probe itself is trading-solana's
+`land_probe`): how fast, and at what cost, a transaction lands, per way of
+sending it. Each probe is a 1-lamport transfer from the probe wallet to
+itself with a memo carrying its id (`land-probe:<host>:<mode>:<n>:<start>`);
+it trades nothing and reads no capture, so it can run beside a capture.
+
+* **Modes:** `rpc` (plain `sendTransaction` to `PUMPFUN_RPC_URL`),
+  `priority` (with a compute-unit price), `jito` (a one-transaction bundle
+  to Jito's block engine, `--jito-region`, default `frankfurt`), `fast`
+  (Helius Sender's SWQOS-only tier, `--sender-region`, default `lon`: a tip
+  of at least 5,000 lamports and a priority fee). They take turns, one probe
+  every `--interval` seconds, `--count` probes a mode.
+* **Prices and tips:** `--cu-price` micro-lamports a compute unit for
+  `priority` and `fast` (default: the 75th percentile of
+  `getRecentPrioritizationFees`); `--tip` lamports for `jito` and `fast`
+  (default 5,000), at most `--max-tip` (default 10,000).
+* **Wallet:** `PUMPFUN_PROBE_PRIVATE_KEY`, never the trading key (the key
+  `PUMPFUN_PRIVATE_KEY` holds is refused), holding at most `--max-balance`
+  SOL (default 0.05): a fuller wallet is refused before anything is sent.
+* **Spending cap:** `--max-spend` SOL (default 0.01). Each probe's most it
+  could cost (base fee, priority fee and tip) is reserved before it is
+  sent, and the probe stops before passing the cap.
+* **Output:** `--out` (a new file) gets one JSON line a probe as it settles:
+  slot sent (slot subscription), slot landed, seconds to `processed` and
+  `confirmed` (signature subscriptions), whether its blockhash expired, fee,
+  tip and cost. `<out>.report.json` has the report per host and mode
+  (landing rate, slots and seconds to land at the median and 90th
+  percentile, confirmed median, lamports a landed probe), also printed as a
+  table. `--delays` writes trading-core FEAT-176's delay sample: one landed
+  probe a line, `<seconds to processed> land-probe:<host>:<mode>`.
+
+Exit 0 when it ran (also when the cap stopped it, which it says); 2 with
+the reason when it could not start (no or a refused key, a full wallet, an
+existing `--out`, an unknown mode or region, an RPC failure).
+
 ## `trading-pump env`
 
 ```bash
 trading-pump env
 ```
 
-A table of the six variables the module reads, each `set`, `set as <alias>`
+A table of the seven variables the module reads, each `set`, `set as <alias>`
 or `unset`, with what it is for; then one warning per other `PUMPFUN_*`
 variable that is set, naming what replaces it. Values are never printed.

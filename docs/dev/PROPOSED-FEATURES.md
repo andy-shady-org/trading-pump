@@ -68,7 +68,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-63 | Funding-source lookup for the FEAT-26 cluster analyser | Income | P2 | creator's funder: backfill at the deep analysis, recorded in pump-12 (item D2) · **venue-neutral form built in trading-core as FEAT-127 (`v0.6.0`)** (its ADR-011, the strategy library) |
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
-| FEAT-174 | Push feed for graduates' pools, measured against the 2 s poller (record-only) | Income | P1 | after `ee-1` (proposed 2026-11-08, below); FEAT-39 is its paid upgrade if per-pool subscriptions fall short |
+| FEAT-174 | Push feed for graduates' pools, measured against the 2 s poller (record-only) | Income | P1 | **Built (Unreleased, 2026-11-09)**: `push` ([`FEATURES.md` §2.3](../FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only)); proposal moved to [`DONE.md`](DONE.md#feat-174-push-feed-for-graduates-pools-measured-against-the-poller-proposed-2026-11-08). Its 24 h run waits for a release, after `ee-1`; FEAT-39 is its paid upgrade if per-pool subscriptions fall short |
 | FEAT-179 | Float (Raydium LaunchLab) capture, record-only: launches, curve trades, graduations and the graduates' CPMM pools | Income | P1 | proposed 2026-11-09 (below); a new release, installed beside the running v0.5.0, never over it |
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-47 | Replay analytics on Parquet + DuckDB | Suggested | P3 | backlog |
@@ -401,35 +401,6 @@ independent source):
   accounts ending with the fee config `62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV`.
 
 **Cost:** one WebSocket stream (Helius credits: measure for a day first).
-**Status:** proposed; after `ee-1`.
-
-## FEAT-174: Push feed for graduates' pools, measured against the poller (proposed 2026-11-08)
-
-**Why.**
-- Today PumpPortal's migration feed names each graduate, and its PumpSwap pool is read by `getMultipleAccounts` every 2 s for 300 s, then every 10 s. ee-1's smoke saw a reading every 2.06 s at the median.
-- So a move is about 1 s old on average when seen, and peaks between readings are missed.
-- Every pump arm is positive with a 1.5 s fill and negative with 3 s (trading-core `STRATEGY-LEDGER.md` §3.2), so the age of the reading is part of the fill.
-- This was the roadmap backlog's push-feed item. It is registered now with trading-core FEAT-176 (replays at a measured delay), trading-solana FEAT-175 (a landing probe) and FEAT-178 (mint safety).
-
-**Spec (record-only, a new release, never during a run).**
-- **The feed:** one `accountSubscribe` per followed pool's two vaults (or `logsSubscribe` on the pool), at `processed` commitment, for the same 300 s window, a few dozen subscriptions at a time.
-- **Not used:** a stream over the whole PumpSwap program. FEAT-77 measured 47 messages a second, which could spend the month's Helius credits in days.
-- **The rows:** each change written with its slot and receive time, beside the poller's readings in the same capture, so both feeds see the same graduates.
-- **Run:** 24 h, record-only, from the UK server and from home if both can run.
-
-**Read-out (exploratory, dated before it is read).**
-- How much sooner each move is seen, at the median and the 90th percentile.
-- How many peaks and troughs the 2 s readings miss.
-- Credits used a day.
-- The momentum lane's and ee-1's rules replayed on both feeds, to show how much the results depend on reading cadence.
-
-**If clearly better:**
-- it becomes the feed of a Stage 1 paper lane and of the bonding-curve recorder (FEAT-169);
-- a rule moved to it is checked again on push-feed data before it is trusted, since every pump rule so far was designed on 2 s readings;
-- if per-pool subscriptions are still too slow or too costly, FEAT-39 (Yellowstone gRPC) is next.
-
-**Cost:** a few dozen WebSocket subscriptions; measure the credits for the day before any longer run.
-
 **Status:** proposed; after `ee-1`.
 
 ## FEAT-179: Float capture, record-only (proposed 2026-11-09)

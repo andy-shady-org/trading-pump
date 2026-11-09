@@ -1047,3 +1047,50 @@ Proposals whose work is done, moved whole and unedited from [`PROPOSED-FEATURES.
 
   Tag `v0.5.0` (FEAT-115, built on `release/v0.5.0`, [DONE.md](DONE.md#release-v050-onto-trading-solana-and-trading-core-070-feat-115)): its release gate, with the replay of rc.11's capture on `v0.4.0` and `0.5.0` to the same positions and net ([`RELEASE-GATE.md` §1](RELEASE-GATE.md#1-current-status)). `damm-1` (FEAT-107, record-only, on `v0.4.0`) runs until 2026-11-06 11:20 UTC; its read-out is trading-meteora's. The PumpSwap lanes are closed (rc.11 NO-GO; nothing passes pump-12's design gate, so **pump-12 is not run**)
 
+---
+
+## FEAT-174 and FEAT-175's command (2026-11-09, Unreleased)
+
+- [x] **FEAT-174, the push feed:** `trading_pump/push.py` (`VaultPushFeed`),
+      the `push` settings section, the module's wiring (from a pool's first
+      reading, through `RpcPoolSource.pool_vaults`), `vault_push` rows, the
+      `Push feed` status row and `push feed` condition
+      ([`FEATURES.md` §2.3](../FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only)).
+      Built as proposed with `accountSubscribe` on the two vaults (not
+      `logsSubscribe`). Its 24 h record-only run needs a release and starts
+      after `ee-1` ([`TODO.md`](TODO.md)).
+- [x] **FEAT-175's command:** `trading-pump land-probe` (`trading_pump/probe.py`)
+      and `PUMPFUN_PROBE_PRIVATE_KEY` ([`CLI.md`](../CLI.md#trading-pump-land-probe));
+      the probe is trading-solana's `land_probe`. The proposal is in
+      trading-solana's `docs/dev/DONE.md`.
+
+The FEAT-174 proposal as it stood:
+
+### FEAT-174: Push feed for graduates' pools, measured against the poller (proposed 2026-11-08)
+
+**Why.**
+- Today PumpPortal's migration feed names each graduate, and its PumpSwap pool is read by `getMultipleAccounts` every 2 s for 300 s, then every 10 s. ee-1's smoke saw a reading every 2.06 s at the median.
+- So a move is about 1 s old on average when seen, and peaks between readings are missed.
+- Every pump arm is positive with a 1.5 s fill and negative with 3 s (trading-core `STRATEGY-LEDGER.md` §3.2), so the age of the reading is part of the fill.
+- This was the roadmap backlog's push-feed item. It is registered now with trading-core FEAT-176 (replays at a measured delay), trading-solana FEAT-175 (a landing probe) and FEAT-178 (mint safety).
+
+**Spec (record-only, a new release, never during a run).**
+- **The feed:** one `accountSubscribe` per followed pool's two vaults (or `logsSubscribe` on the pool), at `processed` commitment, for the same 300 s window, a few dozen subscriptions at a time.
+- **Not used:** a stream over the whole PumpSwap program. FEAT-77 measured 47 messages a second, which could spend the month's Helius credits in days.
+- **The rows:** each change written with its slot and receive time, beside the poller's readings in the same capture, so both feeds see the same graduates.
+- **Run:** 24 h, record-only, from the UK server and from home if both can run.
+
+**Read-out (exploratory, dated before it is read).**
+- How much sooner each move is seen, at the median and the 90th percentile.
+- How many peaks and troughs the 2 s readings miss.
+- Credits used a day.
+- The momentum lane's and ee-1's rules replayed on both feeds, to show how much the results depend on reading cadence.
+
+**If clearly better:**
+- it becomes the feed of a Stage 1 paper lane and of the bonding-curve recorder (FEAT-169);
+- a rule moved to it is checked again on push-feed data before it is trusted, since every pump rule so far was designed on 2 s readings;
+- if per-pool subscriptions are still too slow or too costly, FEAT-39 (Yellowstone gRPC) is next.
+
+**Cost:** a few dozen WebSocket subscriptions; measure the credits for the day before any longer run.
+
+**Status:** proposed; after `ee-1`.

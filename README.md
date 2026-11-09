@@ -66,7 +66,7 @@ trading-pump replay --config configs/paper.json \
 | [docs/STRATEGY.md](docs/STRATEGY.md) | Both lanes: the rule, why, prices and costs, how they are judged |
 | [docs/STRATEGY-LEDGER.md](docs/STRATEGY-LEDGER.md) · [docs/LESSONS.md](docs/LESSONS.md) | Shared with every repository: every strategy tried on every venue and why it failed; every lesson learned |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every `module_settings` key |
-| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | The six environment variables the module reads |
+| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | The seven environment variables the module reads |
 | [docs/CLI.md](docs/CLI.md) | `trading-pump replay / lane-rows / env` and the trading-core commands |
 | [docs/FEATURES.md](docs/FEATURES.md) | What is built, by FEAT ID |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the module meets trading-core's contract |
