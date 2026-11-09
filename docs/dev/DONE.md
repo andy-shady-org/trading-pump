@@ -1132,6 +1132,22 @@ The FEAT-174 proposal as it stood:
   an address lookup table, so the smoke must show `logsSubscribe` sees the
   latter.
 
+**Workspace smoke (2026-11-09, 11:06–11:21 UTC, the built code on Helius,
+before the operator's 1-hour smoke):** 1,544 log notifications in 15
+minutes: 211 curve trades, 3 launches, 427 fee cycles; 80 transactions seen
+on two subscriptions and read once; 795 failed transactions skipped; 2
+truncated logs. Against `getTransactionsForAddress` on the 20 busiest pools
+over the middle 13 minutes, **115 of 115** curve trades were captured,
+including the 2 whose platform config was only in a lookup table, so
+`logsSubscribe` mentions do cover loaded addresses. All 210 trader lookups
+were served (5 after a retry); the 3 launches read their curve and mint.
+About 14 RPC calls a minute for trader lookups (about 20,000 a day), a few a
+launch, and four WebSocket subscriptions; no migration fell in the window,
+so the migration path rests on the recorded mainnet migration in the tests
+until the operator's smoke or the run sees one. A first smoke the same
+morning asked `getTransaction` for version-0 transactions only and had 57
+of 142 lookups refused; fixed before this one.
+
 **Where it differs from the proposal:**
 
 - **Trader and block time:** `logsSubscribe` carries neither, so each
