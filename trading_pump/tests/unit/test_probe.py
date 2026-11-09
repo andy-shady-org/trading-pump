@@ -62,7 +62,8 @@ class FakeProbeIO:
     async def balance(self, address: str) -> int:
         return self.balance_answer
 
-    async def recent_cu_price(self) -> int:
+    async def recent_cu_price(self, accounts: Any = ()) -> int:
+        self.price_accounts = list(accounts)
         return self.recent
 
     async def latest_blockhash(self) -> tuple[str, int]:
@@ -153,6 +154,7 @@ async def test_the_run_writes_rows_report_and_delay_sample(tmp_path: Path) -> No
     assert fake.started and fake.closed
     assert fake.sent == ["rpc", "priority", "rpc", "priority"]
     assert result.cu_price_micro_lamports == 777 and not result.stopped_by_cap
+    assert len(fake.price_accounts) == 8  # Jito's tip accounts
     rows = [json.loads(line) for line in options.out.read_text().splitlines()]
     assert len(rows) == 4 and all(row["landed"] for row in rows)
     assert {row["cu_price_micro_lamports"] for row in rows} == {0, 777}

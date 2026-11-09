@@ -146,8 +146,9 @@ it trades nothing and reads no capture, so it can run beside a capture.
   of at least 5,000 lamports and a priority fee). They take turns, one probe
   every `--interval` seconds, `--count` probes a mode.
 * **Prices and tips:** `--cu-price` micro-lamports a compute unit for
-  `priority` and `fast` (default: the 75th percentile of
-  `getRecentPrioritizationFees`); `--tip` lamports for `jito` and `fast`
+  `priority` and `fast` (default: the median of the non-zero prices
+  `getRecentPrioritizationFees` reports for Jito's tip accounts, about
+  150,000 on 2026-11-09, so about 3,000 lamports a probe at 20,000 units); `--tip` lamports for `jito` and `fast`
   (default 5,000), at most `--max-tip` (default 10,000).
 * **Wallet:** `PUMPFUN_PROBE_PRIVATE_KEY`, never the trading key (the key
   `PUMPFUN_PRIVATE_KEY` holds is refused), holding at most `--max-balance`

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from trading_solana.jito import JITO_BLOCK_ENGINE_ENDPOINTS
+from trading_solana.jito import JITO_BLOCK_ENGINE_ENDPOINTS, JITO_TIP_ACCOUNTS
 from trading_solana.land_probe import (
     MODE_FAST,
     MODE_PRIORITY,
@@ -136,7 +136,8 @@ async def _cu_price(io: Any, options: ProbeOptions) -> int:
         return 0
     if options.cu_price_micro_lamports is not None:
         return int(options.cu_price_micro_lamports)
-    return int(await io.recent_cu_price())
+    # Jito's tip accounts are locked by the senders who pay to land fast.
+    return int(await io.recent_cu_price(JITO_TIP_ACCOUNTS))
 
 
 def report_path(out: Path) -> Path:

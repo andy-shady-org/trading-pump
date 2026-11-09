@@ -126,8 +126,8 @@ def _add_land_probe(sub: Any) -> None:
         "--cu-price",
         type=int,
         default=None,
-        help="micro-lamports a compute unit for priority and fast "
-        "(default: the 75th percentile of recent prioritization fees)",
+        help="micro-lamports a compute unit for priority and fast (default: the "
+        "median non-zero recent price on Jito's tip accounts)",
     )
     probe.add_argument("--tip", type=int, default=DEFAULT_TIP_LAMPORTS)
     probe.add_argument("--max-tip", type=int, default=DEFAULT_MAX_TIP_LAMPORTS)
