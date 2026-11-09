@@ -69,7 +69,7 @@ function or safety. Priorities: **P1** next, **P2** after its dependencies,
 | FEAT-64 | Post-graduation PumpSwap long-tail recorder, capture first | Income | P3 | not scheduled |
 | FEAT-39 | Production Yellowstone gRPC transport | Income (conditional) | P1 | 24D, if latency costs entries |
 | FEAT-174 | Push feed for graduates' pools, measured against the 2 s poller (record-only) | Income | P1 | **Built (Unreleased, 2026-11-09)**: `push` ([`FEATURES.md` §2.3](../FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only)); proposal moved to [`DONE.md`](DONE.md#feat-174-push-feed-for-graduates-pools-measured-against-the-poller-proposed-2026-11-08). Its 24 h run waits for a release, after `ee-1`; FEAT-39 is its paid upgrade if per-pool subscriptions fall short |
-| FEAT-179 | Float (Raydium LaunchLab) capture, record-only: launches, curve trades, graduations and the graduates' CPMM pools | Income | P1 | proposed 2026-11-09 (below); a new release, installed beside the running v0.5.0, never over it |
+| FEAT-179 | Float (Raydium LaunchLab) capture, record-only: launches, curve trades, graduations and the graduates' CPMM pools | Income | P1 | **Built (Unreleased, 2026-11-09)**: `float_capture` ([`FEATURES.md` §2.4](../FEATURES.md#24-the-float-capture-feat-179-record-only)); proposal moved to [`DONE.md`](DONE.md#feat-179-float-capture-record-only-proposed-2026-11-09). Run `float-1` waits for a release, installed beside the running v0.5.0, never over it |
 | FEAT-40 | Live cross-venue arbitrage feed (closes BUG-90) | Suggested | P2 | after 39 |
 | FEAT-47 | Replay analytics on Parquet + DuckDB | Suggested | P3 | backlog |
 
@@ -402,69 +402,3 @@ independent source):
 
 **Cost:** one WebSocket stream (Helius credits: measure for a day first).
 **Status:** proposed; after `ee-1`.
-
-## FEAT-179: Float capture, record-only (proposed 2026-11-09)
-
-**Why.**
-- Float (floatlaunch.xyz) is a Solana launchpad on Raydium LaunchLab, started on 28 Oct 2026. By 9 Nov it had 4,606 launches (940 in the last day) and 49 graduates (7–20 a day).
-- Read trade by trade (trading-core project note `claude/float-launch-2026-11-08.md`, re-look of 2026-11-09), its coins trade more naturally than pump.fun's:
-  - creation-slot buyers: a median of 1–2 against pump.fun's 5, and 3.7–5.1 SOL against 20.5;
-  - one-transaction dumps after graduation: 10 of 49 graduates against 61%;
-  - single-sale dumps on the curve: almost none.
-- Our rules don't pay there yet:
-  - curve momentum entries lose 10–20% a trade, weighted to the population;
-  - ee-1's rule had 6 entries after graduation;
-  - the best cell after graduation, +3–4%, rests on 11 trades.
-- The design data are 49 graduates. The operator's case is that this window closes once snipers and ruggers arrive. So the platform is recorded now, at the finest grain, to design a rule on one week and judge it on the next while it lasts.
-
-**Spec.**
-
-*Sources:*
-- **Launches:** `logsSubscribe` mentioning Float's program (`3KguFi7YYzLgttG46fRism16CfcuNCkDh6U7td9JTqxX`); a launch is its `Launch` or `LaunchKeyed` instruction.
-- **Curve trades:** one `logsSubscribe` per Float platform config, three today:
-  - `2TDPJJPV6nvTEqXABxrqno6Uzpipxxvh1zjLN3SMYn69`, 1.0% a side;
-  - `7paQR4MLZcGdG8ZYAyj9Qu2UsJgXmNVQGha7g1gim1sG`, 2.0%;
-  - `CKpEUk5SRk8CUNhhxaVPKtzKUKLgQe2tQHPH2eXWtaGR`, 2.5%.
-  Every LaunchLab trade on a Float curve names its platform config. Each trade is read from LaunchLab's trade event in the logs.
-- **The platform list** is re-read every hour from Float's config account (`AgaKFP4SfEeeM4r4GcSWBwpEAbfHh7wLkJGHqpWrLBQV`), so a new tier is followed.
-- **Graduates:** at a pool's migration, its Raydium CPMM pool's logs for 2 h, plus `getMultipleAccounts` readings of its two vaults every 2 s for 30 min, ee-1's cadence.
-
-*Rows (one file per UTC day, under the data rule):*
-- `float_launch`:
-  - the pool, mint, quote mint and platform (tier);
-  - the curve's terms (supply, virtual reserves, amount for sale, raise target);
-  - the signer who launched it;
-  - the metadata URI's host;
-  - the token program and Token-2022 extensions (FEAT-178's `mint_safety` once built; until then the mint's authorities).
-- `float_trade`, for curve trades:
-  - slot, block time and receive time;
-  - side, the amounts in and out, the reserves after, and the trader.
-- `float_migration`:
-  - the curve's final reserves;
-  - the CPMM pool and its vaults;
-  - the 20 largest holders outside the pool (`getTokenLargestAccounts`).
-- `float_cpmm_trade`, for CPMM trades in the first 2 h, with the same fields as a curve trade.
-- `float_pool_reading`: the 2 s vault readings.
-- `float_fee_cycle`: Float's fee claims and holder payouts per coin, from the same program stream.
-
-*Quotes:* non-SOL quotes (tokenized stocks, other tokens) are kept in their own units with the quote mint. Their USD prices come at the read-out from GeckoTerminal.
-
-**Before building:**
-- check LaunchLab's and CPMM's event layouts against `getTransaction` on a few hundred trades (the vaults' balance changes must match);
-- check that the three platform subscriptions see every trade on a sample of curves.
-
-**Smoke:** 1 hour, comparing curve trades from the streams with `getTransactionsForAddress` on 20 pools, and logging the Helius credits used.
-
-**Run `float-1`:**
-- record-only, 14 days, on a new trading-pump release installed in its own runtime beside the running v0.5.0;
-- days 1–7 design: rules for curves and graduates, written and frozen with their scorer before day 8 is read;
-- days 8–14 test, under trading-core's verdict standard (ADR-012);
-- a rule that passes goes to a Stage 1 paper lane. Fewer than 150 trades is reported as such, not as a NO-GO.
-
-**Cost:**
-- **Streams:** four WebSocket subscriptions, plus up to a few dozen per graduate's CPMM pool at once.
-- **Readings:** one `getMultipleAccounts` a graduate every 2 s for 30 min.
-- **Credits:** measured in the smoke before the run.
-
-**Status:** proposed.
-

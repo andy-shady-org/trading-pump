@@ -1,0 +1,21 @@
+{
+  "_comment": "FEAT-179 run float-1: record-only Float capture (launches, curve trades, graduations, the graduates' CPMM pools), no pump.fun graduates and no lane. In its own runtime beside the running release, never over it. Run: trading-core run --config configs/float-1.json --headless. Keys: PUMPFUN_RPC_URL and PUMPFUN_RPC_WS_URL (docs/ENVIRONMENT.md); settings: docs/CONFIGURATION.md#float_capture-floats-launches-trades-and-graduates-feat-179.",
+  "module": "pumpfun",
+  "mode": "paper",
+  "strategy_name": "float_capture",
+  "order_size": 0.02,
+  "paper_starting_balance": 2.0,
+  "cycle_seconds": 5,
+  "risk": {"max_total_exposure": 0.2, "max_position_size": 0.02, "max_active_positions": 1},
+  "module_settings": {
+    "graduation": {"enabled": false},
+    "lane": {"enabled": false},
+    "float_capture": {"enabled": true},
+    "capture": {"path": "data/float-1/capture.jsonl"}
+  },
+  "health_timeout_seconds": 600,
+  "status_path": "data/float-1/status.json",
+  "audit_log_path": "data/float-1/audit.jsonl",
+  "event_log_path": "data/float-1/events.jsonl",
+  "log_file": "data/float-1/trading-core.log"
+}

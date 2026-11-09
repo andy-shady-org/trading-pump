@@ -358,6 +358,59 @@ class PushSettings:
             raise ValueError("PushSettings.max_vaults must be at least 2 (one pool)")
 
 
+@dataclass(frozen=True)
+class FloatSettings:
+    """The Float capture (FEAT-179), record-only, off by default.
+
+    ``logsSubscribe`` on the RPC WebSocket (``PUMPFUN_RPC_WS_URL``) mentioning
+    Float's program (launches and fee cycles) and each of its LaunchLab
+    platform configs (curve trades and migrations), at ``commitment``; the
+    platform list is read again from Float's config account every
+    ``platform_refresh_seconds``. At a migration, the graduate's CPMM pool's
+    logs are followed for ``cpmm_logs_seconds`` and its vaults read every
+    ``reading_interval_seconds`` for ``reading_seconds``; at most
+    ``max_graduates`` at once. Each trade's signers and block time are
+    looked up at most ``trader_lookups_per_second`` (0: none, the read-out
+    backfills them), with at most ``max_queued_lookups`` waiting; the
+    ``holders`` largest token accounts are read at a migration.
+    """
+
+    enabled: bool = False
+    commitment: str = "confirmed"
+    platform_refresh_seconds: float = 3_600.0
+    cpmm_logs_seconds: float = 7_200.0
+    reading_seconds: float = 1_800.0
+    reading_interval_seconds: float = 2.0
+    max_graduates: int = 50
+    trader_lookups_per_second: float = 4.0
+    max_queued_lookups: int = 20_000
+    max_lookups: int = 4
+    holders: int = 20
+    seen_signatures: int = 200_000
+    flush_interval_seconds: float = 0.5
+    idle_timeout_seconds: float = 600.0
+
+    def __post_init__(self) -> None:
+        _positive(
+            self,
+            "platform_refresh_seconds",
+            "cpmm_logs_seconds",
+            "reading_seconds",
+            "reading_interval_seconds",
+            "max_graduates",
+            "max_queued_lookups",
+            "max_lookups",
+            "holders",
+            "seen_signatures",
+            "flush_interval_seconds",
+        )
+        _not_negative(self, "trader_lookups_per_second", "idle_timeout_seconds")
+        if self.commitment not in ("processed", "confirmed", "finalized"):
+            raise ValueError(
+                "FloatSettings.commitment must be processed, confirmed or finalized"
+            )
+
+
 _NESTED: dict[str, type] = {
     "graduation": GraduationSettings,
     "lane": LaneSettings,
@@ -367,6 +420,7 @@ _NESTED: dict[str, type] = {
     "stream": StreamSettings,
     "new_pools": NewPoolSettings,
     "push": PushSettings,
+    "float_capture": FloatSettings,
 }
 
 
@@ -382,6 +436,7 @@ class PumpSettings:
     stream: StreamSettings = field(default_factory=StreamSettings)
     new_pools: NewPoolSettings = field(default_factory=NewPoolSettings)
     push: PushSettings = field(default_factory=PushSettings)
+    float_capture: FloatSettings = field(default_factory=FloatSettings)
     screening: ScreeningSettings = field(default_factory=ScreeningSettings)
 
     @classmethod
@@ -453,6 +508,7 @@ __all__ = [
     "GRADUATION_MARKET_CAP_SOL",
     "CaptureSettings",
     "ExecutionSettings",
+    "FloatSettings",
     "GraduationSettings",
     "InstantLaneSettings",
     "LaneSettings",

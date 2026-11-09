@@ -49,6 +49,10 @@ flowchart TD
     SRC -- "PoolReading" --> GT
     SRC --> HOST["host.notify_market_data / set_degraded"]
     GT --> CAP["capture rows (trading-core's CaptureWriter)"]
+    SRC -- "a read pool's vaults (FEAT-174, optional)" --> PUSH["VaultPushFeed (push.py): accountSubscribe a vault"]
+    PUSH -- "vault_push rows" --> CAP
+    FL["RPC logsSubscribe: Float, its platforms, graduates' CPMM pools (FEAT-179, optional)"] --> FW["FloatWatcher (float_capture.py, float_events.py)"]
+    FW -- "float_* rows, record-only" --> CAP
     GT -- "graduates only" --> SCOUT
     subgraph ENGINE["trading-core engine cycle"]
         SCOUT["GraduationScout: picks the lane"] --> FILT["StandardPoolFilter: the lane's band"]
@@ -81,6 +85,10 @@ trading_pump/
 ├── graduates.py         # GraduateTracker: who is followed, readings, capture rows
 ├── feed.py              # MigrationFeed (PumpPortal) and PoolPoller
 ├── pools.py             # NewPoolFeed (trading-solana's ProgramSubscribeFeed) and NewPoolWatcher: new non-graduate pools (FEAT-80)
+├── push.py              # VaultPushFeed: accountSubscribe on followed pools' vaults beside the poller (FEAT-174)
+├── float_events.py      # Float, LaunchLab and CPMM decoders, pinned to mainnet records (FEAT-179)
+├── float_capture.py     # FloatFeed (logsSubscribe), FloatWatcher, RpcFloatSource: the Float capture (FEAT-179)
+├── probe.py             # trading-pump land-probe: trading-solana's landing probe from the probe wallet (FEAT-175)
 ├── execution.py         # PaperExecutor, LiveExecutor, Holdings
 ├── replay.py            # what a capture's rows mean, for trading-core's replay harness
 ├── lanes.py             # captures as trading-core's strategy library records (lane-rows, the market book)

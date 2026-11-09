@@ -150,6 +150,36 @@ pool's first reading until `seconds` after its migration. Needs
 Cost: two subscriptions a graduate for five minutes, a few dozen at once.
 Measure the provider's credits for the first day before a longer run.
 
+## `float_capture`: Float's launches, trades and graduates (FEAT-179)
+
+Record-only and off by default ([FEATURES.md §2.4](FEATURES.md#24-the-float-capture-feat-179-record-only)).
+`logsSubscribe` on the RPC WebSocket (`PUMPFUN_RPC_WS_URL`) mentioning
+Float's program and its LaunchLab platform configs, and each followed
+graduate's CPMM pool. It does not need `graduation`: a Float-only run sets
+`graduation.enabled` and every lane to `false`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Record Float. |
+| `commitment` | `"confirmed"` | `processed`, `confirmed` or `finalized`, for the log subscriptions. |
+| `platform_refresh_seconds` | `3600` | How often Float's platform list (its config account) and each platform's fees are read again; a new platform is followed. |
+| `cpmm_logs_seconds` | `7200` | How long a graduate's CPMM pool's trades are followed after its migration. |
+| `reading_seconds` | `1800` | How long its vaults are read after the migration. |
+| `reading_interval_seconds` | `2` | How often they are read (ee-1's cadence). |
+| `max_graduates` | `50` | Graduates followed at once; one beyond it is recorded (`followed: false`), not followed. |
+| `trader_lookups_per_second` | `4` | `getTransaction` lookups of a trade's signers and block time a second (0: none; the read-out backfills them). |
+| `max_queued_lookups` | `20000` | Trades waiting for that lookup; one more is counted and left to the backfill. |
+| `max_lookups` | `4` | Launch and migration lookups running at once. |
+| `holders` | `20` | Largest token accounts read at a migration (`getTokenLargestAccounts` returns at most 20, pool vaults included). |
+| `seen_signatures` | `200000` | Signatures remembered so a transaction seen on two subscriptions is read once. |
+| `flush_interval_seconds` | `0.5` | The periodic work's tick: subscriptions, readings, lookups. |
+| `idle_timeout_seconds` | `600` | Reconnect when nothing arrives this long. |
+
+Cost, measured in a workspace smoke on 2026-11-09 (see FEATURES §2.4):
+about 20 curve trades and 18 fee-cycle transactions a minute, one
+`getTransaction` a trade, one `getMultipleAccounts` a launch, a few calls a
+migration and one `getMultipleAccounts` a graduate every 2 s for 30 min.
+
 ## `damm_pools`: removed in 0.5.0 (FEAT-107)
 
 The Meteora DAMM v2 capture moved to trading-meteora
