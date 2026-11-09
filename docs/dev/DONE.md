@@ -1059,6 +1059,15 @@ Proposals whose work is done, moved whole and unedited from [`PROPOSED-FEATURES.
       Built as proposed with `accountSubscribe` on the two vaults (not
       `logsSubscribe`). Its 24 h record-only run needs a release and starts
       after `ee-1` ([`TODO.md`](TODO.md)).
+      **Smoke on `v0.6.0`, 2026-11-09 (`smoke-v0.6.0`, 12:11–12:45 UTC,
+      restarted once):** 32,818 `vault_push` rows on 23 of the 27 pools
+      followed; the other 4 never had a poller reading (no `curve_poll` row
+      at all), so their vaults were never known, as designed. On the
+      quote vault, 16,372 pushes could be matched to the poller's next
+      changed reading: the push came a median 1.05 s and a 90th percentile
+      1.88 s sooner. About 1,000 rows a minute at that graduation rate
+      (9.4 MB of capture in 34 minutes), worth knowing for the 24 h run's
+      disk.
 - [x] **FEAT-175's command:** `trading-pump land-probe` (`trading_pump/probe.py`)
       and `PUMPFUN_PROBE_PRIVATE_KEY` ([`CLI.md`](../CLI.md#trading-pump-land-probe));
       the probe is trading-solana's `land_probe`. The proposal is in
@@ -1147,6 +1156,14 @@ so the migration path rests on the recorded mainnet migration in the tests
 until the operator's smoke or the run sees one. A first smoke the same
 morning asked `getTransaction` for version-0 transactions only and had 57
 of 142 lookups refused; fixed before this one.
+
+**Smoke on `v0.6.0`, 2026-11-09 (`smoke-float-1`, the operator's
+1 hour, 12:17–13:17 UTC, float-1's settings):** 1,664 curve trades, 1,662
+trader rows all with a fee payer, 13 launches with no lookup error, 1,854
+fee cycles; against `getTransactionsForAddress` on the 20 busiest pools
+over 3,478 s, **1,014 of 1,014** curve trades captured; no keyed URL in the
+run's files. No migration fell in the hour, so the migration path is still
+unseen live: the first graduation in `float-1` is checked by hand.
 
 **Where it differs from the proposal:**
 
