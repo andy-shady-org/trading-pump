@@ -19,9 +19,10 @@ never values) and warns about every other `PUMPFUN_*` variable that is set
 | Variable | Alias (read when the name is unset or blank) | Used for | Default |
 |---|---|---|---|
 | `PUMPFUN_PRIVATE_KEY` | `SOLANA_PRIVATE_KEY` | The trading wallet: a base58 32-byte seed or 64-byte secret key. Live mode only; paper runs need none (the module signs nothing and the balance read refuses without it). | unset |
+| `PUMPFUN_PROBE_PRIVATE_KEY` | none | The landing probe's own wallet (FEAT-175, `trading-pump land-probe`): a base58 seed or secret key, holding at most 0.05 SOL, funded by the operator. Never a trading wallet's key: the probe refuses the key `PUMPFUN_PRIVATE_KEY` holds and a wallet holding more than `--max-balance`. Read only by `land-probe`. | unset |
 | `PUMPFUN_RPC_URL` | `HELIUS_RPC_URL` | The primary Solana RPC endpoint: every pool, fee-config and account read. | `https://api.mainnet-beta.solana.com` when neither RPC variable is set |
 | `PUMPFUN_RPC_URLS` | `SOLANA_RPC_URLS` | More RPC endpoints, comma separated, for failover. Joined after `PUMPFUN_RPC_URL`, duplicates dropped. | unset |
-| `PUMPFUN_RPC_WS_URL` | none | The Solana RPC WebSocket the new-pool feed (`new_pools`, FEAT-80) subscribes on. Only read when `new_pools.enabled` is on. It may carry the provider's key, so it is never logged: the dashboard shows its host only. | `PUMPFUN_RPC_URL` (or the first RPC endpoint) with `wss://` for `https://` |
+| `PUMPFUN_RPC_WS_URL` | none | The Solana RPC WebSocket the new-pool feed (`new_pools`, FEAT-80), the push feed (`push`, FEAT-174), the Float capture (`float`, FEAT-179) and the landing probe (`trading-pump land-probe`, FEAT-175) subscribe on. Only read when one of them is on. It may carry the provider's key, so it is never logged: the dashboard shows its host only. | `PUMPFUN_RPC_URL` (or the first RPC endpoint) with `wss://` for `https://` |
 | `PUMPFUN_STREAM_URL` | `PUMPFUN_WS_URL` | The PumpPortal WebSocket the migration feed connects to. Keep it free of keys. | `wss://pumpportal.fun/api/data` |
 | `PUMPFUN_STREAM_API_KEY` | none | A PumpPortal API key, added as `api-key` at connect time and only to a `pumpportal.fun` URL. Not needed: the module subscribes to migrations only, which PumpPortal serves without a key. | unset |
 
@@ -32,7 +33,7 @@ The engine's variables (`TRADING_CORE_ALERT_*`, `TRADING_CORE_*_PATH`,
 
 pumpbot read about a hundred `PUMPFUN_*` variables (the archived
 [manual](archive/pumpfun-trading/ENVIRONMENTAL-VARIABLES.md)). trading-pump
-reads the six above. When any other `PUMPFUN_*` variable is set, the module
+reads the seven above. When any other `PUMPFUN_*` variable is set, the module
 records a warning at start (and `trading-pump env` prints it), naming the
 variable and what replaces it, never its value, because some of them held
 webhook URLs:

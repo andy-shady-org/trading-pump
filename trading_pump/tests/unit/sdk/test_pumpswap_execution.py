@@ -385,6 +385,13 @@ async def test_a_remembered_pool_is_read_without_resolving_the_canonical_one() -
     ]
     client.remember_pumpswap_pool("M", "P", "B", "Q")
     assert client._pumpswap_vaults["M"] == ("P", "B", "Q")
+    # FEAT-174: the push feed subscribes to the vaults a read has found.
+    assert client.pumpswap_pool_vaults("M") == ("B", "Q")
+    assert client.pumpswap_pool_vaults("unknown") is None
+
+
+def test_no_pool_vaults_before_any_read() -> None:
+    assert _client().pumpswap_pool_vaults(GRADUATED_MINT) is None
 
 
 async def test_a_pool_with_sol_as_its_base_reads_the_coin_from_the_quote_vault() -> (

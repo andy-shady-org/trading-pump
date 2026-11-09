@@ -130,6 +130,56 @@ provider's WebSocket pricing before a long run. Lookups are about one
 `getSignaturesForAddress` and one `getMultipleAccounts` per pool seen for
 the first time after the warm-up.
 
+## `push`: a push feed of the followed pools' vaults (FEAT-174)
+
+Record-only and off by default ([FEATURES.md §2.3](FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only)).
+One `accountSubscribe` per vault of each followed pool, on the RPC
+WebSocket (`PUMPFUN_RPC_WS_URL`, or the RPC URL with `wss://`), from the
+pool's first reading until `seconds` after its migration. Needs
+`graduation` on.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Subscribe to each followed pool's two vaults and write every push as a `vault_push` row. |
+| `seconds` | `300` | How long after a migration its vaults are pushed (the poller's fast window). |
+| `commitment` | `"processed"` | `processed`, `confirmed` or `finalized`. |
+| `max_vaults` | `200` | Vaults followed at once (two a pool); a pool beyond it is counted, not followed. |
+| `flush_interval_seconds` | `0.5` | How often new subscriptions are sent and ended ones closed. |
+| `idle_timeout_seconds` | `1800` | Reconnect when nothing arrives this long (quiet between graduations, as the migration feed is). |
+
+Cost: two subscriptions a graduate for five minutes, a few dozen at once.
+Measure the provider's credits for the first day before a longer run.
+
+## `float_capture`: Float's launches, trades and graduates (FEAT-179)
+
+Record-only and off by default ([FEATURES.md §2.4](FEATURES.md#24-the-float-capture-feat-179-record-only)).
+`logsSubscribe` on the RPC WebSocket (`PUMPFUN_RPC_WS_URL`) mentioning
+Float's program and its LaunchLab platform configs, and each followed
+graduate's CPMM pool. It does not need `graduation`: a Float-only run sets
+`graduation.enabled` and every lane to `false`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Record Float. |
+| `commitment` | `"confirmed"` | `processed`, `confirmed` or `finalized`, for the log subscriptions. |
+| `platform_refresh_seconds` | `3600` | How often Float's platform list (its config account) and each platform's fees are read again; a new platform is followed. |
+| `cpmm_logs_seconds` | `7200` | How long a graduate's CPMM pool's trades are followed after its migration. |
+| `reading_seconds` | `1800` | How long its vaults are read after the migration. |
+| `reading_interval_seconds` | `2` | How often they are read (ee-1's cadence). |
+| `max_graduates` | `50` | Graduates followed at once; one beyond it is recorded (`followed: false`), not followed. |
+| `trader_lookups_per_second` | `4` | `getTransaction` lookups of a trade's signers and block time a second (0: none; the read-out backfills them). |
+| `max_queued_lookups` | `20000` | Trades waiting for that lookup; one more is counted and left to the backfill. |
+| `max_lookups` | `4` | Launch and migration lookups running at once. |
+| `holders` | `20` | Largest token accounts read at a migration (`getTokenLargestAccounts` returns at most 20, pool vaults included). |
+| `seen_signatures` | `200000` | Signatures remembered so a transaction seen on two subscriptions is read once. |
+| `flush_interval_seconds` | `0.5` | The periodic work's tick: subscriptions, readings, lookups. |
+| `idle_timeout_seconds` | `600` | Reconnect when nothing arrives this long. |
+
+Cost, measured in a workspace smoke on 2026-11-09 (see FEATURES §2.4):
+about 20 curve trades and 18 fee-cycle transactions a minute, one
+`getTransaction` a trade, one `getMultipleAccounts` a launch, a few calls a
+migration and one `getMultipleAccounts` a graduate every 2 s for 30 min.
+
 ## `damm_pools`: removed in 0.5.0 (FEAT-107)
 
 The Meteora DAMM v2 capture moved to trading-meteora

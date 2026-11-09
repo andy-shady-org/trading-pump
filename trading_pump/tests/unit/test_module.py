@@ -21,9 +21,11 @@ from trading_core.positions import Position
 import trading_pump
 from trading_pump.config.env import Credentials, load_credentials
 from trading_pump.feed import CONDITION_FEED, CONDITION_RPC
+from trading_pump.float_capture import CONDITION_FLOAT_FEED, RpcFloatSource
 from trading_pump.lanes import SKIP_NO_LISTING
 from trading_pump.module import PUMP_QUOTE, PumpModule, QuoteUnavailable
 from trading_pump.pools import CONDITION_POOL_FEED
+from trading_pump.push import CONDITION_PUSH_FEED
 from trading_pump.sdk.execution import PumpFunExecutionClient
 from trading_pump.tests.support.constants import (
     SAMPLE_MINT,
@@ -664,3 +666,145 @@ async def test_graduation_off_starts_no_feed_and_says_so() -> None:
     assert rows["Graduates"] == "off (graduation.enabled is false)"
     assert "PumpPortal" not in rows
     await module.stop()
+
+
+# -- FEAT-174: the push feed --------------------------------------------------------
+
+
+async def test_the_push_feed_runs_only_when_enabled_and_stops_with_the_module() -> None:
+    module = PumpModule(
+        source=FakePoolSource(),
+        credentials=Credentials(rpc_urls=("https://rpc.example/?api-key=SECRET",)),
+        capture={"path": None},
+        push={"enabled": True},
+    )
+    started: list[str] = []
+
+    async def run_forever(name: str) -> None:
+        started.append(name)
+        await asyncio.sleep(3600)
+
+    module.feed.run = lambda: run_forever("feed")
+    module.push_feed.run = lambda: run_forever("push")
+    await module.start()
+    await asyncio.sleep(0)
+    assert sorted(started) == ["feed", "push"] and len(module._tasks) == 4
+    assert module.push_feed.stream_url == "wss://rpc.example"
+    assert module.push_feed.stream_connect_url().endswith("api-key=SECRET")
+    await module.stop()
+    assert module._tasks == [] and module.push_feed.stream_stop_requested()
+
+
+class VaultPoolSource(FakePoolSource):
+    """A pool source that knows each pool's vaults once read (FEAT-174)."""
+
+    def pool_vaults(self, mint: str) -> tuple[str, str] | None:
+        return ("BaseV", "QuoteV") if mint in self.reserves else None
+
+
+async def test_a_followed_pool_is_pushed_from_its_first_reading(
+    tmp_path: Path,
+) -> None:
+    source = VaultPoolSource()
+    module = PumpModule(
+        source=source,
+        credentials=Credentials(),
+        clock=lambda: 1_000.0,
+        capture={"path": None},
+        live_feeds=False,
+        push={"enabled": True},
+    )
+    module.tracker.add(MINT, now=999.0)
+    module._store(make_reading(MINT, at=1_000.0))  # vaults not known yet
+    assert module.push_feed.mints == set()
+    source.set(MINT, GRADUATION_BASE_RESERVE, GRADUATION_QUOTE_RESERVE)
+    module._store(make_reading(MINT, at=1_002.0))
+    assert module.push_feed.mints == {MINT}
+    assert set(module.push_feed.watches) == {"BaseV", "QuoteV"}
+    module._store(make_reading(MINT, at=1_004.0))  # followed already
+    module._store(make_reading("Unfollowed", at=1_004.0))
+    assert module.push_feed.mints == {MINT}
+    rows = dict(module.status_rows())
+    assert rows["Push feed"] == "disconnected · 1 pools · 0 pushes"
+    assert module.provenance()["push"]["enabled"] is True
+
+
+def test_a_source_without_vaults_or_push_off_follows_nothing() -> None:
+    module, source, _, host = _module(push={"enabled": True})
+    module.tracker.add(MINT, now=999.0)
+    module._store(make_reading(MINT, at=1_000.0))
+    assert module.push_feed.mints == set()
+    module._push_feed_state(False, "connection closed")
+    assert host.degraded[CONDITION_PUSH_FEED] == "connection closed"
+    module.bind(None)  # type: ignore[arg-type]
+    module._push_feed_state(True, "")
+    off, *_ = _module()
+    off.tracker.add(MINT, now=999.0)
+    off._store(make_reading(MINT, at=1_000.0))
+    assert off.push_feed.mints == set() and "Push feed" not in dict(off.status_rows())
+
+
+# -- FEAT-179: the Float capture ---------------------------------------------------
+
+
+class NoFloatReads:
+    async def get_accounts(self, addresses: Any) -> list[Any]:
+        return [None for _ in addresses]
+
+    async def get_transaction(self, signature: str) -> Any:
+        return None
+
+    async def largest_accounts(self, mint: str) -> list[Any]:
+        return []
+
+
+async def test_the_float_capture_runs_alone_and_stops_with_the_module() -> None:
+    module = PumpModule(
+        source=FakePoolSource(),
+        credentials=Credentials(rpc_urls=("https://rpc.example/?api-key=SECRET",)),
+        capture={"path": None},
+        graduation={"enabled": False},
+        lane={"enabled": False},
+        float_capture={"enabled": True},
+        float_source=NoFloatReads(),
+    )
+    assert module.float_watcher is not None and module.float_feed is not None
+    started: list[str] = []
+
+    async def run_forever(name: str) -> None:
+        started.append(name)
+        await asyncio.sleep(3600)
+
+    async def work(stop: Any, sleep: Any = None) -> None:
+        await run_forever("float work")
+
+    module.float_feed.run = lambda: run_forever("float")
+    module.float_watcher.run = work
+    await module.start()
+    await asyncio.sleep(0)
+    assert sorted(started) == ["float", "float work"] and len(module._tasks) == 2
+    assert module.float_feed.stream_url == "wss://rpc.example"
+    assert module.float_feed.stream_connect_url().endswith("api-key=SECRET")
+    assert len(module.float_feed.mentions) == 4  # Float and its three platforms
+    await module.stop()
+    assert module._tasks == [] and module.float_feed.stream_stop_requested()
+
+
+def test_float_rows_status_provenance_and_its_default_source() -> None:
+    module, _, _, host = _module(float_capture={"enabled": True})
+    assert module.float_watcher is not None
+    assert isinstance(module.float_watcher.source, RpcFloatSource)
+    assert module.float_watcher.source.client is module.client
+    rows = dict(module.status_rows())
+    assert rows["Float"].startswith("disconnected · 0 launches")
+    assert module.provenance()["float_capture"]["enabled"] is True
+    module._float_feed_state(False, "connection closed")
+    assert host.degraded[CONDITION_FLOAT_FEED] == "connection closed"
+    before = host.market_data
+    module._float_message()
+    assert host.market_data == before + 1
+    module.bind(None)  # type: ignore[arg-type]
+    module._float_feed_state(True, "")
+    module._float_message()
+    off, *_ = _module()
+    assert off.float_watcher is None and "Float" not in dict(off.status_rows())

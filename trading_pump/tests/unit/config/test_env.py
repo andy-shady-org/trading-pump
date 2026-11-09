@@ -227,3 +227,22 @@ def test_an_rpc_url_of_another_scheme_is_used_as_it_is() -> None:
     assert Credentials(rpc_urls=()).rpc_ws_connect_url() == (
         "wss://api.mainnet-beta.solana.com"
     )
+
+
+def test_the_probe_key_is_its_own_and_never_the_trading_key() -> None:
+    probe, trading = Keypair(), Keypair()
+    probe_b58 = base58.b58encode(bytes(probe)).decode("ascii")
+    trading_b58 = base58.b58encode(bytes(trading)).decode("ascii")
+    creds = load_credentials(
+        {"PUMPFUN_PROBE_PRIVATE_KEY": probe_b58, "PUMPFUN_PRIVATE_KEY": trading_b58}
+    )
+    assert creds.probe_keypair().pubkey() == probe.pubkey()
+    assert "probe_private_key=set" in repr(creds) and probe_b58 not in repr(creds)
+    assert load_credentials({"PUMPFUN_PROBE_PRIVATE_KEY": probe_b58}).probe_keypair()
+    with pytest.raises(ValueError, match="PUMPFUN_PROBE_PRIVATE_KEY is not set"):
+        load_credentials({}).probe_keypair()
+    same = load_credentials(
+        {"PUMPFUN_PROBE_PRIVATE_KEY": trading_b58, "PUMPFUN_PRIVATE_KEY": trading_b58}
+    )
+    with pytest.raises(ValueError, match="is the trading wallet's key"):
+        same.probe_keypair()

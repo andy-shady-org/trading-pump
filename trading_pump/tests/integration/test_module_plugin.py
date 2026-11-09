@@ -151,3 +151,19 @@ async def test_no_rpc_means_no_entries_and_the_condition_is_shown(
     assert engine.degraded["solana rpc"] == "no healthy endpoint"
     assert "market data stale" in engine.entry_blockers()
     await engine.shutdown()
+
+
+def test_the_float_1_example_config_loads_as_a_float_only_capture() -> None:
+    # FEAT-179: the run float-1's config is valid for the engine and module.
+    config = json.loads(
+        (Path(__file__).parents[3] / "configs" / "float-1.example.json").read_text()
+    )
+    settings = EngineSettings.from_mapping(config)
+    module = PumpModule(
+        source=FakePoolSource(),
+        credentials=Credentials(),
+        live_feeds=False,
+        **{**settings.module_settings, "capture": {"path": None}},
+    )
+    assert module.float_watcher is not None
+    assert not module.settings.graduation.enabled and module.pipeline() is None

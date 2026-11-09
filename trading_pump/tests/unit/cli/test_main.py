@@ -167,3 +167,70 @@ def test_the_retired_record_command_is_gone(
 def test_a_command_is_required(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         main_cli.main([])
+
+
+def _probe_result(tmp_path: Path, *, stopped: bool):
+    from trading_solana.land_probe import ModeReport
+
+    from trading_pump.probe import ProbeResult
+
+    report = ModeReport("home", "rpc", 2, 2, 0, 1.0, 1.0, 2.0, 0.5, 0.6, 0.9, 5000.0)
+    return ProbeResult([], [report], stopped, 0, 1, tmp_path / "p.jsonl.report.json")
+
+
+@pytest.mark.parametrize("stopped", [False, True])
+def test_land_probe_prints_its_report(
+    tmp_path: Path, output: Console, monkeypatch: pytest.MonkeyPatch, stopped: bool
+) -> None:
+    seen: list[Any] = []
+
+    async def fake_run(options: Any, credentials: Any) -> Any:
+        seen.append(options)
+        return _probe_result(tmp_path, stopped=stopped)
+
+    monkeypatch.setattr(main_cli, "run_land_probe", fake_run)
+    code = main_cli.main(
+        [
+            "land-probe",
+            "--modes",
+            "rpc, jito",
+            "--count",
+            "3",
+            "--interval",
+            "2",
+            "--out",
+            str(tmp_path / "p.jsonl"),
+            "--host",
+            "uk",
+            "--delays",
+            str(tmp_path / "d.txt"),
+        ]
+    )
+    assert code == main_cli.EXIT_OK
+    (options,) = seen
+    assert options.modes == ("rpc", "jito") and options.host == "uk"
+    assert options.count == 3 and options.interval_seconds == 2.0
+    assert options.max_spend_sol == 0.01 and options.max_tip_lamports == 10_000
+    text = output.export_text()
+    assert "Landing probe" in text and "5,000" in text
+    assert ("spending cap" in text) is stopped
+
+
+def test_land_probe_errors_exit_2(tmp_path: Path, output: Console) -> None:
+    code = main_cli.main(
+        [
+            "land-probe",
+            "--modes",
+            "smoke",
+            "--count",
+            "1",
+            "--interval",
+            "1",
+            "--out",
+            str(tmp_path / "p.jsonl"),
+            "--host",
+            "uk",
+        ]
+    )
+    assert code == main_cli.EXIT_USAGE
+    assert "Cannot run the landing probe" in output.export_text()

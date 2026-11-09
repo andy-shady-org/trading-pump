@@ -12,6 +12,41 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-09
+
+Three record-only additions for the next runs, none of them traded on: a
+push feed of the followed pools beside the 2 s poller (FEAT-174), the
+Float capture for run `float-1` (FEAT-179), and the landing probe's command
+(FEAT-175, the probe being trading-solana `v0.4.0`'s). All three are off
+by default, so a run on `v0.5.0`'s settings records and trades as before
+(rc.11 replays the same). A MINOR release: new settings sections (`push`,
+`float_capture`), a new command, a new variable and trading-solana
+`>=0.4.0,<0.5`.
+
+### Added
+- **FEAT-174: a push feed beside the poller (record-only, off by default).** `push.enabled` subscribes to each followed pool's two vaults (`accountSubscribe`, `processed`, on `PUMPFUN_RPC_WS_URL`) from its first reading until `push.seconds` (300) after its migration, and writes every push as a `vault_push` row (receive time, slot, side, amount) beside the poller's readings, for the read-out to measure how much sooner a move is seen ([FEATURES §2.3](docs/FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only), [CONFIGURATION](docs/CONFIGURATION.md#push-a-push-feed-of-the-followed-pools-vaults-feat-174)). New `push` settings section, `Push feed` status row and `push feed` condition; `RpcPoolSource.pool_vaults` and `PumpFunExecutionClient.pumpswap_pool_vaults` give a read pool's vaults. Nothing trades on it.
+- **FEAT-179: the Float capture (record-only, off by default).** `float_capture.enabled` records Float (floatlaunch.xyz) on Raydium LaunchLab and CPMM from `logsSubscribe` on Float's program, its platform configs (re-read hourly from Float's config) and each graduate's CPMM pool: `float_launch` (events plus one read of the curve and mint: platform and fee, curve state, token program, authorities, Token-2022 extensions), `float_trade` (each curve trade with slot and receive time), `float_trader` (signers and block time by `getTransaction`, rate-capped), `float_migration` (curve, CPMM pool and vaults, largest holders with owners), `float_cpmm_trade` (2 h), `float_pool_reading` (vaults, held fees and reserves every 2 s for 30 min), `float_fee_cycle` and `float_platforms`. Decoders in `float_events.py` from LaunchLab's on-chain IDL and mainnet records, checked on 1,597 curve trades and 656 CPMM swaps before building. Runs without graduation tracking; each Float transaction is market data for the health monitor. New `float_capture` settings section, `Float` status row, `float feed` condition and `configs/float-1.example.json` ([FEATURES §2.4](docs/FEATURES.md#24-the-float-capture-feat-179-record-only), [CONFIGURATION](docs/CONFIGURATION.md#float_capture-floats-launches-trades-and-graduates-feat-179)).
+- **FEAT-175's command: `trading-pump land-probe`.** Runs trading-solana's landing probe from the probe wallet (`PUMPFUN_PROBE_PRIVATE_KEY`, new; never the trading key, and a wallet holding more than `--max-balance`, 0.05 SOL, is refused) with `--max-spend` (0.01 SOL) and `--max-tip` (10,000 lamports) caps; writes a row a probe, a report per host and mode, and with `--delays` trading-core FEAT-176's delay sample ([CLI.md](docs/CLI.md#trading-pump-land-probe)). The proposal named `trading-solana land-probe`; the library reads no credentials and has no commands, so the command is here.
+
+### Changed
+- **Requirements:** trading-solana `>=0.4.0,<0.5` (was `>=0.3.0,<0.4`) for `land_probe`; CI checks it out at `v0.4.0` (`TRADING_SOLANA_REF`). trading-core stays `>=0.7.0,<0.8`.
+- **`PUMPFUN_RPC_WS_URL`** is also read by the push feed, the Float capture and the landing probe (it was the new-pool feed's only).
+
+### Upgrading
+- Install with trading-solana `v0.4.0` (a runtime's `[libraries.solana]` moves to that tag). Settings files need no change: `push` and `float_capture` are off when absent.
+- Install it in its own runtime beside `v0.5.0`, never over it: `ee-1` runs on `v0.5.0` to 2026-11-13.
+- `PUMPFUN_PROBE_PRIVATE_KEY` is new and read only by `land-probe`; leave it unset elsewhere.
+
+### Release record – v0.6.0 (2026-11-09)
+- Commit: the merge commit on `main` of `release/v0.6.0`; tagged `git tag -s v0.6.0`; on trading-core `v0.7.0` and trading-solana `v0.4.0`
+- Release gate: tests, coverage, lint, types, `nox -s audit` and `nox -s package` run here; open: CI on the tag, the signed tag, the install in its own runtime with trading-solana `v0.4.0`, a smoke run and the restart drill on it
+- Tests: 749 collected (647 at `0.5.0`), all passed on each of 3.11–3.14 against trading-core `v0.7.0` and trading-solana `release/v0.4.0`; coverage 100% statement and branch; ruff, black, flake8 (complexity ≤ 7) and mypy clean; `nox -s audit`: no known vulnerability; `nox -s package`: `trading_pump-0.6.0` (42 files, no tests, private)
+- Checked: FEAT-179's event and account layouts against mainnet before building (1,597 LaunchLab trades and 656 CPMM swaps matched their vault changes) and a 15-minute workspace smoke of the Float capture on Helius (115 of 115 curve trades on the 20 busiest pools, all 210 trader lookups served); FEAT-175's probe transaction simulated on mainnet (trading-solana `v0.4.0`'s record); FEAT-174 not run live yet (its 24 h run is the check)
+- Reference replay: rc.11's capture (17 parts, 2026-10-30 19:02 → 11-02 17:01 UTC, 2,494 migrations) with `configs/rc11-paper.json`, through `v0.5.0` (trading-core `v0.7.0`, trading-solana `v0.3.0`) and through this release (trading-core `v0.7.0`, trading-solana `release/v0.4.0`): 251,458 engine cycles each; 618 audit lines each, of them 614 trade records identical in every field; 307 closed positions, win rate 38.8%, net −0.499965 SOL, costs 0.153413 SOL on both. The only differing line is `run_started`'s provenance (the module version, the process id, and the resolved `module_settings`, which now name the `push` and `float_capture` sections, hence the config hash). The lanes keep their stage (both closed, NO-GO)
+- Modules: needs trading-core `>=0.7.0,<0.8` and trading-solana `>=0.4.0,<0.5`
+- Runs: none started; `ee-1` stays on `v0.5.0`. Next on this release: `float-1`, FEAT-174's 24 h run, FEAT-175's probes
+- Capital stage: none (no lane open; everything new is record-only)
+
 ## [0.5.0] - 2026-11-04
 
 FEAT-115: the module stands on trading-core `v0.7.0` and the new trading-solana library `v0.3.0` (trading-core ADR-010, its `docs/dev/REPOSITORIES.md` §5), and keeps only Pump.fun on PumpSwap. The Solana plumbing it shared with other Solana modules is trading-solana's, the capture writer, the stream loop and the replay harness are trading-core's (FEAT-110), the Meteora DAMM v2 capture (FEAT-107) is trading-meteora's (ADR-011), and the FEAT-65 slow-lane recorders are retired. A dependency move, not a redesign: what the module trades, quotes, fills and records, its settings keys (but `damm_pools`) and its capture rows are unchanged, and `trading-pump replay` takes the same options and prints the same summary. Also the strategy library's records (`lane-rows`, the market book), written after `v0.4.0`. A MINOR release: a settings section, a command and a variable are removed, and the requirements change.

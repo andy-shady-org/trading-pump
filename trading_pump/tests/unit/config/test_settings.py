@@ -9,11 +9,13 @@ from trading_pump.config.settings import (
     GRADUATION_MARKET_CAP_SOL,
     CaptureSettings,
     ExecutionSettings,
+    FloatSettings,
     GraduationSettings,
     InstantLaneSettings,
     LaneSettings,
     NewPoolSettings,
     PumpSettings,
+    PushSettings,
     StreamSettings,
 )
 from trading_pump.strategies.filters import ScreeningSettings
@@ -132,6 +134,13 @@ def test_module_settings_must_be_an_object() -> None:
         (NewPoolSettings, {"warmup_seconds": -1}, "warmup_seconds must not be"),
         (NewPoolSettings, {"max_lookups": 0}, "max_lookups must be positive"),
         (NewPoolSettings, {"signature_limit": 1001}, "within 1..1000"),
+        (PushSettings, {"seconds": 0}, "seconds must be positive"),
+        (PushSettings, {"idle_timeout_seconds": -1}, "must not be negative"),
+        (PushSettings, {"commitment": "fast"}, "processed, confirmed or finalized"),
+        (PushSettings, {"max_vaults": 1}, "at least 2"),
+        (FloatSettings, {"reading_seconds": 0}, "reading_seconds must be positive"),
+        (FloatSettings, {"trader_lookups_per_second": -1}, "must not be negative"),
+        (FloatSettings, {"commitment": "fast"}, "processed, confirmed or finalized"),
     ],
 )
 def test_each_section_validates_its_values(
@@ -234,3 +243,33 @@ def test_graduation_off_needs_every_lane_and_the_new_pools_off() -> None:
                 "new_pools": {"enabled": True},
             }
         )
+
+
+def test_the_push_feed_is_off_by_default_and_needs_graduation_tracking() -> None:
+    assert PumpSettings().push == PushSettings() and not PushSettings().enabled
+    settings = PumpSettings.from_mapping({"push": {"enabled": True, "seconds": 120}})
+    assert settings.push.enabled and settings.push.seconds == 120
+    assert settings.push.commitment == "processed"
+    with pytest.raises(ValueError, match="push follows the pools"):
+        PumpSettings.from_mapping(
+            {
+                "graduation": {"enabled": False},
+                "lane": {"enabled": False},
+                "push": {"enabled": True},
+            }
+        )
+
+
+def test_the_float_capture_is_off_by_default_and_runs_without_graduates() -> None:
+    assert PumpSettings().float_capture == FloatSettings()
+    assert not FloatSettings().enabled
+    settings = PumpSettings.from_mapping(
+        {
+            "graduation": {"enabled": False},
+            "lane": {"enabled": False},
+            "float_capture": {"enabled": True, "reading_interval_seconds": 2},
+        }
+    )
+    assert settings.float_capture.enabled and not settings.graduation.enabled
+    with pytest.raises(ValueError, match="Unknown float_capture keys: speed"):
+        PumpSettings.from_mapping({"float_capture": {"speed": 1}})

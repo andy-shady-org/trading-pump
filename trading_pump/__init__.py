@@ -9,7 +9,7 @@ net-PnL accounting, the audit trail, alerts, the dashboard, the capture
 writer, the stream loop, the replay harness) is trading-core's.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # Importing trading-solana registers its Solana public-key test with
 # trading-core's redaction, so a mint or wallet in a URL is never masked as

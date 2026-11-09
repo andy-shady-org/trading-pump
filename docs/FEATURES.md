@@ -134,6 +134,86 @@ and its rows are read by trading-meteora unchanged. What it recorded is in
 [`CHANGELOG.md`](../CHANGELOG.md) 0.4.0 and the history at tag `v0.4.0`. A
 settings file that still has `damm_pools` is refused as an unknown key.
 
+### 2.3 A push feed beside the poller (FEAT-174, record-only)
+
+Off by default (`push.enabled`, [CONFIGURATION.md](CONFIGURATION.md#push-a-push-feed-of-the-followed-pools-vaults-feat-174)).
+The poller reads each followed pool every 2 s for its first 5 minutes, so a
+move is about a second old when seen and a peak between reads is missed;
+every pump arm is positive with a 1.5 s fill and negative with 3 s. This
+feed has the RPC push each change instead, for the read-out to compare:
+
+* **Feed:** one RPC WebSocket (`PUMPFUN_RPC_WS_URL`) with one
+  `accountSubscribe` per vault of each followed pool (graduates and, when
+  on, FEAT-80's new pools), at `processed` commitment, from the pool's first
+  reading (when its vaults are known) until `push.seconds` (300) after its
+  migration; then `accountUnsubscribe`. Not a stream over the whole
+  PumpSwap program (FEAT-77 measured 47 messages a second there). A
+  reconnect subscribes every live vault again; a send that fails is sent
+  again on the next flush.
+* **Rows:** `vault_push` beside the poller's `curve_poll` rows in the same
+  capture: `timestamp` (receive time), `mint`, `source`, `side` (the pool's
+  `base` or `quote`), `vault`, `amount` (raw token units, `null` for an
+  unreadable account) and `slot`. A graduation pool's quote amount is the
+  SOL in the vault; the poller's `pool_sol` adds the pool's virtual quote
+  reserve.
+* **Never traded on:** the lanes, the market book, `lane-rows` and replay
+  read the poller's rows only.
+* **Dashboard:** a `Push feed` status row (state, pools pushed, pushes) and
+  `push feed` degraded while disconnected.
+
+### 2.4 The Float capture (FEAT-179, record-only)
+
+Off by default (`float_capture.enabled`, [CONFIGURATION.md](CONFIGURATION.md#float_capture-floats-launches-trades-and-graduates-feat-179)).
+Float (floatlaunch.xyz) launches coins on Raydium LaunchLab curves, and a
+filled curve migrates to a Raydium CPMM pool. Its coins traded more
+naturally than pump.fun's in the first two weeks, and that may not last, so
+the platform is recorded at the finest grain (run `float-1`, 14 days: 7 to
+design, 7 to judge). Nothing trades on it.
+
+* **Streams:** one RPC WebSocket with `logsSubscribe` mentioning Float's
+  program (launches, fee cycles), each Float platform config (every
+  LaunchLab trade on a Float curve names its platform config; these carry
+  the curve trades and the migrations) and each followed graduate's CPMM
+  pool for 2 hours. A transaction seen on two subscriptions is read once.
+  The platform list is read again every hour from Float's config account.
+* **Decoding** (`float_events.py`): LaunchLab's `TradeEvent` and
+  `PoolCreateEvent` from its on-chain IDL, Float's launch event, CPMM's
+  `SwapEvent`, and the accounts (curve, platform fees, Float's platform
+  list, CPMM pool), pinned to mainnet records. Checked before building
+  (2026-11-09): on 1,597 trades of 30 Float curves every event matched its
+  reserves, fees and vault changes; on 656 swaps of 8 graduates' CPMM pools
+  the vaults moved by the event's amounts.
+* **Rows:**
+  - `float_launch`: pool, mint, quote mint, launcher, name, symbol,
+    decimals, the metadata URI's host, the curve's terms, then one read of
+    the curve and the mint: platform and its fee a side, curve state, token
+    program, mint and freeze authorities, Token-2022 extensions and the
+    risks trading-solana's `mint_facts` names;
+  - `float_trade`: each curve trade (side, amounts in and out, the four
+    fees, the reserves before and after, the curve's status) with its slot
+    and receive time;
+  - `float_trader`: a trade's signers (fee payer first) and block time,
+    looked up at `trader_lookups_per_second`, as the logs carry neither;
+  - `float_migration`: at `MigrateToCpswap`, the curve and its final state,
+    the CPMM pool and its vaults, and the largest token accounts with their
+    owners (`pool: true` for the curve's and the CPMM pool's vaults);
+  - `float_cpmm_trade`: each CPMM swap on a followed graduate's pool for
+    2 hours (amounts, mints, vaults before, transfer, trade and creator
+    fees);
+  - `float_pool_reading`: the graduate's two vault amounts, the fees held in
+    them (protocol, fund, creator) and the reserves (vault less fees), every
+    2 s for 30 minutes;
+  - `float_fee_cycle`: Float's fee claims, holder payouts and harvests,
+    their instruction names and events as bytes (Float publishes no IDL);
+  - `float_platforms`: each platform's fee a side, at every refresh.
+* **Units:** raw. Non-SOL quotes (tokenized stocks, other tokens) keep
+  their own units with the quote mint; their USD prices come from
+  GeckoTerminal at the read-out.
+* **Health:** each Float transaction is market data for the engine's
+  health monitor (a Float-only run has no pool poller); `float feed` is
+  degraded while the stream is down; a `Float` status row counts launches,
+  trades, migrations and graduates followed.
+
 ## 3. The `pumpswap_momentum` lane (FEAT-76, paper)
 
 The pre-registered rule from the rc.8 read-out, as a trading-core pipeline
@@ -291,7 +371,14 @@ FEAT-76 rule was pre-registered without it.
 
 ## 7. Research recorders
 
-None since 0.5.0: `trading-pump record` and `trading-pump-recorder` are gone.
+`trading-pump record` and `trading-pump-recorder` are gone since 0.5.0.
+
+* **Landing probe (FEAT-175, 0.6.0):** `trading-pump land-probe` times
+  transactions that trade nothing from a dedicated probe wallet, per send
+  mode (`rpc`, `priority`, `jito`, `fast`), under a spending cap, and writes
+  the delay sample trading-core's FEAT-176 replays draw from
+  ([CLI.md](CLI.md#trading-pump-land-probe)). The probe is trading-solana's
+  `land_probe`.
 
 * **Cross-chain market recorder (FEAT-74)**: moved to trading-scout on
   2026-10-30 (its FEAT-1, with a sell check and per-launchpad read-outs).

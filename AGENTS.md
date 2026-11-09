@@ -175,6 +175,10 @@ trading-pump/
 │   ├── graduates.py      # GraduateTracker (FEAT-73): who is followed, readings, capture rows
 │   ├── feed.py           # MigrationFeed (PumpPortal subscribeMigration), PoolPoller
 │   ├── pools.py          # NewPoolFeed (trading-solana's ProgramSubscribeFeed), NewPoolWatcher: new non-graduate pools (FEAT-80)
+│   ├── push.py           # VaultPushFeed: accountSubscribe on followed pools' vaults beside the poller (FEAT-174)
+│   ├── float_events.py   # Float, LaunchLab and CPMM decoders, pinned to mainnet records (FEAT-179)
+│   ├── float_capture.py  # FloatFeed (logsSubscribe), FloatWatcher, RpcFloatSource: the Float capture (FEAT-179)
+│   ├── probe.py          # trading-pump land-probe: trading-solana's landing probe from the probe wallet (FEAT-175)
 │   ├── execution.py      # PaperExecutor (pool-priced fills, every cost), LiveExecutor (refuses)
 │   ├── replay.py         # what a capture's rows mean (GraduationFeed, capture pool sources) for trading-core's replay harness
 │   ├── lanes.py          # captures as trading-core's strategy library records (lane-rows, market_book)

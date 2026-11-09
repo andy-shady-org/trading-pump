@@ -1047,3 +1047,190 @@ Proposals whose work is done, moved whole and unedited from [`PROPOSED-FEATURES.
 
   Tag `v0.5.0` (FEAT-115, built on `release/v0.5.0`, [DONE.md](DONE.md#release-v050-onto-trading-solana-and-trading-core-070-feat-115)): its release gate, with the replay of rc.11's capture on `v0.4.0` and `0.5.0` to the same positions and net ([`RELEASE-GATE.md` §1](RELEASE-GATE.md#1-current-status)). `damm-1` (FEAT-107, record-only, on `v0.4.0`) runs until 2026-11-06 11:20 UTC; its read-out is trading-meteora's. The PumpSwap lanes are closed (rc.11 NO-GO; nothing passes pump-12's design gate, so **pump-12 is not run**)
 
+---
+
+## FEAT-174 and FEAT-175's command (2026-11-09, 0.6.0)
+
+- [x] **FEAT-174, the push feed:** `trading_pump/push.py` (`VaultPushFeed`),
+      the `push` settings section, the module's wiring (from a pool's first
+      reading, through `RpcPoolSource.pool_vaults`), `vault_push` rows, the
+      `Push feed` status row and `push feed` condition
+      ([`FEATURES.md` §2.3](../FEATURES.md#23-a-push-feed-beside-the-poller-feat-174-record-only)).
+      Built as proposed with `accountSubscribe` on the two vaults (not
+      `logsSubscribe`). Its 24 h record-only run needs a release and starts
+      after `ee-1` ([`TODO.md`](TODO.md)).
+- [x] **FEAT-175's command:** `trading-pump land-probe` (`trading_pump/probe.py`)
+      and `PUMPFUN_PROBE_PRIVATE_KEY` ([`CLI.md`](../CLI.md#trading-pump-land-probe));
+      the probe is trading-solana's `land_probe`. The proposal is in
+      trading-solana's `docs/dev/DONE.md`.
+
+The FEAT-174 proposal as it stood:
+
+### FEAT-174: Push feed for graduates' pools, measured against the poller (proposed 2026-11-08)
+
+**Why.**
+- Today PumpPortal's migration feed names each graduate, and its PumpSwap pool is read by `getMultipleAccounts` every 2 s for 300 s, then every 10 s. ee-1's smoke saw a reading every 2.06 s at the median.
+- So a move is about 1 s old on average when seen, and peaks between readings are missed.
+- Every pump arm is positive with a 1.5 s fill and negative with 3 s (trading-core `STRATEGY-LEDGER.md` §3.2), so the age of the reading is part of the fill.
+- This was the roadmap backlog's push-feed item. It is registered now with trading-core FEAT-176 (replays at a measured delay), trading-solana FEAT-175 (a landing probe) and FEAT-178 (mint safety).
+
+**Spec (record-only, a new release, never during a run).**
+- **The feed:** one `accountSubscribe` per followed pool's two vaults (or `logsSubscribe` on the pool), at `processed` commitment, for the same 300 s window, a few dozen subscriptions at a time.
+- **Not used:** a stream over the whole PumpSwap program. FEAT-77 measured 47 messages a second, which could spend the month's Helius credits in days.
+- **The rows:** each change written with its slot and receive time, beside the poller's readings in the same capture, so both feeds see the same graduates.
+- **Run:** 24 h, record-only, from the UK server and from home if both can run.
+
+**Read-out (exploratory, dated before it is read).**
+- How much sooner each move is seen, at the median and the 90th percentile.
+- How many peaks and troughs the 2 s readings miss.
+- Credits used a day.
+- The momentum lane's and ee-1's rules replayed on both feeds, to show how much the results depend on reading cadence.
+
+**If clearly better:**
+- it becomes the feed of a Stage 1 paper lane and of the bonding-curve recorder (FEAT-169);
+- a rule moved to it is checked again on push-feed data before it is trusted, since every pump rule so far was designed on 2 s readings;
+- if per-pool subscriptions are still too slow or too costly, FEAT-39 (Yellowstone gRPC) is next.
+
+**Cost:** a few dozen WebSocket subscriptions; measure the credits for the day before any longer run.
+
+**Status:** proposed; after `ee-1`.
+
+---
+
+## FEAT-179, the Float capture (2026-11-09, 0.6.0)
+
+- [x] `trading_pump/float_events.py` (decoders), `trading_pump/float_capture.py`
+      (`FloatFeed`, `FloatWatcher`, `RpcFloatSource`), the `float_capture`
+      settings section, the module's wiring (it runs without graduation
+      tracking) and `configs/float-1.example.json`
+      ([`FEATURES.md` §2.4](../FEATURES.md#24-the-float-capture-feat-179-record-only)).
+
+**Checked before building (2026-11-09), as the proposal asked:**
+
+- **Layouts.** LaunchLab publishes its Anchor IDL on chain
+  (`raydium_launchpad` 0.2.0): `TradeEvent` (`bddb7fd34ee661ee`, 147 bytes),
+  `PoolCreateEvent` (`97d7e20976a173ae`), `migrate_to_cpswap`
+  (`885cc8671cda908c`) and its 28 accounts were read from it. Float and CPMM
+  publish none: Float's launch event (`3b26bee621225914`, 176 bytes: mint,
+  quote mint, curve, launcher, a second key, symbol) and CPMM's `SwapEvent`
+  (`40c6cde8260871e2`, 170 bytes) were read field by field against their
+  transactions.
+- **Curve trades:** 1,597 `TradeEvent`s in 1,595 transactions on 30 Float
+  curves (15 graduates, 15 not; 1,293 buys, 304 sells). Every event's
+  amounts matched its reserves and fees (a buy pays `amount_in` = quote
+  reserve change + all fees; a sell gets `amount_out` = quote reserve
+  change - fees). The quote vault moved by the quote reserve's change plus
+  the protocol fee in all 1,595; the base vault by the base reserve's
+  change in all but the 18 launch transactions, whose vault is created in
+  the transaction.
+- **CPMM swaps:** 656 swaps on 8 graduates' pools, outside liquidity
+  changes: the output vault fell by `output_amount` and the input vault rose
+  by `input_amount` in every one (50 with a Token-2022 transfer fee:
+  `input_amount` is what reached the vault).
+- **Platform subscriptions:** every one of the 1,595 trade transactions
+  names a Float platform config, 1,565 as a static key and 30 only through
+  an address lookup table, so the smoke must show `logsSubscribe` sees the
+  latter.
+
+**Workspace smoke (2026-11-09, 11:06–11:21 UTC, the built code on Helius,
+before the operator's 1-hour smoke):** 1,544 log notifications in 15
+minutes: 211 curve trades, 3 launches, 427 fee cycles; 80 transactions seen
+on two subscriptions and read once; 795 failed transactions skipped; 2
+truncated logs. Against `getTransactionsForAddress` on the 20 busiest pools
+over the middle 13 minutes, **115 of 115** curve trades were captured,
+including the 2 whose platform config was only in a lookup table, so
+`logsSubscribe` mentions do cover loaded addresses. All 210 trader lookups
+were served (5 after a retry); the 3 launches read their curve and mint.
+About 14 RPC calls a minute for trader lookups (about 20,000 a day), a few a
+launch, and four WebSocket subscriptions; no migration fell in the window,
+so the migration path rests on the recorded mainnet migration in the tests
+until the operator's smoke or the run sees one. A first smoke the same
+morning asked `getTransaction` for version-0 transactions only and had 57
+of 142 lookups refused; fixed before this one.
+
+**Where it differs from the proposal:**
+
+- **Trader and block time:** `logsSubscribe` carries neither, so each
+  trade's transaction is looked up (`getTransaction`, signers and block
+  time) at `trader_lookups_per_second` (4) into its own `float_trader` row;
+  one the queue (20,000) cannot take is counted and left to the read-out's
+  backfill from the signature.
+- **Token-2022 extensions** come from trading-solana's `mint_facts` (since
+  0.3.0), not FEAT-178's `mint_safety`, which is not built.
+- **One file per UTC day:** the rows go to the run's capture, which
+  trading-core's writer rotates by size and age; the read-out splits it by
+  UTC day.
+- **Holders:** `getTokenLargestAccounts` returns at most 20 accounts, pool
+  vaults included: they are kept and marked `pool: true`.
+- **Fee cycles** keep Float's events as bytes with their discriminator;
+  their fields are named at the read-out if needed.
+- **Version 1 transactions:** the lookups ask `getTransaction` with
+  `maxSupportedTransactionVersion: 1`; the first workspace smoke, asking
+  for 0, had 57 of 142 trade lookups refused.
+
+The proposal as it stood:
+
+### FEAT-179: Float capture, record-only (proposed 2026-11-09)
+
+**Why.**
+- Float (floatlaunch.xyz) is a Solana launchpad on Raydium LaunchLab, started on 28 Oct 2026. By 9 Nov it had 4,606 launches (940 in the last day) and 49 graduates (7–20 a day).
+- Read trade by trade (trading-core project note `claude/float-launch-2026-11-08.md`, re-look of 2026-11-09), its coins trade more naturally than pump.fun's:
+  - creation-slot buyers: a median of 1–2 against pump.fun's 5, and 3.7–5.1 SOL against 20.5;
+  - one-transaction dumps after graduation: 10 of 49 graduates against 61%;
+  - single-sale dumps on the curve: almost none.
+- Our rules don't pay there yet:
+  - curve momentum entries lose 10–20% a trade, weighted to the population;
+  - ee-1's rule had 6 entries after graduation;
+  - the best cell after graduation, +3–4%, rests on 11 trades.
+- The design data are 49 graduates. The operator's case is that this window closes once snipers and ruggers arrive. So the platform is recorded now, at the finest grain, to design a rule on one week and judge it on the next while it lasts.
+
+**Spec.**
+
+*Sources:*
+- **Launches:** `logsSubscribe` mentioning Float's program (`3KguFi7YYzLgttG46fRism16CfcuNCkDh6U7td9JTqxX`); a launch is its `Launch` or `LaunchKeyed` instruction.
+- **Curve trades:** one `logsSubscribe` per Float platform config, three today:
+  - `2TDPJJPV6nvTEqXABxrqno6Uzpipxxvh1zjLN3SMYn69`, 1.0% a side;
+  - `7paQR4MLZcGdG8ZYAyj9Qu2UsJgXmNVQGha7g1gim1sG`, 2.0%;
+  - `CKpEUk5SRk8CUNhhxaVPKtzKUKLgQe2tQHPH2eXWtaGR`, 2.5%.
+  Every LaunchLab trade on a Float curve names its platform config. Each trade is read from LaunchLab's trade event in the logs.
+- **The platform list** is re-read every hour from Float's config account (`AgaKFP4SfEeeM4r4GcSWBwpEAbfHh7wLkJGHqpWrLBQV`), so a new tier is followed.
+- **Graduates:** at a pool's migration, its Raydium CPMM pool's logs for 2 h, plus `getMultipleAccounts` readings of its two vaults every 2 s for 30 min, ee-1's cadence.
+
+*Rows (one file per UTC day, under the data rule):*
+- `float_launch`:
+  - the pool, mint, quote mint and platform (tier);
+  - the curve's terms (supply, virtual reserves, amount for sale, raise target);
+  - the signer who launched it;
+  - the metadata URI's host;
+  - the token program and Token-2022 extensions (FEAT-178's `mint_safety` once built; until then the mint's authorities).
+- `float_trade`, for curve trades:
+  - slot, block time and receive time;
+  - side, the amounts in and out, the reserves after, and the trader.
+- `float_migration`:
+  - the curve's final reserves;
+  - the CPMM pool and its vaults;
+  - the 20 largest holders outside the pool (`getTokenLargestAccounts`).
+- `float_cpmm_trade`, for CPMM trades in the first 2 h, with the same fields as a curve trade.
+- `float_pool_reading`: the 2 s vault readings.
+- `float_fee_cycle`: Float's fee claims and holder payouts per coin, from the same program stream.
+
+*Quotes:* non-SOL quotes (tokenized stocks, other tokens) are kept in their own units with the quote mint. Their USD prices come at the read-out from GeckoTerminal.
+
+**Before building:**
+- check LaunchLab's and CPMM's event layouts against `getTransaction` on a few hundred trades (the vaults' balance changes must match);
+- check that the three platform subscriptions see every trade on a sample of curves.
+
+**Smoke:** 1 hour, comparing curve trades from the streams with `getTransactionsForAddress` on 20 pools, and logging the Helius credits used.
+
+**Run `float-1`:**
+- record-only, 14 days, on a new trading-pump release installed in its own runtime beside the running v0.5.0;
+- days 1–7 design: rules for curves and graduates, written and frozen with their scorer before day 8 is read;
+- days 8–14 test, under trading-core's verdict standard (ADR-012);
+- a rule that passes goes to a Stage 1 paper lane. Fewer than 150 trades is reported as such, not as a NO-GO.
+
+**Cost:**
+- **Streams:** four WebSocket subscriptions, plus up to a few dozen per graduate's CPMM pool at once.
+- **Readings:** one `getMultipleAccounts` a graduate every 2 s for 30 min.
+- **Credits:** measured in the smoke before the run.
+
+**Status:** proposed.
