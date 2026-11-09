@@ -920,3 +920,15 @@ Scripts (sha256): `trades.py` (the trades), `fetch.py`
   - arms 6a and 6b, the 30% creation-slot filter;
   - arm 7, the grid's top design cell;
   - the whole grid on ee-1 as exploratory, with the same permutation null.
+
+**Addendum (2026-11-08, exploratory, the operator's question): the creator's wallet as a dump alarm.**
+
+- **The data:** the 629 design-capture coins with a known creator (rc.8, rc.9, rc.11), and every transaction of the creator's wallet from 60 s before the migration to about 30 min after (Helius).
+- **A dump** is the first 2 s reading that falls 40% or more from the one before, within 30 min. 382 coins dumped, at a median of 457 s after the migration.
+- **A raw count misleads.** The creator transacted in the 5 minutes before 66% of dumps, against 37% of coins at the same median moment with no dump. But creators are busiest just after the migration, and many dumps come early.
+- **As an alarm, it fails.** The test checked every 10 s, from 60 s after the migration: a creator transaction 2–60 s earlier (old enough for a 2 s reader to have seen it) against a dump in the next 30 s.
+  - Flagged moments: 2.0% saw a dump. Unflagged moments: 1.7%. The lift is 1.17×, and it is not stable: 1.37× in the first half of the coins, 0.93× in the second.
+  - Only 34% of dumps had a creator transaction 2–60 s before.
+  - Coins averaged 15 creator transactions at other moments (median 6), so the alarm would fire mostly when nothing follows.
+- **This agrees with §6.20 A6** (18 dumps read transaction by transaction): no tokens moved and no SOL reached the creator before the dump, and the dump is one bundle of sells from fresh wallets in one slot.
+- **Not carried forward.** Scripts: `launch-dump-2026-11-08/creator_watch.py`, `creator_watch2.py`.
