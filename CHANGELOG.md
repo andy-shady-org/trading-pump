@@ -12,6 +12,32 @@ This is a proprietary project (see [`LICENSE`](LICENSE)). Versions are private g
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-12
+
+The module on trading-core 0.8.0's shared plumbing (FEAT-184, trading-core
+ADR-013): its lane-rows writer and command, its market book's upkeep and its
+settings checks are the core's. Its writer's two safeguards and its
+translator's `forget` went into the core first, for every module (LESSONS
+§10.8). A MINOR release: new dependencies' ranges and the `lane-rows`
+output's form; no setting, capture row or library row changes.
+
+### Changed
+- On trading-core `>=0.8.0,<0.9` and trading-solana `>=0.4.1,<0.5` (was `>=0.7.0,<0.8` and `>=0.4.0,<0.5`).
+- `lanes.write_lane_rows` is trading-core's writer on this module's `LaneRows` and returns trading-core's `Conversion` (`LaneRowStats` stays the translator's own count); `lane_records` is trading-core's `capture_records`; `LaneRows.translate` is now `records` (trading-core's translator protocol), with `skipped` and `ignored` its `stats`' counters.
+- `trading-pump lane-rows` is trading-core's command with `--source`: it prints one line a count (`listing: 2494`) instead of a table, then the sweep to run next; a refused output or an unreadable file exits 2 with `lane-rows: <why>`. Rows and their order are the same.
+- `PumpModule.market_book()` is trading-core's `LiveBook` on the module's `LaneRows` (`PumpModule.live`; `book` reads its book): still made on the first call, now trimmed at most once a minute instead of on every call, still telling the translator what remains.
+- The settings checks are `trading_core.config.sections`; a capture row's numbers are read with `trading_core.lanes.rows.number` (a non-finite number is no number).
+
+### Upgrading
+- Install trading-solana `v0.4.1` and trading-core `v0.8.0` with it. Code calling `LaneRows.translate` calls `records`. A run pinned to an earlier release keeps its release copy.
+
+### Release record – v0.7.0 (2026-11-12)
+- Commit: the head of `release/v0.7.0` (the tag goes on its merge commit on `main`), after trading-core `v0.8.0` and trading-solana `v0.4.1`
+- Release gate: PASS on Linux for every item that runs here: `nox -s format` (no changes), `lint` (ruff, black, flake8 with complexity ≤ 7: 0 findings), `mypy` (0 issues), `tests-3.11` to `tests-3.14`, `audit` (no known vulnerability), `package` (a private wheel of 42 files, no tests); still to do: CI on the merge and the signed tag, which the operator makes
+- Tests: 749 collected, all passed on 3.11, 3.12, 3.13 and 3.14; coverage 100% of statements and branches on each (none removed)
+- Checked: `trading-pump lane-rows` on rc.11's whole capture (14 parts) by `0.6.0` on trading-core `v0.7.0` and by this on `v0.8.0`'s tree: 2,494 listings and 3,447,298 readings each, 3,449,792 rows identical in content and order, the same 5,049 rows counted as not market data
+- Used by: no run moves onto it; `ee-1` and `float-1` keep their release copies
+
 ## [0.6.0] - 2026-11-09
 
 Three record-only additions for the next runs, none of them traded on: a

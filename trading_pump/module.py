@@ -43,6 +43,7 @@ from dataclasses import asdict
 from typing import Any
 
 from solders.keypair import Keypair
+from trading_core.lanes.book import LiveBook
 from trading_core.lanes.market import MarketBook
 from trading_core.module.base import (
     Fill,
@@ -197,9 +198,10 @@ class PumpModule(TradingModule):
         )
         self.readings: dict[str, PoolReading] = {}
         self.fees: dict[str, SwapFee] = {}
-        # The strategy library's book of graduates, made on the first
-        # market_book() call (the engine asks only when it runs lanes).
-        self.book: MarketBook | None = None
+        # The strategy library's book of graduates (trading-core's LiveBook,
+        # FEAT-184), made on the first market_book() call (the engine asks
+        # only when it runs lanes).
+        self.live: LiveBook[LaneRows] | None = None
         self.book_rows = LaneRows(sources=(GRADUATION_SOURCE,))
         # A replay gives the executor its own source (BUG-164); live and
         # paper runs read the pool for a fill exactly as the poller does.
@@ -326,10 +328,8 @@ class PumpModule(TradingModule):
     def _record(self, row: dict[str, Any]) -> None:
         if self.recorder is not None:
             self.recorder.record(row)
-        if self.book is not None:
-            self.book_rows.learn(row)
-            for record in self.book_rows.translate(row):
-                self.book.add(record)
+        if self.live is not None:
+            self.live.add_row(row, self.clock())
 
     def _store(self, reading: PoolReading) -> None:
         self.readings[reading.mint] = reading
@@ -580,20 +580,32 @@ class PumpModule(TradingModule):
             )
         return self._pipeline
 
+    @property
+    def book(self) -> MarketBook | None:
+        """The market book, once :meth:`market_book` has made it."""
+        return None if self.live is None else self.live.book
+
     def market_book(self) -> MarketBook:
         """The graduates for trading-core's lanes (FEAT-117): each one's
         listing at its migration and its pool readings, as the capture rows
         are written, so a lane sees what ``trading-pump lane-rows`` makes of
         the capture. Made on the first call: a graduate followed before it is
-        left out (its listing is not known). Trimmed on every call: a
-        graduate with no record for ``graduation.book_retention_seconds`` is
-        dropped, unless held."""
-        if self.book is None:
-            self.book = MarketBook()
-        cutoff = self.clock() - float(self.settings.graduation.book_retention_seconds)
-        self.book.forget_before(cutoff, keep=list(self.paper_executor.holdings.raw))
-        self.book_rows.forget(history.instrument_id for history in self.book)
-        return self.book
+        left out (its listing is not known). Trimmed at most once a minute
+        (trading-core's LiveBook, FEAT-184): a graduate with no record for
+        ``graduation.book_retention_seconds`` is dropped, unless held, and
+        the translator forgets it."""
+        now = self.clock()
+        if self.live is None:
+            self.live = LiveBook(
+                self.book_rows,
+                retention_hours=float(self.settings.graduation.book_retention_seconds)
+                / 3_600.0,
+                now=now,
+                held=lambda: list(self.paper_executor.holdings.raw),
+                learn=True,
+            )
+        self.live.trim(now)
+        return self.live.book
 
     def should_exit(
         self, position: Position, quote: MarketQuote | None, now: float

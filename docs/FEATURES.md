@@ -325,7 +325,9 @@ captures into them (`lanes.py`), offline and live, on trading-core
 * **`trading-pump lane-rows`** writes a capture as the library's rows for
   `trading-core-lanes sweep` ([CLI.md](CLI.md#trading-pump-lane-rows)). The
   capture is read twice, first for the listings, so its parts may come in
-  any order. Generic rows only; nothing of the venue is left in
+  any order. From 0.7.0 the writer and the command are trading-core's
+  (`trading_core.lanes.rows`, FEAT-184) on this module's translator; on
+  rc.11's capture their 3,449,792 rows are the 0.6.0 command's, row for row. Generic rows only; nothing of the venue is left in
   them:
 
   | Capture row | Library row |
@@ -349,9 +351,11 @@ captures into them (`lanes.py`), offline and live, on trading-core
   lanes the engine's settings compose. It is fed by the same translator on
   the capture rows as they are written, so a lane sees live what the sweep
   sees in the capture; new pools never enter it (they are record-only). It starts on the engine's first call (a graduate followed
-  before that is left out: its listing is not known) and is trimmed on
-  every call: a graduate with nothing new for
-  `graduation.book_retention_seconds` (1 h) is dropped unless held
+  before that is left out: its listing is not known) and is trimmed at
+  most once a minute (from 0.7.0 it is trading-core's `LiveBook`,
+  FEAT-184; before, on every call): a graduate with nothing new for
+  `graduation.book_retention_seconds` (1 h) is dropped unless held, and
+  the translator forgets it
   ([CONFIGURATION.md](CONFIGURATION.md#graduation-following-graduates-feat-73)).
 * **Not built:** the calibration (trading-core FEAT-133: the sweep must
   reproduce RESULTS §6.20 on the rc.8 to rc.11 rows before it judges a

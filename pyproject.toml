@@ -7,7 +7,7 @@ name = "trading-pump"
 authors = [
     {name="Andy Wilson", email="andy@shady.org"},
 ]
-version = "0.6.0"
+version = "0.7.0"
 description = "Pump.fun and PumpSwap (Solana) trading module for trading-core: graduation tracking, PumpSwap paper fills, the FEAT-76 lane, captures and research recorders (proprietary, private use only)"
 readme = "README.md"
 requires-python = ">=3.11, <3.15"
@@ -33,16 +33,17 @@ classifiers = [
 ]
 # trading-core and trading-solana are private: install them first
 # (noxfile.py, docs/dev/TESTING.md), then this package resolves the
-# requirements against the installed copies. trading-core 0.7.0 brings the
-# capture writer, stream loop and replay harness (FEAT-110) and the strategy
-# library that lanes.py and market_book use; trading-solana is a library
+# requirements against the installed copies. trading-core 0.8.0 brings the
+# capture writer, stream loop and replay harness (FEAT-110), the strategy
+# library, and the live book, lane-rows writer and settings checks lanes.py,
+# market_book and the settings use (FEAT-184); trading-solana is a library
 # (trading-core FEAT-111: a runtime lists it under [libraries.solana]) with
 # the Solana plumbing (FEAT-112); 0.4.0 brings the landing probe that
-# `trading-pump land-probe` runs (FEAT-175). base58 is the tests'
-# (trading-solana needs it too).
+# `trading-pump land-probe` runs (FEAT-175), and 0.4.1 is the first that
+# allows trading-core 0.8. base58 is the tests' (trading-solana needs it too).
 dependencies = [
-  "trading-core>=0.7.0,<0.8",
-  "trading-solana>=0.4.0,<0.5",
+  "trading-core>=0.8.0,<0.9",
+  "trading-solana>=0.4.1,<0.5",
   "aiohttp>=3.9.0",
   "base58>=2.1.0",
   "rich>=13.7.0",

@@ -27,7 +27,8 @@ from typing import Any
 
 from rich.table import Table
 from trading_core.config.settings import EngineSettings
-from trading_core.lanes.market import ROW_HOLDERS, ROW_LISTING, ROW_READING, ROW_TRADE
+from trading_core.lanes.rows import Conversion, add_lane_rows_parser
+from trading_core.lanes.rows import run_lane_rows as core_run_lane_rows
 from trading_core.ops.logging import get_configured_console
 from trading_core.replay import read_rows
 
@@ -36,7 +37,7 @@ from trading_pump.config.env import (
     load_credentials,
     unread_env_warnings,
 )
-from trading_pump.lanes import SOURCES, LaneRowStats, write_lane_rows
+from trading_pump.lanes import SOURCES, write_lane_rows
 from trading_pump.probe import (
     DEFAULT_MAX_BALANCE_SOL,
     DEFAULT_MAX_SPEND_SOL,
@@ -78,16 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_REPLAY_FEE_BPS,
         help="swap fee a side in basis points (default: %(default)s)",
     )
-    lane_rows = sub.add_parser(
-        "lane-rows",
-        description="Write captures as trading-core's strategy library rows",
-    )
-    lane_rows.add_argument(
-        "--capture", nargs="+", required=True, help="capture files (.jsonl, .gz)"
-    )
-    lane_rows.add_argument(
-        "--out", required=True, help="new file for the rows (.jsonl or .jsonl.gz)"
-    )
+    lane_rows = add_lane_rows_parser(sub, capture_help="capture files (.jsonl, .gz)")
     lane_rows.add_argument(
         "--source",
         nargs="+",
@@ -189,29 +181,12 @@ def run_replay(args: argparse.Namespace) -> int:
 
 
 def run_lane_rows(args: argparse.Namespace) -> int:
-    try:
-        stats = write_lane_rows(args.capture, args.out, sources=args.source)
-    except (OSError, ValueError) as exc:
-        console.print(f"[red]Cannot write lane rows: {exc}[/red]")
-        return EXIT_USAGE
-    console.print(_lane_rows_table(stats))
-    console.print(f"Next: trading-core-lanes sweep --capture pump={args.out} --out DIR")
-    return EXIT_OK
+    """trading-core's ``lane-rows`` (FEAT-184) on this module's translator."""
 
+    def write(capture: list[str], out: str) -> Conversion:
+        return write_lane_rows(capture, out, sources=args.source)
 
-def _lane_rows_table(stats: LaneRowStats) -> Table:
-    table = Table(title="Lane rows")
-    table.add_column("Rows", style="bold cyan")
-    table.add_column("Count", justify="right")
-    for kind in (ROW_LISTING, ROW_READING, ROW_TRADE, ROW_HOLDERS):
-        table.add_row(kind, str(stats.written.get(kind, 0)))
-    table.add_row("skipped", str(sum(stats.skipped.values())))
-    for reason, count in stats.skipped.most_common():
-        table.add_row(f"  {reason}", str(count))
-    table.add_row("not market data", str(sum(stats.ignored.values())))
-    for label, count in stats.ignored.most_common():
-        table.add_row(f"  {label}", str(count))
-    return table
+    return core_run_lane_rows(args, console, write, venue="pump")
 
 
 def run_env() -> int:

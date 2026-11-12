@@ -21,9 +21,10 @@ into the run provenance.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from typing import Any, TypeVar
 
+from trading_core.config.sections import not_negative, positive, section
 from trading_core.strategy.exits import ExitRules
 
 from trading_pump.strategies.filters import ScreeningSettings
@@ -34,33 +35,6 @@ from trading_pump.strategies.filters import ScreeningSettings
 GRADUATION_MARKET_CAP_SOL = 410.88
 
 T = TypeVar("T")
-
-
-def _clean(data: Mapping[str, Any] | None, *, where: str, kind: type) -> dict[str, Any]:
-    if data is None:
-        return {}
-    if not isinstance(data, Mapping):
-        raise ValueError(f"{where} must be an object")
-    values = {k: v for k, v in data.items() if not str(k).startswith("_")}
-    known = {item.name for item in fields(kind)}
-    unknown = sorted(set(values) - known)
-    if unknown:
-        raise ValueError(f"Unknown {where} keys: {', '.join(unknown)}")
-    return values
-
-
-def _positive(owner: object, *names: str) -> None:
-    for name in names:
-        value = getattr(owner, name)
-        if isinstance(value, bool) or not float(value) > 0:
-            raise ValueError(f"{type(owner).__name__}.{name} must be positive")
-
-
-def _not_negative(owner: object, *names: str) -> None:
-    for name in names:
-        value = getattr(owner, name)
-        if isinstance(value, bool) or float(value) < 0:
-            raise ValueError(f"{type(owner).__name__}.{name} must not be negative")
 
 
 @dataclass(frozen=True)
@@ -89,7 +63,7 @@ class GraduationSettings:
     book_retention_seconds: float = 3_600.0
 
     def __post_init__(self) -> None:
-        _positive(
+        positive(
             self,
             "observation_seconds",
             "max_mints",
@@ -97,7 +71,7 @@ class GraduationSettings:
             "fast_poll_interval_seconds",
             "book_retention_seconds",
         )
-        _not_negative(self, "fast_seconds", "pool_missing_grace_seconds")
+        not_negative(self, "fast_seconds", "pool_missing_grace_seconds")
 
 
 @dataclass(frozen=True)
@@ -137,8 +111,8 @@ class LaneSettings:
             object.__setattr__(self, "exits", ExitRules.from_mapping(self.exits))
         if not isinstance(self.exits, ExitRules):
             raise ValueError("LaneSettings.exits must be an object")
-        _positive(self, "signal_after_seconds", "signal_window_seconds", "min_ratio")
-        _not_negative(
+        positive(self, "signal_after_seconds", "signal_window_seconds", "min_ratio")
+        not_negative(
             self,
             "first_market_cap_min_sol",
             "first_market_cap_max_sol",
@@ -228,7 +202,7 @@ class ExecutionSettings:
     rpc_timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
-        _not_negative(
+        not_negative(
             self,
             "slippage_bps",
             "fee_bps_floor",
@@ -236,7 +210,7 @@ class ExecutionSettings:
             "jito_tip_lamports",
             "paper_entry_delay_seconds",
         )
-        _positive(
+        positive(
             self, "compute_unit_limit", "quote_max_age_seconds", "rpc_timeout_seconds"
         )
         if int(self.slippage_bps) >= 10_000 or int(self.fee_bps_floor) >= 10_000:
@@ -266,8 +240,8 @@ class CaptureSettings:
     flush_interval_seconds: float = 5.0
 
     def __post_init__(self) -> None:
-        _not_negative(self, "max_bytes", "max_files", "max_age_days")
-        _positive(self, "flush_interval_seconds")
+        not_negative(self, "max_bytes", "max_files", "max_age_days")
+        positive(self, "flush_interval_seconds")
 
 
 @dataclass(frozen=True)
@@ -284,8 +258,8 @@ class StreamSettings:
     idle_timeout_seconds: float = 1800.0
 
     def __post_init__(self) -> None:
-        _positive(self, "reconnect_delay_seconds")
-        _not_negative(self, "heartbeat_seconds", "idle_timeout_seconds")
+        positive(self, "reconnect_delay_seconds")
+        not_negative(self, "heartbeat_seconds", "idle_timeout_seconds")
 
 
 @dataclass(frozen=True)
@@ -315,14 +289,14 @@ class NewPoolSettings:
     idle_timeout_seconds: float = 60.0
 
     def __post_init__(self) -> None:
-        _positive(
+        positive(
             self,
             "max_age_seconds",
             "signature_limit",
             "max_lookups",
             "idle_timeout_seconds",
         )
-        _not_negative(self, "warmup_seconds")
+        not_negative(self, "warmup_seconds")
         if not 1 <= int(self.signature_limit) <= 1000:
             raise ValueError("NewPoolSettings.signature_limit must be within 1..1000")
 
@@ -348,8 +322,8 @@ class PushSettings:
     idle_timeout_seconds: float = 1800.0
 
     def __post_init__(self) -> None:
-        _positive(self, "seconds", "max_vaults", "flush_interval_seconds")
-        _not_negative(self, "idle_timeout_seconds")
+        positive(self, "seconds", "max_vaults", "flush_interval_seconds")
+        not_negative(self, "idle_timeout_seconds")
         if self.commitment not in ("processed", "confirmed", "finalized"):
             raise ValueError(
                 "PushSettings.commitment must be processed, confirmed or finalized"
@@ -391,7 +365,7 @@ class FloatSettings:
     idle_timeout_seconds: float = 600.0
 
     def __post_init__(self) -> None:
-        _positive(
+        positive(
             self,
             "platform_refresh_seconds",
             "cpmm_logs_seconds",
@@ -404,7 +378,7 @@ class FloatSettings:
             "seen_signatures",
             "flush_interval_seconds",
         )
-        _not_negative(self, "trader_lookups_per_second", "idle_timeout_seconds")
+        not_negative(self, "trader_lookups_per_second", "idle_timeout_seconds")
         if self.commitment not in ("processed", "confirmed", "finalized"):
             raise ValueError(
                 "FloatSettings.commitment must be processed, confirmed or finalized"
@@ -441,11 +415,11 @@ class PumpSettings:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> PumpSettings:
-        values = _clean(data, where="module_settings", kind=cls)
+        values = section(data, where="module_settings", kind=cls)
         built: dict[str, Any] = {}
         for key, kind in _NESTED.items():
             if key in values and values[key] is not None:
-                nested = _clean(values[key], where=key, kind=kind)
+                nested = section(values[key], where=key, kind=kind)
                 built[key] = kind(**nested)
         if values.get("screening") is not None:
             if not isinstance(values["screening"], Mapping):
