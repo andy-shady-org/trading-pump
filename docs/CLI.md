@@ -112,8 +112,11 @@ them). The command prints how many rows of each kind it wrote, the rows it
 skipped and why (a reading of a coin whose listing is not in the capture, a
 reading before its listing, a coin whose decimals were not read, a drained
 pool), and the rows that are not market data (`migration`,
-`observation_end`, other runs' rows). It needs trading-core `>=0.7.0`
-(the strategy library, `trading_core.lanes`).
+`observation_end`, other runs' rows), one line each (`listing: 2494`), then
+the sweep to run next. From 0.7.0 the writer and the command are
+trading-core's (`trading_core.lanes.rows`, FEAT-184), on trading-core
+`>=0.8.0`; a file that cannot be read or written, or an output that is not a
+new `.jsonl` or `.jsonl.gz` file, exits 2 with `lane-rows: <why>`.
 
 ## `trading-pump record`
 

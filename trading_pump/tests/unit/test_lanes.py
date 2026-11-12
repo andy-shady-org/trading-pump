@@ -59,7 +59,7 @@ def _convert(rows: list[dict[str, Any]], **kwargs: Any) -> tuple[list[Any], Lane
     lanes = LaneRows(**kwargs)
     for row in rows:
         lanes.learn(row)
-    records = [record for row in rows for record in lanes.translate(row)]
+    records = [record for row in rows for record in lanes.records(row)]
     return records, lanes
 
 
@@ -221,7 +221,7 @@ def test_rows_are_written_for_the_sweep(tmp_path: Path, name: str) -> None:
 
     stats = write_lane_rows([capture], out)
 
-    assert stats.written == {"listing": 2, "reading": 4}
+    assert stats.written == {"listing": 2, "reading": 4, "trade": 0, "holders": 0}
     opener: Any = gzip.open if name.endswith(".gz") else open
     with opener(out, "rt", encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle]

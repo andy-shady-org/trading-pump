@@ -104,9 +104,9 @@ def test_lane_rows_writes_the_capture_and_counts_it(
     )
     text = " ".join(output.export_text().split())
     assert code == main_cli.EXIT_OK and out.exists()
-    assert "listing │ 1" in text and "reading │ 9" in text
-    assert "trade │ 0" in text and "holders │ 0" in text
-    assert "skipped │ 0" in text and "trading-core-lanes sweep --capture pump=" in text
+    assert "listing: 1" in text and "reading: 9" in text
+    assert "trade: 0" in text and "holders: 0" in text
+    assert "skipped: 0" in text and "trading-core-lanes sweep --capture pump=" in text
 
 
 def test_lane_rows_lists_what_it_skipped(tmp_path: Path, output: Console) -> None:
@@ -128,7 +128,8 @@ def test_lane_rows_lists_what_it_skipped(tmp_path: Path, output: Console) -> Non
     )
     text = " ".join(output.export_text().split())
     assert code == main_cli.EXIT_OK
-    assert "no listing in the capture" in text and "migration │ 1" in text
+    assert "no listing in the capture" in text
+    assert "not market data: 1" in text and "migration: 1" in text
 
 
 def test_lane_rows_errors_exit_2(tmp_path: Path, output: Console) -> None:
@@ -136,7 +137,7 @@ def test_lane_rows_errors_exit_2(tmp_path: Path, output: Console) -> None:
         ["lane-rows", "--capture", str(tmp_path / "missing.jsonl"), "--out", "x.csv"]
     )
     assert code == main_cli.EXIT_USAGE
-    assert "Cannot write lane rows" in output.export_text()
+    assert "lane-rows:" in output.export_text()
 
 
 def test_env_lists_names_and_states_never_values(

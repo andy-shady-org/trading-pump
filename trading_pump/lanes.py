@@ -31,7 +31,9 @@ of 0, which the row format cannot carry); the other rows (``migration``,
 ``observation_end``, other runs' rows) are *ignored*, counted by event.
 
 A capture is read twice: first for the listings (its parts may come in any
-order), then for the rows. The module's live market book uses
+order), then for the rows (trading-core's ``capture_records``, FEAT-184);
+the writer and the ``lane-rows`` command are trading-core's too
+(``trading_core.lanes.rows``), given this translator. The module's live market book uses
 the same translator on its capture rows as they are written
 (``PumpModule.market_book``), so a lane sees the same records live as the
 sweep does on the capture.
@@ -39,13 +41,11 @@ sweep does on the capture.
 
 from __future__ import annotations
 
-import gzip
-import json
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 from trading_core.lanes.market import (
     ROW_LISTING,
@@ -53,9 +53,9 @@ from trading_core.lanes.market import (
     Listing,
     Reading,
     Record,
-    to_row,
 )
-from trading_core.replay import read_rows
+from trading_core.lanes.rows import Conversion, capture_records, number
+from trading_core.lanes.rows import write_lane_rows as core_write_lane_rows
 
 from trading_pump.market import PoolReading
 from trading_pump.strategies.observation import (
@@ -78,13 +78,6 @@ SKIP_NO_LISTING = "no listing in the capture (followed before it started)"
 SKIP_BEFORE_LISTING = "before its listing"
 SKIP_NO_DECIMALS = "coin decimals not recorded"
 SKIP_NO_PRICE = "price 0 (drained pool): the row format has no price 0"
-OUTPUT_SUFFIXES = (".jsonl", ".jsonl.gz")
-
-
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return float(value)
 
 
 def _whole(value: Any) -> int | None:
@@ -115,7 +108,7 @@ def _label(row: Mapping[str, Any]) -> str:
 
 def _first_number(row: Mapping[str, Any], *keys: str) -> float | None:
     for key in keys:
-        value = _number(row.get(key))
+        value = number(row.get(key))
         if value is not None:
             return value
     return None
@@ -150,8 +143,9 @@ class _Context:
 
 class LaneRows:
     """Translates capture rows into library records; see the module
-    docstring. Call :meth:`learn` on a row before :meth:`translate` (every row
-    of a capture first, or each row as it is written)."""
+    docstring. Call :meth:`learn` on a row before :meth:`records` (every row
+    of a capture first, or each row as it is written). ``skipped`` and
+    ``ignored`` are ``stats``' counters, as trading-core's writer reads them."""
 
     def __init__(self, sources: Iterable[str] = SOURCES) -> None:
         chosen = frozenset(sources)
@@ -163,6 +157,8 @@ class LaneRows:
         self.sources = chosen
         self.listed: dict[str, _Listed] = {}
         self.stats = LaneRowStats()
+        self.skipped = self.stats.skipped
+        self.ignored = self.stats.ignored
         self._handlers: dict[str, Callable[[Mapping[str, Any]], list[Record]]] = {
             OBSERVATION_START_EVENT: self._listing,
             CURVE_POLL_EVENT: self._curve_reading,
@@ -199,7 +195,7 @@ class LaneRows:
         self.listed = {k: v for k, v in self.listed.items() if k in kept}
 
     # -- rows --------------------------------------------------------------------
-    def translate(self, row: Mapping[str, Any]) -> list[Record]:
+    def records(self, row: Mapping[str, Any]) -> list[Record]:
         """The records one row holds (none for a skipped or ignored row)."""
         handler = self._handlers.get(str(row.get("event")))
         if handler is None or _source(row) not in self.sources:
@@ -232,7 +228,7 @@ class LaneRows:
     def _context(self, row: Mapping[str, Any]) -> _Context | str:
         """What a reading row needs, or why it is skipped."""
         key = _instrument(row)
-        at = _number(row.get("timestamp"))
+        at = number(row.get("timestamp"))
         if key is None or at is None:
             return SKIP_MALFORMED
         listed = self.listed.get(key)
@@ -285,17 +281,9 @@ def _new_pool(row: Mapping[str, Any], mint: str, at: float) -> _Listed:
 
 def lane_records(paths: Sequence[str | Path], rows: LaneRows) -> Iterator[Record]:
     """The records of a capture's files (``.jsonl`` and ``.gz`` parts, in any
-    order); ``rows.stats`` counts what was written, skipped and ignored."""
-    for row in read_rows(paths):
-        rows.learn(row)
-    for row in read_rows(paths):
-        yield from rows.translate(row)
-
-
-def _open_output(path: Path, compress: bool) -> TextIO:
-    if compress:
-        return gzip.open(path, "wt", encoding="utf-8")
-    return path.open("w", encoding="utf-8")
+    order, read as given); ``rows.stats`` counts what was written, skipped and
+    ignored."""
+    return capture_records(paths, rows, order=list)
 
 
 def write_lane_rows(
@@ -303,27 +291,12 @@ def write_lane_rows(
     out: str | Path,
     *,
     sources: Iterable[str] = SOURCES,
-) -> LaneRowStats:
-    """Write a capture's records as library rows to ``out`` (``.jsonl`` or
-    ``.jsonl.gz``, a new file), for ``trading-core-lanes sweep``. Rows are
-    listings and readings in capture order, not time order: the sweep sorts
-    them."""
-    target = Path(out)
-    if not target.name.endswith(OUTPUT_SUFFIXES):
-        raise ValueError(f"{target}: the output must end in .jsonl or .jsonl.gz")
-    if target.exists():
-        raise ValueError(f"{target} exists already: write to a new file")
-    rows = LaneRows(sources)
-    partial = target.with_name(target.name + ".partial")
-    try:
-        with _open_output(partial, target.name.endswith(".gz")) as handle:
-            for record in lane_records(paths, rows):
-                handle.write(json.dumps(to_row(record)) + "\n")
-    except BaseException:
-        partial.unlink(missing_ok=True)
-        raise
-    partial.replace(target)
-    return rows.stats
+) -> Conversion:
+    """Write a capture's records as library rows to ``out`` (a new
+    ``.jsonl`` or ``.jsonl.gz`` file), for ``trading-core-lanes sweep``:
+    trading-core's writer on this translator. Rows are listings and readings
+    in capture order, not time order: the sweep sorts them."""
+    return core_write_lane_rows(paths, out, LaneRows(sources), order=list)
 
 
 __all__ = [

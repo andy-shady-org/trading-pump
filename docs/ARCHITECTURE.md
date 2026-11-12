@@ -23,7 +23,7 @@ knows Pump.fun and PumpSwap (FEAT-115, trading-core ADR-010 and its
 | `execute(order, paper=)` | `PaperExecutor` (pool-priced fills, every cost) or `LiveExecutor` (refuses until the live gate) |
 | `exit_value(position, quote)` | The SOL a sell of the position would return after the fee (BUG-136) |
 | `pipeline()` | One pipeline for both lanes (`strategies/pumpswap_momentum.py`): `graduations → standard_pool → [anti_rug] → momentum`. The scout gives each graduate to the lane whose first-reading band it is in (the instant band is checked first); the filter and the analyst apply that lane's band, ratio and slippage; the signal carries the lane as its `strategy`. None when both lanes are off |
-| `market_book()` | The graduates' listings and readings for trading-core's lanes (FEAT-117), translated from the capture rows as they are written (`lanes.py`); made on the first call, trimmed by `graduation.book_retention_seconds` on every call, held graduates kept |
+| `market_book()` | The graduates' listings and readings for trading-core's lanes (FEAT-117), translated from the capture rows as they are written (`lanes.py`); made on the first call (trading-core's `LiveBook`, FEAT-184, from 0.7.0), trimmed by `graduation.book_retention_seconds` at most once a minute, held graduates kept |
 | `should_exit(position, quote, now)` | The position's lane exits (`lane.exits`, `instant.exits`, FEAT-79) on the pool mark; nothing for a lane without exits, so the engine's `exits` decide |
 | `format_price`, `status_rows`, `strategy_rows` | µSOL prices; feed, new-pool feed, graduates, pool reads, RPC, capture rows; each lane's signal, pool band and exits |
 | `files` | The capture file (when on), listed in the Engine panel with the engine's files |
